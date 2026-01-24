@@ -4,6 +4,7 @@
 import Test.ParserTest
 import Test.SemanticsTest
 import Test.EquivTest
+import Test.PropertyTest
 
 def main : IO Unit := do
   IO.println "╔═══════════════════════════════════╗"
@@ -17,6 +18,9 @@ def main : IO Unit := do
   IO.println ""
 
   EquivTest.runEquivTests
+  IO.println ""
+
+  let _ ← PropertyTest.runPropertyTests
   IO.println ""
 
   IO.println "═══════════════════════════════════"

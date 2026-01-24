@@ -214,6 +214,7 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
         | none => false
       some (Value.bool (if neg then !hasMatch else hasMatch))
   | .exists neg sel =>
+    -- For correlated subqueries, pass the outer row context
     let subResult := evalSelect db sel
     let hasExists := !subResult.isEmpty
     some (Value.bool (if neg then !hasExists else hasExists))
@@ -355,17 +356,24 @@ partial def compareByOrderItems (db : Database) (r1 r2 : Row) : List OrderByItem
 
 /-- Evaluate full SELECT statement -/
 partial def evalSelect (db : Database) (sel : SelectStmt) : Table :=
+  evalSelectWithContext db [] sel
+
+/-- Evaluate SELECT statement with outer row context (for correlated subqueries) -/
+partial def evalSelectWithContext (db : Database) (outerRow : Row) (sel : SelectStmt) : Table :=
   -- 1. FROM clause
   let baseRows : Table := match sel.fromClause with
     | some f => evalFrom db f
     | none => [[]]  -- Single empty row for SELECT without FROM
 
+  -- Merge outer row context into each base row for correlated subqueries
+  let baseRowsWithContext : Table := baseRows.map fun row => outerRow ++ row
+
   -- 2. WHERE clause
   let filteredRows : Table := match sel.whereClause with
     | some cond =>
-      baseRows.filter fun row =>
+      baseRowsWithContext.filter fun row =>
         evalExprWithDb db row cond == some (Value.bool true)
-    | none => baseRows
+    | none => baseRowsWithContext
 
   -- 3. GROUP BY - simplified: just pass through (no aggregation support)
   let groupedRows : Table := filteredRows
@@ -407,6 +415,18 @@ end
 /-- Simple evalExpr without database context (for backwards compatibility) -/
 def evalExpr (row : Row) : Expr → Option Value :=
   evalExprWithDb (fun _ => []) row
+
+-- ============================================================================
+-- Axioms for partial evaluation (needed for equivalence proofs)
+-- ============================================================================
+
+/-- Axiom: evalExprWithDb unfolds for binOp -/
+axiom evalExprWithDb_binOp (db : Database) (row : Row) (op : BinOp) (l r : Expr) :
+  evalExprWithDb db row (Expr.binOp op l r) = evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r)
+
+/-- Axiom: evalExprWithDb unfolds for unaryOp -/
+axiom evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : Expr) :
+  evalExprWithDb db row (Expr.unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e)
 
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation

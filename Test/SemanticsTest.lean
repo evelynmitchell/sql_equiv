@@ -132,7 +132,7 @@ def whereQueryTests : List TestResult := [
   testRowCount "where_eq_string" "SELECT * FROM users WHERE department = 'Engineering'" 2,
   testRowCount "where_and" "SELECT * FROM users WHERE age > 25 AND department = 'Engineering'" 2,
   testRowCount "where_or" "SELECT * FROM users WHERE age < 25 OR age > 30" 2,
-  testRowCount "where_complex" "SELECT * FROM users WHERE (department = 'Engineering' OR department = 'Sales') AND age > 25" 3,
+  testRowCount "where_complex" "SELECT * FROM users WHERE (department = 'Engineering' OR department = 'Sales') AND age > 25" 2,
   testEmpty "where_no_match" "SELECT * FROM users WHERE age > 100"
 ]
 

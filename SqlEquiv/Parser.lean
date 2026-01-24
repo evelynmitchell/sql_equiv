@@ -278,6 +278,12 @@ def parseColumnRef : Parser ColumnRef := do
   else
     return { table := none, column := first }
 
+/-- Keywords that cannot be used as column names in SELECT items -/
+def reservedSelectKeywords : List String := [
+  "FROM", "WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET",
+  "UNION", "INTERSECT", "EXCEPT", "INTO", "VALUES"
+]
+
 -- Expression parsing uses mutual recursion with SELECT parser (for subqueries)
 mutual
 
@@ -596,6 +602,15 @@ partial def parseSelectItem : Parser SelectItem := do
   | .star =>
     let _ ← Parser.advance
     return .star none
+  | .keyword kw =>
+    -- Check if this keyword is reserved (cannot be a column name)
+    if reservedSelectKeywords.contains kw then
+      Parser.fail s!"Unexpected keyword {kw} in SELECT list"
+    else
+      -- Some keywords like aggregate functions can appear in SELECT items
+      let e ← parseExpr
+      let alias ← parseAlias
+      return .exprItem e alias
   | .ident name =>
     -- Check for table.*
     let _ ← Parser.advance

@@ -32,6 +32,17 @@ open Test
 #check @SqlEquiv.not_not
 #check @SqlEquiv.eq_comm
 
+-- Verify associativity theorems exist
+#check @SqlEquiv.and_assoc
+#check @SqlEquiv.or_assoc
+
+-- Verify WHERE clause theorems exist
+#check @SqlEquiv.where_true_elim
+#check @SqlEquiv.where_false_empty
+
+-- Verify JOIN theorems exist
+#check @SqlEquiv.join_comm
+
 -- Verify select equivalence theorems exist
 #check @select_equiv_refl
 #check @select_equiv_symm
@@ -263,6 +274,9 @@ def runEquivTests : IO Unit := do
   IO.println "✓ query_equiv_refl, query_equiv_symm, query_equiv_trans"
   IO.println "✓ stmt_equiv_refl, stmt_equiv_symm, stmt_equiv_trans"
   IO.println "✓ and_comm, or_comm, add_comm, mul_comm, not_not, eq_comm"
+  IO.println "✓ and_assoc, or_assoc"
+  IO.println "✓ where_true_elim, where_false_empty"
+  IO.println "✓ join_comm"
   IO.println "(These are verified at compile time by #check)"
 
   IO.println "\n[Runtime Tests]"
