@@ -3,6 +3,7 @@
 
   This module defines the core types for representing SQL statements.
   Built bottom-up: literals → expressions → clauses → statements
+  Extended for Spider benchmark compatibility: subqueries, aggregates, set operations
 -/
 
 namespace SqlEquiv
@@ -50,6 +51,15 @@ inductive UnaryOp where
   | isNotNull
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- Aggregate functions -/
+inductive AggFunc where
+  | count
+  | sum
+  | avg
+  | min
+  | max
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- Table reference with optional alias -/
 structure TableRef where
   name  : String
@@ -76,55 +86,105 @@ inductive SetOp where
   | union
   | unionAll
   | intersect
-  | except
+  | exceptOp  -- 'except' is reserved in Lean
   deriving Repr, BEq, Inhabited, DecidableEq
 
 -- ============================================================================
--- Core Types (with manual instances due to mutual recursion)
+-- Core Types (mutually recursive for subquery support)
 -- ============================================================================
+
+mutual
 
 /-- SQL expression AST -/
 inductive Expr where
-  | lit     : Value → Expr
-  | col     : ColumnRef → Expr
-  | binOp   : BinOp → Expr → Expr → Expr
-  | unaryOp : UnaryOp → Expr → Expr
-  | func    : String → List Expr → Expr  -- function call
-  | «case»  : List (Expr × Expr) → Option Expr → Expr  -- CASE WHEN ... ELSE
-  | inList  : Expr → List Expr → Expr
-  | between : Expr → Expr → Expr → Expr
+  | lit       : Value → Expr
+  | col       : ColumnRef → Expr
+  | binOp     : BinOp → Expr → Expr → Expr
+  | unaryOp   : UnaryOp → Expr → Expr
+  | func      : String → List Expr → Expr              -- scalar function call
+  | agg       : AggFunc → Option Expr → Bool → Expr    -- aggregate(expr, distinct?)
+  | countStar : Expr                                    -- COUNT(*)
+  | «case»    : List (Expr × Expr) → Option Expr → Expr
+  | inList    : Expr → Bool → List Expr → Expr         -- expr [NOT] IN (values)
+  | inSubquery : Expr → Bool → SelectStmt → Expr       -- expr [NOT] IN (subquery)
+  | exists    : Bool → SelectStmt → Expr               -- [NOT] EXISTS (subquery)
+  | subquery  : SelectStmt → Expr                      -- scalar subquery
+  | between   : Expr → Expr → Expr → Expr
 
 /-- ORDER BY item -/
-structure OrderByItem where
-  expr : Expr
-  dir  : OrderDir
+inductive OrderByItem where
+  | mk : Expr → OrderDir → OrderByItem
 
 /-- SELECT item: an expression with optional alias, or * -/
 inductive SelectItem where
   | star      : Option String → SelectItem           -- * or table.*
   | exprItem  : Expr → Option String → SelectItem    -- expr AS alias
 
-/-- FROM clause source: can be a table or join -/
+/-- FROM clause source: can be a table, join, or subquery -/
 inductive FromClause where
-  | table    : TableRef → FromClause
-  | join     : FromClause → JoinType → FromClause → Option Expr → FromClause
+  | table     : TableRef → FromClause
+  | subquery  : SelectStmt → String → FromClause     -- (SELECT ...) AS alias
+  | join      : FromClause → JoinType → FromClause → Option Expr → FromClause
 
 /-- Full SELECT statement -/
-structure SelectStmt where
-  distinct : Bool
-  items    : List SelectItem
-  fromClause : Option FromClause
-  whereClause : Option Expr
-  groupBy  : List Expr
-  having   : Option Expr
-  orderBy  : List OrderByItem
-  limitVal : Option Nat
-  offsetVal : Option Nat
+inductive SelectStmt where
+  | mk : Bool →                    -- distinct
+         List SelectItem →         -- items
+         Option FromClause →       -- fromClause
+         Option Expr →             -- whereClause
+         List Expr →               -- groupBy
+         Option Expr →             -- having
+         List OrderByItem →        -- orderBy
+         Option Nat →              -- limitVal
+         Option Nat →              -- offsetVal
+         SelectStmt
+
+end
+
+-- Accessor functions for SelectStmt
+def SelectStmt.distinct : SelectStmt → Bool
+  | .mk d _ _ _ _ _ _ _ _ => d
+
+def SelectStmt.items : SelectStmt → List SelectItem
+  | .mk _ i _ _ _ _ _ _ _ => i
+
+def SelectStmt.fromClause : SelectStmt → Option FromClause
+  | .mk _ _ f _ _ _ _ _ _ => f
+
+def SelectStmt.whereClause : SelectStmt → Option Expr
+  | .mk _ _ _ w _ _ _ _ _ => w
+
+def SelectStmt.groupBy : SelectStmt → List Expr
+  | .mk _ _ _ _ g _ _ _ _ => g
+
+def SelectStmt.having : SelectStmt → Option Expr
+  | .mk _ _ _ _ _ h _ _ _ => h
+
+def SelectStmt.orderBy : SelectStmt → List OrderByItem
+  | .mk _ _ _ _ _ _ o _ _ => o
+
+def SelectStmt.limitVal : SelectStmt → Option Nat
+  | .mk _ _ _ _ _ _ _ l _ => l
+
+def SelectStmt.offsetVal : SelectStmt → Option Nat
+  | .mk _ _ _ _ _ _ _ _ o => o
+
+-- Accessor functions for OrderByItem
+def OrderByItem.expr : OrderByItem → Expr
+  | .mk e _ => e
+
+def OrderByItem.dir : OrderByItem → OrderDir
+  | .mk _ d => d
+
+/-- Query with optional set operations -/
+inductive Query where
+  | simple : SelectStmt → Query
+  | compound : Query → SetOp → Query → Query
 
 /-- Values source for INSERT -/
 inductive InsertSource where
   | values : List (List Expr) → InsertSource  -- multiple rows
-  | select : SelectStmt → InsertSource
+  | selectStmt : SelectStmt → InsertSource
 
 /-- Column assignment: column = expr -/
 structure Assignment where
@@ -150,7 +210,7 @@ structure DeleteStmt where
 
 /-- Any SQL DML statement -/
 inductive Stmt where
-  | select : SelectStmt → Stmt
+  | query  : Query → Stmt
   | insert : InsertStmt → Stmt
   | update : UpdateStmt → Stmt
   | delete : DeleteStmt → Stmt
@@ -166,10 +226,15 @@ mutual
     | .binOp op l r => s!"Expr.binOp {repr op} ({l.toReprStr}) ({r.toReprStr})"
     | .unaryOp op e => s!"Expr.unaryOp {repr op} ({e.toReprStr})"
     | .func name args => s!"Expr.func {repr name} [{", ".intercalate (args.map Expr.toReprStr)}]"
+    | .agg fn e dist => s!"Expr.agg {repr fn} {e.map Expr.toReprStr} {dist}"
+    | .countStar => "Expr.countStar"
     | .case branches else_ =>
       let brStr := branches.map fun (c, r) => s!"({c.toReprStr}, {r.toReprStr})"
       s!"Expr.case [{", ".intercalate brStr}] {else_.map Expr.toReprStr}"
-    | .inList e vals => s!"Expr.inList ({e.toReprStr}) [{", ".intercalate (vals.map Expr.toReprStr)}]"
+    | .inList e neg vals => s!"Expr.inList ({e.toReprStr}) {neg} [{", ".intercalate (vals.map Expr.toReprStr)}]"
+    | .inSubquery e neg sel => s!"Expr.inSubquery ({e.toReprStr}) {neg} ({sel.toReprStr})"
+    | .exists neg sel => s!"Expr.exists {neg} ({sel.toReprStr})"
+    | .subquery sel => s!"Expr.subquery ({sel.toReprStr})"
     | .between e lo hi => s!"Expr.between ({e.toReprStr}) ({lo.toReprStr}) ({hi.toReprStr})"
 
   partial def SelectItem.toReprStr : SelectItem → String
@@ -178,21 +243,26 @@ mutual
 
   partial def FromClause.toReprStr : FromClause → String
     | .table t => s!"FromClause.table {repr t}"
+    | .subquery sel alias => s!"FromClause.subquery ({sel.toReprStr}) {repr alias}"
     | .join l jt r on_ =>
       s!"FromClause.join ({FromClause.toReprStr l}) {repr jt} ({FromClause.toReprStr r}) {on_.map Expr.toReprStr}"
 
   partial def OrderByItem.toReprStr : OrderByItem → String
-    | ⟨e, d⟩ => s!"OrderByItem.mk ({Expr.toReprStr e}) {repr d}"
+    | .mk e d => s!"OrderByItem.mk ({Expr.toReprStr e}) {repr d}"
 
   partial def SelectStmt.toReprStr : SelectStmt → String
-    | ⟨d, items, f, w, g, h, o, l, off⟩ =>
+    | .mk d items f w g h o l off =>
       s!"SelectStmt.mk {d} [{", ".intercalate (items.map SelectItem.toReprStr)}] {f.map FromClause.toReprStr} {w.map Expr.toReprStr} [{", ".intercalate (g.map Expr.toReprStr)}] {h.map Expr.toReprStr} [{", ".intercalate (o.map OrderByItem.toReprStr)}] {l} {off}"
+
+  partial def Query.toReprStr : Query → String
+    | .simple sel => s!"Query.simple ({sel.toReprStr})"
+    | .compound l op r => s!"Query.compound ({l.toReprStr}) {repr op} ({r.toReprStr})"
 
   partial def InsertSource.toReprStr : InsertSource → String
     | .values rows =>
       let rowStrs := rows.map fun row => s!"[{", ".intercalate (row.map Expr.toReprStr)}]"
       s!"InsertSource.values [{", ".intercalate rowStrs}]"
-    | .select sel => s!"InsertSource.select ({SelectStmt.toReprStr sel})"
+    | .selectStmt sel => s!"InsertSource.selectStmt ({SelectStmt.toReprStr sel})"
 
   partial def Assignment.toReprStr : Assignment → String
     | ⟨c, v⟩ => s!"Assignment.mk {repr c} ({Expr.toReprStr v})"
@@ -203,6 +273,7 @@ instance : Repr SelectItem where reprPrec i _ := i.toReprStr
 instance : Repr FromClause where reprPrec f _ := f.toReprStr
 instance : Repr OrderByItem where reprPrec o _ := o.toReprStr
 instance : Repr SelectStmt where reprPrec s _ := s.toReprStr
+instance : Repr Query where reprPrec q _ := q.toReprStr
 instance : Repr InsertSource where reprPrec s _ := s.toReprStr
 instance : Repr Assignment where reprPrec a _ := a.toReprStr
 
@@ -217,7 +288,7 @@ instance : Repr DeleteStmt where
 
 instance : Repr Stmt where
   reprPrec s _ := match s with
-    | .select sel => s!"Stmt.select ({SelectStmt.toReprStr sel})"
+    | .query q => s!"Stmt.query ({Query.toReprStr q})"
     | .insert ins => s!"Stmt.insert ({repr ins})"
     | .update upd => s!"Stmt.update ({repr upd})"
     | .delete del => s!"Stmt.delete ({repr del})"
@@ -233,6 +304,13 @@ mutual
     | .binOp op1 l1 r1, .binOp op2 l2 r2 => op1 == op2 && Expr.beq l1 l2 && Expr.beq r1 r2
     | .unaryOp op1 e1, .unaryOp op2 e2 => op1 == op2 && Expr.beq e1 e2
     | .func n1 a1, .func n2 a2 => n1 == n2 && a1.length == a2.length && (a1.zip a2).all (fun (x, y) => Expr.beq x y)
+    | .agg f1 e1 d1, .agg f2 e2 d2 =>
+      f1 == f2 && d1 == d2 &&
+      match e1, e2 with
+      | none, none => true
+      | some x, some y => Expr.beq x y
+      | _, _ => false
+    | .countStar, .countStar => true
     | .case b1 e1, .case b2 e2 =>
       b1.length == b2.length &&
       (b1.zip b2).all (fun ((c1, r1), (c2, r2)) => Expr.beq c1 c2 && Expr.beq r1 r2) &&
@@ -240,8 +318,12 @@ mutual
       | none, none => true
       | some x, some y => Expr.beq x y
       | _, _ => false
-    | .inList e1 v1, .inList e2 v2 =>
-      Expr.beq e1 e2 && v1.length == v2.length && (v1.zip v2).all (fun (x, y) => Expr.beq x y)
+    | .inList e1 n1 v1, .inList e2 n2 v2 =>
+      Expr.beq e1 e2 && n1 == n2 && v1.length == v2.length && (v1.zip v2).all (fun (x, y) => Expr.beq x y)
+    | .inSubquery e1 n1 s1, .inSubquery e2 n2 s2 =>
+      Expr.beq e1 e2 && n1 == n2 && SelectStmt.beq s1 s2
+    | .exists n1 s1, .exists n2 s2 => n1 == n2 && SelectStmt.beq s1 s2
+    | .subquery s1, .subquery s2 => SelectStmt.beq s1 s2
     | .between e1 l1 h1, .between e2 l2 h2 => Expr.beq e1 e2 && Expr.beq l1 l2 && Expr.beq h1 h2
     | _, _ => false
 
@@ -252,6 +334,7 @@ mutual
 
   partial def FromClause.beq : FromClause → FromClause → Bool
     | .table t1, .table t2 => t1 == t2
+    | .subquery s1 a1, .subquery s2 a2 => SelectStmt.beq s1 s2 && a1 == a2
     | .join l1 jt1 r1 on1, .join l2 jt2 r2 on2 =>
       FromClause.beq l1 l2 && jt1 == jt2 && FromClause.beq r1 r2 &&
       match on1, on2 with
@@ -261,10 +344,10 @@ mutual
     | _, _ => false
 
   partial def OrderByItem.beq : OrderByItem → OrderByItem → Bool
-    | ⟨e1, d1⟩, ⟨e2, d2⟩ => Expr.beq e1 e2 && d1 == d2
+    | .mk e1 d1, .mk e2 d2 => Expr.beq e1 e2 && d1 == d2
 
   partial def SelectStmt.beq : SelectStmt → SelectStmt → Bool
-    | ⟨d1, i1, f1, w1, g1, h1, o1, l1, off1⟩, ⟨d2, i2, f2, w2, g2, h2, o2, l2, off2⟩ =>
+    | .mk d1 i1 f1 w1 g1 h1 o1 l1 off1, .mk d2 i2 f2 w2 g2 h2 o2 l2 off2 =>
       d1 == d2 &&
       i1.length == i2.length && (i1.zip i2).all (fun (x, y) => SelectItem.beq x y) &&
       (match f1, f2 with | none, none => true | some x, some y => FromClause.beq x y | _, _ => false) &&
@@ -274,12 +357,18 @@ mutual
       o1.length == o2.length && (o1.zip o2).all (fun (x, y) => OrderByItem.beq x y) &&
       l1 == l2 && off1 == off2
 
+  partial def Query.beq : Query → Query → Bool
+    | .simple s1, .simple s2 => SelectStmt.beq s1 s2
+    | .compound l1 op1 r1, .compound l2 op2 r2 =>
+      Query.beq l1 l2 && op1 == op2 && Query.beq r1 r2
+    | _, _ => false
+
   partial def InsertSource.beq : InsertSource → InsertSource → Bool
     | .values r1, .values r2 =>
       r1.length == r2.length &&
       (r1.zip r2).all (fun (row1, row2) =>
         row1.length == row2.length && (row1.zip row2).all (fun (x, y) => Expr.beq x y))
-    | .select s1, .select s2 => SelectStmt.beq s1 s2
+    | .selectStmt s1, .selectStmt s2 => SelectStmt.beq s1 s2
     | _, _ => false
 
   partial def Assignment.beq : Assignment → Assignment → Bool
@@ -291,6 +380,7 @@ instance : BEq SelectItem where beq := SelectItem.beq
 instance : BEq FromClause where beq := FromClause.beq
 instance : BEq OrderByItem where beq := OrderByItem.beq
 instance : BEq SelectStmt where beq := SelectStmt.beq
+instance : BEq Query where beq := Query.beq
 instance : BEq InsertSource where beq := InsertSource.beq
 instance : BEq Assignment where beq := Assignment.beq
 
@@ -317,7 +407,7 @@ instance : BEq DeleteStmt where
 
 instance : BEq Stmt where
   beq s1 s2 := match s1, s2 with
-    | .select x, .select y => SelectStmt.beq x y
+    | .query x, .query y => Query.beq x y
     | .insert x, .insert y => x == y
     | .update x, .update y => x == y
     | .delete x, .delete y => x == y
@@ -330,14 +420,15 @@ instance : BEq Stmt where
 instance : Inhabited Expr where default := .lit .null
 instance : Inhabited SelectItem where default := .star none
 instance : Inhabited FromClause where default := .table ⟨"", none⟩
-instance : Inhabited OrderByItem where default := ⟨default, .asc⟩
+instance : Inhabited OrderByItem where default := .mk default .asc
 instance : Inhabited SelectStmt where
-  default := ⟨false, [], none, none, [], none, [], none, none⟩
+  default := .mk false [] none none [] none [] none none
+instance : Inhabited Query where default := .simple default
 instance : Inhabited InsertSource where default := .values []
 instance : Inhabited Assignment where default := ⟨"", default⟩
 instance : Inhabited InsertStmt where default := ⟨"", none, default⟩
 instance : Inhabited UpdateStmt where default := ⟨"", [], none⟩
 instance : Inhabited DeleteStmt where default := ⟨"", none⟩
-instance : Inhabited Stmt where default := .select default
+instance : Inhabited Stmt where default := .query default
 
 end SqlEquiv

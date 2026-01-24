@@ -27,6 +27,13 @@ def SelectEquiv (s1 s2 : SelectStmt) : Prop :=
 /-- Notation for select equivalence -/
 scoped infix:50 " ≃ₛ " => SelectEquiv
 
+/-- Two queries are equivalent if they produce the same result for all databases -/
+def QueryEquiv (q1 q2 : Query) : Prop :=
+  ∀ db : Database, evalQuery db q1 = evalQuery db q2
+
+/-- Notation for query equivalence -/
+scoped infix:50 " ≃ᵩ " => QueryEquiv
+
 /-- Two statements are equivalent if they have the same effect on all databases -/
 def StmtEquiv (s1 s2 : Stmt) : Prop :=
   ∀ db : Database, evalStmt db s1 = evalStmt db s2
@@ -70,6 +77,26 @@ theorem select_equiv_symm {s1 s2 : SelectStmt} (h : s1 ≃ₛ s2) : s2 ≃ₛ s1
 /-- Select equivalence is transitive -/
 theorem select_equiv_trans {s1 s2 s3 : SelectStmt}
     (h12 : s1 ≃ₛ s2) (h23 : s2 ≃ₛ s3) : s1 ≃ₛ s3 := by
+  intro db
+  rw [h12 db, h23 db]
+
+-- ============================================================================
+-- Query Equivalence Theorems
+-- ============================================================================
+
+/-- Query equivalence is reflexive -/
+theorem query_equiv_refl (q : Query) : q ≃ᵩ q := by
+  intro db
+  rfl
+
+/-- Query equivalence is symmetric -/
+theorem query_equiv_symm {q1 q2 : Query} (h : q1 ≃ᵩ q2) : q2 ≃ᵩ q1 := by
+  intro db
+  exact (h db).symm
+
+/-- Query equivalence is transitive -/
+theorem query_equiv_trans {q1 q2 q3 : Query}
+    (h12 : q1 ≃ᵩ q2) (h23 : q2 ≃ᵩ q3) : q1 ≃ᵩ q3 := by
   intro db
   rw [h12 db, h23 db]
 
@@ -130,6 +157,16 @@ partial def normalizeExpr : Expr → Expr
   | .binOp op a b => .binOp op (normalizeExpr a) (normalizeExpr b)
   | .unaryOp .not (.unaryOp .not e) => normalizeExpr e  -- Double negation
   | .unaryOp op e => .unaryOp op (normalizeExpr e)
+  | .func name args => .func name (args.map normalizeExpr)
+  | .agg fn arg distinct => .agg fn (arg.map normalizeExpr) distinct
+  | .case branches else_ =>
+    .case (branches.map fun (c, r) => (normalizeExpr c, normalizeExpr r))
+          (else_.map normalizeExpr)
+  | .inList e neg vals => .inList (normalizeExpr e) neg (vals.map normalizeExpr)
+  | .inSubquery e neg sel => .inSubquery (normalizeExpr e) neg sel
+  | .exists neg sel => .exists neg sel
+  | .subquery sel => .subquery sel
+  | .between e lo hi => .between (normalizeExpr e) (normalizeExpr lo) (normalizeExpr hi)
   | e => e
 
 /-- Check syntactic equivalence after normalization -/

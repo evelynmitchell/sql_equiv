@@ -146,8 +146,19 @@ def sqlKeywords : List String := [
   "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "ON",
   "ORDER", "BY", "ASC", "DESC", "GROUP", "HAVING", "DISTINCT",
   "LIMIT", "OFFSET", "AS", "IN", "BETWEEN", "LIKE", "CASE", "WHEN", "THEN",
-  "ELSE", "END", "IS", "UNION", "INTERSECT", "EXCEPT", "ALL"
+  "ELSE", "END", "IS", "UNION", "INTERSECT", "EXCEPT", "ALL",
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "EXISTS"
 ]
+
+/-- Check if string is an aggregate function name -/
+def isAggFunc (s : String) : Option AggFunc :=
+  match s.toUpper with
+  | "COUNT" => some .count
+  | "SUM"   => some .sum
+  | "AVG"   => some .avg
+  | "MIN"   => some .min
+  | "MAX"   => some .max
+  | _       => none
 
 def isWhitespace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
@@ -267,10 +278,10 @@ def parseColumnRef : Parser ColumnRef := do
   else
     return { table := none, column := first }
 
--- Expression parsing uses mutual recursion
+-- Expression parsing uses mutual recursion with SELECT parser (for subqueries)
 mutual
 
-/-- Parse primary expression (literals, columns, parenthesized) -/
+/-- Parse primary expression (literals, columns, parenthesized, aggregates, EXISTS) -/
 partial def parsePrimary : Parser Expr := do
   let t ← Parser.peek
   match t with
@@ -291,8 +302,17 @@ partial def parsePrimary : Parser Expr := do
     return .lit .null
   | .keyword "NOT" =>
     let _ ← Parser.advance
-    let e ← parsePrimary
-    return .unaryOp .not e
+    -- Check for NOT EXISTS
+    let t2 ← Parser.peek
+    if isKeyword "EXISTS" t2 then
+      let _ ← Parser.advance
+      Parser.expect .lparen "Expected ("
+      let sel ← parseSelectStmt
+      Parser.expect .rparen "Expected )"
+      return .exists true sel  -- negated EXISTS
+    else
+      let e ← parsePrimary
+      return .unaryOp .not e
   | .op "-" =>
     let _ ← Parser.advance
     let e ← parsePrimary
@@ -303,21 +323,64 @@ partial def parsePrimary : Parser Expr := do
     let else_ ← parseElse
     Parser.expect (.keyword "END") "Expected END"
     return .case branches else_
+  | .keyword "EXISTS" =>
+    let _ ← Parser.advance
+    Parser.expect .lparen "Expected ("
+    let sel ← parseSelectStmt
+    Parser.expect .rparen "Expected )"
+    return .exists false sel
   | .lparen =>
     let _ ← Parser.advance
-    let e ← parseExpr
-    Parser.expect .rparen "Expected )"
-    return e
+    -- Could be subquery or parenthesized expression
+    let t' ← Parser.peek
+    if isKeyword "SELECT" t' then
+      -- Scalar subquery
+      let sel ← parseSelectStmt
+      Parser.expect .rparen "Expected )"
+      return .subquery sel
+    else
+      let e ← parseExpr
+      Parser.expect .rparen "Expected )"
+      return e
   | .ident _ | .keyword _ =>
-    -- Could be column ref or function call
+    -- Could be column ref, function call, or aggregate
     let first ← parseIdent
     let t' ← Parser.peek
     if t' == .lparen then
-      -- Function call
-      let _ ← Parser.advance
-      let args ← Parser.sepBy parseExpr (Parser.expect .comma "")
-      Parser.expect .rparen "Expected )"
-      return .func first args
+      -- Check if it's an aggregate function
+      match isAggFunc first with
+      | some aggFn =>
+        let _ ← Parser.advance
+        -- Check for COUNT(*)
+        let t'' ← Parser.peek
+        if aggFn == .count && t'' == .star then
+          let _ ← Parser.advance
+          Parser.expect .rparen "Expected )"
+          return .countStar
+        else
+          -- Check for DISTINCT
+          let hasDistinct ←
+            if isKeyword "DISTINCT" t'' then
+              let _ ← Parser.advance
+              Parser.pure true
+            else
+              Parser.pure false
+          -- Parse the argument (could be * for COUNT, or an expression)
+          let t''' ← Parser.peek
+          if t''' == .star then
+            let _ ← Parser.advance
+            Parser.expect .rparen "Expected )"
+            return .countStar
+          else
+            let arg ← parseExpr
+            Parser.expect .rparen "Expected )"
+            return .agg aggFn (some arg) hasDistinct
+      | none =>
+        -- Regular function call
+        let _ ← Parser.advance
+        let args ← Parser.sepBy parseExpr (Parser.expect .comma "")
+        Parser.expect .rparen "Expected )"
+        return .func first args
     else if t' == .dot then
       -- Qualified column
       let _ ← Parser.advance
@@ -349,7 +412,7 @@ where
     else
       return none
 
-/-- Parse postfix operators (IS NULL, IN, BETWEEN, LIKE) -/
+/-- Parse postfix operators (IS NULL, IN, NOT IN, BETWEEN, LIKE) -/
 partial def parsePostfix (e : Expr) : Parser Expr := do
   let t ← Parser.peek
   if isKeyword "IS" t then
@@ -364,12 +427,38 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
       parsePostfix (.unaryOp .isNotNull e)
     else
       Parser.fail "Expected NULL or NOT NULL after IS"
+  else if isKeyword "NOT" t then
+    -- NOT IN
+    let _ ← Parser.advance
+    let t2 ← Parser.peek
+    if isKeyword "IN" t2 then
+      let _ ← Parser.advance
+      Parser.expect .lparen "Expected ("
+      -- Check if it's a subquery or value list
+      let t3 ← Parser.peek
+      if isKeyword "SELECT" t3 then
+        let sel ← parseSelectStmt
+        Parser.expect .rparen "Expected )"
+        parsePostfix (.inSubquery e true sel)  -- negated
+      else
+        let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
+        Parser.expect .rparen "Expected )"
+        parsePostfix (.inList e true vals)  -- negated
+    else
+      Parser.fail "Expected IN after NOT"
   else if isKeyword "IN" t then
     let _ ← Parser.advance
     Parser.expect .lparen "Expected ("
-    let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
-    Parser.expect .rparen "Expected )"
-    parsePostfix (.inList e vals)
+    -- Check if it's a subquery or value list
+    let t2 ← Parser.peek
+    if isKeyword "SELECT" t2 then
+      let sel ← parseSelectStmt
+      Parser.expect .rparen "Expected )"
+      parsePostfix (.inSubquery e false sel)
+    else
+      let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
+      Parser.expect .rparen "Expected )"
+      parsePostfix (.inList e false vals)
   else if isKeyword "BETWEEN" t then
     let _ ← Parser.advance
     let lo ← parseAddSub  -- Use parseAddSub to avoid consuming the AND
@@ -496,10 +585,8 @@ where
 /-- Main expression parser -/
 partial def parseExpr : Parser Expr := parseOr
 
-end -- mutual
-
 -- ============================================================================
--- SELECT Parser
+-- SELECT Parser (within mutual block for subquery support)
 -- ============================================================================
 
 /-- Parse SELECT item: *, table.*, or expr AS alias -/
@@ -569,7 +656,7 @@ where
     | _ => return left
 
 /-- Parse table reference with optional alias -/
-def parseTableRef : Parser TableRef := do
+partial def parseTableRef : Parser TableRef := do
   let name ← parseIdent
   let alias ← do
     let t ← Parser.peek
@@ -583,7 +670,7 @@ def parseTableRef : Parser TableRef := do
   return { name := name, alias := alias }
 
 /-- Parse JOIN type -/
-def parseJoinType : Parser JoinType := do
+partial def parseJoinType : Parser JoinType := do
   let t ← Parser.peek
   if isKeyword "INNER" t then
     let _ ← Parser.advance
@@ -614,10 +701,27 @@ def parseJoinType : Parser JoinType := do
   else
     Parser.fail "Expected JOIN type"
 
+/-- Parse a single FROM source (table or subquery) -/
+partial def parseFromSource : Parser FromClause := do
+  let t ← Parser.peek
+  if t == .lparen then
+    -- Subquery in FROM clause
+    let _ ← Parser.advance
+    let sel ← parseSelectStmt
+    Parser.expect .rparen "Expected )"
+    -- Must have alias
+    let _ ← Parser.tryP (Parser.expect (.keyword "AS") "")
+    let alias ← parseIdent
+    return .subquery sel alias
+  else
+    -- Regular table reference
+    let tref ← parseTableRef
+    return .table tref
+
 /-- Parse FROM clause with joins -/
 partial def parseFromClause : Parser FromClause := do
-  let first ← parseTableRef
-  parseJoins (.table first)
+  let first ← parseFromSource
+  parseJoins first
 where
   parseJoins (left : FromClause) : Parser FromClause := do
     let t ← Parser.peek
@@ -625,16 +729,16 @@ where
                   isKeyword "RIGHT" t || isKeyword "FULL" t || isKeyword "CROSS" t
     if isJoin then
       let jtype ← parseJoinType
-      let right ← parseTableRef
+      let right ← parseFromSource
       let on_ ← if jtype == .cross then Parser.pure none else do
         Parser.expect (.keyword "ON") "Expected ON"
         some <$> parseExpr
-      parseJoins (.join left jtype (.table right) on_)
+      parseJoins (.join left jtype right on_)
     else
       return left
 
 /-- Parse ORDER BY item -/
-def parseOrderByItem : Parser OrderByItem := do
+partial def parseOrderByItem : Parser OrderByItem := do
   let expr ← parseExpr
   let t ← Parser.peek
   let dir ←
@@ -646,10 +750,10 @@ def parseOrderByItem : Parser OrderByItem := do
       Parser.pure OrderDir.desc
     else
       Parser.pure OrderDir.asc  -- default
-  return { expr := expr, dir := dir }
+  return .mk expr dir
 
-/-- Parse SELECT statement -/
-partial def parseSelect : Parser SelectStmt := do
+/-- Parse SELECT statement (implementation for mutual recursion) -/
+partial def parseSelectStmt : Parser SelectStmt := do
   Parser.expect (.keyword "SELECT") "Expected SELECT"
 
   -- DISTINCT?
@@ -735,17 +839,43 @@ partial def parseSelect : Parser SelectStmt := do
     else
       Parser.pure none
 
-  return {
-    distinct := distinct
-    items := items
-    fromClause := fromClause
-    whereClause := whereClause
-    groupBy := groupBy
-    having := having
-    orderBy := orderBy
-    limitVal := limitVal
-    offsetVal := offsetVal
-  }
+  return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
+
+/-- Alias for parseSelectStmt (backwards compatibility) -/
+partial def parseSelect : Parser SelectStmt := parseSelectStmt
+
+/-- Parse set operation (UNION, INTERSECT, EXCEPT) -/
+partial def parseSetOp : Parser (Option SetOp) := do
+  let t ← Parser.peek
+  if isKeyword "UNION" t then
+    let _ ← Parser.advance
+    let t2 ← Parser.peek
+    if isKeyword "ALL" t2 then
+      let _ ← Parser.advance
+      return some .unionAll
+    else
+      return some .union
+  else if isKeyword "INTERSECT" t then
+    let _ ← Parser.advance
+    return some .intersect
+  else if isKeyword "EXCEPT" t then
+    let _ ← Parser.advance
+    return some .exceptOp
+  else
+    return none
+
+/-- Parse a query (SELECT with optional set operations) -/
+partial def parseQuery : Parser Query := do
+  let first ← parseSelectStmt
+  parseQueryRest (.simple first)
+where
+  parseQueryRest (left : Query) : Parser Query := do
+    match ← parseSetOp with
+    | some op =>
+      let right ← parseSelectStmt
+      parseQueryRest (.compound left op (.simple right))
+    | none =>
+      return left
 
 -- ============================================================================
 -- INSERT Parser
@@ -782,7 +912,7 @@ partial def parseInsert : Parser InsertStmt := do
       Parser.pure (InsertSource.values rows)
     else if isKeyword "SELECT" t1 then
       let sel ← parseSelect
-      Parser.pure (InsertSource.select sel)
+      Parser.pure (InsertSource.selectStmt sel)
     else
       Parser.fail "Expected VALUES or SELECT"
 
@@ -844,7 +974,7 @@ partial def parseDelete : Parser DeleteStmt := do
 partial def parseStmt : Parser Stmt := do
   let t ← Parser.peek
   if isKeyword "SELECT" t then
-    .select <$> parseSelect
+    .query <$> parseQuery
   else if isKeyword "INSERT" t then
     .insert <$> parseInsert
   else if isKeyword "UPDATE" t then
@@ -854,20 +984,22 @@ partial def parseStmt : Parser Stmt := do
   else
     Parser.fail "Expected SELECT, INSERT, UPDATE, or DELETE"
 
+end -- mutual
+
 /-- Parse SQL string to AST -/
 def parse (input : String) : Except String Stmt := do
   let tokens ← tokenize input
   let state : ParseState := { tokens := tokens, pos := 0 }
   match parseStmt state with
-  | .error e => .error s!"Parse error at position {e.pos}: {e.message}"
-  | .ok (stmt, _) => .ok stmt
+  | .error e => Except.error s!"Parse error at position {e.pos}: {e.message}"
+  | .ok (stmt, _) => Except.ok stmt
 
 /-- Parse SELECT statement specifically -/
 def parseSelectStr (input : String) : Except String SelectStmt := do
   let tokens ← tokenize input
   let state : ParseState := { tokens := tokens, pos := 0 }
   match parseSelect state with
-  | .error e => .error s!"Parse error at position {e.pos}: {e.message}"
-  | .ok (stmt, _) => .ok stmt
+  | .error e => Except.error s!"Parse error at position {e.pos}: {e.message}"
+  | .ok (stmt, _) => Except.ok stmt
 
 end SqlEquiv

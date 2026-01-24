@@ -2,6 +2,7 @@
   Pretty Printer: AST → SQL String
 
   Converts AST back to SQL text for debugging and round-trip testing.
+  Extended for Spider benchmark compatibility.
 -/
 import SqlEquiv.Ast
 
@@ -45,6 +46,13 @@ def UnaryOp.toSql : UnaryOp → String
   | .isNull    => "IS NULL"
   | .isNotNull => "IS NOT NULL"
 
+def AggFunc.toSql : AggFunc → String
+  | .count => "COUNT"
+  | .sum   => "SUM"
+  | .avg   => "AVG"
+  | .min   => "MIN"
+  | .max   => "MAX"
+
 def JoinType.toSql : JoinType → String
   | .inner => "INNER JOIN"
   | .left  => "LEFT JOIN"
@@ -56,9 +64,17 @@ def OrderDir.toSql : OrderDir → String
   | .asc  => "ASC"
   | .desc => "DESC"
 
+def SetOp.toSql : SetOp → String
+  | .union     => "UNION"
+  | .unionAll  => "UNION ALL"
+  | .intersect => "INTERSECT"
+  | .exceptOp  => "EXCEPT"
+
 -- ============================================================================
 -- Expression Pretty Printing
 -- ============================================================================
+
+mutual
 
 partial def Expr.toSql : Expr → String
   | .lit v => v.toSql
@@ -71,6 +87,12 @@ partial def Expr.toSql : Expr → String
   | .func name args =>
     let argStr := ", ".intercalate (args.map Expr.toSql)
     s!"{name}({argStr})"
+  | .agg fn arg distinct =>
+    let distinctStr := if distinct then "DISTINCT " else ""
+    match arg with
+    | some e => s!"{fn.toSql}({distinctStr}{e.toSql})"
+    | none => s!"{fn.toSql}({distinctStr}*)"  -- shouldn't happen normally
+  | .countStar => "COUNT(*)"
   | .case branches else_ =>
     let branchStr := branches.map fun (cond, result) =>
       s!"WHEN {cond.toSql} THEN {result.toSql}"
@@ -78,9 +100,18 @@ partial def Expr.toSql : Expr → String
       | some e => s!" ELSE {e.toSql}"
       | none => ""
     s!"CASE {" ".intercalate branchStr}{elseStr} END"
-  | .inList e vals =>
+  | .inList e neg vals =>
+    let notStr := if neg then "NOT " else ""
     let valStr := ", ".intercalate (vals.map Expr.toSql)
-    s!"({e.toSql} IN ({valStr}))"
+    s!"({e.toSql} {notStr}IN ({valStr}))"
+  | .inSubquery e neg sel =>
+    let notStr := if neg then "NOT " else ""
+    s!"({e.toSql} {notStr}IN ({sel.toSql}))"
+  | .exists neg sel =>
+    let notStr := if neg then "NOT " else ""
+    s!"({notStr}EXISTS ({sel.toSql}))"
+  | .subquery sel =>
+    s!"({sel.toSql})"
   | .between e lo hi =>
     s!"({e.toSql} BETWEEN {lo.toSql} AND {hi.toSql})"
 
@@ -88,26 +119,27 @@ partial def Expr.toSql : Expr → String
 -- SELECT Components Pretty Printing
 -- ============================================================================
 
-def SelectItem.toSql : SelectItem → String
+partial def SelectItem.toSql : SelectItem → String
   | .star none     => "*"
   | .star (some t) => s!"{t}.*"
   | .exprItem e none     => e.toSql
   | .exprItem e (some a) => s!"{e.toSql} AS {a}"
 
-def TableRef.toSql (t : TableRef) : String :=
+partial def TableRef.toSql (t : TableRef) : String :=
   match t.alias with
   | some a => s!"{t.name} AS {a}"
   | none   => t.name
 
 partial def FromClause.toSql : FromClause → String
   | .table t => t.toSql
+  | .subquery sel alias => s!"({sel.toSql}) AS {alias}"
   | .join left jtype right on_ =>
     let onStr := match on_ with
       | some e => s!" ON {e.toSql}"
       | none   => ""
     s!"{left.toSql} {jtype.toSql} {right.toSql}{onStr}"
 
-def OrderByItem.toSql (o : OrderByItem) : String :=
+partial def OrderByItem.toSql (o : OrderByItem) : String :=
   s!"{o.expr.toSql} {o.dir.toSql}"
 
 -- ============================================================================
@@ -141,6 +173,12 @@ partial def SelectStmt.toSql (s : SelectStmt) : String :=
   ]
   " ".intercalate (parts.filter (· ≠ ""))
 
+partial def Query.toSql : Query → String
+  | .simple sel => sel.toSql
+  | .compound left op right => s!"{left.toSql} {op.toSql} {right.toSql}"
+
+end
+
 def InsertStmt.toSql (i : InsertStmt) : String :=
   let colStr := match i.columns with
     | some cols => s!" ({", ".intercalate cols})"
@@ -150,7 +188,7 @@ def InsertStmt.toSql (i : InsertStmt) : String :=
       let rowStrs := rows.map fun (row : List Expr) =>
         s!"({", ".intercalate (row.map Expr.toSql)})"
       s!"VALUES {", ".intercalate rowStrs}"
-    | .select sel => sel.toSql
+    | .selectStmt sel => sel.toSql
   s!"INSERT INTO {i.table}{colStr} {sourceStr}"
 
 def UpdateStmt.toSql (u : UpdateStmt) : String :=
@@ -168,7 +206,7 @@ def DeleteStmt.toSql (d : DeleteStmt) : String :=
   s!"DELETE FROM {d.table}{whereStr}"
 
 def Stmt.toSql : Stmt → String
-  | .select s => s.toSql
+  | .query q  => q.toSql
   | .insert i => i.toSql
   | .update u => u.toSql
   | .delete d => d.toSql

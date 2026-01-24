@@ -10,7 +10,15 @@ def demoParser : IO Unit := do
     "SELECT u.name, o.total FROM users u INNER JOIN orders o ON u.id = o.user_id",
     "INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')",
     "UPDATE users SET status = 'inactive' WHERE last_login < '2024-01-01'",
-    "DELETE FROM sessions WHERE expired = TRUE"
+    "DELETE FROM sessions WHERE expired = TRUE",
+    -- Spider benchmark style queries
+    "SELECT COUNT(*) FROM users",
+    "SELECT MAX(age), MIN(age), AVG(salary) FROM employees",
+    "SELECT department, COUNT(DISTINCT employee_id) FROM employees GROUP BY department",
+    "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders)",
+    "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)",
+    "SELECT name FROM active_users UNION SELECT name FROM admin_users",
+    "SELECT * FROM (SELECT name, age FROM users WHERE age > 21) AS adults"
   ]
 
   for query in queries do
