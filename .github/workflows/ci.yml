@@ -1,0 +1,39 @@
+  name: CI                                                                                                                                                   
+                                                                                                                                                             
+  on:                                                                                                                                                        
+    push:                                                                                                                                                    
+      branches: [main, master]                                                                                                                               
+    pull_request:                                                                                                                                            
+      branches: [main, master]                                                                                                                               
+                                                                                                                                                             
+  jobs:                                                                                                                                                      
+    build-and-test:                                                                                                                                          
+      runs-on: ubuntu-latest                                                                                                                                 
+                                                                                                                                                             
+      steps:                                                                                                                                                 
+        - name: Checkout repository                                                                                                                          
+          uses: actions/checkout@v4                                                                                                                          
+                                                                                                                                                             
+        - name: Install elan                                                                                                                                 
+          run: |                                                                                                                                             
+            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none                          
+            echo "$HOME/.elan/bin" >> $GITHUB_PATH                                                                                                           
+                                                                                                                                                             
+        - name: Cache Lake packages                                                                                                                          
+          uses: actions/cache@v4                                                                                                                             
+          with:                                                                                                                                              
+            path: |                                                                                                                                          
+              ~/.elan/toolchains                                                                                                                             
+              .lake                                                                                                                                          
+            key: ${{ runner.os }}-lake-${{ hashFiles('lakefile.toml', 'lean-toolchain') }}                                                                   
+            restore-keys: |                                                                                                                                  
+              ${{ runner.os }}-lake-                                                                                                                         
+                                                                                                                                                             
+        - name: Build library                                                                                                                                
+          run: lake build SqlEquiv                                                                                                                           
+                                                                                                                                                             
+        - name: Build tests                                                                                                                                  
+          run: lake build sql_equiv_test                                                                                                                     
+                                                                                                                                                             
+        - name: Run tests                                                                                                                                    
+          run: lake exe sql_equiv_test                                                                                                                       
