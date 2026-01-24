@@ -1,0 +1,15 @@
+name = "sql_equiv"
+version = "0.1.0"
+defaultTargets = ["sql_equiv"]
+
+[[require]]
+name = "batteries"
+git = "https://github.com/leanprover-community/batteries"
+rev = "main"
+
+[[lean_lib]]
+name = "SqlEquiv"
+
+[[lean_exe]]
+name = "sql_equiv"
+root = "Main"
