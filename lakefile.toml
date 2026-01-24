@@ -10,6 +10,14 @@ rev = "main"
 [[lean_lib]]
 name = "SqlEquiv"
 
+[[lean_lib]]
+name = "Test"
+globs = ["Test.*"]
+
 [[lean_exe]]
 name = "sql_equiv"
 root = "Main"
+
+[[lean_exe]]
+name = "sql_equiv_test"
+root = "Test.Main"

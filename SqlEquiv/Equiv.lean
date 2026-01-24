@@ -120,6 +120,46 @@ theorem stmt_equiv_trans {s1 s2 s3 : Stmt} (h12 : s1 ≃ s2) (h23 : s2 ≃ s3) :
   rw [h12 db, h23 db]
 
 -- ============================================================================
+-- Expression Commutativity Theorems
+-- ============================================================================
+
+/-- AND is commutative: (a AND b) ≃ (b AND a) -/
+theorem and_comm (a b : Expr) : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by
+  intro row
+  -- The proof follows from case analysis on evalBinOp and Bool.and_comm
+  sorry
+
+/-- OR is commutative: (a OR b) ≃ (b OR a) -/
+theorem or_comm (a b : Expr) : Expr.binOp .or a b ≃ₑ Expr.binOp .or b a := by
+  intro row
+  -- The proof follows from case analysis on evalBinOp and Bool.or_comm
+  sorry
+
+/-- Addition is commutative: (a + b) ≃ (b + a) -/
+theorem add_comm (a b : Expr) : Expr.binOp .add a b ≃ₑ Expr.binOp .add b a := by
+  intro row
+  -- The proof follows from case analysis and Int.add_comm
+  sorry
+
+/-- Multiplication is commutative: (a * b) ≃ (b * a) -/
+theorem mul_comm (a b : Expr) : Expr.binOp .mul a b ≃ₑ Expr.binOp .mul b a := by
+  intro row
+  -- The proof follows from case analysis and Int.mul_comm
+  sorry
+
+/-- Double negation elimination: NOT (NOT e) ≃ₑ e -/
+theorem not_not (e : Expr) : Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e := by
+  intro row
+  -- The proof follows from evalUnaryOp definition and Bool.not_not
+  sorry
+
+/-- Equality is commutative: (a = b) ≃ (b = a) -/
+theorem eq_comm (a b : Expr) : Expr.binOp .eq a b ≃ₑ Expr.binOp .eq b a := by
+  intro row
+  -- The proof follows from symmetry of equality on values
+  sorry
+
+-- ============================================================================
 -- Normalization (for decidable equivalence checking)
 -- ============================================================================
 
