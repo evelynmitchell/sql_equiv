@@ -204,7 +204,10 @@ def subqueryTests : List TestResult := [
   testRowCount "in_subquery_correlated" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE orders.amount > 150)" 2,
   -- Correlated scalar subquery - get first order amount for Alice
   -- Alice's first order (id=1) has amount=100
-  testContainsValue "scalar_subquery_correlated" "SELECT (SELECT amount FROM orders WHERE orders.user_id = users.id LIMIT 1) FROM users WHERE id = 1" (.int 100)
+  testContainsValue "scalar_subquery_correlated" "SELECT (SELECT amount FROM orders WHERE orders.user_id = users.id LIMIT 1) FROM users WHERE id = 1" (.int 100),
+  -- Correlated scalar subquery with MAX aggregate - get max order amount for Alice
+  -- Alice has orders 100 and 200, so max is 200
+  testContainsValue "scalar_subquery_max" "SELECT (SELECT MAX(amount) FROM orders WHERE orders.user_id = users.id) FROM users WHERE id = 1" (.int 200)
 ]
 
 -- ============================================================================

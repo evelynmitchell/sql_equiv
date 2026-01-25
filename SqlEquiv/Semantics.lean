@@ -183,6 +183,32 @@ def exprToName : Expr → String
   | _ => "expr"
 
 -- ============================================================================
+-- Aggregate Detection and Evaluation
+-- ============================================================================
+
+/-- Check if expression contains aggregate functions -/
+partial def hasAggregate : Expr → Bool
+  | .agg _ _ _ => true
+  | .countStar => true
+  | .binOp _ l r => hasAggregate l || hasAggregate r
+  | .unaryOp _ e => hasAggregate e
+  | .func _ args => args.any hasAggregate
+  | .case branches else_ =>
+    branches.any (fun (c, r) => hasAggregate c || hasAggregate r) ||
+    match else_ with
+    | some e => hasAggregate e
+    | none => false
+  | .inList e _ vals => hasAggregate e || vals.any hasAggregate
+  | .between e lo hi => hasAggregate e || hasAggregate lo || hasAggregate hi
+  | _ => false
+
+/-- Check if any SELECT item contains aggregates -/
+def selectHasAggregate (items : List SelectItem) : Bool :=
+  items.any fun
+    | .star _ => false
+    | .exprItem e _ => hasAggregate e
+
+-- ============================================================================
 -- Mutually Recursive Evaluation Functions
 -- ============================================================================
 
@@ -349,6 +375,63 @@ partial def evalSelectItem (db : Database) (row : Row) : SelectItem → List (St
       let colName := alias.getD (exprToName e)
       [(colName, .null none)]
 
+/-- Evaluate an aggregate function over a table (group of rows) -/
+partial def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Expr) (distinct : Bool) (rows : Table) : Option Value :=
+  -- Extract values from rows for the aggregate argument
+  let values : List Value := match argExpr with
+    | none => []  -- For COUNT(*) equivalent
+    | some e => rows.filterMap fun row => evalExprWithDb db row e
+  -- Apply DISTINCT if requested
+  let distinctValues := if distinct then values.eraseDups else values
+  match fn with
+  | .count =>
+    some (.int distinctValues.length)
+  | .sum =>
+    let nums := distinctValues.filterMap fun
+      | .int n => some n
+      | _ => none
+    if nums.isEmpty then some (.null none)
+    else some (.int (nums.foldl (· + ·) 0))
+  | .avg =>
+    let nums := distinctValues.filterMap fun
+      | .int n => some n
+      | _ => none
+    if nums.isEmpty then some (.null none)
+    else some (.int (nums.foldl (· + ·) 0 / nums.length))
+  | .min =>
+    let nums := distinctValues.filterMap fun
+      | .int n => some n
+      | _ => none
+    match nums with
+    | [] => some (.null none)
+    | n :: rest => some (.int (rest.foldl min n))
+  | .max =>
+    let nums := distinctValues.filterMap fun
+      | .int n => some n
+      | _ => none
+    match nums with
+    | [] => some (.null none)
+    | n :: rest => some (.int (rest.foldl max n))
+
+/-- Evaluate expression with aggregate support over a table -/
+partial def evalExprWithAgg (db : Database) (rows : Table) (row : Row) : Expr → Option Value
+  | .agg fn arg distinct => evalAggOverTable db fn arg distinct rows
+  | .countStar => some (.int rows.length)
+  | e => evalExprWithDb db row e
+
+/-- Evaluate SELECT item with aggregate support -/
+partial def evalSelectItemWithAgg (db : Database) (rows : Table) (row : Row) : SelectItem → List (String × Value)
+  | .star none => row
+  | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+  | .exprItem e alias =>
+    match evalExprWithAgg db rows row e with
+    | some v =>
+      let colName := alias.getD (exprToName e)
+      [(colName, v)]
+    | none =>
+      let colName := alias.getD (exprToName e)
+      [(colName, .null none)]
+
 /-- Compare rows by ORDER BY items -/
 partial def compareByOrderItems (db : Database) (r1 r2 : Row) : List OrderByItem → Bool
   | [] => true
@@ -395,8 +478,15 @@ partial def evalSelectWithContext (db : Database) (outerRow : Row) (sel : Select
     | none => groupedRows
 
   -- 5. SELECT items (projection)
-  let projectedRows : Table := havingRows.map fun row =>
-    sel.items.flatMap (evalSelectItem db row)
+  -- Check if we have aggregates without GROUP BY - treat entire table as one group
+  let projectedRows : Table :=
+    if selectHasAggregate sel.items && sel.groupBy.isEmpty then
+      -- Aggregate query: entire filtered table is one group, return single row
+      let sampleRow := havingRows.head?.getD []
+      [sel.items.flatMap (evalSelectItemWithAgg db havingRows sampleRow)]
+    else
+      -- Non-aggregate query: project each row individually
+      havingRows.map fun row => sel.items.flatMap (evalSelectItem db row)
 
   -- 6. DISTINCT
   let distinctRows : Table := if sel.distinct then
