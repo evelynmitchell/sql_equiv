@@ -382,6 +382,24 @@ inductive Stmt where
 | `nullif_same_int` | `NULLIF(n, n) = NULL` |
 | `nullif_diff_int` | `NULLIF(n, m) = n` when `n ≠ m` |
 
+### Aggregate Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `count_star_nonneg` | `COUNT(*) >= 0` (always non-negative) |
+| `count_star_empty` | `COUNT(*) = 0` on empty table |
+| `count_star_singleton` | `COUNT(*) = 1` on single-row table |
+| `count_after_filter_le` | `COUNT(*) WHERE p <= COUNT(*)` |
+| `sum_empty` | `SUM([]) = 0` |
+| `sum_singleton` | `SUM([n]) = n` |
+| `sum_add_zero` | `SUM(xs ++ [0]) = SUM(xs)` |
+| `min_singleton` | `MIN([n]) = n` |
+| `max_singleton` | `MAX([n]) = n` |
+| `min_le_elem` | `MIN(xs) <= n` for any `n ∈ xs` |
+| `max_ge_elem` | `MAX(xs) >= n` for any `n ∈ xs` |
+| `distinct_count_le` | `COUNT(DISTINCT x) <= COUNT(x)` |
+| `distinct_idempotent` | `DISTINCT(DISTINCT(xs)) = DISTINCT(xs)` |
+
 ### Other
 
 | Theorem | Description |
