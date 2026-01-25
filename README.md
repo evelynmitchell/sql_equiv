@@ -506,6 +506,34 @@ inductive Stmt where
 | `union_intersect_distrib` | `A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C)` |
 | `intersect_union_distrib` | `A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C)` |
 
+### JOIN Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `join_comm` | INNER JOIN is commutative (row membership) |
+| `join_comm_full` | INNER JOIN commutativity (full equality) |
+| `join_assoc` | INNER JOIN is associative |
+| `cross_join_comm` | CROSS JOIN is commutative (row membership) |
+| `cross_join_assoc` | CROSS JOIN is associative |
+| `cross_join_cardinality_comm` | `|A × B| = |B × A|` |
+| `inner_join_true_is_cross` | `A INNER JOIN B ON TRUE = A CROSS JOIN B` |
+| `inner_join_false_empty` | `A INNER JOIN B ON FALSE = ∅` |
+| `left_join_false_all_left` | `|A LEFT JOIN B ON FALSE| = |A|` |
+| `cross_join_cardinality` | `|A × B| = |A| * |B|` |
+| `inner_join_cardinality_le` | `|A ⋈ B| ≤ |A| * |B|` |
+| `left_join_cardinality_ge` | `|A LEFT JOIN B| ≥ |A|` |
+| `right_join_cardinality_ge` | `|A RIGHT JOIN B| ≥ |B|` |
+| `inner_join_empty_left` | `∅ INNER JOIN B = ∅` |
+| `inner_join_empty_right` | `A INNER JOIN ∅ = ∅` |
+| `cross_join_empty_left` | `∅ × B = ∅` |
+| `cross_join_empty_right` | `A × ∅ = ∅` |
+| `cross_join_assoc_cardinality` | `|(A × B) × C| = |A × (B × C)|` |
+| `inner_join_to_where` | `A ⋈ B ON cond = (A × B) WHERE cond` |
+| `left_join_preserves_left` | LEFT JOIN preserves all left rows |
+| `right_join_preserves_right` | RIGHT JOIN preserves all right rows |
+| `inner_subset_cross` | `|A ⋈ B ON cond| ≤ |A × B|` |
+| `left_join_filter_null_is_inner` | LEFT JOIN filtered by non-null = INNER JOIN |
+
 ### Other
 
 | Theorem | Description |

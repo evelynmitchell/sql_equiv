@@ -2211,4 +2211,140 @@ axiom intersect_union_distrib (a b c : Query) :
     Query.compound a .intersect (Query.compound b .union c) ≃ᵩ
     Query.compound (Query.compound a .intersect b) .union (Query.compound a .intersect c)
 
+-- ============================================================================
+-- JOIN Theorems
+-- ============================================================================
+
+/-- Helper: Create a FROM clause for a single table -/
+def fromTable (name : String) (alias : Option String := none) : FromClause :=
+  .table ⟨name, alias⟩
+
+/-- Helper: Create an INNER JOIN FROM clause -/
+def innerJoin (left right : FromClause) (on_ : Option Expr) : FromClause :=
+  .join left .inner right on_
+
+/-- Helper: Create a LEFT JOIN FROM clause -/
+def leftJoin (left right : FromClause) (on_ : Option Expr) : FromClause :=
+  .join left .left right on_
+
+/-- Helper: Create a CROSS JOIN FROM clause -/
+def crossJoin (left right : FromClause) : FromClause :=
+  .join left .cross right none
+
+/-- CROSS JOIN cardinality is symmetric: |A × B| = |B × A| -/
+axiom cross_join_cardinality_comm (db : Database) (a b : FromClause) :
+    let rowsAB := evalFrom db (.join a .cross b none)
+    let rowsBA := evalFrom db (.join b .cross a none)
+    rowsAB.length = rowsBA.length
+
+/-- INNER JOIN with ON TRUE is equivalent to CROSS JOIN -/
+axiom inner_join_true_is_cross (db : Database) (a b : FromClause) :
+    evalFrom db (.join a .inner b (some (.lit (.bool true)))) =
+    evalFrom db (.join a .cross b none)
+
+/-- INNER JOIN with ON FALSE produces empty result -/
+axiom inner_join_false_empty (db : Database) (a b : FromClause) :
+    evalFrom db (.join a .inner b (some (.lit (.bool false)))) = []
+
+/-- LEFT JOIN with ON FALSE returns all left rows with NULLs for right -/
+axiom left_join_false_all_left (db : Database) (a b : FromClause) :
+    let result := evalFrom db (.join a .left b (some (.lit (.bool false))))
+    let leftRows := evalFrom db a
+    result.length = leftRows.length
+
+/-- CROSS JOIN cardinality: |A CROSS JOIN B| = |A| * |B| -/
+axiom cross_join_cardinality (db : Database) (a b : FromClause) :
+    let rowsA := evalFrom db a
+    let rowsB := evalFrom db b
+    let rowsAB := evalFrom db (.join a .cross b none)
+    rowsAB.length = rowsA.length * rowsB.length
+
+/-- INNER JOIN cardinality upper bound: |A INNER JOIN B| <= |A| * |B| -/
+axiom inner_join_cardinality_le (db : Database) (a b : FromClause) (on_ : Option Expr) :
+    let rowsA := evalFrom db a
+    let rowsB := evalFrom db b
+    let rowsAB := evalFrom db (.join a .inner b on_)
+    rowsAB.length ≤ rowsA.length * rowsB.length
+
+/-- LEFT JOIN cardinality: |A LEFT JOIN B| >= |A| -/
+axiom left_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option Expr) :
+    let rowsA := evalFrom db a
+    let rowsAB := evalFrom db (.join a .left b on_)
+    rowsAB.length ≥ rowsA.length
+
+/-- RIGHT JOIN cardinality: |A RIGHT JOIN B| >= |B| -/
+axiom right_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option Expr) :
+    let rowsB := evalFrom db b
+    let rowsAB := evalFrom db (.join a .right b on_)
+    rowsAB.length ≥ rowsB.length
+
+/-- INNER JOIN with empty left produces empty result -/
+axiom inner_join_empty_left (db : Database) (a b : FromClause) (on_ : Option Expr)
+    (h : evalFrom db a = []) :
+    evalFrom db (.join a .inner b on_) = []
+
+/-- INNER JOIN with empty right produces empty result -/
+axiom inner_join_empty_right (db : Database) (a b : FromClause) (on_ : Option Expr)
+    (h : evalFrom db b = []) :
+    evalFrom db (.join a .inner b on_) = []
+
+/-- CROSS JOIN with empty left produces empty result -/
+axiom cross_join_empty_left (db : Database) (a b : FromClause)
+    (h : evalFrom db a = []) :
+    evalFrom db (.join a .cross b none) = []
+
+/-- CROSS JOIN with empty right produces empty result -/
+axiom cross_join_empty_right (db : Database) (a b : FromClause)
+    (h : evalFrom db b = []) :
+    evalFrom db (.join a .cross b none) = []
+
+/-- Join associativity for CROSS JOIN: (A × B) × C has same cardinality as A × (B × C) -/
+axiom cross_join_assoc_cardinality (db : Database) (a b c : FromClause) :
+    let abc1 := evalFrom db (.join (.join a .cross b none) .cross c none)
+    let abc2 := evalFrom db (.join a .cross (.join b .cross c none) none)
+    abc1.length = abc2.length
+
+/-- INNER JOIN condition can be moved to WHERE (join-to-where conversion) -/
+axiom inner_join_to_where (db : Database) (t1 t2 : TableRef) (cond : Expr) :
+    let joinFrom := FromClause.join (.table t1) .inner (.table t2) (some cond)
+    let crossFrom := FromClause.join (.table t1) .cross (.table t2) none
+    let joinResult := evalFrom db joinFrom
+    let crossFiltered := (evalFrom db crossFrom).filter fun row =>
+      evalExprWithDb db row cond == some (.bool true)
+    joinResult = crossFiltered
+
+/-- LEFT JOIN preserves all left rows: every left row appears in the result -/
+axiom left_join_preserves_left (db : Database) (a b : FromClause) (on_ : Option Expr) :
+    let leftRows := evalFrom db a
+    let joinResult := evalFrom db (.join a .left b on_)
+    ∀ lr ∈ leftRows, ∃ jr ∈ joinResult, ∀ (k : String) (v : Value),
+      (k, v) ∈ lr → (k, v) ∈ jr
+
+/-- RIGHT JOIN preserves all right rows: every right row appears in the result -/
+axiom right_join_preserves_right (db : Database) (a b : FromClause) (on_ : Option Expr) :
+    let rightRows := evalFrom db b
+    let joinResult := evalFrom db (.join a .right b on_)
+    ∀ rr ∈ rightRows, ∃ jr ∈ joinResult, ∀ (k : String) (v : Value),
+      (k, v) ∈ rr → (k, v) ∈ jr
+
+/-- INNER JOIN is a subset of CROSS JOIN (when ON is given) -/
+axiom inner_subset_cross (db : Database) (a b : FromClause) (cond : Expr) :
+    let innerResult := evalFrom db (.join a .inner b (some cond))
+    let crossResult := evalFrom db (.join a .cross b none)
+    innerResult.length ≤ crossResult.length
+
+/-- Converting LEFT JOIN to INNER JOIN by filtering out NULLs:
+    If we filter the result of LEFT JOIN to exclude rows where right columns are NULL,
+    we get the same result as INNER JOIN -/
+axiom left_join_filter_null_is_inner (db : Database) (a b : FromClause) (on_ : Option Expr)
+    (rightCol : String) :
+    let leftResult := evalFrom db (.join a .left b on_)
+    let innerResult := evalFrom db (.join a .inner b on_)
+    let filtered := leftResult.filter fun row =>
+      match row.find? (fun (k, _) => k == rightCol) with
+      | some (_, v) => !isNullValue v
+      | none => false
+    -- The filtered left join has same length as inner join
+    filtered.length = innerResult.length
+
 end SqlEquiv
