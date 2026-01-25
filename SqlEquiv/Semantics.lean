@@ -73,8 +73,8 @@ def Row.getQualified (row : Row) (table : Option String) (col : String) : Option
 
 /-- Compare two values for equality -/
 def Value.eq : Value → Value → Option Bool
-  | .null, _ => none  -- NULL = anything is NULL
-  | _, .null => none
+  | .null _, _ => none  -- NULL = anything is NULL
+  | _, .null _ => none
   | .int a, .int b => some (a == b)
   | .string a, .string b => some (a == b)
   | .bool a, .bool b => some (a == b)
@@ -82,8 +82,8 @@ def Value.eq : Value → Value → Option Bool
 
 /-- Compare two values for ordering -/
 def Value.compare : Value → Value → Option Ordering
-  | .null, _ => none
-  | _, .null => none
+  | .null _, _ => none
+  | _, .null _ => none
   | .int a, .int b => some (Ord.compare a b)
   | .string a, .string b => some (Ord.compare a b)
   | _, _ => none
@@ -91,7 +91,7 @@ def Value.compare : Value → Value → Option Ordering
 /-- Convert value to boolean for WHERE clauses -/
 def Value.toBool : Value → Option Bool
   | .bool b => some b
-  | .null => none
+  | .null _ => none
   | .int n => some (n != 0)
   | _ => none
 
@@ -142,22 +142,28 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
     some (.bool (simpleLike s pat))
   | _, _, _ => none
 
+/-- Check if Option Value is NULL (none or some null) -/
+def isNullValue : Option Value → Bool
+  | none => true
+  | some (.null _) => true
+  | _ => false
+
 /-- Evaluate unary operator -/
 def evalUnaryOp (op : UnaryOp) (e : Option Value) : Option Value :=
   match op, e with
   | .not, some (.bool b) => some (.bool (!b))
   | .neg, some (.int n) => some (.int (-n))
-  | .isNull, v => some (.bool (v.isNone || v == some .null))
-  | .isNotNull, v => some (.bool (v.isSome && v != some .null))
+  | .isNull, v => some (.bool (isNullValue v))
+  | .isNotNull, v => some (.bool (!isNullValue v))
   | _, _ => none
 
 /-- Evaluate scalar function -/
 def evalFunc (name : String) (args : List (Option Value)) : Option Value :=
   match name.toUpper, args with
   | "COALESCE", vals =>
-    vals.find? (fun v => v.isSome && v != some .null) |>.join
+    vals.find? (fun v => !isNullValue v) |>.join
   | "NULLIF", [some a, some b] =>
-    if a.eq b == some true then some .null else some a
+    if a.eq b == some true then some (.null none) else some a
   | "ABS", [some (.int n)] => some (.int n.natAbs)
   | "LENGTH", [some (.string s)] => some (.int s.length)
   | "UPPER", [some (.string s)] => some (.string s.toUpper)
@@ -222,7 +228,7 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
     -- Scalar subquery - returns first column of first row
     match (evalSelect db sel).head? with
     | some subRow => subRow.head?.map (·.2)
-    | none => some .null
+    | none => some (.null none)  -- Empty subquery returns NULL
   | .between e lo hi =>
     match evalExprWithDb db row e, evalExprWithDb db row lo, evalExprWithDb db row hi with
     | some v, some vlo, some vhi =>
@@ -289,7 +295,7 @@ partial def evalFrom (db : Database) : FromClause → Table
         if matchingRows.isEmpty then
           -- Return left row with NULLs for right columns
           match rightRows.head? with
-          | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null)]
+          | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
           | none => [lr]
         else
           matchingRows
@@ -305,7 +311,7 @@ partial def evalFrom (db : Database) : FromClause → Table
             | _ => none
         if matchingRows.isEmpty then
           match leftRows.head? with
-          | some leftRow => [leftRow.map (fun (k, _) => (k, .null)) ++ rr]
+          | some leftRow => [leftRow.map (fun (k, _) => (k, .null none)) ++ rr]
           | none => [rr]
         else
           matchingRows
@@ -323,7 +329,7 @@ partial def evalFrom (db : Database) : FromClause → Table
               | _ => false
           if hasMatch then none
           else match leftRows.head? with
-            | some leftRow => some (leftRow.map (fun (k, _) => (k, .null)) ++ rr)
+            | some leftRow => some (leftRow.map (fun (k, _) => (k, .null none)) ++ rr)
             | none => some rr)
 
 /-- Evaluate SELECT item to extract columns from row -/
@@ -341,7 +347,7 @@ partial def evalSelectItem (db : Database) (row : Row) : SelectItem → List (St
       [(colName, v)]
     | none =>
       let colName := alias.getD (exprToName e)
-      [(colName, .null)]
+      [(colName, .null none)]
 
 /-- Compare rows by ORDER BY items -/
 partial def compareByOrderItems (db : Database) (r1 r2 : Row) : List OrderByItem → Bool
@@ -446,10 +452,10 @@ partial def evalInsert (db : Database) (ins : InsertStmt) : Database :=
       rowExprs.map fun (exprs : List Expr) =>
         match ins.columns with
         | some cols =>
-          cols.zip (exprs.map fun e => (evalExprWithDb db [] e).getD .null)
+          cols.zip (exprs.map fun e => (evalExprWithDb db [] e).getD (.null none))
         | none =>
           (listEnumerate exprs).map fun (i, e) =>
-            (s!"col{i}", (evalExprWithDb db [] e).getD .null)
+            (s!"col{i}", (evalExprWithDb db [] e).getD (.null none))
     | .selectStmt sel =>
       evalSelect db sel
   fun name =>
@@ -470,7 +476,7 @@ partial def evalUpdate (db : Database) (upd : UpdateStmt) : Database :=
           upd.assignments.foldl (fun r a =>
             r.map fun (k, v) =>
               if k == a.column || k.endsWith s!".{a.column}" then
-                (k, (evalExprWithDb db r a.value).getD .null)
+                (k, (evalExprWithDb db r a.value).getD (.null none))
               else
                 (k, v)
           ) row

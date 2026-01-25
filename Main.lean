@@ -120,7 +120,7 @@ def valueToDisplay : Value -> String
   | .int n => toString n
   | .string s => s
   | .bool b => if b then "true" else "false"
-  | .null => "NULL"
+  | .null _ => "NULL"
 
 /-- Pretty print a table result -/
 def prettyTable (result : Table) : String :=

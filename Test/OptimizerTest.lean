@@ -252,7 +252,7 @@ def testNegConstant : TestResult :=
     .fail "NEG 5 = -5" s!"Expected lit -5, got {repr optimized}"
 
 def testIsNullNull : TestResult :=
-  let expr := Expr.unaryOp .isNull (.lit .null)
+  let expr := Expr.unaryOp .isNull (.lit (.null none))
   let optimized := optimizeExpr expr
   if optimized == boolLit true then
     .pass "IS NULL on NULL = TRUE"

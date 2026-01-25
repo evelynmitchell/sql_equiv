@@ -19,35 +19,35 @@ theorem evalBinOp_and_comm (l r : Option Value) :
     simp only [evalBinOp, Bool.and_comm]
   | some (.bool false), some (.int _) => rfl
   | some (.bool false), some (.string _) => rfl
-  | some (.bool false), some .null => rfl
+  | some (.bool false), some (.null _) => rfl
   | some (.bool false), none => rfl
   | some (.int _), some (.bool false) => rfl
   | some (.string _), some (.bool false) => rfl
-  | some .null, some (.bool false) => rfl
+  | some (.null _), some (.bool false) => rfl
   | none, some (.bool false) => rfl
   | some (.bool true), some (.int _) => rfl
   | some (.bool true), some (.string _) => rfl
-  | some (.bool true), some .null => rfl
+  | some (.bool true), some (.null _) => rfl
   | some (.bool true), none => rfl
   | some (.int _), some (.bool true) => rfl
   | some (.string _), some (.bool true) => rfl
-  | some .null, some (.bool true) => rfl
+  | some (.null _), some (.bool true) => rfl
   | none, some (.bool true) => rfl
   | some (.int _), some (.int _) => rfl
   | some (.int _), some (.string _) => rfl
-  | some (.int _), some .null => rfl
+  | some (.int _), some (.null _) => rfl
   | some (.int _), none => rfl
   | some (.string _), some (.int _) => rfl
   | some (.string _), some (.string _) => rfl
-  | some (.string _), some .null => rfl
+  | some (.string _), some (.null _) => rfl
   | some (.string _), none => rfl
-  | some .null, some (.int _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some .null => rfl
-  | some .null, none => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.null _), none => rfl
   | none, some (.int _) => rfl
   | none, some (.string _) => rfl
-  | none, some .null => rfl
+  | none, some (.null _) => rfl
   | none, none => rfl
 
 /-- OR is commutative at the value level -/
@@ -58,35 +58,35 @@ theorem evalBinOp_or_comm (l r : Option Value) :
     simp only [evalBinOp, Bool.or_comm]
   | some (.bool true), some (.int _) => rfl
   | some (.bool true), some (.string _) => rfl
-  | some (.bool true), some .null => rfl
+  | some (.bool true), some (.null _) => rfl
   | some (.bool true), none => rfl
   | some (.int _), some (.bool true) => rfl
   | some (.string _), some (.bool true) => rfl
-  | some .null, some (.bool true) => rfl
+  | some (.null _), some (.bool true) => rfl
   | none, some (.bool true) => rfl
   | some (.bool false), some (.int _) => rfl
   | some (.bool false), some (.string _) => rfl
-  | some (.bool false), some .null => rfl
+  | some (.bool false), some (.null _) => rfl
   | some (.bool false), none => rfl
   | some (.int _), some (.bool false) => rfl
   | some (.string _), some (.bool false) => rfl
-  | some .null, some (.bool false) => rfl
+  | some (.null _), some (.bool false) => rfl
   | none, some (.bool false) => rfl
   | some (.int _), some (.int _) => rfl
   | some (.int _), some (.string _) => rfl
-  | some (.int _), some .null => rfl
+  | some (.int _), some (.null _) => rfl
   | some (.int _), none => rfl
   | some (.string _), some (.int _) => rfl
   | some (.string _), some (.string _) => rfl
-  | some (.string _), some .null => rfl
+  | some (.string _), some (.null _) => rfl
   | some (.string _), none => rfl
-  | some .null, some (.int _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some .null => rfl
-  | some .null, none => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.null _), none => rfl
   | none, some (.int _) => rfl
   | none, some (.string _) => rfl
-  | none, some .null => rfl
+  | none, some (.null _) => rfl
   | none, none => rfl
 
 /-- Addition is commutative at the value level -/
@@ -97,27 +97,27 @@ theorem evalBinOp_add_comm (l r : Option Value) :
     simp only [evalBinOp, Int.add_comm]
   | some (.int _), some (.bool _) => rfl
   | some (.int _), some (.string _) => rfl
-  | some (.int _), some .null => rfl
+  | some (.int _), some (.null _) => rfl
   | some (.int _), none => rfl
   | some (.bool _), some (.int _) => rfl
   | some (.string _), some (.int _) => rfl
-  | some .null, some (.int _) => rfl
+  | some (.null _), some (.int _) => rfl
   | none, some (.int _) => rfl
   | some (.bool _), some (.bool _) => rfl
   | some (.bool _), some (.string _) => rfl
-  | some (.bool _), some .null => rfl
+  | some (.bool _), some (.null _) => rfl
   | some (.bool _), none => rfl
   | some (.string _), some (.bool _) => rfl
   | some (.string _), some (.string _) => rfl
-  | some (.string _), some .null => rfl
+  | some (.string _), some (.null _) => rfl
   | some (.string _), none => rfl
-  | some .null, some (.bool _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some .null => rfl
-  | some .null, none => rfl
+  | some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.null _), none => rfl
   | none, some (.bool _) => rfl
   | none, some (.string _) => rfl
-  | none, some .null => rfl
+  | none, some (.null _) => rfl
   | none, none => rfl
 
 /-- Multiplication is commutative at the value level -/
@@ -128,27 +128,27 @@ theorem evalBinOp_mul_comm (l r : Option Value) :
     simp only [evalBinOp, Int.mul_comm]
   | some (.int _), some (.bool _) => rfl
   | some (.int _), some (.string _) => rfl
-  | some (.int _), some .null => rfl
+  | some (.int _), some (.null _) => rfl
   | some (.int _), none => rfl
   | some (.bool _), some (.int _) => rfl
   | some (.string _), some (.int _) => rfl
-  | some .null, some (.int _) => rfl
+  | some (.null _), some (.int _) => rfl
   | none, some (.int _) => rfl
   | some (.bool _), some (.bool _) => rfl
   | some (.bool _), some (.string _) => rfl
-  | some (.bool _), some .null => rfl
+  | some (.bool _), some (.null _) => rfl
   | some (.bool _), none => rfl
   | some (.string _), some (.bool _) => rfl
   | some (.string _), some (.string _) => rfl
-  | some (.string _), some .null => rfl
+  | some (.string _), some (.null _) => rfl
   | some (.string _), none => rfl
-  | some .null, some (.bool _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some .null => rfl
-  | some .null, none => rfl
+  | some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.null _), none => rfl
   | none, some (.bool _) => rfl
   | none, some (.string _) => rfl
-  | none, some .null => rfl
+  | none, some (.null _) => rfl
   | none, none => rfl
 
 /-- Helper: BEq is commutative for Int -/
@@ -175,13 +175,13 @@ theorem evalBinOp_eq_comm (l r : Option Value) :
     simp only [evalBinOp, Value.eq, String.beq_comm]
   | some (.bool a), some (.bool b) =>
     simp only [evalBinOp, Value.eq, Bool.beq_comm]
-  | some .null, some (.int _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some (.bool _) => rfl
-  | some .null, some .null => rfl
-  | some (.int _), some .null => rfl
-  | some (.string _), some .null => rfl
-  | some (.bool _), some .null => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _) => rfl
+  | some (.string _), some (.null _) => rfl
+  | some (.bool _), some (.null _) => rfl
   | some (.int _), some (.bool _) => rfl
   | some (.int _), some (.string _) => rfl
   | some (.bool _), some (.int _) => rfl
@@ -204,7 +204,7 @@ theorem evalBinOp_and_false_right (v : Option Value) :
   | some (.bool false) => rfl
   | some (.int _) => rfl
   | some (.string _) => rfl
-  | some .null => rfl
+  | some (.null _) => rfl
   | none => rfl
 
 /-- AND with false on left always yields false (short-circuit) -/
@@ -214,7 +214,7 @@ theorem evalBinOp_and_false_left (v : Option Value) :
   | some (.bool _) => rfl
   | some (.int _) => rfl
   | some (.string _) => rfl
-  | some .null => rfl
+  | some (.null _) => rfl
   | none => rfl
 
 /-- OR with true on right always yields true (short-circuit) -/
@@ -225,7 +225,7 @@ theorem evalBinOp_or_true_right (v : Option Value) :
   | some (.bool false) => rfl
   | some (.int _) => rfl
   | some (.string _) => rfl
-  | some .null => rfl
+  | some (.null _) => rfl
   | none => rfl
 
 /-- OR with true on left always yields true (short-circuit) -/
@@ -235,7 +235,7 @@ theorem evalBinOp_or_true_left (v : Option Value) :
   | some (.bool _) => rfl
   | some (.int _) => rfl
   | some (.string _) => rfl
-  | some .null => rfl
+  | some (.null _) => rfl
   | none => rfl
 
 /-- AND with true on right preserves boolean values -/
@@ -318,39 +318,39 @@ theorem evalUnaryOp_not_and (l r : Option Value) :
   -- false AND anything
   | some (.bool false), some (.int _) => rfl
   | some (.bool false), some (.string _) => rfl
-  | some (.bool false), some .null => rfl
+  | some (.bool false), some (.null _) => rfl
   | some (.bool false), none => rfl
   -- anything AND false
   | some (.int _), some (.bool false) => rfl
   | some (.string _), some (.bool false) => rfl
-  | some .null, some (.bool false) => rfl
+  | some (.null _), some (.bool false) => rfl
   | none, some (.bool false) => rfl
   -- true AND non-bool
   | some (.bool true), some (.int _) => rfl
   | some (.bool true), some (.string _) => rfl
-  | some (.bool true), some .null => rfl
+  | some (.bool true), some (.null _) => rfl
   | some (.bool true), none => rfl
   -- non-bool AND true
   | some (.int _), some (.bool true) => rfl
   | some (.string _), some (.bool true) => rfl
-  | some .null, some (.bool true) => rfl
+  | some (.null _), some (.bool true) => rfl
   | none, some (.bool true) => rfl
   -- Non-bool cases
   | some (.int _), some (.int _) => rfl
   | some (.int _), some (.string _) => rfl
-  | some (.int _), some .null => rfl
+  | some (.int _), some (.null _) => rfl
   | some (.int _), none => rfl
   | some (.string _), some (.int _) => rfl
   | some (.string _), some (.string _) => rfl
-  | some (.string _), some .null => rfl
+  | some (.string _), some (.null _) => rfl
   | some (.string _), none => rfl
-  | some .null, some (.int _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some .null => rfl
-  | some .null, none => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.null _), none => rfl
   | none, some (.int _) => rfl
   | none, some (.string _) => rfl
-  | none, some .null => rfl
+  | none, some (.null _) => rfl
   | none, none => rfl
 
 /-- De Morgan's law: NOT (a OR b) = (NOT a) AND (NOT b) at value level -/
@@ -366,39 +366,39 @@ theorem evalUnaryOp_not_or (l r : Option Value) :
   -- true OR anything
   | some (.bool true), some (.int _) => rfl
   | some (.bool true), some (.string _) => rfl
-  | some (.bool true), some .null => rfl
+  | some (.bool true), some (.null _) => rfl
   | some (.bool true), none => rfl
   -- anything OR true
   | some (.int _), some (.bool true) => rfl
   | some (.string _), some (.bool true) => rfl
-  | some .null, some (.bool true) => rfl
+  | some (.null _), some (.bool true) => rfl
   | none, some (.bool true) => rfl
   -- false OR non-bool
   | some (.bool false), some (.int _) => rfl
   | some (.bool false), some (.string _) => rfl
-  | some (.bool false), some .null => rfl
+  | some (.bool false), some (.null _) => rfl
   | some (.bool false), none => rfl
   -- non-bool OR false
   | some (.int _), some (.bool false) => rfl
   | some (.string _), some (.bool false) => rfl
-  | some .null, some (.bool false) => rfl
+  | some (.null _), some (.bool false) => rfl
   | none, some (.bool false) => rfl
   -- Non-bool cases
   | some (.int _), some (.int _) => rfl
   | some (.int _), some (.string _) => rfl
-  | some (.int _), some .null => rfl
+  | some (.int _), some (.null _) => rfl
   | some (.int _), none => rfl
   | some (.string _), some (.int _) => rfl
   | some (.string _), some (.string _) => rfl
-  | some (.string _), some .null => rfl
+  | some (.string _), some (.null _) => rfl
   | some (.string _), none => rfl
-  | some .null, some (.int _) => rfl
-  | some .null, some (.string _) => rfl
-  | some .null, some .null => rfl
-  | some .null, none => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.null _), none => rfl
   | none, some (.int _) => rfl
   | none, some (.string _) => rfl
-  | none, some .null => rfl
+  | none, some (.null _) => rfl
   | none, none => rfl
 
 -- ============================================================================
@@ -1377,6 +1377,410 @@ theorem push_filter_project_through_join (db : Database) (a b : FromClause)
       | .exprItem e _ => exprReferencesOnlyFrom a e)) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) := by
+  rfl
+
+-- ============================================================================
+-- NULL Theorems: IS NULL Laws
+-- ============================================================================
+
+/-- IS NULL on a NULL value returns true -/
+theorem is_null_on_null (t : Option SqlType) :
+    evalUnaryOp .isNull (some (.null t)) = some (.bool true) := by
+  rfl
+
+/-- IS NULL on none (missing value) returns true -/
+theorem is_null_on_none :
+    evalUnaryOp .isNull none = some (.bool true) := by
+  rfl
+
+/-- IS NULL on a non-NULL int returns false -/
+theorem is_null_on_int (n : Int) :
+    evalUnaryOp .isNull (some (.int n)) = some (.bool false) := by
+  rfl
+
+/-- IS NULL on a non-NULL string returns false -/
+theorem is_null_on_string (s : String) :
+    evalUnaryOp .isNull (some (.string s)) = some (.bool false) := by
+  rfl
+
+/-- IS NULL on a non-NULL bool returns false -/
+theorem is_null_on_bool (b : Bool) :
+    evalUnaryOp .isNull (some (.bool b)) = some (.bool false) := by
+  rfl
+
+/-- IS NOT NULL on a NULL value returns false -/
+theorem is_not_null_on_null (t : Option SqlType) :
+    evalUnaryOp .isNotNull (some (.null t)) = some (.bool false) := by
+  rfl
+
+/-- IS NOT NULL on none (missing value) returns false -/
+theorem is_not_null_on_none :
+    evalUnaryOp .isNotNull none = some (.bool false) := by
+  rfl
+
+/-- IS NOT NULL on a non-NULL int returns true -/
+theorem is_not_null_on_int (n : Int) :
+    evalUnaryOp .isNotNull (some (.int n)) = some (.bool true) := by
+  rfl
+
+/-- IS NOT NULL on a non-NULL string returns true -/
+theorem is_not_null_on_string (s : String) :
+    evalUnaryOp .isNotNull (some (.string s)) = some (.bool true) := by
+  rfl
+
+/-- IS NOT NULL on a non-NULL bool returns true -/
+theorem is_not_null_on_bool (b : Bool) :
+    evalUnaryOp .isNotNull (some (.bool b)) = some (.bool true) := by
+  rfl
+
+/-- IS NULL and IS NOT NULL are complementary (on non-none values) -/
+theorem is_null_is_not_null_complement (v : Value) :
+    match evalUnaryOp .isNull (some v), evalUnaryOp .isNotNull (some v) with
+    | some (.bool a), some (.bool b) => a = !b
+    | _, _ => False := by
+  match v with
+  | .int _ => rfl
+  | .string _ => rfl
+  | .bool _ => rfl
+  | .null _ => rfl
+
+-- ============================================================================
+-- NULL Theorems: NULL Propagation in Arithmetic
+-- ============================================================================
+
+/-- NULL + anything = NULL (left) -/
+theorem null_add_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .add (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything + NULL = NULL (right) -/
+theorem null_add_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .add v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- NULL - anything = NULL (left) -/
+theorem null_sub_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .sub (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything - NULL = NULL (right) -/
+theorem null_sub_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .sub v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- NULL * anything = NULL (left) -/
+theorem null_mul_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .mul (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything * NULL = NULL (right) -/
+theorem null_mul_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .mul v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- NULL / anything = NULL (left) -/
+theorem null_div_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .div (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything / NULL = NULL (right) -/
+theorem null_div_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .div v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+-- ============================================================================
+-- NULL Theorems: NULL Propagation in Comparisons
+-- ============================================================================
+
+/-- NULL = anything = NULL (comparison returns unknown) -/
+theorem null_eq_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .eq (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything = NULL = NULL (comparison returns unknown) -/
+theorem null_eq_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .eq v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- NULL <> anything = NULL (comparison returns unknown) -/
+theorem null_ne_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .ne (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything <> NULL = NULL (comparison returns unknown) -/
+theorem null_ne_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .ne v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- NULL < anything = NULL -/
+theorem null_lt_left (t : Option SqlType) (v : Option Value) :
+    evalBinOp .lt (some (.null t)) v = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+/-- anything < NULL = NULL -/
+theorem null_lt_right (v : Option Value) (t : Option SqlType) :
+    evalBinOp .lt v (some (.null t)) = none := by
+  match v with
+  | none => rfl
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => rfl
+
+-- ============================================================================
+-- NULL Theorems: Three-Valued Logic (AND/OR with NULL)
+-- ============================================================================
+
+/-- FALSE AND NULL = FALSE (FALSE dominates in AND) -/
+theorem false_and_null (t : Option SqlType) :
+    evalBinOp .and (some (.bool false)) (some (.null t)) = some (.bool false) := by
+  rfl
+
+/-- NULL AND FALSE = FALSE (FALSE dominates in AND) -/
+theorem null_and_false (t : Option SqlType) :
+    evalBinOp .and (some (.null t)) (some (.bool false)) = some (.bool false) := by
+  rfl
+
+/-- TRUE AND NULL = NULL (propagates unknown) -/
+theorem true_and_null (t : Option SqlType) :
+    evalBinOp .and (some (.bool true)) (some (.null t)) = none := by
+  rfl
+
+/-- NULL AND TRUE = NULL (propagates unknown) -/
+theorem null_and_true (t : Option SqlType) :
+    evalBinOp .and (some (.null t)) (some (.bool true)) = none := by
+  rfl
+
+/-- TRUE OR NULL = TRUE (TRUE dominates in OR) -/
+theorem true_or_null (t : Option SqlType) :
+    evalBinOp .or (some (.bool true)) (some (.null t)) = some (.bool true) := by
+  rfl
+
+/-- NULL OR TRUE = TRUE (TRUE dominates in OR) -/
+theorem null_or_true (t : Option SqlType) :
+    evalBinOp .or (some (.null t)) (some (.bool true)) = some (.bool true) := by
+  rfl
+
+/-- FALSE OR NULL = NULL (propagates unknown) -/
+theorem false_or_null (t : Option SqlType) :
+    evalBinOp .or (some (.bool false)) (some (.null t)) = none := by
+  rfl
+
+/-- NULL OR FALSE = NULL (propagates unknown) -/
+theorem null_or_false (t : Option SqlType) :
+    evalBinOp .or (some (.null t)) (some (.bool false)) = none := by
+  rfl
+
+/-- NULL AND NULL = NULL -/
+theorem null_and_null (t1 t2 : Option SqlType) :
+    evalBinOp .and (some (.null t1)) (some (.null t2)) = none := by
+  rfl
+
+/-- NULL OR NULL = NULL -/
+theorem null_or_null (t1 t2 : Option SqlType) :
+    evalBinOp .or (some (.null t1)) (some (.null t2)) = none := by
+  rfl
+
+-- ============================================================================
+-- Trilean Theorems: Three-Valued Logic Properties
+-- ============================================================================
+
+/-- Trilean NOT is self-inverse -/
+theorem trilean_not_not (t : Trilean) : t.not.not = t := by
+  match t with
+  | .true => rfl
+  | .false => rfl
+  | .unknown => rfl
+
+/-- Trilean AND is commutative -/
+theorem trilean_and_comm (a b : Trilean) : a.and b = b.and a := by
+  match a, b with
+  | .true, .true => rfl
+  | .true, .false => rfl
+  | .true, .unknown => rfl
+  | .false, .true => rfl
+  | .false, .false => rfl
+  | .false, .unknown => rfl
+  | .unknown, .true => rfl
+  | .unknown, .false => rfl
+  | .unknown, .unknown => rfl
+
+/-- Trilean OR is commutative -/
+theorem trilean_or_comm (a b : Trilean) : a.or b = b.or a := by
+  match a, b with
+  | .true, .true => rfl
+  | .true, .false => rfl
+  | .true, .unknown => rfl
+  | .false, .true => rfl
+  | .false, .false => rfl
+  | .false, .unknown => rfl
+  | .unknown, .true => rfl
+  | .unknown, .false => rfl
+  | .unknown, .unknown => rfl
+
+/-- Trilean AND with TRUE is identity -/
+theorem trilean_and_true (t : Trilean) : t.and .true = t := by
+  match t with
+  | .true => rfl
+  | .false => rfl
+  | .unknown => rfl
+
+/-- Trilean OR with FALSE is identity -/
+theorem trilean_or_false (t : Trilean) : t.or .false = t := by
+  match t with
+  | .true => rfl
+  | .false => rfl
+  | .unknown => rfl
+
+/-- Trilean AND with FALSE is FALSE -/
+theorem trilean_and_false (t : Trilean) : t.and .false = .false := by
+  match t with
+  | .true => rfl
+  | .false => rfl
+  | .unknown => rfl
+
+/-- Trilean OR with TRUE is TRUE -/
+theorem trilean_or_true (t : Trilean) : t.or .true = .true := by
+  match t with
+  | .true => rfl
+  | .false => rfl
+  | .unknown => rfl
+
+/-- De Morgan's law for Trilean: NOT (a AND b) = (NOT a) OR (NOT b) -/
+theorem trilean_de_morgan_and (a b : Trilean) :
+    (a.and b).not = a.not.or b.not := by
+  match a, b with
+  | .true, .true => rfl
+  | .true, .false => rfl
+  | .true, .unknown => rfl
+  | .false, .true => rfl
+  | .false, .false => rfl
+  | .false, .unknown => rfl
+  | .unknown, .true => rfl
+  | .unknown, .false => rfl
+  | .unknown, .unknown => rfl
+
+/-- De Morgan's law for Trilean: NOT (a OR b) = (NOT a) AND (NOT b) -/
+theorem trilean_de_morgan_or (a b : Trilean) :
+    (a.or b).not = a.not.and b.not := by
+  match a, b with
+  | .true, .true => rfl
+  | .true, .false => rfl
+  | .true, .unknown => rfl
+  | .false, .true => rfl
+  | .false, .false => rfl
+  | .false, .unknown => rfl
+  | .unknown, .true => rfl
+  | .unknown, .false => rfl
+  | .unknown, .unknown => rfl
+
+-- ============================================================================
+-- COALESCE Theorems
+-- ============================================================================
+
+/-- Helper: isNullValue is true for none -/
+theorem isNullValue_none : isNullValue none = true := by rfl
+
+/-- Helper: isNullValue is true for null values -/
+theorem isNullValue_null (t : Option SqlType) : isNullValue (some (.null t)) = true := by rfl
+
+/-- Helper: isNullValue is false for int values -/
+theorem isNullValue_int (n : Int) : isNullValue (some (.int n)) = false := by rfl
+
+/-- Helper: isNullValue is false for string values -/
+theorem isNullValue_string (s : String) : isNullValue (some (.string s)) = false := by rfl
+
+/-- Helper: isNullValue is false for bool values -/
+theorem isNullValue_bool (b : Bool) : isNullValue (some (.bool b)) = false := by rfl
+
+-- ============================================================================
+-- Value Type Theorems
+-- ============================================================================
+
+/-- A value is either null or not null (law of excluded middle for nullness) -/
+theorem value_null_or_not_null (v : Value) : v.isNull = true ∨ v.isNotNull = true := by
+  match v with
+  | .int _ => right; rfl
+  | .string _ => right; rfl
+  | .bool _ => right; rfl
+  | .null _ => left; rfl
+
+/-- isNull and isNotNull are complementary -/
+theorem value_is_null_complement (v : Value) : v.isNull = !v.isNotNull := by
+  match v with
+  | .int _ => rfl
+  | .string _ => rfl
+  | .bool _ => rfl
+  | .null _ => rfl
+
+/-- Typed NULL values have the same nullness regardless of type -/
+theorem typed_null_same_nullness (t1 t2 : Option SqlType) :
+    Value.isNull (.null t1) = Value.isNull (.null t2) := by
   rfl
 
 end SqlEquiv

@@ -19,6 +19,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 
 - **SELECT statements**: `*`, column lists, aliases, DISTINCT
 - **Expressions**: arithmetic, comparisons, boolean logic, CASE/WHEN, BETWEEN, IN, LIKE
+- **NULL handling**: Typed NULLs, IS NULL/IS NOT NULL, three-valued logic, NULL propagation
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries
@@ -218,12 +219,20 @@ example (h1 : a =~e b) (h2 : b =~e c) : a =~e c := by
 ### Key Types
 
 ```lean
--- Values
+-- SQL types for typed NULLs
+inductive SqlType where
+  | int | string | bool | unknown
+
+-- Three-valued logic (TRUE, FALSE, UNKNOWN)
+inductive Trilean where
+  | true | false | unknown
+
+-- Values with typed NULLs
 inductive Value where
   | int    : Int -> Value
   | string : String -> Value
   | bool   : Bool -> Value
-  | null   : Value
+  | null   : Option SqlType -> Value  -- typed NULL (none = unknown type)
 
 -- Expressions
 inductive Expr where
@@ -313,6 +322,52 @@ inductive Stmt where
 | `or_false` | `a OR FALSE =~e a` |
 | `and_false` | `a AND FALSE =~e FALSE` |
 | `or_true` | `a OR TRUE =~e TRUE` |
+
+### NULL Handling (IS NULL Laws)
+
+| Theorem | Description |
+|---------|-------------|
+| `is_null_on_null` | `IS NULL` on NULL returns TRUE |
+| `is_null_on_int/string/bool` | `IS NULL` on non-NULL returns FALSE |
+| `is_not_null_on_null` | `IS NOT NULL` on NULL returns FALSE |
+| `is_not_null_on_int/string/bool` | `IS NOT NULL` on non-NULL returns TRUE |
+| `is_null_is_not_null_complement` | `IS NULL` and `IS NOT NULL` are complementary |
+
+### NULL Propagation
+
+| Theorem | Description |
+|---------|-------------|
+| `null_add_left/right` | `NULL + x = NULL`, `x + NULL = NULL` |
+| `null_sub_left/right` | `NULL - x = NULL`, `x - NULL = NULL` |
+| `null_mul_left/right` | `NULL * x = NULL`, `x * NULL = NULL` |
+| `null_div_left/right` | `NULL / x = NULL`, `x / NULL = NULL` |
+| `null_eq_left/right` | `NULL = x = NULL` (comparison returns unknown) |
+| `null_ne_left/right` | `NULL <> x = NULL` |
+| `null_lt_left/right` | `NULL < x = NULL` |
+
+### Three-Valued Logic (NULL in Boolean Operations)
+
+| Theorem | Description |
+|---------|-------------|
+| `false_and_null` | `FALSE AND NULL = FALSE` (FALSE dominates) |
+| `null_and_false` | `NULL AND FALSE = FALSE` |
+| `true_and_null` | `TRUE AND NULL = NULL` (propagates unknown) |
+| `true_or_null` | `TRUE OR NULL = TRUE` (TRUE dominates) |
+| `false_or_null` | `FALSE OR NULL = NULL` (propagates unknown) |
+| `null_and_null` | `NULL AND NULL = NULL` |
+| `null_or_null` | `NULL OR NULL = NULL` |
+
+### Trilean Properties
+
+| Theorem | Description |
+|---------|-------------|
+| `trilean_not_not` | Trilean NOT is self-inverse |
+| `trilean_and_comm` | Trilean AND is commutative |
+| `trilean_or_comm` | Trilean OR is commutative |
+| `trilean_and_true/false` | Identity and annihilation laws |
+| `trilean_or_true/false` | Identity and annihilation laws |
+| `trilean_de_morgan_and` | `NOT (a AND b) = (NOT a) OR (NOT b)` |
+| `trilean_de_morgan_or` | `NOT (a OR b) = (NOT a) AND (NOT b)` |
 
 ### Other
 

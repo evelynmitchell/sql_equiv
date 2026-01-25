@@ -71,7 +71,7 @@ def genValue (rng : RngState) : Value × RngState :=
     let (b, rng2) := rng1.nextBool
     (.bool b, rng2)
   | _ =>
-    (.null, rng1)
+    (.null none, rng1)
 
 -- ============================================================================
 -- Random Row Generator

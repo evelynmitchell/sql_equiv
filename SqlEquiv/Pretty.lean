@@ -16,7 +16,7 @@ def Value.toSql : Value → String
   | .int n    => toString n
   | .string s => s!"'{s}'"  -- TODO: escape quotes
   | .bool b   => if b then "TRUE" else "FALSE"
-  | .null     => "NULL"
+  | .null _   => "NULL"  -- All NULLs print as NULL regardless of type
 
 def ColumnRef.toSql (c : ColumnRef) : String :=
   match c.table with

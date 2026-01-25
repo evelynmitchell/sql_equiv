@@ -184,9 +184,9 @@ def constantFoldUnaryOp (op : UnaryOp) (e : Expr) : Expr :=
   match op, getLitValue e with
   | .not, some (.bool b) => .lit (.bool (!b))
   | .neg, some (.int n) => .lit (.int (-n))
-  | .isNull, some .null => .lit (.bool true)
+  | .isNull, some (.null _) => .lit (.bool true)
   | .isNull, some _ => .lit (.bool false)
-  | .isNotNull, some .null => .lit (.bool false)
+  | .isNotNull, some (.null _) => .lit (.bool false)
   | .isNotNull, some _ => .lit (.bool true)
   | _, _ => .unaryOp op e
 
@@ -226,10 +226,10 @@ partial def optimizeExpr : Expr -> Expr
       match cond with
       | .lit (.bool true) => result
       | .lit (.bool false) =>
-        if rest.isEmpty then else'.getD (.lit .null)
+        if rest.isEmpty then else'.getD (.lit (.null none))
         else .case rest else'
       | _ => .case branches' else'
-    | [] => else'.getD (.lit .null)
+    | [] => else'.getD (.lit (.null none))
   | .inList e neg vals =>
     let e' := optimizeExpr e
     let vals' := vals.map optimizeExpr

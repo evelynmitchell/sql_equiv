@@ -9,16 +9,135 @@
 namespace SqlEquiv
 
 -- ============================================================================
+-- SQL Type System
+-- ============================================================================
+
+/-- SQL data types for typed NULLs and type checking -/
+inductive SqlType where
+  | int
+  | string
+  | bool
+  | unknown  -- for untyped NULL or expressions with indeterminate type
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+-- ============================================================================
+-- Three-Valued Logic (Trilean)
+-- ============================================================================
+
+/-- SQL's three-valued logic: TRUE, FALSE, UNKNOWN
+    UNKNOWN represents NULL in boolean context -/
+inductive Trilean where
+  | true
+  | false
+  | unknown
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+namespace Trilean
+
+/-- NOT in three-valued logic -/
+def not : Trilean → Trilean
+  | .true => .false
+  | .false => .true
+  | .unknown => .unknown
+
+/-- AND in three-valued logic (truth table):
+    T ∧ T = T, T ∧ F = F, T ∧ U = U
+    F ∧ T = F, F ∧ F = F, F ∧ U = F  (FALSE dominates UNKNOWN)
+    U ∧ T = U, U ∧ F = F, U ∧ U = U -/
+def and : Trilean → Trilean → Trilean
+  | .false, _ => .false
+  | _, .false => .false
+  | .true, .true => .true
+  | .true, .unknown => .unknown
+  | .unknown, .true => .unknown
+  | .unknown, .unknown => .unknown
+
+/-- OR in three-valued logic (truth table):
+    T ∨ T = T, T ∨ F = T, T ∨ U = T  (TRUE dominates UNKNOWN)
+    F ∨ T = T, F ∨ F = F, F ∨ U = U
+    U ∨ T = T, U ∨ F = U, U ∨ U = U -/
+def or : Trilean → Trilean → Trilean
+  | .true, _ => .true
+  | _, .true => .true
+  | .false, .false => .false
+  | .false, .unknown => .unknown
+  | .unknown, .false => .unknown
+  | .unknown, .unknown => .unknown
+
+/-- Convert Bool to Trilean -/
+def ofBool : Bool → Trilean
+  | Bool.true => .true
+  | Bool.false => .false
+
+/-- Convert Trilean to Bool (UNKNOWN → false, as in WHERE clause) -/
+def toBool : Trilean → Bool
+  | .true => Bool.true
+  | .false => Bool.false
+  | .unknown => Bool.false
+
+/-- Check if Trilean is definitely true -/
+def isTrue : Trilean → Bool
+  | .true => Bool.true
+  | _ => Bool.false
+
+/-- Check if Trilean is definitely false -/
+def isFalse : Trilean → Bool
+  | .false => Bool.true
+  | _ => Bool.false
+
+/-- Check if Trilean is unknown -/
+def isUnknown : Trilean → Bool
+  | .unknown => Bool.true
+  | _ => Bool.false
+
+end Trilean
+
+-- ============================================================================
 -- Value Types
 -- ============================================================================
 
-/-- SQL value literals -/
+/-- SQL value literals with typed NULLs -/
 inductive Value where
   | int    : Int → Value
   | string : String → Value
   | bool   : Bool → Value
-  | null   : Value
+  | null   : Option SqlType → Value  -- typed NULL (none = unknown type)
   deriving Repr, BEq, Inhabited, DecidableEq
+
+namespace Value
+
+/-- Get the SQL type of a value -/
+def sqlType : Value → SqlType
+  | .int _ => .int
+  | .string _ => .string
+  | .bool _ => .bool
+  | .null (some t) => t
+  | .null none => .unknown
+
+/-- Check if value is NULL (any type) -/
+def isNull : Value → Bool
+  | .null _ => true
+  | _ => false
+
+/-- Check if value is not NULL -/
+def isNotNull : Value → Bool
+  | .null _ => false
+  | _ => true
+
+/-- Create typed NULL values -/
+def nullInt : Value := .null (some .int)
+def nullString : Value := .null (some .string)
+def nullBool : Value := .null (some .bool)
+def nullUntyped : Value := .null none
+
+/-- Convert boolean value to Trilean -/
+def toTrilean : Value → Trilean
+  | .bool true => .true
+  | .bool false => .false
+  | .null _ => .unknown
+  | _ => .unknown  -- non-boolean treated as unknown in boolean context
+
+end Value
 
 /-- Column reference: optionally qualified with table name -/
 structure ColumnRef where
@@ -482,7 +601,7 @@ instance : BEq Stmt where
 -- Inhabited instances
 -- ============================================================================
 
-instance : Inhabited Expr where default := .lit .null
+instance : Inhabited Expr where default := .lit (.null none)
 instance : Inhabited WindowSpec where default := .mk [] []
 instance : Inhabited SelectItem where default := .star none
 instance : Inhabited FromClause where default := .table ⟨"", none⟩

@@ -599,7 +599,7 @@ partial def parsePrimary : Parser Expr := do
     return .lit (.bool false)
   | .keyword "NULL" =>
     let _ ← Parser.advance
-    return .lit .null
+    return .lit (.null none)  -- Untyped NULL from parser
   | .keyword "NOT" =>
     let _ ← Parser.advance
     -- Check for NOT EXISTS
