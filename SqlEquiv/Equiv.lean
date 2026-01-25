@@ -2083,4 +2083,132 @@ axiom lower_upper_lower (e : Expr) :
 axiom length_empty :
     Expr.func "LENGTH" [Expr.lit (.string "")] ≃ₑ Expr.lit (.int 0)
 
+-- ============================================================================
+-- Comparison Theorems
+-- ============================================================================
+
+/-- x = x is TRUE (reflexivity of equality for non-null) -/
+axiom eq_reflexive (e : Expr) :
+    -- For non-null values, x = x is true
+    Expr.binOp .eq e e ≃ₑ
+    Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
+              (some (Expr.lit (.bool true)))
+
+/-- x <> x is FALSE (for non-null values) -/
+axiom ne_irreflexive (e : Expr) :
+    Expr.binOp .ne e e ≃ₑ
+    Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
+              (some (Expr.lit (.bool false)))
+
+/-- NOT (x = y) = (x <> y) -/
+axiom not_eq_is_ne (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .eq a b) ≃ₑ Expr.binOp .ne a b
+
+/-- NOT (x <> y) = (x = y) -/
+axiom not_ne_is_eq (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .ne a b) ≃ₑ Expr.binOp .eq a b
+
+/-- NOT (x < y) = (x >= y) -/
+axiom not_lt_is_ge (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .lt a b) ≃ₑ Expr.binOp .ge a b
+
+/-- NOT (x <= y) = (x > y) -/
+axiom not_le_is_gt (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .le a b) ≃ₑ Expr.binOp .gt a b
+
+/-- NOT (x > y) = (x <= y) -/
+axiom not_gt_is_le (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .gt a b) ≃ₑ Expr.binOp .le a b
+
+/-- NOT (x >= y) = (x < y) -/
+axiom not_ge_is_lt (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .ge a b) ≃ₑ Expr.binOp .lt a b
+
+/-- x < y = y > x (flip) -/
+axiom lt_flip (a b : Expr) :
+    Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a
+
+/-- x <= y = y >= x (flip) -/
+axiom le_flip (a b : Expr) :
+    Expr.binOp .le a b ≃ₑ Expr.binOp .ge b a
+
+/-- x > y = y < x (flip) -/
+axiom gt_flip (a b : Expr) :
+    Expr.binOp .gt a b ≃ₑ Expr.binOp .lt b a
+
+/-- x >= y = y <= x (flip) -/
+axiom ge_flip (a b : Expr) :
+    Expr.binOp .ge a b ≃ₑ Expr.binOp .le b a
+
+-- ============================================================================
+-- Set Operation Theorems (UNION, INTERSECT, EXCEPT)
+-- ============================================================================
+
+/-- UNION is commutative: A UNION B = B UNION A -/
+axiom union_comm (a b : SelectStmt) :
+    Query.compound (Query.simple a) .union (Query.simple b) ≃ᵩ
+    Query.compound (Query.simple b) .union (Query.simple a)
+
+/-- UNION ALL is commutative: A UNION ALL B = B UNION ALL A -/
+axiom union_all_comm (a b : SelectStmt) :
+    Query.compound (Query.simple a) .unionAll (Query.simple b) ≃ᵩ
+    Query.compound (Query.simple b) .unionAll (Query.simple a)
+
+/-- INTERSECT is commutative: A INTERSECT B = B INTERSECT A -/
+axiom intersect_comm (a b : SelectStmt) :
+    Query.compound (Query.simple a) .intersect (Query.simple b) ≃ᵩ
+    Query.compound (Query.simple b) .intersect (Query.simple a)
+
+/-- UNION is associative: (A UNION B) UNION C = A UNION (B UNION C) -/
+axiom union_assoc (a b c : Query) :
+    Query.compound (Query.compound a .union b) .union c ≃ᵩ
+    Query.compound a .union (Query.compound b .union c)
+
+/-- INTERSECT is associative: (A INTERSECT B) INTERSECT C = A INTERSECT (B INTERSECT C) -/
+axiom intersect_assoc (a b c : Query) :
+    Query.compound (Query.compound a .intersect b) .intersect c ≃ᵩ
+    Query.compound a .intersect (Query.compound b .intersect c)
+
+/-- UNION is idempotent: A UNION A = A -/
+axiom union_idempotent (a : SelectStmt) :
+    Query.compound (Query.simple a) .union (Query.simple a) ≃ᵩ
+    Query.simple a
+
+/-- INTERSECT is idempotent: A INTERSECT A = A -/
+axiom intersect_idempotent (a : SelectStmt) :
+    Query.compound (Query.simple a) .intersect (Query.simple a) ≃ᵩ
+    Query.simple a
+
+/-- A EXCEPT A = empty (self-difference is empty) -/
+axiom except_self_empty (db : Database) (a : SelectStmt) :
+    evalQuery db (Query.compound (Query.simple a) .exceptOp (Query.simple a)) = []
+
+/-- UNION with empty is identity (axiom form) -/
+axiom union_empty_right (db : Database) (a : SelectStmt) :
+    let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
+    evalQuery db (Query.compound (Query.simple a) .union (Query.simple emptySelect)) =
+    evalQuery db (Query.simple a)
+
+/-- INTERSECT with empty is empty -/
+axiom intersect_empty_right (db : Database) (a : SelectStmt) :
+    let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
+    evalQuery db (Query.compound (Query.simple a) .intersect (Query.simple emptySelect)) = []
+
+/-- UNION ALL keeps all duplicates from both sides -/
+axiom union_all_length (db : Database) (a b : SelectStmt) :
+    (evalQuery db (Query.compound (Query.simple a) .unionAll (Query.simple b))).length =
+    (evalQuery db (Query.simple a)).length + (evalQuery db (Query.simple b)).length
+
+-- Note: EXCEPT is NOT commutative, so we don't have a commutativity axiom for it
+
+/-- Distributivity: A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C) -/
+axiom union_intersect_distrib (a b c : Query) :
+    Query.compound a .union (Query.compound b .intersect c) ≃ᵩ
+    Query.compound (Query.compound a .union b) .intersect (Query.compound a .union c)
+
+/-- Distributivity: A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C) -/
+axiom intersect_union_distrib (a b c : Query) :
+    Query.compound a .intersect (Query.compound b .union c) ≃ᵩ
+    Query.compound (Query.compound a .intersect b) .union (Query.compound a .intersect c)
+
 end SqlEquiv

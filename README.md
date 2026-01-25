@@ -471,6 +471,41 @@ inductive Stmt where
 | `lower_upper_lower` | `LOWER(UPPER(LOWER(x))) = LOWER(x)` |
 | `length_empty` | `LENGTH('') = 0` |
 
+### Comparison Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `eq_reflexive` | `x = x` is TRUE (for non-null, NULL-aware via CASE) |
+| `ne_irreflexive` | `x <> x` is FALSE (for non-null) |
+| `not_eq_is_ne` | `NOT (x = y) = (x <> y)` |
+| `not_ne_is_eq` | `NOT (x <> y) = (x = y)` |
+| `not_lt_is_ge` | `NOT (x < y) = (x >= y)` |
+| `not_le_is_gt` | `NOT (x <= y) = (x > y)` |
+| `not_gt_is_le` | `NOT (x > y) = (x <= y)` |
+| `not_ge_is_lt` | `NOT (x >= y) = (x < y)` |
+| `lt_flip` | `x < y = y > x` |
+| `le_flip` | `x <= y = y >= x` |
+| `gt_flip` | `x > y = y < x` |
+| `ge_flip` | `x >= y = y <= x` |
+
+### Set Operation Theorems (UNION, INTERSECT, EXCEPT)
+
+| Theorem | Description |
+|---------|-------------|
+| `union_comm` | `A UNION B = B UNION A` |
+| `union_all_comm` | `A UNION ALL B = B UNION ALL A` |
+| `intersect_comm` | `A INTERSECT B = B INTERSECT A` |
+| `union_assoc` | `(A UNION B) UNION C = A UNION (B UNION C)` |
+| `intersect_assoc` | `(A INTERSECT B) INTERSECT C = A INTERSECT (B INTERSECT C)` |
+| `union_idempotent` | `A UNION A = A` |
+| `intersect_idempotent` | `A INTERSECT A = A` |
+| `except_self_empty` | `A EXCEPT A = ∅` |
+| `union_empty_right` | `A UNION ∅ = A` |
+| `intersect_empty_right` | `A INTERSECT ∅ = ∅` |
+| `union_all_length` | `|A UNION ALL B| = |A| + |B|` |
+| `union_intersect_distrib` | `A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C)` |
+| `intersect_union_distrib` | `A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C)` |
+
 ### Other
 
 | Theorem | Description |
