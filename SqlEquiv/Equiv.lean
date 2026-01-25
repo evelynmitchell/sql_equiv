@@ -1965,4 +1965,122 @@ axiom expr_zero_mul (e : Expr) :
 axiom expr_sub_zero (e : Expr) :
     Expr.binOp .sub e (Expr.lit (.int 0)) ≃ₑ e
 
+-- ============================================================================
+-- IN List Theorems
+-- ============================================================================
+
+/-- x IN () = FALSE (empty IN list) -/
+axiom in_empty_false (e : Expr) :
+    Expr.inList e false [] ≃ₑ Expr.lit (.bool false)
+
+/-- x NOT IN () = TRUE (empty NOT IN list) -/
+axiom not_in_empty_true (e : Expr) :
+    Expr.inList e true [] ≃ₑ Expr.lit (.bool true)
+
+/-- x IN (a) = (x = a) (singleton IN list) -/
+axiom in_singleton (e a : Expr) :
+    Expr.inList e false [a] ≃ₑ Expr.binOp .eq e a
+
+/-- x NOT IN (a) = (x <> a) (singleton NOT IN list) -/
+axiom not_in_singleton (e a : Expr) :
+    Expr.inList e true [a] ≃ₑ Expr.binOp .ne e a
+
+/-- x IN (a, b) = (x = a OR x = b) -/
+axiom in_pair (e a b : Expr) :
+    Expr.inList e false [a, b] ≃ₑ
+    Expr.binOp .or (Expr.binOp .eq e a) (Expr.binOp .eq e b)
+
+/-- x NOT IN (a, b) = (x <> a AND x <> b) -/
+axiom not_in_pair (e a b : Expr) :
+    Expr.inList e true [a, b] ≃ₑ
+    Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b)
+
+/-- IN list is equivalent to OR of equalities (general form) -/
+axiom in_list_or_expansion (e : Expr) (vals : List Expr) :
+    Expr.inList e false vals ≃ₑ
+    vals.foldl (fun acc v => Expr.binOp .or acc (Expr.binOp .eq e v))
+               (Expr.lit (.bool false))
+
+/-- NOT IN list is equivalent to AND of inequalities (general form) -/
+axiom not_in_list_and_expansion (e : Expr) (vals : List Expr) :
+    Expr.inList e true vals ≃ₑ
+    vals.foldl (fun acc v => Expr.binOp .and acc (Expr.binOp .ne e v))
+               (Expr.lit (.bool true))
+
+-- ============================================================================
+-- BETWEEN Theorems
+-- ============================================================================
+
+/-- x BETWEEN a AND b = (x >= a AND x <= b) -/
+axiom between_expansion (e lo hi : Expr) :
+    Expr.between e lo hi ≃ₑ
+    Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)
+
+/-- BETWEEN is reflexive: x BETWEEN x AND x = TRUE when x is non-null -/
+axiom between_reflexive (e : Expr) :
+    Expr.between e e e ≃ₑ
+    Expr.binOp .and (Expr.binOp .ge e e) (Expr.binOp .le e e)
+
+/-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b) -/
+axiom not_between_expansion (e lo hi : Expr) :
+    Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
+    Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi)
+
+-- ============================================================================
+-- LIKE Pattern Theorems
+-- ============================================================================
+
+/-- x LIKE '%' = TRUE for non-null x (matches everything) -/
+axiom like_match_all (e : Expr) :
+    -- When e evaluates to a non-null string, LIKE '%' is true
+    Expr.binOp .like e (Expr.lit (.string "%")) ≃ₑ
+    Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
+              (some (Expr.lit (.bool true)))
+
+/-- x LIKE '' = (x = '') (empty pattern matches empty string) -/
+axiom like_empty_pattern (e : Expr) :
+    Expr.binOp .like e (Expr.lit (.string "")) ≃ₑ
+    Expr.binOp .eq e (Expr.lit (.string ""))
+
+/-- x LIKE x = TRUE for non-null x with no wildcards -/
+axiom like_self (e : Expr) :
+    -- Pattern with no wildcards: LIKE behaves like equality
+    Expr.binOp .like e e ≃ₑ
+    Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
+              (some (Expr.lit (.bool true)))
+
+-- ============================================================================
+-- String Function Theorems
+-- ============================================================================
+
+/-- CONCAT('', x) = x (empty string is identity for concat) -/
+axiom concat_empty_left (e : Expr) :
+    Expr.func "CONCAT" [Expr.lit (.string ""), e] ≃ₑ e
+
+/-- CONCAT(x, '') = x (empty string is identity for concat) -/
+axiom concat_empty_right (e : Expr) :
+    Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e
+
+/-- UPPER(UPPER(x)) = UPPER(x) (idempotent) -/
+axiom upper_idempotent (e : Expr) :
+    Expr.func "UPPER" [Expr.func "UPPER" [e]] ≃ₑ Expr.func "UPPER" [e]
+
+/-- LOWER(LOWER(x)) = LOWER(x) (idempotent) -/
+axiom lower_idempotent (e : Expr) :
+    Expr.func "LOWER" [Expr.func "LOWER" [e]] ≃ₑ Expr.func "LOWER" [e]
+
+/-- UPPER(LOWER(UPPER(x))) = UPPER(x) -/
+axiom upper_lower_upper (e : Expr) :
+    Expr.func "UPPER" [Expr.func "LOWER" [Expr.func "UPPER" [e]]] ≃ₑ
+    Expr.func "UPPER" [e]
+
+/-- LOWER(UPPER(LOWER(x))) = LOWER(x) -/
+axiom lower_upper_lower (e : Expr) :
+    Expr.func "LOWER" [Expr.func "UPPER" [Expr.func "LOWER" [e]]] ≃ₑ
+    Expr.func "LOWER" [e]
+
+/-- LENGTH('') = 0 -/
+axiom length_empty :
+    Expr.func "LENGTH" [Expr.lit (.string "")] ≃ₑ Expr.lit (.int 0)
+
 end SqlEquiv

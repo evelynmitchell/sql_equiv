@@ -430,6 +430,47 @@ inductive Stmt where
 | `expr_zero_mul` | `0 * x = 0` |
 | `expr_sub_zero` | `x - 0 = x` |
 
+### IN List Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `in_empty_false` | `x IN () = FALSE` |
+| `not_in_empty_true` | `x NOT IN () = TRUE` |
+| `in_singleton` | `x IN (a) = (x = a)` |
+| `not_in_singleton` | `x NOT IN (a) = (x <> a)` |
+| `in_pair` | `x IN (a, b) = (x = a OR x = b)` |
+| `not_in_pair` | `x NOT IN (a, b) = (x <> a AND x <> b)` |
+| `in_list_or_expansion` | General IN to OR expansion |
+| `not_in_list_and_expansion` | General NOT IN to AND expansion |
+
+### BETWEEN Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `between_expansion` | `x BETWEEN a AND b = (x >= a AND x <= b)` |
+| `between_reflexive` | `x BETWEEN x AND x` expansion |
+| `not_between_expansion` | `NOT (x BETWEEN a AND b) = (x < a OR x > b)` |
+
+### LIKE Pattern Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `like_match_all` | `x LIKE '%' = TRUE` for non-null x |
+| `like_empty_pattern` | `x LIKE '' = (x = '')` |
+| `like_self` | `x LIKE x = TRUE` for non-null x (no wildcards) |
+
+### String Function Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `concat_empty_left` | `CONCAT('', x) = x` |
+| `concat_empty_right` | `CONCAT(x, '') = x` |
+| `upper_idempotent` | `UPPER(UPPER(x)) = UPPER(x)` |
+| `lower_idempotent` | `LOWER(LOWER(x)) = LOWER(x)` |
+| `upper_lower_upper` | `UPPER(LOWER(UPPER(x))) = UPPER(x)` |
+| `lower_upper_lower` | `LOWER(UPPER(LOWER(x))) = LOWER(x)` |
+| `length_empty` | `LENGTH('') = 0` |
+
 ### Other
 
 | Theorem | Description |
