@@ -423,6 +423,10 @@ def evalExpr (row : Row) : Expr → Option Value :=
 -- Axioms for partial evaluation (needed for equivalence proofs)
 -- ============================================================================
 
+/-- Axiom: evalExprWithDb unfolds for literals -/
+axiom evalExprWithDb_lit (db : Database) (row : Row) (v : Value) :
+  evalExprWithDb db row (Expr.lit v) = some v
+
 /-- Axiom: evalExprWithDb unfolds for binOp -/
 axiom evalExprWithDb_binOp (db : Database) (row : Row) (op : BinOp) (l r : Expr) :
   evalExprWithDb db row (Expr.binOp op l r) = evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r)
