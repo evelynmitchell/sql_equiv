@@ -197,8 +197,14 @@ def subqueryTests : List TestResult := [
   testRowCount "in_subquery" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)" 3,
   -- Users who don't have orders
   testRowCount "not_in_subquery" "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)" 2,
-  -- EXISTS - users with at least one order
-  testNonEmpty "exists_subquery" "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)"
+  -- EXISTS - users with at least one order (correlated)
+  testNonEmpty "exists_subquery" "SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)",
+  -- Correlated IN subquery - users with high-value orders (amount > 150)
+  -- Alice has order 200, Carol has order 300 = 2 users
+  testRowCount "in_subquery_correlated" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE orders.amount > 150)" 2,
+  -- Correlated scalar subquery - get first order amount for Alice
+  -- Alice's first order (id=1) has amount=100
+  testContainsValue "scalar_subquery_correlated" "SELECT (SELECT amount FROM orders WHERE orders.user_id = users.id LIMIT 1) FROM users WHERE id = 1" (.int 100)
 ]
 
 -- ============================================================================
