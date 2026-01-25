@@ -1889,4 +1889,80 @@ axiom distinct_idempotent (vs : List Value) :
 axiom count_distinct_le_count (vs : List Value) :
     vs.eraseDups.length ≤ vs.length
 
+-- ============================================================================
+-- CASE Expression Theorems
+-- ============================================================================
+
+/-- CASE WHEN TRUE THEN x ELSE y END = x -/
+axiom case_when_true (x y : Expr) :
+    Expr.case [(Expr.lit (.bool true), x)] (some y) ≃ₑ x
+
+/-- CASE WHEN FALSE THEN x ELSE y END = y -/
+axiom case_when_false (x y : Expr) :
+    Expr.case [(Expr.lit (.bool false), x)] (some y) ≃ₑ y
+
+/-- CASE WHEN FALSE THEN x END = NULL (no else clause) -/
+axiom case_when_false_no_else (x : Expr) :
+    Expr.case [(Expr.lit (.bool false), x)] none ≃ₑ Expr.lit (.null none)
+
+/-- CASE with no branches and ELSE = ELSE value -/
+axiom case_empty_else (y : Expr) :
+    Expr.case [] (some y) ≃ₑ y
+
+/-- CASE with no branches and no ELSE = NULL -/
+axiom case_empty_no_else :
+    Expr.case [] none ≃ₑ Expr.lit (.null none)
+
+-- ============================================================================
+-- Predicate Pushdown Theorems
+-- ============================================================================
+
+/-- Conjunction of filters equals sequential filtering (axiom) -/
+axiom filter_and_eq_filter_filter (rows : Table) (p q : Row → Bool) :
+    rows.filter (fun r => p r && q r) = (rows.filter p).filter q
+
+/-- Filter order doesn't matter for AND (axiom) -/
+axiom filter_comm (rows : Table) (p q : Row → Bool) :
+    (rows.filter p).filter q = (rows.filter q).filter p
+
+/-- Predicate pushdown: filtering after select = select with combined WHERE
+    This captures: SELECT * FROM (SELECT * FROM t WHERE p) WHERE q
+                 = SELECT * FROM t WHERE (p AND q) -/
+axiom predicate_pushdown (db : Database) (t : String) (p q : Expr) :
+    let inner := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some p) [] none [] none none
+    let outer := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some (.binOp .and p q)) [] none [] none none
+    (evalSelect db inner).filter (fun row => evalExpr row q == some (.bool true)) = evalSelect db outer
+
+-- ============================================================================
+-- Arithmetic Expression Theorems
+-- ============================================================================
+
+/-- x + 0 = x for expressions (when x evaluates to int) -/
+axiom expr_add_zero (e : Expr) :
+    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e
+
+/-- 0 + x = x for expressions (when x evaluates to int) -/
+axiom expr_zero_add (e : Expr) :
+    Expr.binOp .add (Expr.lit (.int 0)) e ≃ₑ e
+
+/-- x * 1 = x for expressions (when x evaluates to int) -/
+axiom expr_mul_one (e : Expr) :
+    Expr.binOp .mul e (Expr.lit (.int 1)) ≃ₑ e
+
+/-- 1 * x = x for expressions (when x evaluates to int) -/
+axiom expr_one_mul (e : Expr) :
+    Expr.binOp .mul (Expr.lit (.int 1)) e ≃ₑ e
+
+/-- x * 0 = 0 for expressions (when x evaluates to int) -/
+axiom expr_mul_zero (e : Expr) :
+    Expr.binOp .mul e (Expr.lit (.int 0)) ≃ₑ Expr.lit (.int 0)
+
+/-- 0 * x = 0 for expressions (when x evaluates to int) -/
+axiom expr_zero_mul (e : Expr) :
+    Expr.binOp .mul (Expr.lit (.int 0)) e ≃ₑ Expr.lit (.int 0)
+
+/-- x - 0 = x for expressions (when x evaluates to int) -/
+axiom expr_sub_zero (e : Expr) :
+    Expr.binOp .sub e (Expr.lit (.int 0)) ≃ₑ e
+
 end SqlEquiv

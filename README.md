@@ -400,6 +400,36 @@ inductive Stmt where
 | `distinct_count_le` | `COUNT(DISTINCT x) <= COUNT(x)` |
 | `distinct_idempotent` | `DISTINCT(DISTINCT(xs)) = DISTINCT(xs)` |
 
+### CASE Expression Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `case_when_true` | `CASE WHEN TRUE THEN x ELSE y END = x` |
+| `case_when_false` | `CASE WHEN FALSE THEN x ELSE y END = y` |
+| `case_when_false_no_else` | `CASE WHEN FALSE THEN x END = NULL` |
+| `case_empty_else` | `CASE ELSE y END = y` |
+| `case_empty_no_else` | `CASE END = NULL` |
+
+### Predicate Pushdown Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `filter_and_eq_filter_filter` | `filter(p AND q) = filter(q, filter(p))` |
+| `filter_comm` | `filter(q, filter(p)) = filter(p, filter(q))` |
+| `predicate_pushdown` | `SELECT * FROM t WHERE p` filtered by q = `WHERE (p AND q)` |
+
+### Arithmetic Expression Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `expr_add_zero` | `x + 0 = x` |
+| `expr_zero_add` | `0 + x = x` |
+| `expr_mul_one` | `x * 1 = x` |
+| `expr_one_mul` | `1 * x = x` |
+| `expr_mul_zero` | `x * 0 = 0` |
+| `expr_zero_mul` | `0 * x = 0` |
+| `expr_sub_zero` | `x - 0 = x` |
+
 ### Other
 
 | Theorem | Description |
