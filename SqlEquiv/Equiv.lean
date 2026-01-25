@@ -1758,6 +1758,49 @@ theorem isNullValue_string (s : String) : isNullValue (some (.string s)) = false
 /-- Helper: isNullValue is false for bool values -/
 theorem isNullValue_bool (b : Bool) : isNullValue (some (.bool b)) = false := by rfl
 
+/-- COALESCE(NULL, x) = x (axiom - true by evalFunc definition) -/
+axiom coalesce_null_left (t : Option SqlType) (v : Option Value) :
+    evalFunc "COALESCE" [some (.null t), v] = v
+
+/-- COALESCE(x, y) = x when x is a non-null int -/
+axiom coalesce_int_left (n : Int) (v : Option Value) :
+    evalFunc "COALESCE" [some (.int n), v] = some (.int n)
+
+/-- COALESCE(x, y) = x when x is a non-null string -/
+axiom coalesce_string_left (s : String) (v : Option Value) :
+    evalFunc "COALESCE" [some (.string s), v] = some (.string s)
+
+/-- COALESCE(x, y) = x when x is a non-null bool -/
+axiom coalesce_bool_left (b : Bool) (v : Option Value) :
+    evalFunc "COALESCE" [some (.bool b), v] = some (.bool b)
+
+/-- COALESCE with single non-null int argument returns that value -/
+axiom coalesce_single_int (n : Int) :
+    evalFunc "COALESCE" [some (.int n)] = some (.int n)
+
+/-- COALESCE with single non-null string argument returns that value -/
+axiom coalesce_single_string (s : String) :
+    evalFunc "COALESCE" [some (.string s)] = some (.string s)
+
+/-- COALESCE with single non-null bool argument returns that value -/
+axiom coalesce_single_bool (b : Bool) :
+    evalFunc "COALESCE" [some (.bool b)] = some (.bool b)
+
+/-- COALESCE with single NULL returns none -/
+axiom coalesce_single_null (t : Option SqlType) :
+    evalFunc "COALESCE" [some (.null t)] = none
+
+/-- COALESCE with empty args returns none -/
+axiom coalesce_empty : evalFunc "COALESCE" [] = none
+
+/-- NULLIF(x, x) = NULL for same int values -/
+axiom nullif_same_int (n : Int) :
+    evalFunc "NULLIF" [some (.int n), some (.int n)] = some (.null none)
+
+/-- NULLIF(x, y) = x when x ≠ y (different ints) -/
+axiom nullif_diff_int (n m : Int) (h : n ≠ m) :
+    evalFunc "NULLIF" [some (.int n), some (.int m)] = some (.int n)
+
 -- ============================================================================
 -- Value Type Theorems
 -- ============================================================================

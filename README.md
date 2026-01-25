@@ -369,6 +369,19 @@ inductive Stmt where
 | `trilean_de_morgan_and` | `NOT (a AND b) = (NOT a) OR (NOT b)` |
 | `trilean_de_morgan_or` | `NOT (a OR b) = (NOT a) AND (NOT b)` |
 
+### COALESCE and NULLIF
+
+| Theorem | Description |
+|---------|-------------|
+| `coalesce_null_left` | `COALESCE(NULL, x) = x` |
+| `coalesce_int_left` | `COALESCE(n, y) = n` for non-null int |
+| `coalesce_string_left` | `COALESCE(s, y) = s` for non-null string |
+| `coalesce_bool_left` | `COALESCE(b, y) = b` for non-null bool |
+| `coalesce_single_*` | `COALESCE(x) = x` for single argument |
+| `coalesce_empty` | `COALESCE() = NULL` |
+| `nullif_same_int` | `NULLIF(n, n) = NULL` |
+| `nullif_diff_int` | `NULLIF(n, m) = n` when `n ≠ m` |
+
 ### Other
 
 | Theorem | Description |
