@@ -559,6 +559,46 @@ inductive Stmt where
 | `in_singleton_subquery` | `x IN (single value v) = (x = v)` |
 | `correlated_subquery_uses_context` | Correlated subquery uses outer row context |
 
+### ORDER BY Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `order_by_preserves_count` | ORDER BY doesn't change row count |
+| `order_by_empty_identity` | Empty ORDER BY list is identity |
+| `order_by_idempotent` | Ordering twice by same criteria = once |
+| `order_by_last_wins` | Multiple ORDER BY on same column: last wins |
+| `order_by_reverse` | ASC vs DESC reverses the result |
+
+### LIMIT Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `limit_zero_empty` | `LIMIT 0` returns empty result |
+| `limit_upper_bound` | `LIMIT n` returns at most n rows |
+| `limit_none_all_rows` | No LIMIT = all rows |
+| `limit_monotonic` | Larger LIMIT gives more rows |
+| `limit_one_singleton` | `LIMIT 1` returns at most 1 row |
+
+### OFFSET Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `offset_zero_identity` | `OFFSET 0` is identity |
+| `offset_too_large_empty` | `OFFSET >= count` returns empty |
+| `offset_reduces_count` | OFFSET reduces row count |
+| `offset_monotonic` | Larger OFFSET gives fewer rows |
+
+### LIMIT + OFFSET Combination Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `limit_offset_compose` | `LIMIT n OFFSET m` = skip m, take n |
+| `offset_limit_zero_empty` | `OFFSET x LIMIT 0` = empty |
+| `pagination_upper_bound` | `LIMIT n OFFSET m` returns at most n rows |
+| `pagination_identity` | `OFFSET 0 LIMIT count` = all rows |
+| `consecutive_pages` | Page 1 ++ Page 2 = combined page |
+| `order_limit_deterministic` | ORDER BY + LIMIT gives deterministic prefix |
+
 ### Other
 
 | Theorem | Description |
