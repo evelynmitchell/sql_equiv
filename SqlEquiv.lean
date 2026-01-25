@@ -2,3 +2,4 @@
 -- Import modules here that should be built as part of the library.
 import SqlEquiv.Basic
 import SqlEquiv.Tactics
+import SqlEquiv.Optimizer

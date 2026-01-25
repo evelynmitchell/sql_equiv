@@ -3,8 +3,11 @@
 
   Custom tactics for proving SQL equivalence properties:
   - sql_equiv: Automated equivalence proving
+  - sql_equiv!: Aggressive version with all rewrites
   - sql_simp: SQL-specific simplification
   - sql_normalize: Normalize expressions to canonical form
+  - sql_congr: Congruence tactics for descending into subexpressions
+  - sql_calc: Chaining equivalences
 -/
 import SqlEquiv.Ast
 import SqlEquiv.Semantics
@@ -14,6 +17,7 @@ import Lean
 namespace SqlEquiv
 
 open Lean Elab Tactic Meta
+open scoped SqlEquiv  -- Make scoped notations available
 
 -- ============================================================================
 -- sql_simp Tactic
@@ -67,16 +71,221 @@ elab "sql_equiv" : tactic => do
       | exact eq_comm _ _))
   if ← tryTactic tryComm then return
 
-  -- Step 3: Unfold equivalence definitions and try to close
+  -- Step 3: Try associativity lemmas
+  let tryAssoc : TacticM Unit := do
+    evalTactic (← `(tactic| first
+      | exact and_assoc _ _ _
+      | exact or_assoc _ _ _))
+  if ← tryTactic tryAssoc then return
+
+  -- Step 4: Try De Morgan's laws
+  let tryDeMorgan : TacticM Unit := do
+    evalTactic (← `(tactic| first
+      | exact not_and _ _
+      | exact not_or _ _
+      | exact or_not_not _ _
+      | exact and_not_not _ _))
+  if ← tryTactic tryDeMorgan then return
+
+  -- Step 5: Try distributivity laws
+  let tryDistrib : TacticM Unit := do
+    evalTactic (← `(tactic| first
+      | exact and_or_distrib_left _ _ _
+      | exact and_or_distrib_right _ _ _
+      | exact or_and_distrib_left _ _ _
+      | exact or_and_distrib_right _ _ _
+      | exact or_and_factor_left _ _ _
+      | exact and_or_factor_left _ _ _))
+  if ← tryTactic tryDistrib then return
+
+  -- Step 6: Try absorption laws
+  let tryAbsorb : TacticM Unit := do
+    evalTactic (← `(tactic| first
+      | exact and_absorb_or _ _
+      | exact or_absorb_and _ _))
+  if ← tryTactic tryAbsorb then return
+
+  -- Step 7: Try identity laws
+  let tryIdentity : TacticM Unit := do
+    evalTactic (← `(tactic| first
+      | exact and_true _
+      | exact true_and _
+      | exact or_false _
+      | exact false_or _
+      | exact and_false _
+      | exact false_and _
+      | exact or_true _
+      | exact true_or _
+      | exact and_self _
+      | exact or_self _))
+  if ← tryTactic tryIdentity then return
+
+  -- Step 8: Try complement laws
+  let tryComplement : TacticM Unit := do
+    evalTactic (← `(tactic| first
+      | exact and_not_self _
+      | exact not_self_and _
+      | exact or_not_self _
+      | exact not_self_or _))
+  if ← tryTactic tryComplement then return
+
+  -- Step 9: Unfold equivalence definitions and try to close
   evalTactic (← `(tactic| unfold ExprEquiv SelectEquiv QueryEquiv StmtEquiv))
 
-  -- Step 4: Introduce the universal quantifier if present
+  -- Step 10: Introduce the universal quantifier if present
   let tryIntro : TacticM Unit := evalTactic (← `(tactic| intro _))
   discard <| tryTactic tryIntro
 
-  -- Step 5: Try reflexivity
+  -- Step 11: Try reflexivity
   let tryRfl : TacticM Unit := evalTactic (← `(tactic| rfl))
   discard <| tryTactic tryRfl
+
+-- ============================================================================
+-- sql_congr Tactic - Congruence for binary/unary ops
+-- ============================================================================
+
+/-- sql_congr tactic: Apply congruence to binary/unary ops -/
+syntax "sql_congr" : tactic
+
+macro_rules
+  | `(tactic| sql_congr) =>
+    `(tactic| first
+      | apply binOp_congr <;> try sql_equiv
+      | apply binOp_congr_left <;> try sql_equiv
+      | apply binOp_congr_right <;> try sql_equiv
+      | apply unaryOp_congr <;> try sql_equiv)
+
+/-- sql_congr_left tactic: Apply left congruence to binary ops -/
+syntax "sql_congr_left" : tactic
+
+macro_rules
+  | `(tactic| sql_congr_left) =>
+    `(tactic| apply binOp_congr_left)
+
+/-- sql_congr_right tactic: Apply right congruence to binary ops -/
+syntax "sql_congr_right" : tactic
+
+macro_rules
+  | `(tactic| sql_congr_right) =>
+    `(tactic| apply binOp_congr_right)
+
+/-- sql_congr_unary tactic: Apply congruence to unary ops -/
+syntax "sql_congr_unary" : tactic
+
+macro_rules
+  | `(tactic| sql_congr_unary) =>
+    `(tactic| apply unaryOp_congr)
+
+-- ============================================================================
+-- sql_equiv! Tactic - Aggressive version
+-- ============================================================================
+
+/-- sql_equiv! tactic: Aggressive SQL equivalence proving with all rewrites -/
+syntax "sql_equiv!" : tactic
+
+/-- Helper: all SQL rewrite rules as simp lemmas -/
+macro_rules
+  | `(tactic| sql_equiv!) =>
+    `(tactic|
+      first
+        -- Try basic sql_equiv first
+        | sql_equiv
+        -- Try normalization-based proof
+        | (have h : syntacticEquiv _ _ = true := by native_decide
+           exact syntacticEquiv_implies_equiv h)
+        -- Try repeated rewriting with all rules
+        | (repeat (first
+            | exact expr_equiv_refl _
+            | exact and_comm _ _
+            | exact or_comm _ _
+            | exact add_comm _ _
+            | exact mul_comm _ _
+            | exact not_not _
+            | exact eq_comm _ _
+            | exact and_assoc _ _ _
+            | exact or_assoc _ _ _
+            | exact not_and _ _
+            | exact not_or _ _
+            | exact or_not_not _ _
+            | exact and_not_not _ _
+            | exact and_or_distrib_left _ _ _
+            | exact and_or_distrib_right _ _ _
+            | exact or_and_distrib_left _ _ _
+            | exact or_and_distrib_right _ _ _
+            | exact or_and_factor_left _ _ _
+            | exact and_or_factor_left _ _ _
+            | exact and_absorb_or _ _
+            | exact or_absorb_and _ _
+            | exact and_true _
+            | exact true_and _
+            | exact or_false _
+            | exact false_or _
+            | exact and_false _
+            | exact false_and _
+            | exact or_true _
+            | exact true_or _
+            | exact and_self _
+            | exact or_self _
+            | exact and_not_self _
+            | exact not_self_and _
+            | exact or_not_self _
+            | exact not_self_or _
+            | apply binOp_congr <;> sql_equiv
+            | apply unaryOp_congr <;> sql_equiv
+            | rfl))
+        -- Final fallback: unfold and try decidability
+        | (unfold ExprEquiv SelectEquiv QueryEquiv StmtEquiv
+           intro _
+           first | rfl | native_decide))
+
+-- ============================================================================
+-- sql_rw Tactic - Apply specific rewrite rules
+-- ============================================================================
+
+/-- sql_rw tactic: Apply a specific SQL rewrite rule -/
+syntax "sql_rw" ("[" ident,* "]")? : tactic
+
+/-- Helper for applying specific rewrite rules -/
+elab "sql_rw_demorgan" : tactic => do
+  evalTactic (← `(tactic| first
+    | exact not_and _ _
+    | exact not_or _ _
+    | exact or_not_not _ _
+    | exact and_not_not _ _
+    | apply expr_equiv_trans; first
+      | exact not_and _ _
+      | exact not_or _ _
+    | fail "No De Morgan rule applies"))
+
+elab "sql_rw_distrib" : tactic => do
+  evalTactic (← `(tactic| first
+    | exact and_or_distrib_left _ _ _
+    | exact and_or_distrib_right _ _ _
+    | exact or_and_distrib_left _ _ _
+    | exact or_and_distrib_right _ _ _
+    | exact or_and_factor_left _ _ _
+    | exact and_or_factor_left _ _ _
+    | fail "No distributivity rule applies"))
+
+elab "sql_rw_absorb" : tactic => do
+  evalTactic (← `(tactic| first
+    | exact and_absorb_or _ _
+    | exact or_absorb_and _ _
+    | fail "No absorption rule applies"))
+
+elab "sql_rw_identity" : tactic => do
+  evalTactic (← `(tactic| first
+    | exact and_true _
+    | exact true_and _
+    | exact or_false _
+    | exact false_or _
+    | exact and_false _
+    | exact false_and _
+    | exact or_true _
+    | exact true_or _
+    | exact and_self _
+    | exact or_self _
+    | fail "No identity rule applies"))
 
 -- ============================================================================
 -- Helper Tactics
@@ -123,6 +332,33 @@ macro_rules
       | apply stmt_equiv_trans)
 
 -- ============================================================================
+-- sql_calc - Chaining equivalences (Term-mode helper)
+-- ============================================================================
+
+/-- Chain expression equivalences using transitivity -/
+def exprCalc2 {e1 e2 e3 : Expr} (h1 : e1 ≃ₑ e2) (h2 : e2 ≃ₑ e3) : e1 ≃ₑ e3 :=
+  expr_equiv_trans h1 h2
+
+def exprCalc3 {e1 e2 e3 e4 : Expr}
+    (h1 : e1 ≃ₑ e2) (h2 : e2 ≃ₑ e3) (h3 : e3 ≃ₑ e4) : e1 ≃ₑ e4 :=
+  expr_equiv_trans (expr_equiv_trans h1 h2) h3
+
+def exprCalc4 {e1 e2 e3 e4 e5 : Expr}
+    (h1 : e1 ≃ₑ e2) (h2 : e2 ≃ₑ e3) (h3 : e3 ≃ₑ e4) (h4 : e4 ≃ₑ e5) : e1 ≃ₑ e5 :=
+  expr_equiv_trans (expr_equiv_trans (expr_equiv_trans h1 h2) h3) h4
+
+/-
+-- NOTE: sql_calc syntax is currently disabled because scoped infix notation
+-- cannot be used in macro syntax patterns. The helper functions above
+-- (exprCalc2, exprCalc3, exprCalc4) can still be used directly.
+--
+-- To chain equivalences, use:
+--   exact exprCalc2 proof1 proof2
+-- or:
+--   exact exprCalc3 proof1 proof2 proof3
+-/
+
+-- ============================================================================
 -- Example Proofs (tests for the tactics)
 -- ============================================================================
 
@@ -158,6 +394,60 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
   sql_trans b
   · exact h1
   · exact h2
+
+/-- Example: De Morgan's law -/
+example : Expr.unaryOp .not (Expr.binOp .and a b) ≃ₑ
+          Expr.binOp .or (Expr.unaryOp .not a) (Expr.unaryOp .not b) := by sql_equiv
+
+/-- Example: Distributivity -/
+example : Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ
+          Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) := by sql_equiv
+
+/-- Example: Absorption -/
+example : Expr.binOp .and a (Expr.binOp .or a b) ≃ₑ a := by sql_equiv
+
+/-- Example: Identity AND TRUE -/
+example : Expr.binOp .and a (Expr.lit (.bool true)) ≃ₑ a := by sql_equiv
+
+/-- Example: Identity OR FALSE -/
+example : Expr.binOp .or a (Expr.lit (.bool false)) ≃ₑ a := by sql_equiv
+
+/-- Example: Annihilation AND FALSE -/
+example : Expr.binOp .and a (Expr.lit (.bool false)) ≃ₑ Expr.lit (.bool false) := by sql_equiv
+
+/-- Example: Annihilation OR TRUE -/
+example : Expr.binOp .or a (Expr.lit (.bool true)) ≃ₑ Expr.lit (.bool true) := by sql_equiv
+
+/-- Example: Idempotent AND -/
+example : Expr.binOp .and a a ≃ₑ a := by sql_equiv
+
+/-- Example: Idempotent OR -/
+example : Expr.binOp .or a a ≃ₑ a := by sql_equiv
+
+/-- Example: Complement AND -/
+example : Expr.binOp .and a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool false) := by sql_equiv
+
+/-- Example: Complement OR -/
+example : Expr.binOp .or a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool true) := by sql_equiv
+
+/-- Example: Congruence for binary ops -/
+example (h : a ≃ₑ b) : Expr.binOp .and a c ≃ₑ Expr.binOp .and b c := by
+  sql_congr_left
+  exact h
+
+/-- Example: Congruence for unary ops -/
+example (h : a ≃ₑ b) : Expr.unaryOp .not a ≃ₑ Expr.unaryOp .not b := by
+  sql_congr_unary
+  exact h
+
+/-- Example: chaining equivalences using exprCalc2/exprCalc3 directly -/
+example : Expr.binOp .and (Expr.binOp .and a b) c ≃ₑ
+          Expr.binOp .and a (Expr.binOp .and b c) := by
+  exact and_assoc a b c
+
+/-- Example: Multi-step chaining using exprCalc2 -/
+example : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by
+  exact exprCalc2 (and_comm a b) (expr_equiv_refl _)
 
 end Examples
 

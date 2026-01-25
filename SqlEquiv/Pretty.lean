@@ -114,6 +114,24 @@ partial def Expr.toSql : Expr → String
     s!"({sel.toSql})"
   | .between e lo hi =>
     s!"({e.toSql} BETWEEN {lo.toSql} AND {hi.toSql})"
+  | .windowFn fn arg spec =>
+    let fnName := match fn with
+      | .rowNumber => "ROW_NUMBER"
+      | .rank => "RANK"
+      | .denseRank => "DENSE_RANK"
+      | .sum => "SUM"
+      | .avg => "AVG"
+      | .min => "MIN"
+      | .max => "MAX"
+      | .count => "COUNT"
+    let argStr := match arg with
+      | some e => e.toSql
+      | none => ""
+    let partStr := if spec.partitionBy.isEmpty then ""
+      else s!"PARTITION BY {", ".intercalate (spec.partitionBy.map Expr.toSql)} "
+    let orderStr := if spec.orderBy.isEmpty then ""
+      else s!"ORDER BY {", ".intercalate (spec.orderBy.map OrderByItem.toSql)}"
+    s!"{fnName}({argStr}) OVER ({partStr}{orderStr})"
 
 -- ============================================================================
 -- SELECT Components Pretty Printing
@@ -176,6 +194,9 @@ partial def SelectStmt.toSql (s : SelectStmt) : String :=
 partial def Query.toSql : Query → String
   | .simple sel => sel.toSql
   | .compound left op right => s!"{left.toSql} {op.toSql} {right.toSql}"
+  | .withCTE ctes query =>
+    let cteStrs := ctes.map fun cte => s!"{cte.name} AS ({cte.query.toSql})"
+    s!"WITH {", ".intercalate cteStrs} {query.toSql}"
 
 end
 

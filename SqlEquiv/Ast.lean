@@ -89,11 +89,29 @@ inductive SetOp where
   | exceptOp  -- 'except' is reserved in Lean
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- Window function types -/
+inductive WindowFunc where
+  | rowNumber
+  | rank
+  | denseRank
+  | sum
+  | avg
+  | min
+  | max
+  | count
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 -- ============================================================================
 -- Core Types (mutually recursive for subquery support)
 -- ============================================================================
 
 mutual
+
+/-- Window frame specification -/
+inductive WindowSpec where
+  | mk : List Expr →        -- partitionBy
+         List OrderByItem → -- orderBy
+         WindowSpec
 
 /-- SQL expression AST -/
 inductive Expr where
@@ -110,6 +128,7 @@ inductive Expr where
   | exists    : Bool → SelectStmt → Expr               -- [NOT] EXISTS (subquery)
   | subquery  : SelectStmt → Expr                      -- scalar subquery
   | between   : Expr → Expr → Expr → Expr
+  | windowFn  : WindowFunc → Option Expr → WindowSpec → Expr  -- window function with OVER clause
 
 /-- ORDER BY item -/
 inductive OrderByItem where
@@ -176,10 +195,26 @@ def OrderByItem.expr : OrderByItem → Expr
 def OrderByItem.dir : OrderByItem → OrderDir
   | .mk _ d => d
 
+-- Accessor functions for WindowSpec
+def WindowSpec.partitionBy : WindowSpec → List Expr
+  | .mk p _ => p
+
+def WindowSpec.orderBy : WindowSpec → List OrderByItem
+  | .mk _ o => o
+
+/-- Common Table Expression definition: name and query -/
+structure CTEDef where
+  name  : String
+  query : SelectStmt
+
+-- Note: Repr instance defined after toReprStr is available
+-- Note: Inhabited instance defined after SelectStmt Inhabited is available
+
 /-- Query with optional set operations -/
 inductive Query where
   | simple : SelectStmt → Query
   | compound : Query → SetOp → Query → Query
+  | withCTE : List CTEDef → Query → Query  -- WITH cte1 AS (...), cte2 AS (...) query
 
 /-- Values source for INSERT -/
 inductive InsertSource where
@@ -236,6 +271,11 @@ mutual
     | .exists neg sel => s!"Expr.exists {neg} ({sel.toReprStr})"
     | .subquery sel => s!"Expr.subquery ({sel.toReprStr})"
     | .between e lo hi => s!"Expr.between ({e.toReprStr}) ({lo.toReprStr}) ({hi.toReprStr})"
+    | .windowFn fn arg spec => s!"Expr.windowFn {repr fn} {arg.map Expr.toReprStr} ({WindowSpec.toReprStr spec})"
+
+  partial def WindowSpec.toReprStr : WindowSpec → String
+    | .mk partBy orderBy =>
+      s!"WindowSpec.mk [{", ".intercalate (partBy.map Expr.toReprStr)}] [{", ".intercalate (orderBy.map OrderByItem.toReprStr)}]"
 
   partial def SelectItem.toReprStr : SelectItem → String
     | .star t => s!"SelectItem.star {repr t}"
@@ -257,6 +297,9 @@ mutual
   partial def Query.toReprStr : Query → String
     | .simple sel => s!"Query.simple ({sel.toReprStr})"
     | .compound l op r => s!"Query.compound ({l.toReprStr}) {repr op} ({r.toReprStr})"
+    | .withCTE ctes q =>
+      let cteStrs := ctes.map fun cte => s!"CTEDef.mk {repr cte.name} ({cte.query.toReprStr})"
+      s!"Query.withCTE [{", ".intercalate cteStrs}] ({q.toReprStr})"
 
   partial def InsertSource.toReprStr : InsertSource → String
     | .values rows =>
@@ -269,6 +312,7 @@ mutual
 end
 
 instance : Repr Expr where reprPrec e _ := e.toReprStr
+instance : Repr WindowSpec where reprPrec s _ := s.toReprStr
 instance : Repr SelectItem where reprPrec i _ := i.toReprStr
 instance : Repr FromClause where reprPrec f _ := f.toReprStr
 instance : Repr OrderByItem where reprPrec o _ := o.toReprStr
@@ -292,6 +336,10 @@ instance : Repr Stmt where
     | .insert ins => s!"Stmt.insert ({repr ins})"
     | .update upd => s!"Stmt.update ({repr upd})"
     | .delete del => s!"Stmt.delete ({repr del})"
+
+-- CTEDef instances (defined after SelectStmt toReprStr is available)
+instance : Repr CTEDef where
+  reprPrec cte _ := s!"CTEDef.mk {repr cte.name} ({cte.query.toReprStr})"
 
 -- ============================================================================
 -- BEq instances
@@ -325,7 +373,18 @@ mutual
     | .exists n1 s1, .exists n2 s2 => n1 == n2 && SelectStmt.beq s1 s2
     | .subquery s1, .subquery s2 => SelectStmt.beq s1 s2
     | .between e1 l1 h1, .between e2 l2 h2 => Expr.beq e1 e2 && Expr.beq l1 l2 && Expr.beq h1 h2
+    | .windowFn fn1 arg1 spec1, .windowFn fn2 arg2 spec2 =>
+      fn1 == fn2 && WindowSpec.beq spec1 spec2 &&
+      match arg1, arg2 with
+      | none, none => true
+      | some x, some y => Expr.beq x y
+      | _, _ => false
     | _, _ => false
+
+  partial def WindowSpec.beq : WindowSpec → WindowSpec → Bool
+    | .mk part1 ord1, .mk part2 ord2 =>
+      part1.length == part2.length && (part1.zip part2).all (fun (x, y) => Expr.beq x y) &&
+      ord1.length == ord2.length && (ord1.zip ord2).all (fun (x, y) => OrderByItem.beq x y)
 
   partial def SelectItem.beq : SelectItem → SelectItem → Bool
     | .star t1, .star t2 => t1 == t2
@@ -361,6 +420,10 @@ mutual
     | .simple s1, .simple s2 => SelectStmt.beq s1 s2
     | .compound l1 op1 r1, .compound l2 op2 r2 =>
       Query.beq l1 l2 && op1 == op2 && Query.beq r1 r2
+    | .withCTE ctes1 q1, .withCTE ctes2 q2 =>
+      ctes1.length == ctes2.length &&
+      (ctes1.zip ctes2).all (fun (c1, c2) => c1.name == c2.name && SelectStmt.beq c1.query c2.query) &&
+      Query.beq q1 q2
     | _, _ => false
 
   partial def InsertSource.beq : InsertSource → InsertSource → Bool
@@ -376,6 +439,7 @@ mutual
 end
 
 instance : BEq Expr where beq := Expr.beq
+instance : BEq WindowSpec where beq := WindowSpec.beq
 instance : BEq SelectItem where beq := SelectItem.beq
 instance : BEq FromClause where beq := FromClause.beq
 instance : BEq OrderByItem where beq := OrderByItem.beq
@@ -383,6 +447,7 @@ instance : BEq SelectStmt where beq := SelectStmt.beq
 instance : BEq Query where beq := Query.beq
 instance : BEq InsertSource where beq := InsertSource.beq
 instance : BEq Assignment where beq := Assignment.beq
+instance : BEq CTEDef where beq c1 c2 := c1.name == c2.name && SelectStmt.beq c1.query c2.query
 
 instance : BEq InsertStmt where
   beq i1 i2 := i1.table == i2.table && i1.columns == i2.columns && InsertSource.beq i1.source i2.source
@@ -418,11 +483,13 @@ instance : BEq Stmt where
 -- ============================================================================
 
 instance : Inhabited Expr where default := .lit .null
+instance : Inhabited WindowSpec where default := .mk [] []
 instance : Inhabited SelectItem where default := .star none
 instance : Inhabited FromClause where default := .table ⟨"", none⟩
 instance : Inhabited OrderByItem where default := .mk default .asc
 instance : Inhabited SelectStmt where
   default := .mk false [] none none [] none [] none none
+instance : Inhabited CTEDef where default := ⟨"", default⟩
 instance : Inhabited Query where default := .simple default
 instance : Inhabited InsertSource where default := .values []
 instance : Inhabited Assignment where default := ⟨"", default⟩

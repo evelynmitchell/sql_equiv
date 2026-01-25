@@ -232,6 +232,9 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
       | some _, some _ => some (Value.bool true)
       | _, _ => none
     | _, _, _ => none
+  | .windowFn _fn _arg _spec =>
+    -- Window functions need full partition context, return null for single-row evaluation
+    none
 
 /-- Helper for CASE expression evaluation -/
 partial def evalCase (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) : Option Value :=
@@ -494,6 +497,12 @@ partial def evalQuery (db : Database) : Query → Table
     | .unionAll => leftResult ++ rightResult
     | .intersect => leftResult.filter fun row => rightResult.contains row
     | .exceptOp => leftResult.filter fun row => !rightResult.contains row
+  | .withCTE ctes query =>
+    -- Evaluate CTEs and add them to the database context
+    let dbWithCtes := ctes.foldl (fun db' cte =>
+      fun name => if name == cte.name then evalSelect db' cte.query else db' name
+    ) db
+    evalQuery dbWithCtes query
 
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table

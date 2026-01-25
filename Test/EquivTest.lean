@@ -36,6 +36,26 @@ open Test
 #check @SqlEquiv.and_assoc
 #check @SqlEquiv.or_assoc
 
+-- Verify De Morgan's Laws
+#check @SqlEquiv.not_and
+#check @SqlEquiv.not_or
+
+-- Verify Distributivity Laws
+#check @SqlEquiv.and_or_distrib_left
+#check @SqlEquiv.and_or_distrib_right
+#check @SqlEquiv.or_and_distrib_left
+#check @SqlEquiv.or_and_distrib_right
+
+-- Verify Absorption Laws
+#check @SqlEquiv.and_absorb_or
+#check @SqlEquiv.or_absorb_and
+
+-- Verify Identity Laws
+#check @SqlEquiv.and_true
+#check @SqlEquiv.or_false
+#check @SqlEquiv.and_false
+#check @SqlEquiv.or_true
+
 -- Verify WHERE clause theorems exist
 #check @SqlEquiv.where_true_elim
 #check @SqlEquiv.where_false_empty

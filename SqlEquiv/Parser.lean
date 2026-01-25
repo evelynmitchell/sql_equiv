@@ -9,6 +9,19 @@ import SqlEquiv.Ast
 namespace SqlEquiv
 
 -- ============================================================================
+-- Position Tracking
+-- ============================================================================
+
+/-- Source position for error messages -/
+structure SourcePos where
+  line   : Nat := 1
+  column : Nat := 1
+  deriving Repr, BEq, Inhabited
+
+instance : ToString SourcePos where
+  toString p := s!"line {p.line}, column {p.column}"
+
+-- ============================================================================
 -- Tokens
 -- ============================================================================
 
@@ -28,21 +41,59 @@ inductive Token where
   | eof      : Token
   deriving Repr, BEq, Inhabited
 
+/-- Token with source position -/
+structure PositionedToken where
+  token : Token
+  pos   : SourcePos
+  text  : String  -- original text representation
+  deriving Repr, BEq, Inhabited
+
+/-- Get human-readable description of a token -/
+def Token.describe : Token → String
+  | .keyword s => s!"keyword '{s}'"
+  | .ident s => s!"identifier '{s}'"
+  | .intLit n => s!"integer {n}"
+  | .strLit s => s!"string '{s}'"
+  | .op s => s!"operator '{s}'"
+  | .lparen => "'('"
+  | .rparen => "')'"
+  | .comma => "','"
+  | .dot => "'.'"
+  | .semicolon => "';'"
+  | .star => "'*'"
+  | .eof => "end of input"
+
 -- ============================================================================
 -- Parser Monad
 -- ============================================================================
 
-/-- Parser state: remaining tokens and position -/
+/-- Parser state: remaining tokens with positions -/
 structure ParseState where
-  tokens : List Token
-  pos    : Nat
+  tokens      : List PositionedToken
+  pos         : Nat
+  input       : String              -- original input for context
+  parenStack  : List SourcePos      -- track open parentheses positions
   deriving Repr
 
-/-- Parser error -/
+/-- Parser error with detailed context -/
 structure ParseError where
-  message : String
-  pos     : Nat
+  message    : String
+  line       : Nat
+  column     : Nat
+  context    : Option String        -- surrounding text
+  suggestion : Option String        -- suggested fix
   deriving Repr
+
+instance : ToString ParseError where
+  toString e :=
+    let loc := s!"at line {e.line}, column {e.column}"
+    let ctx := match e.context with
+      | some c => s!"\n  Near: {c}"
+      | none => ""
+    let sug := match e.suggestion with
+      | some s => s!"\n  Suggestion: {s}"
+      | none => ""
+    s!"{e.message} {loc}{ctx}{sug}"
 
 /-- Parser monad: Either error or (result, remaining state) -/
 abbrev Parser (α : Type) := ParseState → Except ParseError (α × ParseState)
@@ -60,8 +111,43 @@ instance : Monad Parser where
   pure := Parser.pure
   bind := Parser.bind
 
+/-- Get context around current position -/
+private def getContext (state : ParseState) : Option String :=
+  -- Get up to 30 chars around current token
+  match state.tokens with
+  | [] => none
+  | pt :: _ =>
+    let startIdx := if pt.pos.column > 15 then pt.pos.column - 15 else 0
+    let snippet := (state.input.drop startIdx |>.take 30).toString
+    if snippet.isEmpty then none else some snippet
+
+/-- Get current position -/
+private def currentPos (state : ParseState) : SourcePos :=
+  match state.tokens with
+  | [] => ⟨1, state.input.length + 1⟩  -- end of input
+  | pt :: _ => pt.pos
+
+/-- Create an error with full context -/
 def fail (msg : String) : Parser α := fun s =>
-  .error { message := msg, pos := s.pos }
+  let pos := currentPos s
+  .error {
+    message := msg
+    line := pos.line
+    column := pos.column
+    context := getContext s
+    suggestion := none
+  }
+
+/-- Create an error with a suggestion -/
+def failWithSuggestion (msg : String) (suggestion : String) : Parser α := fun s =>
+  let pos := currentPos s
+  .error {
+    message := msg
+    line := pos.line
+    column := pos.column
+    context := getContext s
+    suggestion := some suggestion
+  }
 
 def getState : Parser ParseState := fun s => .ok (s, s)
 
@@ -71,13 +157,25 @@ def setState (s : ParseState) : Parser Unit := fun _ => .ok ((), s)
 def peek : Parser Token := fun s =>
   match s.tokens with
   | [] => .ok (.eof, s)
-  | t :: _ => .ok (t, s)
+  | pt :: _ => .ok (pt.token, s)
+
+/-- Peek at current positioned token -/
+def peekPositioned : Parser PositionedToken := fun s =>
+  match s.tokens with
+  | [] => .ok (⟨.eof, ⟨1, s.input.length + 1⟩, ""⟩, s)
+  | pt :: _ => .ok (pt, s)
 
 /-- Consume and return current token -/
 def advance : Parser Token := fun s =>
   match s.tokens with
   | [] => .ok (.eof, s)
-  | t :: ts => .ok (t, { tokens := ts, pos := s.pos + 1 })
+  | pt :: pts => .ok (pt.token, { s with tokens := pts, pos := s.pos + 1 })
+
+/-- Consume and return current positioned token -/
+def advancePositioned : Parser PositionedToken := fun s =>
+  match s.tokens with
+  | [] => .ok (⟨.eof, ⟨1, s.input.length + 1⟩, ""⟩, s)
+  | pt :: pts => .ok (pt, { s with tokens := pts, pos := s.pos + 1 })
 
 /-- Check if current token matches -/
 def check (pred : Token → Bool) : Parser Bool := do
@@ -99,11 +197,47 @@ def orElse (p1 : Parser α) (p2 : Unit → Parser α) : Parser α := fun s =>
 instance : OrElse (Parser α) where
   orElse := orElse
 
-/-- Expect a specific token -/
-def expect (expected : Token) (msg : String) : Parser Unit := do
-  let t ← advance
-  if t == expected then return ()
-  else fail msg
+/-- Expect a specific token with better error messages -/
+def expect (expected : Token) (msg : String) : Parser Unit := fun s =>
+  match s.tokens with
+  | [] =>
+    let pos := currentPos s
+    .error {
+      message := if msg.isEmpty then s!"Expected {expected.describe}, got end of input" else msg
+      line := pos.line
+      column := pos.column
+      context := getContext s
+      suggestion := none
+    }
+  | pt :: pts =>
+    if pt.token == expected then
+      .ok ((), { s with tokens := pts, pos := s.pos + 1 })
+    else
+      let actualDesc := pt.token.describe
+      let expectedDesc := expected.describe
+      .error {
+        message := if msg.isEmpty then s!"Expected {expectedDesc}, got {actualDesc}" else s!"{msg} (got {actualDesc})"
+        line := pt.pos.line
+        column := pt.pos.column
+        context := getContext s
+        suggestion := none
+      }
+
+/-- Push open paren position onto stack -/
+def pushParen : Parser Unit := fun s =>
+  let pos := currentPos s
+  .ok ((), { s with parenStack := pos :: s.parenStack })
+
+/-- Pop paren position from stack -/
+def popParen : Parser Unit := fun s =>
+  match s.parenStack with
+  | [] => .ok ((), s)
+  | _ :: rest => .ok ((), { s with parenStack := rest })
+
+/-- Expect close paren and pop from stack -/
+def expectCloseParen (_openPos : SourcePos) : Parser Unit := do
+  Parser.expect .rparen "Expected )"
+  Parser.popParen
 
 /-- Parse zero or more -/
 partial def many (p : Parser α) : Parser (List α) := do
@@ -147,7 +281,8 @@ def sqlKeywords : List String := [
   "ORDER", "BY", "ASC", "DESC", "GROUP", "HAVING", "DISTINCT",
   "LIMIT", "OFFSET", "AS", "IN", "BETWEEN", "LIKE", "CASE", "WHEN", "THEN",
   "ELSE", "END", "IS", "UNION", "INTERSECT", "EXCEPT", "ALL",
-  "COUNT", "SUM", "AVG", "MIN", "MAX", "EXISTS"
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "EXISTS",
+  "WITH", "OVER", "PARTITION", "ROW_NUMBER", "RANK", "DENSE_RANK"
 ]
 
 /-- Check if string is an aggregate function name -/
@@ -172,83 +307,235 @@ def isAlpha (c : Char) : Bool :=
 def isAlphaNum (c : Char) : Bool :=
   isAlpha c || isDigit c
 
-/-- Tokenize input string -/
-partial def tokenize (input : String) : Except String (List Token) := do
-  let rec go (chars : List Char) (acc : List Token) : Except String (List Token) :=
+/-- Tokenizer state tracking position -/
+structure TokenizerState where
+  line   : Nat := 1
+  column : Nat := 1
+  offset : Nat := 0  -- character offset from start
+  deriving Repr
+
+/-- Tokenizer error with position -/
+structure TokenizerError where
+  message : String
+  line    : Nat
+  column  : Nat
+  context : Option String
+  deriving Repr
+
+instance : ToString TokenizerError where
+  toString e :=
+    let ctx := match e.context with
+      | some c => s!" near '{c}'"
+      | none => ""
+    s!"{e.message} at line {e.line}, column {e.column}{ctx}"
+
+/-- Advance position for a character -/
+private def advancePos (state : TokenizerState) (c : Char) : TokenizerState :=
+  if c == '\n' then
+    { line := state.line + 1, column := 1, offset := state.offset + 1 }
+  else
+    { line := state.line, column := state.column + 1, offset := state.offset + 1 }
+
+/-- Advance position for multiple characters -/
+private def advancePosMany (state : TokenizerState) (chars : List Char) : TokenizerState :=
+  chars.foldl advancePos state
+
+/-- Get context string around position -/
+private def getContextAt (input : String) (offset : Nat) : Option String :=
+  let startIdx := if offset > 10 then offset - 10 else 0
+  let snippet := (input.drop startIdx |>.take 20).toString
+  if snippet.isEmpty then none else some snippet
+
+/-- Tokenize input string with position tracking -/
+partial def tokenize (input : String) : Except TokenizerError (List PositionedToken) := do
+  let rec go (chars : List Char) (state : TokenizerState) (acc : List PositionedToken)
+      : Except TokenizerError (List PositionedToken) :=
     match chars with
     | [] => .ok acc.reverse
     | c :: rest =>
       if isWhitespace c then
-        go rest acc
+        go rest (advancePos state c) acc
       else if c == '(' then
-        go rest (.lparen :: acc)
+        let pt := ⟨.lparen, ⟨state.line, state.column⟩, "("⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == ')' then
-        go rest (.rparen :: acc)
+        let pt := ⟨.rparen, ⟨state.line, state.column⟩, ")"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == ',' then
-        go rest (.comma :: acc)
+        let pt := ⟨.comma, ⟨state.line, state.column⟩, ","⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '.' then
-        go rest (.dot :: acc)
+        let pt := ⟨.dot, ⟨state.line, state.column⟩, "."⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == ';' then
-        go rest (.semicolon :: acc)
+        let pt := ⟨.semicolon, ⟨state.line, state.column⟩, ";"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '*' then
-        go rest (.star :: acc)
+        let pt := ⟨.star, ⟨state.line, state.column⟩, "*"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '+' then
-        go rest (.op "+" :: acc)
+        let pt := ⟨.op "+", ⟨state.line, state.column⟩, "+"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '-' then
-        go rest (.op "-" :: acc)
+        let pt := ⟨.op "-", ⟨state.line, state.column⟩, "-"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '/' then
-        go rest (.op "/" :: acc)
+        let pt := ⟨.op "/", ⟨state.line, state.column⟩, "/"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '%' then
-        go rest (.op "%" :: acc)
+        let pt := ⟨.op "%", ⟨state.line, state.column⟩, "%"⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '=' then
-        go rest (.op "=" :: acc)
+        let pt := ⟨.op "=", ⟨state.line, state.column⟩, "="⟩
+        go rest (advancePos state c) (pt :: acc)
       else if c == '<' then
         match rest with
-        | '>' :: rest' => go rest' (.op "<>" :: acc)
-        | '=' :: rest' => go rest' (.op "<=" :: acc)
-        | _ => go rest (.op "<" :: acc)
+        | '>' :: rest' =>
+          let pt := ⟨.op "<>", ⟨state.line, state.column⟩, "<>"⟩
+          go rest' (advancePosMany state ['<', '>']) (pt :: acc)
+        | '=' :: rest' =>
+          let pt := ⟨.op "<=", ⟨state.line, state.column⟩, "<="⟩
+          go rest' (advancePosMany state ['<', '=']) (pt :: acc)
+        | _ =>
+          let pt := ⟨.op "<", ⟨state.line, state.column⟩, "<"⟩
+          go rest (advancePos state c) (pt :: acc)
       else if c == '>' then
         match rest with
-        | '=' :: rest' => go rest' (.op ">=" :: acc)
-        | _ => go rest (.op ">" :: acc)
+        | '=' :: rest' =>
+          let pt := ⟨.op ">=", ⟨state.line, state.column⟩, ">="⟩
+          go rest' (advancePosMany state ['>', '=']) (pt :: acc)
+        | _ =>
+          let pt := ⟨.op ">", ⟨state.line, state.column⟩, ">"⟩
+          go rest (advancePos state c) (pt :: acc)
       else if c == '|' then
         match rest with
-        | '|' :: rest' => go rest' (.op "||" :: acc)
-        | _ => .error "Unexpected character: |"
+        | '|' :: rest' =>
+          let pt := ⟨.op "||", ⟨state.line, state.column⟩, "||"⟩
+          go rest' (advancePosMany state ['|', '|']) (pt :: acc)
+        | _ => .error {
+            message := "Unexpected character '|' (did you mean '||'?)"
+            line := state.line
+            column := state.column
+            context := getContextAt input state.offset
+          }
       else if c == '!' then
         match rest with
-        | '=' :: rest' => go rest' (.op "<>" :: acc)
-        | _ => .error "Unexpected character: !"
+        | '=' :: rest' =>
+          let pt := ⟨.op "<>", ⟨state.line, state.column⟩, "!="⟩
+          go rest' (advancePosMany state ['!', '=']) (pt :: acc)
+        | _ => .error {
+            message := "Unexpected character '!' (did you mean '!='?)"
+            line := state.line
+            column := state.column
+            context := getContextAt input state.offset
+          }
       else if c == '\'' then
         -- String literal
-        let rec readStr (cs : List Char) (accStr : List Char) : Except String (String × List Char) :=
+        let startPos := ⟨state.line, state.column⟩
+        let rec readStr (cs : List Char) (st : TokenizerState) (accStr : List Char)
+            : Except TokenizerError (String × List Char × TokenizerState) :=
           match cs with
-          | [] => .error "Unterminated string literal"
-          | '\'' :: '\'' :: cs' => readStr cs' ('\'' :: accStr)  -- escaped quote
-          | '\'' :: cs' => .ok (String.ofList accStr.reverse, cs')
-          | ch :: cs' => readStr cs' (ch :: accStr)
-        match readStr rest [] with
+          | [] => .error {
+              message := "Unterminated string literal"
+              line := startPos.line
+              column := startPos.column
+              context := some s!"String started at line {startPos.line}, column {startPos.column}"
+            }
+          | '\'' :: '\'' :: cs' =>
+            readStr cs' (advancePosMany st ['\'', '\'']) ('\'' :: accStr)
+          | '\'' :: cs' =>
+            .ok (String.ofList accStr.reverse, cs', advancePos st '\'')
+          | ch :: cs' =>
+            readStr cs' (advancePos st ch) (ch :: accStr)
+        match readStr rest (advancePos state c) [] with
         | .error e => .error e
-        | .ok (s, rest') => go rest' (.strLit s :: acc)
+        | .ok (s, rest', state') =>
+          let pt := ⟨.strLit s, startPos, s!"'{s}'"⟩
+          go rest' state' (pt :: acc)
       else if isDigit c then
         -- Integer literal
+        let startPos := ⟨state.line, state.column⟩
         let (digits, rest') := rest.span isDigit
-        let numStr := String.ofList (c :: digits)
+        let allDigits := c :: digits
+        let numStr := String.ofList allDigits
         match numStr.toInt? with
-        | some n => go rest' (.intLit n :: acc)
-        | none => .error s!"Invalid integer: {numStr}"
+        | some n =>
+          let pt := ⟨.intLit n, startPos, numStr⟩
+          go rest' (advancePosMany state allDigits) (pt :: acc)
+        | none => .error {
+            message := s!"Invalid integer: {numStr}"
+            line := startPos.line
+            column := startPos.column
+            context := getContextAt input state.offset
+          }
       else if isAlpha c then
         -- Identifier or keyword
+        let startPos := ⟨state.line, state.column⟩
         let (chars', rest') := rest.span isAlphaNum
-        let word := String.ofList (c :: chars')
+        let allChars := c :: chars'
+        let word := String.ofList allChars
         let upper := word.toUpper
-        if sqlKeywords.contains upper then
-          go rest' (.keyword upper :: acc)
-        else
-          go rest' (.ident word :: acc)
+        let token := if sqlKeywords.contains upper then .keyword upper else .ident word
+        let pt := ⟨token, startPos, word⟩
+        go rest' (advancePosMany state allChars) (pt :: acc)
       else
-        .error s!"Unexpected character: {c}"
-  go input.toList []
+        .error {
+          message := s!"Unexpected character: '{c}'"
+          line := state.line
+          column := state.column
+          context := getContextAt input state.offset
+        }
+  go input.toList ⟨1, 1, 0⟩ []
+
+-- ============================================================================
+-- Error Helpers
+-- ============================================================================
+
+/-- Compute edit distance between two strings (for suggestions) -/
+private partial def editDistance (s1 s2 : String) : Nat :=
+  let a := s1.toList
+  let b := s2.toList
+  let m := a.length
+  let n := b.length
+  if m == 0 then n
+  else if n == 0 then m
+  else
+    -- Simple recursive implementation (not optimal but fine for short keywords)
+    let rec go (i j : Nat) : Nat :=
+      if i == 0 then j
+      else if j == 0 then i
+      else
+        let cost := if a[i-1]? == b[j-1]? then 0 else 1
+        let del := go (i-1) j + 1
+        let ins := go i (j-1) + 1
+        let sub := go (i-1) (j-1) + cost
+        Nat.min del (Nat.min ins sub)
+    go m n
+
+/-- Find similar keywords to a misspelled word -/
+def suggestKeyword (word : String) : Option String :=
+  let upper := word.toUpper
+  let candidates := sqlKeywords.filter fun kw =>
+    let dist := editDistance upper kw
+    dist <= 2 && dist > 0  -- Allow up to 2 edits, but not exact match
+  match candidates with
+  | [] => none
+  | kw :: _ => some kw
+
+/-- Suggest fixes for common SQL mistakes -/
+def suggestFix (context : String) (token : Token) : Option String :=
+  match token with
+  | .ident s =>
+    match suggestKeyword s with
+    | some kw => some s!"Did you mean '{kw}'?"
+    | none => none
+  | .keyword "WHERE" =>
+    let containsSubstr (haystack needle : String) : Bool :=
+      (haystack.splitOn needle).length > 1
+    if containsSubstr context.toUpper "SELECT" && !containsSubstr context.toUpper "FROM" then
+      some "Add a FROM clause before WHERE"
+    else none
+  | _ => none
 
 -- ============================================================================
 -- Expression Parser
@@ -259,13 +546,20 @@ def isKeyword (kw : String) : Token → Bool
   | .keyword k => k == kw
   | _ => false
 
-/-- Parse identifier -/
+/-- Parse identifier with better error -/
 def parseIdent : Parser String := do
-  let t ← Parser.advance
-  match t with
-  | .ident s => return s
-  | .keyword s => return s  -- Allow keywords as identifiers in some contexts
-  | _ => Parser.fail "Expected identifier"
+  let pt ← Parser.peekPositioned
+  match pt.token with
+  | .ident s =>
+    let _ ← Parser.advance
+    return s
+  | .keyword s =>
+    let _ ← Parser.advance
+    return s  -- Allow keywords as identifiers in some contexts
+  | .eof =>
+    Parser.fail "Expected identifier, but reached end of input"
+  | t =>
+    Parser.fail s!"Expected identifier, got {t.describe}"
 
 /-- Parse column reference (possibly qualified) -/
 def parseColumnRef : Parser ColumnRef := do
@@ -336,17 +630,20 @@ partial def parsePrimary : Parser Expr := do
     Parser.expect .rparen "Expected )"
     return .exists false sel
   | .lparen =>
+    -- Track paren position for better error messages
+    let openPt ← Parser.peekPositioned
     let _ ← Parser.advance
+    Parser.pushParen
     -- Could be subquery or parenthesized expression
     let t' ← Parser.peek
     if isKeyword "SELECT" t' then
       -- Scalar subquery
       let sel ← parseSelectStmt
-      Parser.expect .rparen "Expected )"
+      Parser.expectCloseParen openPt.pos
       return .subquery sel
     else
       let e ← parseExpr
-      Parser.expect .rparen "Expected )"
+      Parser.expectCloseParen openPt.pos
       return e
   | .ident _ | .keyword _ =>
     -- Could be column ref, function call, or aggregate
@@ -783,12 +1080,18 @@ partial def parseSelectStmt : Parser SelectStmt := do
   -- Select items
   let items ← Parser.sepBy1 parseSelectItem (Parser.expect .comma "")
 
-  -- FROM clause (optional)
+  -- FROM clause (optional) - with better error detection
   let t1 ← Parser.peek
   let fromClause ←
     if isKeyword "FROM" t1 then
       let _ ← Parser.advance
       some <$> parseFromClause
+    else if isKeyword "WHERE" t1 || isKeyword "GROUP" t1 ||
+            isKeyword "HAVING" t1 || isKeyword "ORDER" t1 then
+      -- Common mistake: forgot FROM before WHERE/GROUP BY/etc.
+      Parser.failWithSuggestion
+        s!"Missing FROM clause before {(match t1 with | .keyword k => k | _ => "clause")}"
+        "Add 'FROM table_name' before this clause"
     else
       Parser.pure none
 
@@ -1003,18 +1306,18 @@ end -- mutual
 
 /-- Parse SQL string to AST -/
 def parse (input : String) : Except String Stmt := do
-  let tokens ← tokenize input
-  let state : ParseState := { tokens := tokens, pos := 0 }
+  let tokens ← (tokenize input).mapError toString
+  let state : ParseState := { tokens := tokens, pos := 0, input := input, parenStack := [] }
   match parseStmt state with
-  | .error e => Except.error s!"Parse error at position {e.pos}: {e.message}"
+  | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
   | .ok (stmt, _) => Except.ok stmt
 
 /-- Parse SELECT statement specifically -/
 def parseSelectStr (input : String) : Except String SelectStmt := do
-  let tokens ← tokenize input
-  let state : ParseState := { tokens := tokens, pos := 0 }
+  let tokens ← (tokenize input).mapError toString
+  let state : ParseState := { tokens := tokens, pos := 0, input := input, parenStack := [] }
   match parseSelect state with
-  | .error e => Except.error s!"Parse error at position {e.pos}: {e.message}"
+  | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
   | .ok (stmt, _) => Except.ok stmt
 
 end SqlEquiv
