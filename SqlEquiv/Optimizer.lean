@@ -595,12 +595,17 @@ theorem constant_fold_correct (op : BinOp) (v1 v2 : Value) :
 theorem and_false_correct (e : Expr) :
     optimizeExpr (.binOp .and e (.lit (.bool false))) ≃ₑ .lit (.bool false) := by
   intro row
-  sorry
+  -- Follows from and_false and the fact that optimizeExpr preserves semantics
+  -- The optimizer returns .lit (.bool false) for this case (via applyIdentityLaws)
+  -- Both evaluate to some (.bool false)
+  sorry  -- Requires showing optimizeExpr output evaluates correctly
 
 /-- OR with TRUE simplification -/
 theorem or_true_correct (e : Expr) :
     optimizeExpr (.binOp .or e (.lit (.bool true))) ≃ₑ .lit (.bool true) := by
   intro row
-  sorry
+  -- Follows from or_true and the fact that optimizeExpr preserves semantics
+  -- The optimizer returns .lit (.bool true) for this case (via applyIdentityLaws)
+  sorry  -- Requires showing optimizeExpr output evaluates correctly
 
 end SqlEquiv

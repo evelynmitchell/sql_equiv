@@ -568,7 +568,10 @@ theorem where_true_elim (db : Database) (items : List SelectItem) (from_ : Optio
     (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
     (limit offset : Option Nat) :
     evalSelect db (.mk false items from_ (some (.lit (.bool true))) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ none groupBy having orderBy limit offset) := by sorry
+    evalSelect db (.mk false items from_ none groupBy having orderBy limit offset) := by
+  -- WHERE TRUE keeps all rows since evalExprWithDb_lit gives true for all rows
+  -- The filter condition is always true, equivalent to no filter
+  sorry  -- Requires proving filter identity at the List level
 
 theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
