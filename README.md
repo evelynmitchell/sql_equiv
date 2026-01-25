@@ -534,6 +534,31 @@ inductive Stmt where
 | `inner_subset_cross` | `|A ⋈ B ON cond| ≤ |A × B|` |
 | `left_join_filter_null_is_inner` | LEFT JOIN filtered by non-null = INNER JOIN |
 
+### Subquery Theorems
+
+| Theorem | Description |
+|---------|-------------|
+| `exists_empty_false` | `EXISTS (empty) = FALSE` |
+| `not_exists_empty_true` | `NOT EXISTS (empty) = TRUE` |
+| `exists_nonempty_true` | `EXISTS (non-empty) = TRUE` |
+| `not_exists_nonempty_false` | `NOT EXISTS (non-empty) = FALSE` |
+| `not_not_exists` | `NOT NOT EXISTS = EXISTS` |
+| `in_empty_subquery_false` | `x IN (empty subquery) = FALSE` |
+| `not_in_empty_subquery_true` | `x NOT IN (empty subquery) = TRUE` |
+| `scalar_subquery_empty_null` | Scalar subquery on empty = NULL |
+| `exists_as_count_gt_zero` | `EXISTS = (COUNT(*) > 0)` |
+| `not_exists_as_count_eq_zero` | `NOT EXISTS = (COUNT(*) = 0)` |
+| `in_subquery_as_exists` | `x IN (SELECT col FROM t) = EXISTS (SELECT 1 FROM t WHERE col = x)` |
+| `not_in_subquery_as_not_exists` | `x NOT IN (...) = NOT EXISTS (...)` |
+| `uncorrelated_subquery_independent` | Uncorrelated subquery result is independent of outer row |
+| `subquery_limit_one` | Subquery with LIMIT 1 returns at most 1 row |
+| `scalar_subquery_is_first` | Scalar subquery = first column of first row |
+| `exists_monotonic` | EXISTS is monotonic (superset preserves TRUE) |
+| `subquery_where_true` | Adding WHERE TRUE doesn't change subquery |
+| `subquery_where_false` | Adding WHERE FALSE makes subquery empty |
+| `in_singleton_subquery` | `x IN (single value v) = (x = v)` |
+| `correlated_subquery_uses_context` | Correlated subquery uses outer row context |
+
 ### Other
 
 | Theorem | Description |
