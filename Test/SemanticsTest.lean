@@ -141,11 +141,75 @@ def whereQueryTests : List TestResult := [
 -- ============================================================================
 
 def joinQueryTests : List TestResult := [
+  -- Basic JOIN tests
   testNonEmpty "inner_join" "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id",
   testRowCount "inner_join_count" "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id" 4,
   -- Users 4 and 5 have no orders, so left join should have more rows with NULLs
   testNonEmpty "left_join" "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id",
-  testNonEmpty "cross_join" "SELECT * FROM users CROSS JOIN products"
+  testNonEmpty "cross_join" "SELECT * FROM users CROSS JOIN products",
+
+  -- LEFT JOIN preserves all left rows (5 users, some with NULL order data)
+  testRowCount "left_join_preserves_left" "SELECT * FROM users u LEFT JOIN orders o ON u.id = o.user_id" 6,
+
+  -- CROSS JOIN cardinality: 5 users × 3 products = 15 rows
+  testRowCount "cross_join_cardinality" "SELECT * FROM users CROSS JOIN products" 15,
+
+  -- JOIN with additional WHERE filter
+  testRowCount "join_with_where" "SELECT * FROM users u INNER JOIN orders o ON u.id = o.user_id WHERE o.amount > 150" 2,
+
+  -- Self-join: users in same department
+  testNonEmpty "self_join" "SELECT u1.name, u2.name FROM users u1 INNER JOIN users u2 ON u1.department = u2.department AND u1.id < u2.id",
+
+  -- Multiple JOINs
+  testNonEmpty "triple_join" "SELECT u.name, o.amount, p.price FROM users u INNER JOIN orders o ON u.id = o.user_id INNER JOIN products p ON o.product = p.name",
+
+  -- JOIN on TRUE = CROSS JOIN equivalent
+  testRowCount "join_on_true" "SELECT * FROM users u INNER JOIN products p ON 1 = 1" 15,
+
+  -- JOIN on FALSE = empty
+  testRowCount "join_on_false" "SELECT * FROM users u INNER JOIN orders o ON 1 = 0" 0
+]
+
+-- ============================================================================
+-- Edge Case Tests
+-- ============================================================================
+
+def edgeCaseTests : List TestResult := [
+  -- Empty result from WHERE FALSE
+  testEmpty "where_false" "SELECT * FROM users WHERE 1 = 0",
+
+  -- WHERE TRUE returns all rows
+  testRowCount "where_true" "SELECT * FROM users WHERE 1 = 1" 5,
+
+  -- LIMIT 0 returns empty
+  testEmpty "limit_zero" "SELECT * FROM users LIMIT 0",
+
+  -- OFFSET beyond row count returns empty
+  testEmpty "offset_beyond" "SELECT * FROM users OFFSET 100",
+
+  -- Empty IN list
+  testEmpty "empty_in_subquery" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 1000)",
+
+  -- NOT IN with no matches returns all
+  testRowCount "not_in_no_match" "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE amount > 1000)" 5,
+
+  -- NULL handling in comparisons
+  testNonEmpty "null_safe_query" "SELECT * FROM users WHERE name IS NOT NULL",
+
+  -- COALESCE-like behavior
+  testNonEmpty "case_null" "SELECT CASE WHEN name IS NULL THEN 'Unknown' ELSE name END FROM users",
+
+  -- Empty table behavior (nonexistent table returns empty)
+  testEmpty "empty_table" "SELECT * FROM nonexistent_table",
+
+  -- DISTINCT on single value
+  testRowCount "distinct_single" "SELECT DISTINCT 1 FROM users" 1,
+
+  -- ORDER BY with LIMIT
+  testRowCount "order_limit" "SELECT * FROM users ORDER BY age DESC LIMIT 2" 2,
+
+  -- Complex nested conditions
+  testNonEmpty "nested_conditions" "SELECT * FROM users WHERE (age > 25 AND department = 'Engineering') OR (age < 30 AND department = 'Sales')"
 ]
 
 -- ============================================================================
@@ -318,7 +382,8 @@ def allSemanticsTests : List TestResult :=
   basicQueryTests ++ whereQueryTests ++ joinQueryTests ++
   projectionTests ++ distinctTests ++ orderByTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
-  distinctAggTests ++ groupByTests ++ setOpQueryTests ++ arithmeticTests ++ mutationTests
+  distinctAggTests ++ groupByTests ++ setOpQueryTests ++
+  arithmeticTests ++ edgeCaseTests ++ mutationTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests

@@ -50,8 +50,10 @@ def StmtEquiv (s1 s2 : Stmt) : Prop :=
 ### Custom Tactics for SQL Proofs
 
 ```lean
--- Automated equivalence proving
+-- Automated equivalence proving (handles boolean, arithmetic, comparison)
 example : Expr.binOp .and a b =~e Expr.binOp .and b a := by sql_equiv
+example : Expr.binOp .add a (Expr.lit (.int 0)) =~e a := by sql_equiv
+example : Expr.binOp .lt a b =~e Expr.binOp .gt b a := by sql_equiv
 
 -- SQL-specific simplification
 example : ... := by sql_simp
@@ -60,6 +62,13 @@ example : ... := by sql_simp
 example : a =~e a := by sql_refl
 example (h : a =~e b) : b =~e a := by sql_symm; exact h
 example (h1 : a =~e b) (h2 : b =~e c) : a =~e c := by sql_trans b <;> assumption
+
+-- Specialized rewrite tactics
+example : ... := by sql_rw_arith      -- Arithmetic identities (x+0=x, x*1=x)
+example : ... := by sql_rw_compare    -- Comparison flips (x<y = y>x)
+example : ... := by sql_rw_demorgan   -- De Morgan's laws
+example : ... := by sql_rw_distrib    -- Distributivity
+example : ... := by sql_rw_null       -- NULL handling rules
 ```
 
 ### Property-Based Testing
