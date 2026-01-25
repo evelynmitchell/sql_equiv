@@ -211,6 +211,31 @@ def subqueryTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Aggregate Tests
+-- ============================================================================
+
+def aggregateTests : List TestResult := [
+  -- COUNT(*) - count all orders
+  testContainsValue "count_star" "SELECT COUNT(*) FROM orders" (.int 4),
+  -- COUNT(column) - count non-null values
+  testContainsValue "count_col" "SELECT COUNT(amount) FROM orders" (.int 4),
+  -- SUM - sum of all order amounts (100 + 200 + 150 + 300 = 750)
+  testContainsValue "sum" "SELECT SUM(amount) FROM orders" (.int 750),
+  -- AVG - average order amount (750 / 4 = 187 integer division)
+  testContainsValue "avg" "SELECT AVG(amount) FROM orders" (.int 187),
+  -- MIN - minimum order amount
+  testContainsValue "min" "SELECT MIN(amount) FROM orders" (.int 100),
+  -- MAX - maximum order amount
+  testContainsValue "max" "SELECT MAX(amount) FROM orders" (.int 300),
+  -- Aggregate with WHERE clause - sum of orders over 150
+  testContainsValue "sum_where" "SELECT SUM(amount) FROM orders WHERE amount > 150" (.int 500),
+  -- COUNT with WHERE - orders over 100
+  testContainsValue "count_where" "SELECT COUNT(*) FROM orders WHERE amount > 100" (.int 3),
+  -- Multiple aggregates in one query
+  testNonEmpty "multi_agg" "SELECT COUNT(*), SUM(amount), MAX(amount) FROM orders"
+]
+
+-- ============================================================================
 -- Set Operation Tests
 -- ============================================================================
 
@@ -249,8 +274,8 @@ def mutationTests : List TestResult := [
 def allSemanticsTests : List TestResult :=
   basicQueryTests ++ whereQueryTests ++ joinQueryTests ++
   projectionTests ++ distinctTests ++ orderByTests ++
-  limitOffsetTests ++ subqueryTests ++ setOpQueryTests ++
-  arithmeticTests ++ mutationTests
+  limitOffsetTests ++ subqueryTests ++ aggregateTests ++
+  setOpQueryTests ++ arithmeticTests ++ mutationTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
