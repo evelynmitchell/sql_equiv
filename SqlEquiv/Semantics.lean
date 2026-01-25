@@ -213,7 +213,7 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
     match evalExprWithDb db row e with
     | none => none
     | some v =>
-      let subResult := evalSelect db sel
+      let subResult := evalSelectWithContext db row sel
       let hasMatch := subResult.any fun subRow =>
         match subRow.head? with
         | some (_, subVal) => v.eq subVal == some true
@@ -221,12 +221,12 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
       some (Value.bool (if neg then !hasMatch else hasMatch))
   | .exists neg sel =>
     -- For correlated subqueries, pass the outer row context
-    let subResult := evalSelect db sel
+    let subResult := evalSelectWithContext db row sel
     let hasExists := !subResult.isEmpty
     some (Value.bool (if neg then !hasExists else hasExists))
   | .subquery sel =>
     -- Scalar subquery - returns first column of first row
-    match (evalSelect db sel).head? with
+    match (evalSelectWithContext db row sel).head? with
     | some subRow => subRow.head?.map (·.2)
     | none => some (.null none)  -- Empty subquery returns NULL
   | .between e lo hi =>
