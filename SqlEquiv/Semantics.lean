@@ -417,6 +417,16 @@ partial def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Ex
 partial def evalExprWithAgg (db : Database) (rows : Table) (row : Row) : Expr → Option Value
   | .agg fn arg distinct => evalAggOverTable db fn arg distinct rows
   | .countStar => some (.int rows.length)
+  | .binOp op l r =>
+    let lv := evalExprWithAgg db rows row l
+    let rv := evalExprWithAgg db rows row r
+    match lv, rv with
+    | some a, some b => evalBinOp op a b
+    | _, _ => none
+  | .unaryOp op e =>
+    match evalExprWithAgg db rows row e with
+    | some v => evalUnaryOp op v
+    | none => none
   | e => evalExprWithDb db row e
 
 /-- Evaluate SELECT item with aggregate support -/
@@ -446,6 +456,19 @@ partial def compareByOrderItems (db : Database) (r1 r2 : Row) : List OrderByItem
       | _ => compareByOrderItems db r1 r2 rest
     | _, _ => compareByOrderItems db r1 r2 rest
 
+/-- Compute GROUP BY key for a row -/
+partial def evalGroupKey (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=
+  groupExprs.map (evalExprWithDb db row)
+
+/-- Group rows by their GROUP BY key -/
+partial def groupRowsByKey (db : Database) (rows : Table) (groupExprs : List Expr) : List (List (Option Value) × Table) :=
+  let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) : List (List (Option Value) × Table) :=
+    let key := evalGroupKey db row groupExprs
+    match groups.find? (fun (k, _) => k == key) with
+    | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+    | none => groups ++ [(key, [row])]
+  rows.foldl addToGroups []
+
 /-- Evaluate full SELECT statement -/
 partial def evalSelect (db : Database) (sel : SelectStmt) : Table :=
   evalSelectWithContext db [] sel
@@ -467,25 +490,46 @@ partial def evalSelectWithContext (db : Database) (outerRow : Row) (sel : Select
         evalExprWithDb db row cond == some (Value.bool true)
     | none => baseRowsWithContext
 
-  -- 3. GROUP BY - simplified: just pass through (no aggregation support)
-  let groupedRows : Table := filteredRows
-
-  -- 4. HAVING clause
-  let havingRows : Table := match sel.having with
-    | some cond =>
-      groupedRows.filter fun row =>
-        evalExprWithDb db row cond == some (Value.bool true)
-    | none => groupedRows
-
-  -- 5. SELECT items (projection)
-  -- Check if we have aggregates without GROUP BY - treat entire table as one group
+  -- 3. GROUP BY and 4. HAVING and 5. SELECT (projection)
+  -- These are interrelated for aggregate queries
   let projectedRows : Table :=
-    if selectHasAggregate sel.items && sel.groupBy.isEmpty then
-      -- Aggregate query: entire filtered table is one group, return single row
-      let sampleRow := havingRows.head?.getD []
-      [sel.items.flatMap (evalSelectItemWithAgg db havingRows sampleRow)]
+    if !sel.groupBy.isEmpty then
+      -- GROUP BY present: partition rows and evaluate aggregates per group
+      let groups := groupRowsByKey db filteredRows sel.groupBy
+      let groupResults := groups.filterMap fun (_key, groupRows) =>
+        -- Use first row of group as representative for non-aggregate expressions
+        match groupRows.head? with
+        | none => none
+        | some sampleRow =>
+          -- Apply HAVING filter to group (evaluate with aggregate support)
+          let passesHaving := match sel.having with
+            | none => true
+            | some cond =>
+              evalExprWithAgg db groupRows sampleRow cond == some (Value.bool true)
+          if passesHaving then
+            some (sel.items.flatMap (evalSelectItemWithAgg db groupRows sampleRow))
+          else
+            none
+      groupResults
+    else if selectHasAggregate sel.items then
+      -- Aggregates without GROUP BY: entire filtered table is one group
+      let sampleRow := filteredRows.head?.getD []
+      -- Apply HAVING filter
+      let passesHaving := match sel.having with
+        | none => true
+        | some cond =>
+          evalExprWithAgg db filteredRows sampleRow cond == some (Value.bool true)
+      if passesHaving then
+        [sel.items.flatMap (evalSelectItemWithAgg db filteredRows sampleRow)]
+      else
+        []
     else
-      -- Non-aggregate query: project each row individually
+      -- No aggregates, no GROUP BY: apply HAVING as regular filter, project each row
+      let havingRows := match sel.having with
+        | some cond =>
+          filteredRows.filter fun row =>
+            evalExprWithDb db row cond == some (Value.bool true)
+        | none => filteredRows
       havingRows.map fun row => sel.items.flatMap (evalSelectItem db row)
 
   -- 6. DISTINCT

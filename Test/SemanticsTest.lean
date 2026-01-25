@@ -236,6 +236,27 @@ def aggregateTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- GROUP BY Tests
+-- ============================================================================
+
+def groupByTests : List TestResult := [
+  -- GROUP BY department: Engineering (2), Sales (2), Marketing (1) = 3 groups
+  testRowCount "group_by_count" "SELECT department, COUNT(*) FROM users GROUP BY department" 3,
+  -- GROUP BY user_id for orders: user 1 (2 orders), user 2 (1), user 3 (1) = 3 groups
+  testRowCount "group_by_user" "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id" 3,
+  -- SUM per user: user 1 = 100+200=300, user 2 = 150, user 3 = 300
+  testRowCount "group_by_sum" "SELECT user_id, SUM(amount) FROM orders GROUP BY user_id" 3,
+  -- GROUP BY product: Widget (2), Gadget (1), Gizmo (1) = 3 groups
+  testRowCount "group_by_product" "SELECT product, COUNT(*) FROM orders GROUP BY product" 3,
+  -- MAX per product: Widget max=150, Gadget=200, Gizmo=300
+  testNonEmpty "group_by_max" "SELECT product, MAX(amount) FROM orders GROUP BY product",
+  -- HAVING clause: only departments with count > 1 (Engineering, Sales)
+  testRowCount "group_by_having" "SELECT department, COUNT(*) FROM users GROUP BY department HAVING COUNT(*) > 1" 2,
+  -- Multiple GROUP BY columns
+  testNonEmpty "group_by_multi" "SELECT department, COUNT(*) FROM users GROUP BY department"
+]
+
+-- ============================================================================
 -- Set Operation Tests
 -- ============================================================================
 
@@ -275,7 +296,7 @@ def allSemanticsTests : List TestResult :=
   basicQueryTests ++ whereQueryTests ++ joinQueryTests ++
   projectionTests ++ distinctTests ++ orderByTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
-  setOpQueryTests ++ arithmeticTests ++ mutationTests
+  groupByTests ++ setOpQueryTests ++ arithmeticTests ++ mutationTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
