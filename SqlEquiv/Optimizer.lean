@@ -343,9 +343,10 @@ end
 -- Query and Statement Optimizer
 -- ============================================================================
 
+mutual
 /-- Optimize a CTE definition -/
-def optimizeCTE : CTEDef -> CTEDef
-  | ⟨name, query⟩ => ⟨name, optimizeSelectStmt query⟩
+partial def optimizeCTE : CTEDef -> CTEDef
+  | .mk name query isRecursive => .mk name (optimizeQuery query) isRecursive
 
 /-- Optimize a Query -/
 partial def optimizeQuery : Query -> Query
@@ -354,6 +355,7 @@ partial def optimizeQuery : Query -> Query
     .compound (optimizeQuery left) op (optimizeQuery right)
   | .withCTE ctes query =>
     .withCTE (ctes.map optimizeCTE) (optimizeQuery query)
+end
 
 /-- Optimize InsertSource -/
 partial def optimizeInsertSource : InsertSource -> InsertSource
@@ -503,7 +505,7 @@ partial def estimateQueryCost (factors : CostFactors) : Query -> Nat
       | .exceptOp => 100
     leftCost + rightCost + opCost
   | .withCTE ctes query =>
-    let cteCost := ctes.foldl (fun acc cte => acc + estimateSelectCost factors cte.query) 0
+    let cteCost := ctes.foldl (fun acc cte => acc + estimateQueryCost factors cte.query) 0
     cteCost + estimateQueryCost factors query
 
 /-- Estimate the cost of a Statement -/

@@ -916,7 +916,7 @@ partial def decideQueryEq (q1 q2 : Query) : Bool :=
     decideQueryEq l1 l2 && op1 == op2 && decideQueryEq r1 r2
   | .withCTE ctes1 q1, .withCTE ctes2 q2 =>
     ctes1.length == ctes2.length &&
-    (ctes1.zip ctes2).all (fun (c1, c2) => c1.name == c2.name && decideSelectStmtEq c1.query c2.query) &&
+    (ctes1.zip ctes2).all (fun (c1, c2) => c1.name == c2.name && decideQueryEq c1.query c2.query && c1.isRecursive == c2.isRecursive) &&
     decideQueryEq q1 q2
   | _, _ => false
 

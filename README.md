@@ -24,6 +24,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
+- **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries
 - **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET
 - **INSERT statements**: VALUES, INSERT...SELECT
 - **UPDATE statements**: SET with WHERE conditions
@@ -184,6 +185,36 @@ theorem my_where_true (db : Database) (items : List SelectItem) (from_ : Option 
     evalSelect db (.mk false items from_ none [] none [] none none) := by
   exact where_true_elim db items from_ [] none [] none none
 ```
+
+### Recursive CTEs
+
+```lean
+import SqlEquiv
+
+open SqlEquiv
+
+-- Parse and evaluate a recursive CTE
+def recursiveCTEExample : IO Unit := do
+  -- Generate numbers 1 to 5 using recursive CTE
+  let sql := "WITH RECURSIVE nums AS (
+    SELECT 1 AS n
+    UNION ALL
+    SELECT n + 1 FROM nums WHERE n < 5
+  ) SELECT * FROM nums"
+
+  match parse sql with
+  | .ok stmt =>
+    let db : Database := fun _ => []  -- Empty database (CTE is self-contained)
+    match stmt with
+    | .query q =>
+      let result := evalQuery db q
+      IO.println s!"Generated {result.length} rows"
+      -- Output: Generated 5 rows (n = 1, 2, 3, 4, 5)
+    | _ => IO.println "Not a query"
+  | .error e => IO.println s!"Error: {e}"
+```
+
+The recursive CTE evaluator uses fixed-point iteration with a maximum of 1000 iterations to prevent infinite loops.
 
 ### Using the sql_equiv Tactic
 

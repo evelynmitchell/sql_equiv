@@ -195,8 +195,9 @@ partial def Query.toSql : Query → String
   | .simple sel => sel.toSql
   | .compound left op right => s!"{left.toSql} {op.toSql} {right.toSql}"
   | .withCTE ctes query =>
-    let cteStrs := ctes.map fun cte => s!"{cte.name} AS ({cte.query.toSql})"
-    s!"WITH {", ".intercalate cteStrs} {query.toSql}"
+    let recursiveKw := if ctes.any (·.isRecursive) then "RECURSIVE " else ""
+    let cteStrs := ctes.map fun cte => s!"{cte.name} AS ({Query.toSql cte.query})"
+    s!"WITH {recursiveKw}{", ".intercalate cteStrs} {query.toSql}"
 
 end
 

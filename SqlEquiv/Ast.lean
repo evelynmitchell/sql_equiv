@@ -321,19 +321,28 @@ def WindowSpec.partitionBy : WindowSpec → List Expr
 def WindowSpec.orderBy : WindowSpec → List OrderByItem
   | .mk _ o => o
 
-/-- Common Table Expression definition: name and query -/
-structure CTEDef where
-  name  : String
-  query : SelectStmt
-
--- Note: Repr instance defined after toReprStr is available
--- Note: Inhabited instance defined after SelectStmt Inhabited is available
+-- Note: CTEDef and Query are mutually recursive
+mutual
+/-- Common Table Expression definition: name, query, and recursion flag -/
+inductive CTEDef where
+  | mk : (name : String) → (query : Query) → (isRecursive : Bool := false) → CTEDef
 
 /-- Query with optional set operations -/
 inductive Query where
   | simple : SelectStmt → Query
   | compound : Query → SetOp → Query → Query
   | withCTE : List CTEDef → Query → Query  -- WITH cte1 AS (...), cte2 AS (...) query
+end
+
+-- Accessor functions for CTEDef
+def CTEDef.name : CTEDef → String
+  | .mk n _ _ => n
+
+def CTEDef.query : CTEDef → Query
+  | .mk _ q _ => q
+
+def CTEDef.isRecursive : CTEDef → Bool
+  | .mk _ _ r => r
 
 /-- Values source for INSERT -/
 inductive InsertSource where
@@ -417,7 +426,7 @@ mutual
     | .simple sel => s!"Query.simple ({sel.toReprStr})"
     | .compound l op r => s!"Query.compound ({l.toReprStr}) {repr op} ({r.toReprStr})"
     | .withCTE ctes q =>
-      let cteStrs := ctes.map fun cte => s!"CTEDef.mk {repr cte.name} ({cte.query.toReprStr})"
+      let cteStrs := ctes.map fun cte => s!"CTEDef.mk {repr cte.name} ({Query.toReprStr cte.query}) {cte.isRecursive}"
       s!"Query.withCTE [{", ".intercalate cteStrs}] ({q.toReprStr})"
 
   partial def InsertSource.toReprStr : InsertSource → String
@@ -458,7 +467,7 @@ instance : Repr Stmt where
 
 -- CTEDef instances (defined after SelectStmt toReprStr is available)
 instance : Repr CTEDef where
-  reprPrec cte _ := s!"CTEDef.mk {repr cte.name} ({cte.query.toReprStr})"
+  reprPrec cte _ := s!"CTEDef.mk {repr cte.name} ({Query.toReprStr cte.query}) {cte.isRecursive}"
 
 -- ============================================================================
 -- BEq instances
@@ -541,7 +550,7 @@ mutual
       Query.beq l1 l2 && op1 == op2 && Query.beq r1 r2
     | .withCTE ctes1 q1, .withCTE ctes2 q2 =>
       ctes1.length == ctes2.length &&
-      (ctes1.zip ctes2).all (fun (c1, c2) => c1.name == c2.name && SelectStmt.beq c1.query c2.query) &&
+      (ctes1.zip ctes2).all (fun (c1, c2) => c1.name == c2.name && Query.beq c1.query c2.query && c1.isRecursive == c2.isRecursive) &&
       Query.beq q1 q2
     | _, _ => false
 
@@ -566,7 +575,7 @@ instance : BEq SelectStmt where beq := SelectStmt.beq
 instance : BEq Query where beq := Query.beq
 instance : BEq InsertSource where beq := InsertSource.beq
 instance : BEq Assignment where beq := Assignment.beq
-instance : BEq CTEDef where beq c1 c2 := c1.name == c2.name && SelectStmt.beq c1.query c2.query
+instance : BEq CTEDef where beq c1 c2 := c1.name == c2.name && Query.beq c1.query c2.query && c1.isRecursive == c2.isRecursive
 
 instance : BEq InsertStmt where
   beq i1 i2 := i1.table == i2.table && i1.columns == i2.columns && InsertSource.beq i1.source i2.source
@@ -608,7 +617,7 @@ instance : Inhabited FromClause where default := .table ⟨"", none⟩
 instance : Inhabited OrderByItem where default := .mk default .asc
 instance : Inhabited SelectStmt where
   default := .mk false [] none none [] none [] none none
-instance : Inhabited CTEDef where default := ⟨"", default⟩
+instance : Inhabited CTEDef where default := ⟨"", .simple default, false⟩
 instance : Inhabited Query where default := .simple default
 instance : Inhabited InsertSource where default := .values []
 instance : Inhabited Assignment where default := ⟨"", default⟩

@@ -282,7 +282,7 @@ def sqlKeywords : List String := [
   "LIMIT", "OFFSET", "AS", "IN", "BETWEEN", "LIKE", "CASE", "WHEN", "THEN",
   "ELSE", "END", "IS", "UNION", "INTERSECT", "EXCEPT", "ALL",
   "COUNT", "SUM", "AVG", "MIN", "MAX", "EXISTS",
-  "WITH", "OVER", "PARTITION", "ROW_NUMBER", "RANK", "DENSE_RANK"
+  "WITH", "RECURSIVE", "OVER", "PARTITION", "ROW_NUMBER", "RANK", "DENSE_RANK"
 ]
 
 /-- Check if string is an aggregate function name -/
@@ -1182,40 +1182,48 @@ partial def parseSetOp : Parser (Option SetOp) := do
   else
     return none
 
-/-- Parse a single CTE: name AS (SELECT ...) -/
-partial def parseCTEDef : Parser CTEDef := do
+/-- Parse query rest (handles UNION, INTERSECT, EXCEPT) -/
+partial def parseQueryRest (left : Query) : Parser Query := do
+  match ← parseSetOp with
+  | some op =>
+    let right ← parseSelectStmt
+    parseQueryRest (.compound left op (.simple right))
+  | none =>
+    return left
+
+/-- Parse a query body (SELECT with optional set operations, but not WITH) -/
+partial def parseQueryBody : Parser Query := do
+  let first ← parseSelectStmt
+  parseQueryRest (.simple first)
+
+/-- Parse a single CTE: name AS (query) -/
+partial def parseCTEDef (isRecursive : Bool) : Parser CTEDef := do
   let name ← parseIdent
   Parser.expect (.keyword "AS") "Expected AS"
   Parser.expect .lparen "Expected ("
-  let query ← parseSelect
+  let query ← parseQueryBody  -- Now parses compound queries (UNION, etc.)
   Parser.expect .rparen "Expected )"
-  return { name := name, query := query }
+  return .mk name query isRecursive
 
 /-- Parse comma-separated list of CTEs -/
-partial def parseCTEList : Parser (List CTEDef) :=
-  Parser.sepBy1 parseCTEDef (Parser.expect .comma "")
+partial def parseCTEList (isRecursive : Bool) : Parser (List CTEDef) :=
+  Parser.sepBy1 (parseCTEDef isRecursive) (Parser.expect .comma "")
 
 /-- Parse a query (SELECT with optional set operations, or WITH clause) -/
 partial def parseQuery : Parser Query := do
   let t ← Parser.peek
   if isKeyword "WITH" t then
     let _ ← Parser.advance
-    let ctes ← parseCTEList
+    -- Check for RECURSIVE keyword
+    let t2 ← Parser.peek
+    let isRecursive := isKeyword "RECURSIVE" t2
+    if isRecursive then
+      let _ ← Parser.advance
+    let ctes ← parseCTEList isRecursive
     let mainQuery ← parseQueryBody
     return .withCTE ctes mainQuery
   else
     parseQueryBody
-where
-  parseQueryBody : Parser Query := do
-    let first ← parseSelectStmt
-    parseQueryRest (.simple first)
-  parseQueryRest (left : Query) : Parser Query := do
-    match ← parseSetOp with
-    | some op =>
-      let right ← parseSelectStmt
-      parseQueryRest (.compound left op (.simple right))
-    | none =>
-      return left
 
 -- ============================================================================
 -- INSERT Parser

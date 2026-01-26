@@ -793,6 +793,27 @@ def evalDelete (db : Database) (del : DeleteStmt) : Database :=
     else
       db name
 
+/-- Maximum iterations for recursive CTE to prevent infinite loops -/
+def maxCTEIterations : Nat := 1000
+
+mutual
+/-- Evaluate a recursive CTE using fixed-point iteration -/
+partial def evalRecursiveCTE (db : Database) (cteName : String) (cteQuery : Query) : Table :=
+  -- For recursive CTEs, iterate until fixed point (no new rows)
+  -- Start with empty table for self-reference
+  let rec iterate (workingTable : Table) (iteration : Nat) : Table :=
+    if iteration >= maxCTEIterations then workingTable
+    else
+      -- Create database with current working table for CTE self-reference
+      let dbWithCTE : Database := fun name =>
+        if name == cteName then workingTable else db name
+      let result := evalQuery dbWithCTE cteQuery
+      -- Check for fixed point (no change)
+      if result == workingTable then workingTable
+      else iterate result (iteration + 1)
+  -- Start iteration with empty table
+  iterate [] 0
+
 /-- Evaluate a Query (simple SELECT or compound with set operations) -/
 partial def evalQuery (db : Database) : Query → Table
   | .simple sel => evalSelect db sel
@@ -807,9 +828,17 @@ partial def evalQuery (db : Database) : Query → Table
   | .withCTE ctes query =>
     -- Evaluate CTEs and add them to the database context
     let dbWithCtes := ctes.foldl (fun db' cte =>
-      fun name => if name == cte.name then evalSelect db' cte.query else db' name
+      fun name =>
+        if name == cte.name then
+          if cte.isRecursive then
+            evalRecursiveCTE db' cte.name cte.query
+          else
+            evalQuery db' cte.query
+        else
+          db' name
     ) db
     evalQuery dbWithCtes query
+end
 
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table

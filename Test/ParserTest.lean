@@ -212,13 +212,25 @@ def cteTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Recursive CTE (WITH RECURSIVE) Tests
+-- ============================================================================
+
+def recursiveCTETests : List TestResult := [
+  testRoundTrip "recursive_simple" "WITH RECURSIVE nums AS (SELECT 1 AS n UNION ALL SELECT n FROM nums WHERE n < 5) SELECT * FROM nums",
+  testRoundTrip "recursive_self_ref" "WITH RECURSIVE cnt AS (SELECT 1 AS x UNION ALL SELECT x FROM cnt) SELECT * FROM cnt",
+  testRoundTrip "recursive_tree" "WITH RECURSIVE tree AS (SELECT id, parent_id FROM nodes UNION ALL SELECT n.id, n.parent_id FROM nodes n) SELECT * FROM tree",
+  testRoundTrip "recursive_multiple_ctes" "WITH RECURSIVE a AS (SELECT 1), b AS (SELECT * FROM a UNION ALL SELECT * FROM b) SELECT * FROM b"
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
-  insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests
+  insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests ++
+  recursiveCTETests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests
