@@ -200,13 +200,25 @@ def parseFailTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- CTE (WITH clause) Tests
+-- ============================================================================
+
+def cteTests : List TestResult := [
+  testRoundTrip "cte_simple" "WITH t AS (SELECT 1) SELECT * FROM t",
+  testRoundTrip "cte_from_table" "WITH active AS (SELECT * FROM users WHERE active = TRUE) SELECT * FROM active",
+  testRoundTrip "cte_multiple" "WITH a AS (SELECT 1), b AS (SELECT 2) SELECT * FROM a, b",
+  testRoundTrip "cte_reference_earlier" "WITH a AS (SELECT 1 AS x), b AS (SELECT x FROM a) SELECT * FROM b",
+  testRoundTrip "cte_with_join" "WITH t AS (SELECT * FROM users) SELECT * FROM t INNER JOIN orders ON t.id = orders.user_id"
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
-  insertTests ++ updateTests ++ deleteTests ++ parseFailTests
+  insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests

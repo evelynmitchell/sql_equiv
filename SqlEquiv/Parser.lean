@@ -1182,11 +1182,33 @@ partial def parseSetOp : Parser (Option SetOp) := do
   else
     return none
 
-/-- Parse a query (SELECT with optional set operations) -/
+/-- Parse a single CTE: name AS (SELECT ...) -/
+partial def parseCTEDef : Parser CTEDef := do
+  let name ← parseIdent
+  Parser.expect (.keyword "AS") "Expected AS"
+  Parser.expect .lparen "Expected ("
+  let query ← parseSelect
+  Parser.expect .rparen "Expected )"
+  return { name := name, query := query }
+
+/-- Parse comma-separated list of CTEs -/
+partial def parseCTEList : Parser (List CTEDef) :=
+  Parser.sepBy1 parseCTEDef (Parser.expect .comma "")
+
+/-- Parse a query (SELECT with optional set operations, or WITH clause) -/
 partial def parseQuery : Parser Query := do
-  let first ← parseSelectStmt
-  parseQueryRest (.simple first)
+  let t ← Parser.peek
+  if isKeyword "WITH" t then
+    let _ ← Parser.advance
+    let ctes ← parseCTEList
+    let mainQuery ← parseQueryBody
+    return .withCTE ctes mainQuery
+  else
+    parseQueryBody
 where
+  parseQueryBody : Parser Query := do
+    let first ← parseSelectStmt
+    parseQueryRest (.simple first)
   parseQueryRest (left : Query) : Parser Query := do
     match ← parseSetOp with
     | some op =>
@@ -1291,7 +1313,7 @@ partial def parseDelete : Parser DeleteStmt := do
 /-- Parse any SQL statement -/
 partial def parseStmt : Parser Stmt := do
   let t ← Parser.peek
-  if isKeyword "SELECT" t then
+  if isKeyword "SELECT" t || isKeyword "WITH" t then
     .query <$> parseQuery
   else if isKeyword "INSERT" t then
     .insert <$> parseInsert
@@ -1300,7 +1322,7 @@ partial def parseStmt : Parser Stmt := do
   else if isKeyword "DELETE" t then
     .delete <$> parseDelete
   else
-    Parser.fail "Expected SELECT, INSERT, UPDATE, or DELETE"
+    Parser.fail "Expected SELECT, WITH, INSERT, UPDATE, or DELETE"
 
 end -- mutual
 
