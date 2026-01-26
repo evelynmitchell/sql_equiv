@@ -469,6 +469,149 @@ partial def groupRowsByKey (db : Database) (rows : Table) (groupExprs : List Exp
     | none => groups ++ [(key, [row])]
   rows.foldl addToGroups []
 
+-- ============================================================================
+-- Window Function Evaluation
+-- ============================================================================
+
+/-- Partition rows by PARTITION BY expressions -/
+partial def partitionRows (db : Database) (rows : Table) (partExprs : List Expr) : List Table :=
+  if partExprs.isEmpty then
+    [rows]  -- No PARTITION BY: entire result set is one partition
+  else
+    let groups := groupRowsByKey db rows partExprs
+    groups.map (·.2)
+
+/-- Sort rows within a partition by ORDER BY -/
+partial def sortPartition (db : Database) (rows : Table) (orderBy : List OrderByItem) : Table :=
+  if orderBy.isEmpty then rows
+  else rows.mergeSort fun r1 r2 => compareByOrderItems db r1 r2 orderBy
+
+/-- Compute ROW_NUMBER for each row in a sorted partition -/
+partial def computeRowNumbers (rows : Table) : List (Row × Nat) :=
+  (List.range rows.length).zip rows |>.map fun (i, row) => (row, i + 1)
+
+/-- Compute RANK for each row in a sorted partition (same rank for ties, gaps after) -/
+partial def computeRanks (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
+  let rec go (remaining : List Row) (currentRank : Nat) (nextRank : Nat) (prevKey : Option (List (Option Value))) : List (Row × Nat) :=
+    match remaining with
+    | [] => []
+    | row :: rest =>
+      let key := orderBy.map fun item => evalExprWithDb db row item.expr
+      let (rank, newNextRank) := match prevKey with
+        | none => (1, 2)
+        | some pk => if pk == key then (currentRank, nextRank + 1) else (nextRank, nextRank + 1)
+      (row, rank) :: go rest rank newNextRank (some key)
+  go rows 1 2 none
+
+/-- Compute DENSE_RANK for each row (no gaps after ties) -/
+partial def computeDenseRanks (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
+  let rec go (remaining : List Row) (currentRank : Nat) (prevKey : Option (List (Option Value))) : List (Row × Nat) :=
+    match remaining with
+    | [] => []
+    | row :: rest =>
+      let key := orderBy.map fun item => evalExprWithDb db row item.expr
+      let rank := match prevKey with
+        | none => 1
+        | some pk => if pk == key then currentRank else currentRank + 1
+      (row, rank) :: go rest rank (some key)
+  go rows 1 none
+
+/-- Evaluate a window function for a specific row within its partition -/
+partial def evalWindowFn (db : Database) (fn : WindowFunc) (arg : Option Expr)
+    (partition : Table) (sortedPartition : Table) (row : Row) (rowIndex : Nat) : Option Value :=
+  match fn with
+  | .rowNumber => some (.int (Int.ofNat (rowIndex + 1)))
+  | .rank =>
+    -- Find this row's rank in the sorted partition
+    let ranks := computeRanks db sortedPartition ([] : List OrderByItem)  -- Already sorted
+    match ranks.find? (fun (r, _) => r == row) with
+    | some (_, rank) => some (.int (Int.ofNat rank))
+    | none => some (.int (Int.ofNat (rowIndex + 1)))
+  | .denseRank =>
+    let ranks := computeDenseRanks db sortedPartition ([] : List OrderByItem)
+    match ranks.find? (fun (r, _) => r == row) with
+    | some (_, rank) => some (.int (Int.ofNat rank))
+    | none => some (.int (Int.ofNat (rowIndex + 1)))
+  | .sum =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => evalExprWithDb db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      some (.int (intVals.foldl (· + ·) 0))
+  | .avg =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => evalExprWithDb db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      if intVals.isEmpty then some (.null none)
+      else some (.int (intVals.foldl (· + ·) 0 / Int.ofNat intVals.length))
+  | .min =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => evalExprWithDb db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m < n then m else n)) none with
+      | some n => some (.int n)
+      | none => some (.null none)
+  | .max =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => evalExprWithDb db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m > n then m else n)) none with
+      | some n => some (.int n)
+      | none => some (.null none)
+  | .count =>
+    match arg with
+    | none => some (.int (Int.ofNat partition.length))  -- COUNT(*)
+    | some e =>
+      let nonNullCount := partition.filter fun r =>
+        match evalExprWithDb db r e with
+        | some v => !isNullValue v
+        | none => false
+      some (.int (Int.ofNat nonNullCount.length))
+
+/-- Check if expression contains window functions -/
+partial def exprHasWindowFn : Expr → Bool
+  | .windowFn _ _ _ => true
+  | .binOp _ l r => exprHasWindowFn l || exprHasWindowFn r
+  | .unaryOp _ e => exprHasWindowFn e
+  | .func _ args => args.any exprHasWindowFn
+  | .case branches else_ =>
+    branches.any (fun (c, r) => exprHasWindowFn c || exprHasWindowFn r) ||
+    (match else_ with | some e => exprHasWindowFn e | none => false)
+  | _ => false
+
+/-- Check if SELECT items contain window functions -/
+partial def selectHasWindowFn (items : List SelectItem) : Bool :=
+  items.any fun
+    | .exprItem e _ => exprHasWindowFn e
+    | _ => false
+
+/-- Evaluate expression with window function support -/
+partial def evalExprWithWindow (db : Database) (row : Row) (partition : Table)
+    (sortedPartition : Table) (rowIndex : Nat) : Expr → Option Value
+  | .windowFn fn arg spec =>
+    -- Sort partition by window's ORDER BY if specified
+    let winSorted := if spec.orderBy.isEmpty then sortedPartition
+                     else sortPartition db partition spec.orderBy
+    evalWindowFn db fn arg partition winSorted row rowIndex
+  | .binOp op l r =>
+    let lv := evalExprWithWindow db row partition sortedPartition rowIndex l
+    let rv := evalExprWithWindow db row partition sortedPartition rowIndex r
+    match lv, rv with
+    | some a, some b => evalBinOp op a b
+    | _, _ => none
+  | .unaryOp op e =>
+    match evalExprWithWindow db row partition sortedPartition rowIndex e with
+    | some v => evalUnaryOp op v
+    | none => none
+  | e => evalExprWithDb db row e
+
 /-- Evaluate full SELECT statement -/
 partial def evalSelect (db : Database) (sel : SelectStmt) : Table :=
   evalSelectWithContext db [] sel
@@ -523,8 +666,28 @@ partial def evalSelectWithContext (db : Database) (outerRow : Row) (sel : Select
         [sel.items.flatMap (evalSelectItemWithAgg db filteredRows sampleRow)]
       else
         []
+    else if selectHasWindowFn sel.items then
+      -- Window functions present: evaluate with partition context
+      let havingRows := match sel.having with
+        | some cond =>
+          filteredRows.filter fun row =>
+            evalExprWithDb db row cond == some (Value.bool true)
+        | none => filteredRows
+      -- For window functions, we need to track row position within partitions
+      -- For simplicity, treat entire result as one partition (no PARTITION BY in SELECT)
+      let partition := havingRows
+      let sortedPartition := havingRows  -- Will be sorted by window's ORDER BY if needed
+      ((List.range havingRows.length).zip havingRows).map fun (idx, row) =>
+        sel.items.flatMap fun item =>
+          match item with
+          | .star none => row
+          | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+          | .exprItem e alias =>
+            match evalExprWithWindow db row partition sortedPartition idx e with
+            | some v => [(alias.getD (exprToName e), v)]
+            | none => [(alias.getD (exprToName e), .null none)]
     else
-      -- No aggregates, no GROUP BY: apply HAVING as regular filter, project each row
+      -- No aggregates, no GROUP BY, no window functions: apply HAVING as regular filter, project each row
       let havingRows := match sel.having with
         | some cond =>
           filteredRows.filter fun row =>

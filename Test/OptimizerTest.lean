@@ -394,7 +394,7 @@ def testOptimizeWithProof : TestResult :=
     none
     none
   ))
-  let result := optimizeWithProof stmt
+  let _ := optimizeWithProof stmt
   -- Just verify it returns a result (the proof is checked by Lean's type system)
   .pass "optimizeWithProof returns valid result"
 
