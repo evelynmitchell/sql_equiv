@@ -1,0 +1,51 @@
+name: Build PropertyTest
+
+on:
+  # Run on schedule to keep cache warm
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+  # Manual trigger
+  workflow_dispatch:
+  # Only run on changes to PropertyTest or its dependencies
+  push:
+    branches: [main, master]
+    paths:
+      - 'Test/PropertyTest.lean'
+      - 'SqlEquiv/**'
+      - 'lakefile.toml'
+      - 'lean-toolchain'
+
+jobs:
+  build-property-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache Lake packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan/toolchains
+            .lake
+          key: ${{ runner.os }}-lake-propertytest-${{ hashFiles('lakefile.toml', 'lean-toolchain', 'Test/PropertyTest.lean') }}
+          restore-keys: |
+            ${{ runner.os }}-lake-propertytest-
+            ${{ runner.os }}-lake-
+
+      - name: Build PropertyTest
+        run: |
+          echo "Building PropertyTest.lean..."
+          time lake build Test.PropertyTest
+          echo "Build complete!"
+
+      - name: Show build artifacts
+        run: |
+          ls -la .lake/build/lib/lean/Test/ || true
+          du -sh .lake/
