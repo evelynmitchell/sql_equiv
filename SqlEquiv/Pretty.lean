@@ -12,9 +12,13 @@ namespace SqlEquiv
 -- Helper Functions
 -- ============================================================================
 
+/-- Escape single quotes in SQL strings by doubling them -/
+def escapeSqlString (s : String) : String :=
+  s.replace "'" "''"
+
 def Value.toSql : Value → String
   | .int n    => toString n
-  | .string s => s!"'{s}'"  -- TODO: escape quotes
+  | .string s => s!"'{escapeSqlString s}'"
   | .bool b   => if b then "TRUE" else "FALSE"
   | .null _   => "NULL"  -- All NULLs print as NULL regardless of type
 

@@ -48,6 +48,7 @@ def basicSelectTests : List TestResult := [
   testRoundTrip "select_distinct" "SELECT DISTINCT name FROM users",
   testRoundTrip "select_no_from" "SELECT 1",
   testRoundTrip "select_literal_string" "SELECT 'hello'",
+  testRoundTrip "select_string_with_quote" "SELECT 'it''s a test'",
   testRoundTrip "select_literal_bool" "SELECT TRUE, FALSE",
   testRoundTrip "select_null" "SELECT NULL"
 ]
