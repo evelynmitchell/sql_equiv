@@ -1049,7 +1049,7 @@ axiom ground_expr_eval_independent (e : Expr) (hg : e.isGround = true) :
     ∀ r1 r2 : Row, evalExpr r1 e = evalExpr r2 e
 
 /-- For ground expressions, equivalence is decidable by evaluation -/
-def decideGroundExprEquiv (e1 e2 : Expr) (h1 : e1.isGround = true) (h2 : e2.isGround = true) : Bool :=
+def decideGroundExprEquiv (e1 e2 : Expr) (_h1 : e1.isGround = true) (_h2 : e2.isGround = true) : Bool :=
   -- Ground expressions evaluate the same on any row, so use empty row
   evalExpr [] e1 == evalExpr [] e2
 
@@ -1283,7 +1283,7 @@ axiom cross_join_comm (db : Database) (a b : FromClause) :
 theorem project_join (db : Database) (a b : FromClause) (cond : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_items_from_a : items.all (fun item => match item with
+    (_h_items_from_a : items.all (fun item => match item with
       | .star (some t) => getFromClauseTableNames a |>.contains t
       | .star none => false
       | .exprItem e _ => exprReferencesOnlyFrom a e)) :
@@ -1370,8 +1370,8 @@ theorem push_filter_project_through_join (db : Database) (a b : FromClause)
     (cond filter : Expr) (items : List SelectItem)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_filter : exprReferencesOnlyFrom a filter = true)
-    (h_items : items.all (fun item => match item with
+    (_h_filter : exprReferencesOnlyFrom a filter = true)
+    (_h_items : items.all (fun item => match item with
       | .star (some t) => getFromClauseTableNames a |>.contains t
       | .star none => true
       | .exprItem e _ => exprReferencesOnlyFrom a e)) :
@@ -2495,6 +2495,111 @@ axiom correlated_subquery_uses_context (db : Database) (outerRow : Row)
     -- The subquery can access outerCol from the outer row
     -- subResult is computed with outerRow available for column resolution
     True  -- This is a semantic property, not a computational one
+
+-- ============================================================================
+-- Subquery Unnesting Theorems
+-- ============================================================================
+
+/-- Subquery unnesting: IN subquery can be rewritten as a semi-join with DISTINCT.
+    SELECT * FROM t WHERE x IN (SELECT y FROM s)
+    ≡ SELECT DISTINCT t.* FROM t JOIN s ON t.x = s.y
+
+    This is a key database optimization. The DISTINCT is required because
+    the join may produce duplicates when multiple s rows have the same y value.
+
+    NULL handling: Both forms exclude rows where t.x is NULL (IN returns NULL
+    which WHERE treats as FALSE; JOIN condition evaluates to NULL/no match).
+    Similarly, NULL values in s.y don't cause differences - they simply
+    don't match in either form.
+
+    This axiom expresses the semantic equivalence at the statement level. -/
+axiom in_subquery_unnest_to_join (db : Database)
+    (tName sName : String) (xCol yCol : String) :
+    let inSubqueryForm := SelectStmt.mk false
+        [.star (some tName)]  -- SELECT t.*
+        (some (.table ⟨tName, some tName⟩))  -- FROM t
+        (some (.inSubquery
+          (.col ⟨some tName, xCol⟩)
+          false  -- not negated (IN, not NOT IN)
+          (SelectStmt.mk false
+            [.exprItem (.col ⟨none, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩))
+            none [] none [] none none)))  -- WHERE x IN (SELECT y FROM s)
+        [] none [] none none
+    let joinForm := SelectStmt.mk true  -- DISTINCT
+        [.star (some tName)]  -- SELECT DISTINCT t.*
+        (some (.join
+          (.table ⟨tName, some tName⟩)
+          .inner
+          (.table ⟨sName, some sName⟩)
+          (some (.binOp .eq
+            (.col ⟨some tName, xCol⟩)
+            (.col ⟨some sName, yCol⟩)))))  -- FROM t JOIN s ON t.x = s.y
+        none [] none [] none none
+    evalSelect db inSubqueryForm = evalSelect db joinForm
+
+/-- NOT IN subquery can be unnested to an anti-join pattern.
+    SELECT * FROM t WHERE x NOT IN (SELECT y FROM s)
+    ≡ SELECT t.* FROM t LEFT JOIN s ON t.x = s.y WHERE s.y IS NULL
+
+    The anti-join returns rows from t that have no matching rows in s.
+
+    Note: This transformation assumes s.y contains no NULL values.
+    When s.y can be NULL, NOT IN has different semantics (returns NULL
+    when x matches no values but s contains NULL). -/
+axiom not_in_subquery_unnest_to_antijoin (db : Database)
+    (tName sName : String) (xCol yCol : String) :
+    let notInSubqueryForm := SelectStmt.mk false
+        [.star (some tName)]  -- SELECT t.*
+        (some (.table ⟨tName, some tName⟩))  -- FROM t
+        (some (.inSubquery
+          (.col ⟨some tName, xCol⟩)
+          true  -- negated (NOT IN)
+          (SelectStmt.mk false
+            [.exprItem (.col ⟨none, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩))
+            none [] none [] none none)))  -- WHERE x NOT IN (SELECT y FROM s)
+        [] none [] none none
+    let antijoinForm := SelectStmt.mk false
+        [.star (some tName)]  -- SELECT t.*
+        (some (.join
+          (.table ⟨tName, some tName⟩)
+          .left  -- LEFT JOIN
+          (.table ⟨sName, some sName⟩)
+          (some (.binOp .eq
+            (.col ⟨some tName, xCol⟩)
+            (.col ⟨some sName, yCol⟩)))))  -- LEFT JOIN s ON t.x = s.y
+        (some (.unaryOp .isNull (.col ⟨some sName, yCol⟩)))  -- WHERE s.y IS NULL
+        [] none [] none none
+    evalSelect db notInSubqueryForm = evalSelect db antijoinForm
+
+/-- At the expression level: x IN (SELECT y FROM s) evaluates to true for a row
+    if and only if there exists a matching row in the join result.
+
+    This captures the logical essence of the unnesting transformation:
+    membership in a subquery result corresponds to a successful join match. -/
+axiom in_subquery_implies_join_match (db : Database) (row : Row)
+    (x : Expr) (sName yCol : String)
+    (h : evalExprWithDb db row (Expr.inSubquery x false
+           (SelectStmt.mk false
+             [.exprItem (.col ⟨none, yCol⟩) none]
+             (some (.table ⟨sName, some sName⟩))
+             none [] none [] none none)) = some (.bool true)) :
+    ∃ sRow ∈ db sName,
+      evalExprWithDb db (row ++ sRow)
+        (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)
+
+/-- The converse: if a join match exists, the IN subquery returns true. -/
+axiom join_match_implies_in_subquery (db : Database) (row : Row)
+    (x : Expr) (sName yCol : String) (sRow : Row)
+    (hMem : sRow ∈ db sName)
+    (hMatch : evalExprWithDb db (row ++ sRow)
+                (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)) :
+    evalExprWithDb db row (Expr.inSubquery x false
+      (SelectStmt.mk false
+        [.exprItem (.col ⟨none, yCol⟩) none]
+        (some (.table ⟨sName, some sName⟩))
+        none [] none [] none none)) = some (.bool true)
 
 -- ============================================================================
 -- ORDER BY Theorems

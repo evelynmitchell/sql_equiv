@@ -375,6 +375,75 @@ def mutationTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Subquery Unnesting Semantic Tests
+-- ============================================================================
+
+/-- Compare two query results for set equality (same rows, ignoring order) -/
+def resultsSetEqual (r1 r2 : Table) : Bool :=
+  let sorted1 := r1.mergeSort (fun a b =>
+    match a.head?, b.head? with
+    | some (_, v1), some (_, v2) => v1.toSql < v2.toSql
+    | _, _ => true)
+  let sorted2 := r2.mergeSort (fun a b =>
+    match a.head?, b.head? with
+    | some (_, v1), some (_, v2) => v1.toSql < v2.toSql
+    | _, _ => true)
+  sorted1 == sorted2
+
+/-- Test that IN subquery and JOIN produce same rows (set equality) -/
+def testUnnestEquiv (name : String) (inSql joinSql : String) : TestResult :=
+  match parseSelectStr inSql, parseSelectStr joinSql with
+  | .error e, _ => .fail name s!"Parse error in IN query: {e}"
+  | _, .error e => .fail name s!"Parse error in JOIN query: {e}"
+  | .ok sel1, .ok sel2 =>
+    let result1 := evalSelect testDb sel1
+    let result2 := evalSelect testDb sel2
+    if resultsSetEqual result1 result2 then .pass name
+    else .fail name s!"Set mismatch: IN returned {result1.length} rows, JOIN returned {result2.length} rows"
+
+def subqueryUnnestingTests : List TestResult := [
+  -- Users with orders: Alice (1), Bob (2), Carol (3) - only Alice and Bob have orders
+  -- IN subquery form
+  testRowCount "unnest_in_count"
+    "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)" 3,
+
+  -- Semi-join form should return same count (with DISTINCT to eliminate duplicates)
+  testRowCount "unnest_join_count"
+    "SELECT DISTINCT users.* FROM users INNER JOIN orders ON users.id = orders.user_id" 3,
+
+  -- Test equivalence: IN subquery vs semi-join
+  testUnnestEquiv "unnest_in_vs_join"
+    "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)"
+    "SELECT DISTINCT users.* FROM users INNER JOIN orders ON users.id = orders.user_id",
+
+  -- NOT IN subquery: users without orders (Dave and Eve)
+  testRowCount "unnest_not_in_count"
+    "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)" 2,
+
+  -- Anti-join form should return same rows
+  testRowCount "unnest_antijoin_count"
+    "SELECT users.* FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.user_id IS NULL" 2,
+
+  -- Test equivalence: NOT IN vs anti-join
+  testUnnestEquiv "unnest_not_in_vs_antijoin"
+    "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)"
+    "SELECT users.* FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.user_id IS NULL",
+
+  -- Filtered subquery: users with high-value orders (>150)
+  -- Alice has order 200, Carol has order 300
+  testRowCount "unnest_filtered_in"
+    "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 150)" 2,
+
+  -- Empty subquery case: no users match
+  testEmpty "unnest_empty_in"
+    "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 1000)",
+
+  -- Empty NOT IN returns all users
+  testRowCount "unnest_empty_not_in"
+    "SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE amount > 1000)" 5
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -383,7 +452,8 @@ def allSemanticsTests : List TestResult :=
   projectionTests ++ distinctTests ++ orderByTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
-  arithmeticTests ++ edgeCaseTests ++ mutationTests
+  arithmeticTests ++ edgeCaseTests ++ mutationTests ++
+  subqueryUnnestingTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests

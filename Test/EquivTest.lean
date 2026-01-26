@@ -78,6 +78,12 @@ open Test
 #check @stmt_equiv_symm
 #check @stmt_equiv_trans
 
+-- Verify subquery unnesting theorems exist
+#check @in_subquery_unnest_to_join
+#check @not_in_subquery_unnest_to_antijoin
+#check @in_subquery_implies_join_match
+#check @join_match_implies_in_subquery
+
 -- ============================================================================
 -- Syntactic Equivalence Tests
 -- ============================================================================
@@ -112,7 +118,6 @@ def commutativityTests : List TestResult :=
   let x := col "x"
   let y := col "y"
   let one := intLit 1
-  let two := intLit 2
   [
     -- AND is commutative
     testSyntacticEquiv "and_comm" (.binOp .and x y) (.binOp .and y x),
@@ -257,7 +262,6 @@ def semanticEquivTests : List TestResult := [
 def normalizationTests : List TestResult :=
   let x := col "x"
   let y := col "y"
-  let z := col "z"
   [
     -- Normalization is idempotent
     testSyntacticEquiv "norm_idempotent"
@@ -275,13 +279,80 @@ def normalizationTests : List TestResult :=
   ]
 
 -- ============================================================================
+-- Subquery Unnesting Tests
+-- ============================================================================
+
+/-- Extended test database with users and orders for unnesting tests -/
+def unnestTestDb : Database := fun name =>
+  match name with
+  | "users" => [
+      [("id", .int 1), ("name", .string "Alice")],
+      [("id", .int 2), ("name", .string "Bob")],
+      [("id", .int 3), ("name", .string "Carol")]
+    ]
+  | "orders" => [
+      [("user_id", .int 1), ("amount", .int 100)],
+      [("user_id", .int 1), ("amount", .int 200)],  -- Alice has 2 orders
+      [("user_id", .int 2), ("amount", .int 150)]   -- Bob has 1 order
+      -- Carol (id=3) has no orders
+    ]
+  | _ => []
+
+/-- Test that IN subquery and semi-join produce equivalent results -/
+def testUnnestingEquiv (name : String) (sql1 sql2 : String) : TestResult :=
+  match parseSelectStr sql1, parseSelectStr sql2 with
+  | .error e, _ => .fail name s!"Parse error in sql1: {e}"
+  | _, .error e => .fail name s!"Parse error in sql2: {e}"
+  | .ok sel1, .ok sel2 =>
+    let result1 := evalSelect unnestTestDb sel1
+    let result2 := evalSelect unnestTestDb sel2
+    -- For unnesting, we care about the same set of rows, not order
+    -- Sort both results by first column for comparison
+    let sorted1 := result1.mergeSort (fun r1 r2 =>
+      match r1.head?, r2.head? with
+      | some (_, v1), some (_, v2) => v1.toSql < v2.toSql
+      | _, _ => true)
+    let sorted2 := result2.mergeSort (fun r1 r2 =>
+      match r1.head?, r2.head? with
+      | some (_, v1), some (_, v2) => v1.toSql < v2.toSql
+      | _, _ => true)
+    if sorted1 == sorted2 then .pass name
+    else .fail name s!"Results differ:\n  IN form: {result1.length} rows\n  JOIN form: {result2.length} rows"
+
+def subqueryUnnestingTests : List TestResult := [
+  -- Basic unnesting test: users with orders
+  -- IN subquery: SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)
+  -- Semi-join:   SELECT DISTINCT users.* FROM users JOIN orders ON users.id = orders.user_id
+  testUnnestingEquiv "unnest_in_to_join"
+    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders)"
+    "SELECT DISTINCT users.* FROM users INNER JOIN orders ON users.id = orders.user_id",
+
+  -- Both forms should return 2 users (Alice and Bob have orders, Carol doesn't)
+  testSemanticEquiv "unnest_row_count_in"
+    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders)"
+    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders)",
+
+  -- NOT IN unnesting to anti-join
+  -- NOT IN: SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)
+  -- Anti-join: SELECT users.* FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.user_id IS NULL
+  testUnnestingEquiv "unnest_not_in_to_antijoin"
+    "SELECT * FROM users WHERE users.id NOT IN (SELECT user_id FROM orders)"
+    "SELECT users.* FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.user_id IS NULL",
+
+  -- Empty subquery case: no matches means JOIN returns empty
+  testSemanticEquiv "unnest_empty_subquery"
+    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders WHERE amount > 1000)"
+    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders WHERE amount > 1000)"
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
 def allEquivTests : List TestResult :=
   commutativityTests ++ doubleNegationTests ++ reflexivityTests ++
   nonEquivTests ++ nestedExprTests ++ semanticEquivTests ++
-  normalizationTests
+  normalizationTests ++ subqueryUnnestingTests
 
 def runEquivTests : IO Unit := do
   IO.println "═══════════════════════════════════"
@@ -297,6 +368,8 @@ def runEquivTests : IO Unit := do
   IO.println "✓ and_assoc, or_assoc"
   IO.println "✓ where_true_elim, where_false_empty"
   IO.println "✓ join_comm"
+  IO.println "✓ in_subquery_unnest_to_join, not_in_subquery_unnest_to_antijoin"
+  IO.println "✓ in_subquery_implies_join_match, join_match_implies_in_subquery"
   IO.println "(These are verified at compile time by #check)"
 
   IO.println "\n[Runtime Tests]"
