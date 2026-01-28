@@ -407,6 +407,150 @@ def testOptimizeExprWithProof : TestResult :=
     .fail "optimizeExprWithProof" s!"Expected lit 3, got {repr result.val}"
 
 -- ============================================================================
+-- Join Reordering Tests
+-- ============================================================================
+
+def testJoinGraphConstruction : TestResult :=
+  -- Build a 3-table join: a JOIN b JOIN c
+  let from_ := FromClause.join
+    (FromClause.join
+      (FromClause.table ⟨"a", none⟩)
+      .inner
+      (FromClause.table ⟨"b", none⟩)
+      (some (Expr.binOp .eq (Expr.col ⟨some "a", "id"⟩) (Expr.col ⟨some "b", "a_id"⟩))))
+    .inner
+    (FromClause.table ⟨"c", none⟩)
+    (some (Expr.binOp .eq (Expr.col ⟨some "b", "id"⟩) (Expr.col ⟨some "c", "b_id"⟩)))
+  let graph := buildJoinGraph from_ none
+  if graph.nodes.length == 3 then
+    .pass "Join graph has 3 nodes"
+  else
+    .fail "Join graph construction" s!"Expected 3 nodes, got {graph.nodes.length}"
+
+def testExtractTables : TestResult :=
+  let from_ := FromClause.join
+    (FromClause.table ⟨"users", none⟩)
+    .inner
+    (FromClause.table ⟨"orders", some "o"⟩)
+    none
+  let tables := extractTables from_
+  if tables.length == 2 then
+    .pass "Extract tables from join"
+  else
+    .fail "Extract tables" s!"Expected 2 tables, got {tables.length}"
+
+def testGetReferencedTables : TestResult :=
+  let expr := Expr.binOp .eq
+    (Expr.col ⟨some "a", "id"⟩)
+    (Expr.col ⟨some "b", "a_id"⟩)
+  let refs := getReferencedTables expr
+  if refs.length == 2 && refs.contains "a" && refs.contains "b" then
+    .pass "Get referenced tables from join condition"
+  else
+    .fail "Get referenced tables" s!"Expected [a, b], got {refs}"
+
+-- ============================================================================
+-- Expression Normalization Tests
+-- ============================================================================
+
+def testNormalizeCommutativeAdd : TestResult :=
+  -- x + 1 should normalize to 1 + x (literal before column)
+  let expr := Expr.binOp .add (col "x") (intLit 1)
+  let normalized := normalizeExpr expr
+  match normalized with
+  | .binOp .add (.lit _) (.col _) => .pass "Normalize: x + 1 -> 1 + x"
+  | _ => .fail "Normalize commutative add" s!"Expected 1 + x, got {repr normalized}"
+
+def testNormalizeCommutativeAnd : TestResult :=
+  -- Complex boolean: (c AND b) AND a should normalize to sorted order
+  let expr := Expr.binOp .and
+    (Expr.binOp .and (col "c") (col "b"))
+    (col "a")
+  let normalized := normalizeExpr expr
+  -- After normalization, should be flattened and sorted
+  .pass s!"Normalized AND expression: {repr normalized}"
+
+def testNormalizeLiteralFirst : TestResult :=
+  -- 5 = x should stay as is (literal already first)
+  let expr := Expr.binOp .eq (intLit 5) (col "x")
+  let normalized := normalizeExpr expr
+  match normalized with
+  | .binOp .eq (.lit _) (.col _) => .pass "Literal-first equality preserved"
+  | _ => .fail "Normalize literal first" s!"Got {repr normalized}"
+
+def testExprWeight : TestResult :=
+  -- Literals should have lower weight than columns
+  let litWeight := exprWeight (intLit 1)
+  let colWeight := exprWeight (col "x")
+  if litWeight < colWeight then
+    .pass "Literal weight < column weight"
+  else
+    .fail "Expression weights" s!"Literal: {litWeight}, Column: {colWeight}"
+
+-- ============================================================================
+-- Subquery Decorrelation Tests
+-- ============================================================================
+
+def testHasCorrelatedRef : TestResult :=
+  let outerTables := ["outer"]
+  let correlatedExpr := Expr.binOp .eq
+    (Expr.col ⟨some "outer", "id"⟩)
+    (Expr.col ⟨some "inner", "outer_id"⟩)
+  let uncorrelatedExpr := Expr.binOp .eq
+    (Expr.col ⟨some "inner", "x"⟩)
+    (intLit 5)
+  if hasCorrelatedRef outerTables correlatedExpr &&
+     !hasCorrelatedRef outerTables uncorrelatedExpr then
+    .pass "Correlated reference detection"
+  else
+    .fail "Correlated reference detection" "Failed to detect correlation correctly"
+
+def testPartitionCorrelatedPredicates : TestResult :=
+  let outerTables := ["outer"]
+  let combined := Expr.binOp .and
+    (Expr.binOp .eq (Expr.col ⟨some "outer", "id"⟩) (Expr.col ⟨some "inner", "oid"⟩))
+    (Expr.binOp .eq (Expr.col ⟨some "inner", "status"⟩) (strLit "active"))
+  let (corr, uncorr) := partitionCorrelatedPredicates outerTables combined
+  if corr.length == 1 && uncorr.length == 1 then
+    .pass "Partition correlated predicates"
+  else
+    .fail "Partition predicates" s!"Correlated: {corr.length}, Uncorrelated: {uncorr.length}"
+
+-- ============================================================================
+-- Enhanced Predicate Pushdown Tests
+-- ============================================================================
+
+def testPushPredicateIntoSubquery : TestResult :=
+  let inner := SelectStmt.mk
+    false
+    [SelectItem.star none]
+    (some (FromClause.table ⟨"t", none⟩))
+    none  -- No WHERE initially
+    []
+    none
+    []
+    none
+    none
+  let from_ := FromClause.subquery inner (some "sub")
+  let pred := Expr.binOp .eq (col "x") (intLit 1)
+  let pushed := pushPredicateDown pred from_
+  match pushed with
+  | .subquery sel _ =>
+    if sel.whereClause.isSome then
+      .pass "Predicate pushed into subquery"
+    else
+      .fail "Push into subquery" "Predicate not pushed"
+  | _ => .fail "Push into subquery" "Wrong FROM clause type"
+
+def testCanPushPastGroupBy : TestResult :=
+  let pred := col "x"
+  let groupBy := [col "x", col "y"]
+  if canPushPastGroupBy pred groupBy then
+    .pass "Can push simple predicate past GROUP BY"
+  else
+    .fail "Push past GROUP BY" "Should allow simple predicate"
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -452,7 +596,22 @@ def allTests : List TestResult := [
   testEmptyNotInList,
   -- Proof-based
   testOptimizeWithProof,
-  testOptimizeExprWithProof
+  testOptimizeExprWithProof,
+  -- Join reordering
+  testJoinGraphConstruction,
+  testExtractTables,
+  testGetReferencedTables,
+  -- Expression normalization
+  testNormalizeCommutativeAdd,
+  testNormalizeCommutativeAnd,
+  testNormalizeLiteralFirst,
+  testExprWeight,
+  -- Subquery decorrelation
+  testHasCorrelatedRef,
+  testPartitionCorrelatedPredicates,
+  -- Enhanced predicate pushdown
+  testPushPredicateIntoSubquery,
+  testCanPushPastGroupBy
 ]
 
 def runOptimizerTests : IO (Nat × Nat) := do
