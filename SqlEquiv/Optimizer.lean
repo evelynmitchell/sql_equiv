@@ -305,11 +305,8 @@ partial def optimizeSelectStmt : SelectStmt -> SelectStmt
     -- Optimize WHERE clause
     let where' := where_.map optimizeExpr
 
-    -- Normalize WHERE clause for better matching
-    let where'' := where'.map normalizeExpr
-
     -- Dead code elimination for WHERE
-    let (where''', isDeadQuery) := match where'' with
+    let (where'', isDeadQuery) := match where' with
       | some (Expr.lit (.bool true)) => (none, false)  -- WHERE TRUE -> no WHERE
       | some (Expr.lit (.bool false)) => (some (Expr.lit (.bool false)), true)  -- Query returns nothing
       | other => (other, false)
@@ -321,29 +318,12 @@ partial def optimizeSelectStmt : SelectStmt -> SelectStmt
         (some f', pred)
       | none => (none, none)
 
-    -- Apply join reordering for multi-table joins
-    let from'' := match from' with
-      | some f =>
-        let tables := extractTables f
-        if tables.length > 2 then
-          some (optimizeJoinOrder f where''' defaultCostFactors)
-        else some f
-      | none => none
-
-    -- Enhanced predicate pushdown: push WHERE predicates into FROM
-    let (from''', finalWhere) := match from'', where''' with
-      | some f, some w =>
-        -- Try to push predicates down
-        let pushed := pushPredicateDown w f
-        (some pushed, remainingPred)
-      | f, w =>
-        -- Combine remaining predicate with WHERE
-        let combined := match w, remainingPred with
-          | some w', some p => some (Expr.binOp .and w' p)
-          | some w', none => some w'
-          | none, some p => some p
-          | none, none => none
-        (f, combined)
+    -- Combine remaining predicate with WHERE
+    let finalWhere := match where'', remainingPred with
+      | some w, some p => some (Expr.binOp .and w p)
+      | some w, none => some w
+      | none, some p => some p
+      | none, none => none
 
     -- Optimize other clauses
     let items' := items.map optimizeSelectItem
@@ -353,9 +333,9 @@ partial def optimizeSelectStmt : SelectStmt -> SelectStmt
 
     -- For dead queries (WHERE FALSE), we can simplify
     if isDeadQuery then
-      .mk distinct items' from''' (some (.lit (.bool false))) [] none [] (some 0) none
+      .mk distinct items' from' (some (.lit (.bool false))) [] none [] (some 0) none
     else
-      .mk distinct items' from''' finalWhere groupBy' having' orderBy' limitVal offsetVal
+      .mk distinct items' from' finalWhere groupBy' having' orderBy' limitVal offsetVal
 
 end
 
@@ -963,6 +943,53 @@ partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
         | some c => some (Expr.binOp .and c pred)
         | none => some pred
       .join left jtype right newOn
+
+-- ============================================================================
+-- Advanced Optimization (combines all features)
+-- ============================================================================
+
+/-- Apply advanced optimizations to a SelectStmt.
+    This function applies all optimization passes in the correct order:
+    1. Basic expression optimization
+    2. Expression normalization
+    3. Join reordering (for 3+ tables)
+    4. Predicate pushdown
+    Note: Call this after basic optimization for maximum benefit. -/
+def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
+  -- First apply basic optimization
+  let sel1 := optimizeSelectStmt sel
+
+  -- Normalize WHERE clause for better matching
+  let where' := sel1.whereClause.map normalizeExpr
+
+  -- Apply join reordering for multi-table joins
+  let from' := match sel1.fromClause with
+    | some f =>
+      let tables := extractTables f
+      if tables.length > 2 then
+        some (optimizeJoinOrder f where' defaultCostFactors)
+      else some f
+    | none => none
+
+  -- Apply predicate pushdown
+  let from'' := match from', where' with
+    | some f, some w => some (pushPredicateDown w f)
+    | f, _ => f
+
+  -- Return optimized statement
+  { sel1 with
+    fromClause := from''
+    whereClause := where' }
+
+/-- Apply advanced optimization to a full statement -/
+def optimizeAdvanced (s : Stmt) : Stmt :=
+  match s with
+  | .query (.simple sel) => .query (.simple (optimizeSelectAdvanced sel))
+  | .query (.compound left op right) =>
+    .query (.compound (optimizeQuery left) op (optimizeQuery right))
+  | .query (.withCTE ctes q) =>
+    .query (.withCTE (ctes.map optimizeCTE) (optimizeQuery q))
+  | other => optimize other
 
 -- ============================================================================
 -- Specific Optimization Theorems (derived from optimizeExpr_equiv axiom)
