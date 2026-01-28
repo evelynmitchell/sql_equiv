@@ -671,7 +671,11 @@ def findBestJoinPair (nodes : List JoinNode) (edges : List JoinEdge) : Option (J
     | some (_, n1, n2, edge) => some (n1, n2, edge)
     | none => none
 
-/-- Construct a FROM clause from a join ordering -/
+/-- Construct a FROM clause from a join ordering.
+    Note: The first table's condition is intentionally ignored (matched as `_`) because
+    in a join chain, the first table is the "anchor" with no incoming join condition.
+    Join conditions are associated with the second table onward (t2 joins t1 ON cond, etc.).
+    This matches how `reorderJoinsGreedy` constructs the list: first table has `none`. -/
 def buildFromClause (tables : List (TableRef × Option Expr)) : Option FromClause :=
   match tables with
   | [] => none
@@ -929,11 +933,17 @@ def canPushPastGroupBy (pred : Expr) (groupBy : List Expr) : Bool :=
 partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
   | .table t => .table t  -- Can't push into base table
   | .subquery sel alias =>
-    -- Try to push predicate into subquery's WHERE clause
-    let newWhere := match sel.whereClause with
-      | some w => some (Expr.binOp .and w pred)
-      | none => some pred
-    .subquery { sel with whereClause := newWhere } alias
+    -- Only push predicate into subquery when it is safe w.r.t. projection and GROUP BY
+    let canProj := canPushPastProjection pred sel.selectItems
+    let canGroup := canPushPastGroupBy pred sel.groupBy
+    if canProj && canGroup then
+      let newWhere := match sel.whereClause with
+        | some w => some (Expr.binOp .and w pred)
+        | none => some pred
+      .subquery { sel with whereClause := newWhere } alias
+    else
+      -- Leave subquery unchanged; caller should keep predicate at outer level
+      .subquery sel alias
   | .join left jtype right on_ =>
     let leftTables := (extractTables left).map getTableName
     let rightTables := (extractTables right).map getTableName
