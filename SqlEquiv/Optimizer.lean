@@ -898,15 +898,22 @@ def decorrelateIn (outerTables : List String) (e : Expr) (neg : Bool) (sel : Sel
 /-- Check if a predicate can be pushed past a projection (SELECT items).
     A predicate can be pushed if it only references columns that pass through unchanged. -/
 def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
-  let refs := getReferencedTables pred
-  -- For simplicity, allow pushdown if predicate references no aliases
-  -- or all referenced columns are direct column references in the projection
-  items.all fun item =>
+  -- If projection has a star (*), all columns pass through
+  let hasStar := items.any fun item =>
     match item with
     | .star _ => true
-    | .exprItem (.col _) _ => true
-    | .exprItem _ (some _) => true  -- Aliased expressions might hide columns
-    | _ => true
+    | _ => false
+  if hasStar then true
+  else
+    -- Get columns referenced by predicate
+    let predCols := getReferencedTables pred
+    -- Check that all referenced tables have columns passing through
+    predCols.isEmpty || predCols.all fun _t =>
+      -- For simplicity, allow if there are direct column references in projection
+      items.any fun item =>
+        match item with
+        | .exprItem (.col _) _ => true
+        | _ => false
 
 /-- Check if a predicate can be pushed below a GROUP BY.
     Only predicates on grouping columns can be pushed. -/
