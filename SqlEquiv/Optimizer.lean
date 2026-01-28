@@ -563,10 +563,16 @@ instance : ToString OptimizationReport := ⟨OptimizationReport.toString⟩
 -- Join Reordering
 -- ============================================================================
 
+/-- Default estimated row count for tables without statistics -/
+def defaultTableCardinality : Nat := 100
+
+/-- Default selectivity for join conditions without statistics -/
+def defaultJoinSelectivity : Float := 0.1
+
 /-- Represents a table in the join graph with cardinality estimate -/
 structure JoinNode where
   table : TableRef
-  estimatedRows : Nat := 100
+  estimatedRows : Nat := defaultTableCardinality
   deriving Repr, BEq
 
 /-- Represents an edge (join condition) between tables -/
@@ -574,7 +580,7 @@ structure JoinEdge where
   leftTable : String
   rightTable : String
   condition : Expr
-  selectivity : Float := 0.1  -- Estimated fraction of rows that match
+  selectivity : Float := defaultJoinSelectivity
   deriving Repr
 
 /-- A join graph represents the tables and their join relationships -/
@@ -590,7 +596,7 @@ def getTableName (t : TableRef) : String :=
 /-- Extract all base tables from a FROM clause -/
 partial def extractTables : FromClause -> List TableRef
   | .table t => [t]
-  | .subquery _ alias => [⟨"__subq__", alias⟩]  -- Treat subqueries as opaque
+  | .subquery _ alias => [⟨"__subq__", some alias⟩]  -- Treat subqueries as opaque
   | .join left _ right _ => extractTables left ++ extractTables right
 
 /-- Check if an expression references a specific table -/
@@ -620,16 +626,20 @@ partial def getReferencedTables : Expr -> List String
   | .between e lo hi => getReferencedTables e ++ getReferencedTables lo ++ getReferencedTables hi
   | _ => []
 
+/-- Deduplicate a list while preserving order (first occurrence kept) -/
+def dedup (xs : List String) : List String :=
+  xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
+
 /-- Extract join conditions and build edges -/
 partial def extractJoinConditions (tables : List String) : Expr -> List JoinEdge
   | .binOp .and l r => extractJoinConditions tables l ++ extractJoinConditions tables r
   | e =>
-    let refs := (getReferencedTables e).eraseDups
+    let refs := dedup (getReferencedTables e)
     -- A join condition references exactly 2 tables
     if refs.length == 2 then
       match refs with
       | [t1, t2] => if tables.contains t1 && tables.contains t2
-                    then [⟨t1, t2, e, 0.1⟩]
+                    then [⟨t1, t2, e, defaultJoinSelectivity⟩]
                     else []
       | _ => []
     else []
@@ -638,7 +648,7 @@ partial def extractJoinConditions (tables : List String) : Expr -> List JoinEdge
 def buildJoinGraph (from_ : FromClause) (where_ : Option Expr) : JoinGraph :=
   let tables := extractTables from_
   let tableNames := tables.map getTableName
-  let nodes := tables.map fun t => ⟨t, 100⟩
+  let nodes := tables.map fun t => ⟨t, defaultTableCardinality⟩
   let whereEdges := match where_ with
     | some w => extractJoinConditions tableNames w
     | none => []
@@ -832,6 +842,10 @@ partial def normalizeExpr : Expr -> Expr
 -- ============================================================================
 -- Subquery Decorrelation
 -- ============================================================================
+-- Note: These are utility functions for subquery decorrelation transformations.
+-- They are not yet integrated into the main optimizer pipeline but are provided
+-- for future use and for users who want to apply decorrelation manually.
+-- Integration into optimizeSelectAdvanced is planned for a future update.
 
 /-- Check if an expression contains a correlated reference (reference to outer query) -/
 partial def hasCorrelatedRef (outerTables : List String) : Expr -> Bool
