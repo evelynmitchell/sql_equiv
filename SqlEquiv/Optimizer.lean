@@ -599,10 +599,13 @@ partial def extractTables : FromClause -> List TableRef
   | .subquery _ alias => [⟨"__subq__", some alias⟩]  -- Treat subqueries as opaque
   | .join left _ right _ => extractTables left ++ extractTables right
 
-/-- Check if an expression references a specific table -/
+/-- Check if an expression references a specific table.
+    Note: Unqualified columns (no table prefix) return false since we cannot
+    determine their source table without schema context. This is conservative
+    for predicate pushdown (may miss some valid pushdowns) but safe. -/
 partial def exprReferencesTable (tableName : String) : Expr -> Bool
   | .col ⟨some t, _⟩ => t == tableName
-  | .col ⟨none, _⟩ => true  -- Unqualified columns might reference any table
+  | .col ⟨none, _⟩ => false  -- Can't determine table without context
   | .binOp _ l r => exprReferencesTable tableName l || exprReferencesTable tableName r
   | .unaryOp _ e => exprReferencesTable tableName e
   | .func _ args => args.any (exprReferencesTable tableName)
@@ -659,10 +662,15 @@ def buildJoinGraph (from_ : FromClause) (where_ : Option Expr) : JoinGraph :=
     | none => []
   ⟨nodes, whereEdges⟩
 
-/-- Estimate cost of joining two tables -/
+/-- Estimate cost of joining two tables.
+    Returns at least 1 to avoid division issues. Caps result to prevent overflow. -/
 def estimateJoinCost (leftRows rightRows : Nat) (selectivity : Float) : Nat :=
   let result := leftRows.toFloat * rightRows.toFloat * selectivity
-  max 1 result.toUInt64.toNat
+  -- Cap at a reasonable max to prevent overflow and handle edge cases
+  let maxCost : Nat := 1000000000  -- 1 billion
+  if result.isNaN || result.isInf || result < 0.0 then 1
+  else if result > maxCost.toFloat then maxCost
+  else max 1 result.toUInt64.toNat
 
 /-- Find best join pair from remaining tables based on cost -/
 def findBestJoinPair (nodes : List JoinNode) (edges : List JoinEdge) : Option (JoinNode × JoinNode × Option JoinEdge) :=
@@ -687,10 +695,16 @@ def findBestJoinPair (nodes : List JoinNode) (edges : List JoinEdge) : Option (J
     | none => none
 
 /-- Construct a FROM clause from a join ordering.
-    Note: The first table's condition is intentionally ignored (matched as `_`) because
-    in a join chain, the first table is the "anchor" with no incoming join condition.
-    Join conditions are associated with the second table onward (t2 joins t1 ON cond, etc.).
-    This matches how `reorderJoinsGreedy` constructs the list: first table has `none`. -/
+    IMPORTANT: This function creates INNER joins only. It should only be called
+    after verifying the original FROM contains only INNER/CROSS joins via
+    `hasOnlyInnerJoins`. Join conditions come from the WHERE clause (extracted
+    by buildJoinGraph); original ON conditions from the source FROM clause are
+    not preserved during reordering.
+
+    Design notes:
+    - First table's condition is ignored (matched as `_`) because it's the anchor
+    - Join conditions are associated with subsequent tables (t2 joins t1 ON cond)
+    - This matches how `reorderJoinsGreedy` constructs the list: first table has `none` -/
 def buildFromClause (tables : List (TableRef × Option Expr)) : Option FromClause :=
   match tables with
   | [] => none
@@ -698,6 +712,15 @@ def buildFromClause (tables : List (TableRef × Option Expr)) : Option FromClaus
   | (t1, _) :: (t2, cond) :: rest =>
     let initial := FromClause.join (.table t1) .inner (.table t2) cond
     some <| rest.foldl (fun acc (t, c) => FromClause.join acc .inner (.table t) c) initial
+
+/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder) -/
+partial def hasOnlyInnerJoins : FromClause -> Bool
+  | .table _ => true
+  | .subquery _ _ => true
+  | .join left jtype right _ =>
+    match jtype with
+    | .inner | .cross => hasOnlyInnerJoins left && hasOnlyInnerJoins right
+    | _ => false  -- LEFT, RIGHT, FULL OUTER joins cannot be safely reordered
 
 /-- Greedy join reordering: picks the cheapest join at each step -/
 def reorderJoinsGreedy (graph : JoinGraph) : List (TableRef × Option Expr) :=
@@ -732,11 +755,13 @@ def reorderJoinsGreedy (graph : JoinGraph) : List (TableRef × Option Expr) :=
 
 /-- Apply join reordering to a FROM clause.
     Reorders joins with 3 or more tables using a greedy cost-based algorithm.
-    For 2 or fewer tables, returns the original FROM clause unchanged. -/
+    For 2 or fewer tables, returns the original FROM clause unchanged.
+    Only reorders if all joins are INNER/CROSS (outer joins cannot be safely reordered). -/
 def optimizeJoinOrder (from_ : FromClause) (where_ : Option Expr) : FromClause :=
   let tables := extractTables from_
-  -- Only reorder if we have 3+ tables (2-table joins don't benefit from reordering)
+  -- Only reorder if we have 3+ tables and all joins are INNER/CROSS
   if tables.length <= 2 then from_
+  else if !hasOnlyInnerJoins from_ then from_  -- Don't reorder outer joins
   else
     let graph := buildJoinGraph from_ where_
     let ordering := reorderJoinsGreedy graph
@@ -912,7 +937,8 @@ def decorrelateIn (outerTables : List String) (e : Expr) (neg : Bool) (sel : Sel
     let fullCond := match sel.whereClause with
       | some w => Expr.binOp .and eqCond w
       | none => eqCond
-    if hasCorrelatedRef outerTables fullCond || !neg then
+    -- Only decorrelate if actually correlated AND not a NOT IN (anti-join not supported)
+    if hasCorrelatedRef outerTables fullCond && !neg then
       some (innerFrom, some fullCond)
     else none
   | _, _ => none
@@ -920,6 +946,14 @@ def decorrelateIn (outerTables : List String) (e : Expr) (neg : Bool) (sel : Sel
 -- ============================================================================
 -- Enhanced Predicate Pushdown
 -- ============================================================================
+
+/-- Extract column references that pass through a projection unchanged -/
+def getPassthroughColumns (items : List SelectItem) : List ColumnRef :=
+  items.flatMap fun item =>
+    match item with
+    | .star _ => []  -- Star handled separately
+    | .exprItem (.col c) _ => [c]  -- Direct column pass-through
+    | _ => []  -- Computed expressions don't pass columns through
 
 /-- Check if a predicate can be pushed past a projection (SELECT items).
     A predicate can be pushed if it only references columns that pass through unchanged. -/
@@ -932,14 +966,14 @@ def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
   if hasStar then true
   else
     -- Get columns referenced by predicate
-    let predCols := getReferencedTables pred
-    -- Check that all referenced tables have columns passing through
-    predCols.isEmpty || predCols.all fun _t =>
-      -- For simplicity, allow if there are direct column references in projection
-      items.any fun item =>
-        match item with
-        | .exprItem (.col _) _ => true
-        | _ => false
+    let predCols := getColumnRefs pred
+    -- Get columns that pass through the projection unchanged
+    let passThroughCols := getPassthroughColumns items
+    -- All predicate columns must be in pass-through columns
+    predCols.all fun pc =>
+      passThroughCols.any fun ptc =>
+        -- Match by column name (table qualifier may differ due to aliasing)
+        pc.column == ptc.column
 
 /-- Extract all column references from an expression -/
 partial def getColumnRefs : Expr -> List ColumnRef
@@ -1045,15 +1079,17 @@ def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
       else some f
     | none => none
 
-  -- Apply predicate pushdown
-  let from'' := match from', where' with
-    | some f, some w => some (pushPredicateDown w f)
-    | f, _ => f
+  -- Apply predicate pushdown and clear WHERE (predicate moves into FROM tree)
+  let (from'', finalWhere) := match from', where' with
+    | some f, some w =>
+      -- Push predicate into FROM clause; clear WHERE to avoid duplication
+      (some (pushPredicateDown w f), none)
+    | f, w => (f, w)
 
   -- Return optimized statement
   { sel1 with
     fromClause := from''
-    whereClause := where' }
+    whereClause := finalWhere }
 
 /-- Apply advanced optimization to a full statement -/
 def optimizeAdvanced (s : Stmt) : Stmt :=

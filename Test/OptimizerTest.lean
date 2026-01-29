@@ -630,6 +630,54 @@ def testPushPredicateOuterJoin : TestResult :=
   | .join _ .left _ (some _) => .pass "Predicate on null-extended side kept in ON clause"
   | _ => .fail "Outer join pushdown" "Predicate incorrectly pushed"
 
+def testHasOnlyInnerJoins : TestResult :=
+  -- INNER joins should return true
+  let innerJoin := FromClause.join
+    (FromClause.table ⟨"a", none⟩)
+    .inner
+    (FromClause.table ⟨"b", none⟩)
+    none
+  -- LEFT join should return false
+  let leftJoin := FromClause.join
+    (FromClause.table ⟨"a", none⟩)
+    .left
+    (FromClause.table ⟨"b", none⟩)
+    none
+  if hasOnlyInnerJoins innerJoin && !hasOnlyInnerJoins leftJoin then
+    .pass "hasOnlyInnerJoins correctly identifies join types"
+  else
+    .fail "hasOnlyInnerJoins" "Incorrect join type detection"
+
+def testOuterJoinNotReordered : TestResult :=
+  -- LEFT JOIN should not be reordered
+  let from_ := FromClause.join
+    (FromClause.join
+      (FromClause.table ⟨"a", none⟩)
+      .left
+      (FromClause.table ⟨"b", none⟩)
+      none)
+    .inner
+    (FromClause.table ⟨"c", none⟩)
+    none
+  let result := optimizeJoinOrder from_ none
+  -- Should return original unchanged (contains LEFT join)
+  match result, from_ with
+  | .join (.join _ .left _ _) _ _ _, .join (.join _ .left _ _) _ _ _ =>
+    .pass "Outer join FROM not reordered"
+  | _, _ => .fail "Outer join reordering" "FROM clause was incorrectly modified"
+
+def testGetPassthroughColumns : TestResult :=
+  let items := [
+    SelectItem.exprItem (Expr.col ⟨some "t", "x"⟩) (some "x_alias"),
+    SelectItem.exprItem (Expr.binOp .add (intLit 1) (intLit 2)) (some "computed")
+  ]
+  let cols := getPassthroughColumns items
+  -- Only the direct column should be included, not the computed expression
+  if cols.length == 1 then
+    .pass "getPassthroughColumns extracts only direct columns"
+  else
+    .fail "getPassthroughColumns" s!"Expected 1 column, got {cols.length}"
+
 -- ============================================================================
 -- Integration Tests
 -- ============================================================================
@@ -763,6 +811,9 @@ def allTests : List TestResult := [
   testCanPushLeftThroughJoin,
   testCanPushRightThroughJoin,
   testPushPredicateOuterJoin,
+  testHasOnlyInnerJoins,
+  testOuterJoinNotReordered,
+  testGetPassthroughColumns,
   -- Integration tests
   testOptimizeJoinOrder,
   testOptimizeSelectAdvanced,
