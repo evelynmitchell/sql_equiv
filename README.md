@@ -254,6 +254,7 @@ example (h1 : a =~e b) (h2 : b =~e c) : a =~e c := by
 | `SqlEquiv.Semantics` | Relational algebra-based evaluation model |
 | `SqlEquiv.Equiv` | Equivalence definitions and core theorems |
 | `SqlEquiv.Tactics` | Custom Lean 4 tactics for SQL proofs |
+| `SqlEquiv.Optimizer` | Query optimizer with join reordering, predicate pushdown, and expression normalization |
 | `SqlEquiv.Basic` | Re-exports all modules for convenience |
 
 ### Key Types
@@ -303,6 +304,121 @@ inductive Stmt where
 - **Row**: `List (String * Value)` - A mapping from column names to values
 - **Table**: `List Row` - A collection of rows (bag semantics)
 - **Database**: `String -> Table` - A mapping from table names to tables
+
+## Query Optimizer
+
+The `SqlEquiv.Optimizer` module provides cost-based query optimization with formal correctness guarantees.
+
+### Optimization Features
+
+| Feature | Description |
+|---------|-------------|
+| **Constant Folding** | Evaluate constant expressions at compile time (`1 + 2` → `3`) |
+| **Boolean Simplification** | Apply De Morgan's laws, double negation elimination, identity laws |
+| **Dead Code Elimination** | Remove `WHERE TRUE`, optimize `WHERE FALSE` to `LIMIT 0` |
+| **Join Reordering** | Cost-based greedy algorithm for 3+ table joins (INNER/CROSS only) |
+| **Expression Normalization** | Canonical ordering for commutative operations |
+| **Predicate Pushdown** | Push WHERE predicates into JOINs and subqueries |
+| **Subquery Decorrelation** | Helpers for converting correlated subqueries to semi-joins |
+
+### Usage
+
+```lean
+import SqlEquiv
+
+open SqlEquiv
+
+-- Basic optimization (constant folding, boolean simplification, dead code elimination)
+def optimizedStmt := optimize stmt
+
+-- Advanced optimization (includes join reordering and predicate pushdown)
+def fullyOptimized := optimizeAdvanced stmt
+
+-- Get optimization with proof of equivalence
+def optimizedWithProof := optimizeWithProof stmt
+-- Returns { s' : Stmt // s ≃ s' }
+
+-- Generate optimization report with cost comparison
+def report := generateReport stmt
+-- Shows original cost, optimized cost, and improvement percentage
+```
+
+### Join Reordering
+
+The optimizer uses a greedy cost-based algorithm to reorder joins:
+
+```lean
+-- Only applies to queries with 3+ tables and INNER/CROSS joins only
+-- Outer joins (LEFT, RIGHT, FULL) are never reordered to preserve semantics
+
+-- Example: Given tables A(1000 rows), B(100 rows), C(10 rows)
+-- Original: A JOIN B JOIN C
+-- Optimized: C JOIN B JOIN A (smallest tables first)
+```
+
+**Safety guarantees:**
+- Only reorders INNER and CROSS joins (checked via `hasOnlyInnerJoins`)
+- Preserves query semantics (proven via `join_reorder_equiv` axiom)
+- Uses WHERE clause conditions for cost estimation
+
+### Predicate Pushdown
+
+Pushes WHERE predicates as deep as possible into the query tree:
+
+```lean
+-- Before: SELECT * FROM (SELECT * FROM t) sub WHERE x > 5
+-- After:  SELECT * FROM (SELECT * FROM t WHERE x > 5) sub
+
+-- Respects outer join semantics:
+-- - LEFT JOIN: only push predicates referencing left side
+-- - RIGHT JOIN: only push predicates referencing right side
+-- - FULL JOIN: predicates stay in ON clause, not pushed
+```
+
+**Safety checks:**
+- `canPushPastProjection`: Verifies predicate columns exist in SELECT list
+- `canPushPastGroupBy`: Only pushes predicates on grouping columns
+- `canPushLeftThroughJoin` / `canPushRightThroughJoin`: Respects outer join semantics
+
+### Expression Normalization
+
+Normalizes expressions to canonical form for better matching:
+
+```lean
+-- Commutative operations sorted by weight (literals < columns < complex)
+-- x + 1 → 1 + x
+-- c AND b AND a → a AND b AND c (flattened and sorted)
+```
+
+### Cost Model
+
+The optimizer includes a configurable cost model:
+
+```lean
+structure CostFactors where
+  scanRowCost : Nat := 1
+  filterCost : Nat := 2
+  joinCost : Nat := 10
+  sortCost : Nat := 5
+  distinctCost : Nat := 3
+  subqueryCost : Nat := 20
+
+-- Estimate cost of any statement
+def cost := estimateCost defaultCostFactors stmt
+```
+
+### Correctness Axioms
+
+The optimizer's correctness is captured by these axioms:
+
+| Axiom | Description |
+|-------|-------------|
+| `optimizeExpr_equiv` | Expression optimization preserves semantics |
+| `optimizeSelectStmt_equiv` | SELECT optimization preserves semantics |
+| `optimize_equiv` | Full statement optimization preserves semantics |
+| `normalizeExpr_equiv` | Expression normalization preserves semantics |
+| `join_reorder_equiv` | Join reordering preserves semantics (for inner joins) |
+| `predicate_pushdown_equiv` | Predicate pushdown preserves semantics |
 
 ## Available Theorems
 
@@ -704,6 +820,7 @@ sql_equiv/
 |   +-- Semantics.lean    # Evaluation model
 |   +-- Equiv.lean        # Equivalence proofs
 |   +-- Tactics.lean      # Custom tactics
+|   +-- Optimizer.lean    # Query optimizer
 |   +-- Basic.lean        # Re-exports
 +-- Test/
 |   +-- Common.lean       # Test infrastructure
@@ -711,6 +828,7 @@ sql_equiv/
 |   +-- SemanticsTest.lean# Semantics tests
 |   +-- EquivTest.lean    # Equivalence tests
 |   +-- PropertyTest.lean # Property-based tests
+|   +-- OptimizerTest.lean# Optimizer tests
 |   +-- Main.lean         # Test runner
 +-- Main.lean             # Demo application
 +-- lakefile.toml         # Lake build config
