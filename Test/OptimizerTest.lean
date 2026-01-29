@@ -608,7 +608,7 @@ def testOptimizeJoinOrder : TestResult :=
   let whereExpr := Expr.binOp .and
     (Expr.binOp .eq (Expr.col ⟨some "a", "id"⟩) (Expr.col ⟨some "b", "a_id"⟩))
     (Expr.binOp .eq (Expr.col ⟨some "b", "id"⟩) (Expr.col ⟨some "c", "b_id"⟩))
-  let optimized := optimizeJoinOrder from_ (some whereExpr) defaultCostFactors
+  let optimized := optimizeJoinOrder from_ (some whereExpr)
   -- The optimized result should still be a valid FROM clause
   match optimized with
   | .join _ _ _ _ => .pass "optimizeJoinOrder produces valid join structure"

@@ -725,10 +725,12 @@ def reorderJoinsGreedy (graph : JoinGraph) : List (TableRef × Option Expr) :=
           loop (combined :: remaining') edges (result ++ [(n2.table, cond)]) fuel'
   loop graph.nodes graph.edges [] graph.nodes.length
 
-/-- Apply join reordering to a FROM clause -/
-def optimizeJoinOrder (from_ : FromClause) (where_ : Option Expr) (factors : CostFactors) : FromClause :=
+/-- Apply join reordering to a FROM clause.
+    Reorders joins with 3 or more tables using a greedy cost-based algorithm.
+    For 2 or fewer tables, returns the original FROM clause unchanged. -/
+def optimizeJoinOrder (from_ : FromClause) (where_ : Option Expr) : FromClause :=
   let tables := extractTables from_
-  -- Only reorder if we have multiple tables
+  -- Only reorder if we have 3+ tables (2-table joins don't benefit from reordering)
   if tables.length <= 2 then from_
   else
     let graph := buildJoinGraph from_ where_
@@ -833,9 +835,9 @@ partial def normalizeExpr : Expr -> Expr
   | .case branches else_ =>
     .case (branches.map fun (c, r) => (normalizeExpr c, normalizeExpr r)) (else_.map normalizeExpr)
   | .inList e neg vals => .inList (normalizeExpr e) neg (vals.map normalizeExpr)
-  | .inSubquery e neg sel => .inSubquery (normalizeExpr e) neg sel
-  | .exists neg sel => .exists neg sel
-  | .subquery sel => .subquery sel
+  | .inSubquery e neg sel => .inSubquery (normalizeExpr e) neg (optimizeSelectStmt sel)
+  | .exists neg sel => .exists neg (optimizeSelectStmt sel)
+  | .subquery sel => .subquery (optimizeSelectStmt sel)
   | .between e lo hi => .between (normalizeExpr e) (normalizeExpr lo) (normalizeExpr hi)
   | .windowFn fn arg spec => .windowFn fn (arg.map normalizeExpr) spec
 
@@ -998,7 +1000,7 @@ def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
     | some f =>
       let tables := extractTables f
       if tables.length > 2 then
-        some (optimizeJoinOrder f where' defaultCostFactors)
+        some (optimizeJoinOrder f where')
       else some f
     | none => none
 
@@ -1091,7 +1093,7 @@ def normalizeExprWithProof (e : Expr) : { e' : Expr // e ≃ₑ e' } :=
     Axiom: Inner joins are commutative and associative. -/
 axiom join_reorder_equiv (from1 from2 : FromClause) :
   ∀ db, evalFrom db from1 = evalFrom db from2 →
-        evalFrom db (optimizeJoinOrder from1 none defaultCostFactors) = evalFrom db from2
+        evalFrom db (optimizeJoinOrder from1 none) = evalFrom db from2
 
 /-- Predicate pushdown preserves semantics.
     Axiom: Pushing predicates into JOINs/subqueries doesn't change results. -/
