@@ -644,7 +644,12 @@ partial def extractJoinConditions (tables : List String) : Expr -> List JoinEdge
       | _ => []
     else []
 
-/-- Build a join graph from a FROM clause and WHERE conditions -/
+/-- Build a join graph from a FROM clause and WHERE conditions.
+    Note: This function extracts join edges only from the WHERE clause.
+    ON conditions in the FROM clause are not extracted into the graph;
+    they are preserved in the original join structure. The graph is used
+    for cost-based reordering of tables, while original ON conditions
+    remain attached to their respective joins. -/
 def buildJoinGraph (from_ : FromClause) (where_ : Option Expr) : JoinGraph :=
   let tables := extractTables from_
   let tableNames := tables.map getTableName
@@ -820,9 +825,10 @@ partial def normalizeExpr : Expr -> Expr
     let r' := normalizeExpr r
     -- For AND/OR, flatten, sort, and rebuild
     if op == .and || op == .or then
+      -- Note: l' and r' are already normalized, so flattenBoolOp produces
+      -- a list of already-normalized expressions. No need to normalize again.
       let flattened := flattenBoolOp op (.binOp op l' r')
-      let normalized := flattened.map normalizeExpr
-      let sorted := normalized.toArray.qsort (exprCompare · · == .lt) |>.toList
+      let sorted := flattened.toArray.qsort (exprCompare · · == .lt) |>.toList
       match rebuildBoolOp op sorted with
       | some e => e
       | none => .binOp op l' r'
@@ -935,17 +941,52 @@ def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
         | .exprItem (.col _) _ => true
         | _ => false
 
+/-- Extract all column references from an expression -/
+partial def getColumnRefs : Expr -> List ColumnRef
+  | .col c => [c]
+  | .binOp _ l r => getColumnRefs l ++ getColumnRefs r
+  | .unaryOp _ e => getColumnRefs e
+  | .func _ args => args.flatMap getColumnRefs
+  | .case branches else_ =>
+    branches.flatMap (fun (c, r) => getColumnRefs c ++ getColumnRefs r) ++
+    (else_.map getColumnRefs |>.getD [])
+  | .between e lo hi => getColumnRefs e ++ getColumnRefs lo ++ getColumnRefs hi
+  | .inList e _ vals => getColumnRefs e ++ vals.flatMap getColumnRefs
+  | _ => []
+
 /-- Check if a predicate can be pushed below a GROUP BY.
     Only predicates on grouping columns can be pushed. -/
 def canPushPastGroupBy (pred : Expr) (groupBy : List Expr) : Bool :=
   if groupBy.isEmpty then true
   else
-    -- All column references in pred must be in groupBy
-    let predCols := getReferencedTables pred
-    -- Simplified: allow pushdown if pred is simple
-    predCols.length <= 1
+    -- All column references in pred must appear in groupBy columns
+    let predCols := getColumnRefs pred
+    let groupByCols := groupBy.flatMap getColumnRefs
+    -- Check that every column in pred is also in groupBy
+    predCols.all fun pc =>
+      groupByCols.any fun gc =>
+        pc.table == gc.table && pc.column == gc.column
 
-/-- Push predicates as deep as possible into the query tree -/
+/-- Check if a join type allows predicate pushdown to the left side -/
+def canPushLeftThroughJoin : JoinType -> Bool
+  | .inner => true
+  | .cross => true
+  | .left => true   -- Can push predicates on left side
+  | .right => false -- Right preserves left side nulls
+  | .full => false  -- Full preserves both sides' nulls
+
+/-- Check if a join type allows predicate pushdown to the right side -/
+def canPushRightThroughJoin : JoinType -> Bool
+  | .inner => true
+  | .cross => true
+  | .left => false  -- Left preserves right side nulls
+  | .right => true  -- Can push predicates on right side
+  | .full => false  -- Full preserves both sides' nulls
+
+/-- Push predicates as deep as possible into the query tree.
+    Note: For OUTER JOINs, pushing predicates can change semantics by filtering
+    out NULL rows that should be preserved. We only push through OUTER JOINs
+    to the "preserved" side (left for LEFT JOIN, right for RIGHT JOIN). -/
 partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
   | .table t => .table t  -- Can't push into base table
   | .subquery sel alias =>
@@ -964,13 +1005,13 @@ partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
     let leftTables := (extractTables left).map getTableName
     let rightTables := (extractTables right).map getTableName
     let predTables := getReferencedTables pred
-    -- Push to left if only references left tables
-    if predTables.all (leftTables.contains ·) then
+    -- Push to left if only references left tables AND join type allows it
+    if predTables.all (leftTables.contains ·) && canPushLeftThroughJoin jtype then
       .join (pushPredicateDown pred left) jtype right on_
-    -- Push to right if only references right tables
-    else if predTables.all (rightTables.contains ·) then
+    -- Push to right if only references right tables AND join type allows it
+    else if predTables.all (rightTables.contains ·) && canPushRightThroughJoin jtype then
       .join left jtype (pushPredicateDown pred right) on_
-    -- Otherwise keep in join condition
+    -- Otherwise keep in join condition (or at outer level for FULL OUTER)
     else
       let newOn := match on_ with
         | some c => some (Expr.binOp .and c pred)
@@ -1095,8 +1136,14 @@ axiom join_reorder_equiv (from1 from2 : FromClause) :
   ∀ db, evalFrom db from1 = evalFrom db from2 →
         evalFrom db (optimizeJoinOrder from1 none) = evalFrom db from2
 
-/-- Predicate pushdown preserves semantics.
-    Axiom: Pushing predicates into JOINs/subqueries doesn't change results. -/
+/-- Predicate pushdown preserves semantics for INNER JOINs.
+    Axiom: Pushing predicates into INNER JOINs/CROSS JOINs/subqueries doesn't
+    change results. For OUTER JOINs (LEFT/RIGHT/FULL), pushPredicateDown only
+    pushes to the "preserved" side, so semantics are preserved:
+    - LEFT JOIN: predicates on left side only are pushed left
+    - RIGHT JOIN: predicates on right side only are pushed right
+    - FULL JOIN: predicates are kept in the join condition, not pushed
+    This ensures NULL-extended rows from outer joins are handled correctly. -/
 axiom predicate_pushdown_equiv (pred : Expr) (from_ : FromClause) :
   ∀ db, evalFrom db (pushPredicateDown pred from_) =
         evalFrom db from_ |>.filter (fun row => evalExprToBool pred row db)

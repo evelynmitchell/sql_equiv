@@ -589,6 +589,47 @@ def testCanPushPastProjectionWithStar : TestResult :=
   else
     .fail "Push past projection" "Should allow with star"
 
+def testGetColumnRefs : TestResult :=
+  -- Test the getColumnRefs helper function
+  let expr := Expr.binOp .and
+    (Expr.col ⟨some "t", "a"⟩)
+    (Expr.binOp .eq (Expr.col ⟨none, "b"⟩) (intLit 5))
+  let refs := getColumnRefs expr
+  if refs.length == 2 then
+    .pass "getColumnRefs extracts column references"
+  else
+    .fail "getColumnRefs" s!"Expected 2 refs, got {refs.length}"
+
+def testCanPushLeftThroughJoin : TestResult :=
+  -- INNER and LEFT allow pushing to left side
+  if canPushLeftThroughJoin .inner && canPushLeftThroughJoin .left &&
+     !canPushLeftThroughJoin .full then
+    .pass "canPushLeftThroughJoin correct for join types"
+  else
+    .fail "canPushLeftThroughJoin" "Incorrect join type handling"
+
+def testCanPushRightThroughJoin : TestResult :=
+  -- INNER and RIGHT allow pushing to right side
+  if canPushRightThroughJoin .inner && canPushRightThroughJoin .right &&
+     !canPushRightThroughJoin .full then
+    .pass "canPushRightThroughJoin correct for join types"
+  else
+    .fail "canPushRightThroughJoin" "Incorrect join type handling"
+
+def testPushPredicateOuterJoin : TestResult :=
+  -- For LEFT JOIN, predicate on right side should NOT be pushed
+  let from_ := FromClause.join
+    (FromClause.table ⟨"left", none⟩)
+    .left
+    (FromClause.table ⟨"right", none⟩)
+    (some (Expr.binOp .eq (Expr.col ⟨some "left", "id"⟩) (Expr.col ⟨some "right", "lid"⟩)))
+  let predOnRight := Expr.binOp .eq (Expr.col ⟨some "right", "status"⟩) (strLit "active")
+  let result := pushPredicateDown predOnRight from_
+  -- The predicate should be in the ON clause, not pushed into right side
+  match result with
+  | .join _ .left _ (some _) => .pass "Predicate on null-extended side kept in ON clause"
+  | _ => .fail "Outer join pushdown" "Predicate incorrectly pushed"
+
 -- ============================================================================
 -- Integration Tests
 -- ============================================================================
@@ -718,6 +759,10 @@ def allTests : List TestResult := [
   testCanPushPastGroupBy,
   testCannotPushComplexPastGroupBy,
   testCanPushPastProjectionWithStar,
+  testGetColumnRefs,
+  testCanPushLeftThroughJoin,
+  testCanPushRightThroughJoin,
+  testPushPredicateOuterJoin,
   -- Integration tests
   testOptimizeJoinOrder,
   testOptimizeSelectAdvanced,
