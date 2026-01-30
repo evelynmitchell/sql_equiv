@@ -290,7 +290,7 @@ partial def normalizeExprCanonical : Expr → Expr
   | .windowFn fn arg (.mk partBy orderBy) =>
     let normArg := arg.map normalizeExprCanonical
     let normPartBy := partBy.map normalizeExprCanonical
-    let normOrderBy := orderBy.map fun item => OrderByItem.mk (normalizeExprCanonical item.expr) item.dir
+    let normOrderBy := orderBy.map fun item => .mk (normalizeExprCanonical item.expr) item.dir
     .windowFn fn normArg (.mk normPartBy normOrderBy)
   -- Leaves (lit, col, countStar) and subqueries (own scope): unchanged
   | e => e
@@ -341,9 +341,10 @@ def pushPredicateDown (pred : Expr) (from_ : FromClause) : PushdownResult
 /-- Extract column reference info from SelectItem (name and optional table qualifier) -/
 def getSelectItemColumnRef : SelectItem → Option ColumnRef
   | .star _ => none
-  | .exprItem (.col c) _ => some c  -- preserve full column reference
-  | .exprItem _ (some alias) => some { column := alias, table := none }
-  | .exprItem _ none => none
+  | .exprItem (.col c) (some alias) => some { column := alias, table := none }  -- alias takes precedence
+  | .exprItem (.col c) none => some c  -- preserve full column reference when unaliased
+  | .exprItem _ (some alias) => some { column := alias, table := none }  -- non-column expr with alias
+  | .exprItem _ none => none  -- non-column expr without alias: can't reference
 
 /-- Can push predicate past SELECT projection?
     Uses getReferencedColumns (PR 0) to check column availability.
