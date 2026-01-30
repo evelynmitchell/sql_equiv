@@ -245,14 +245,16 @@ def exprCompare : Expr → Expr → Ordering :=
 /-- Normalize to canonical form. Idempotent: normalize (normalize e) = normalize e -/
 partial def normalizeExprCanonical : Expr → Expr
   | .binOp .and l r =>
-    -- We've already decomposed the top-level AND in the pattern match, so we
-    -- can flatten l and r directly, then normalize and sort conjuncts.
+    -- Pattern match captures the top-level AND operands l and r, then
+    -- flattenAnd recursively flattens any nested ANDs within each operand
+    -- before we normalize and sort conjuncts.
     let conjuncts := (flattenAnd l ++ flattenAnd r).map normalizeExprCanonical
     let sorted := conjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenAnd sorted |>.getD (.lit (.bool true))
   | .binOp .or l r =>
-    -- We've already decomposed the top-level OR in the pattern match, so we
-    -- can flatten l and r directly, then normalize and sort disjuncts.
+    -- Pattern match captures the top-level OR operands l and r, then
+    -- flattenOr recursively flattens any nested ORs within each operand
+    -- before we normalize and sort disjuncts.
     let disjuncts := (flattenOr l ++ flattenOr r).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenOr sorted |>.getD (.lit (.bool false))
