@@ -18,7 +18,7 @@ The following utilities already exist and should be leveraged:
 | `exprReferencesOnlyTable` | Equiv.lean:1175 | Check if expr references only one table |
 | `exprReferencesOnlyFrom` | Equiv.lean:1207 | Check if expr references only columns in a FROM |
 | `hasAggregate` | Semantics.lean:190 | Detect aggregate functions in expressions |
-| `Expr.isGround` | Equiv.lean | Check if expression has no column references |
+| `Expr.isGround` | Equiv.lean:977 | Check if expression has no column references |
 | `normalizeExpr` | Equiv.lean:627 | Existing normalizer (commutative reordering) |
 
 ### Existing Axioms for Join Reordering
@@ -57,6 +57,9 @@ partial def exprStructuralCmp : Expr → Expr → Ordering
 - `flattenAnd`/`unflattenAnd`: PR A needs these for sorting conjuncts; PR B needs them to split predicates for pushdown
 - `getReferencedColumns`: PR B needs this for `canPushPastProjection`; PR C needs it for edge detection
 - `exprStructuralCmp`: PR A can use this instead of `toString (repr e)` for deterministic ordering
+- `getSelectItemAlias`: PR B needs this for `canPushPastProjection` to check column availability
+- `getTableName`: PR C needs this for `JoinNode.leaf` to extract table names
+- `exprRefersToColumn`: PR B needs this for `canPushPastGroupBy` to check column membership
 
 ### Function Signature Concerns
 
@@ -91,19 +94,25 @@ These serve different purposes and should coexist.
 ```lean
 -- In a new file: SqlEquiv/OptimizerUtils.lean
 
-/-- Extract all column references from an expression -/
+/-- Extract all column references from an expression (complete coverage) -/
 partial def getReferencedColumns : Expr → List ColumnRef
+  | .lit _ => []
   | .col c => [c]
   | .binOp _ l r => getReferencedColumns l ++ getReferencedColumns r
   | .unaryOp _ e => getReferencedColumns e
   | .func _ args => args.flatMap getReferencedColumns
   | .agg _ (some e) _ => getReferencedColumns e
+  | .agg _ none _ => []
+  | .countStar => []
   | .case branches else_ =>
     branches.flatMap (fun (c, r) => getReferencedColumns c ++ getReferencedColumns r) ++
     (else_.map getReferencedColumns |>.getD [])
   | .inList e _ vals => getReferencedColumns e ++ vals.flatMap getReferencedColumns
+  | .inSubquery e _ _ => getReferencedColumns e  -- subquery has own scope
+  | .exists _ _ => []  -- subquery has own scope
+  | .subquery _ => []  -- subquery has own scope
   | .between e lo hi => getReferencedColumns e ++ getReferencedColumns lo ++ getReferencedColumns hi
-  | _ => []
+  | .windowFn _ args _ => args.flatMap getReferencedColumns
 
 /-- Flatten nested ANDs: (a AND (b AND c)) → [a, b, c] -/
 partial def flattenAnd : Expr → List Expr
@@ -131,6 +140,27 @@ def unflattenOr : List Expr → Option Expr
 partial def exprStructuralCmp : Expr → Expr → Ordering
   -- Implementation: compare constructors first, then recursively compare fields
   -- Literals < Columns < BinOps < UnaryOps < Functions < etc.
+
+/-- Extract alias from SelectItem if present -/
+def getSelectItemAlias : SelectItem → Option String
+  | .star _ => none
+  | .exprItem _ (some alias) => some alias
+  | .exprItem (.col c) none => some c.column  -- use column name as implicit alias
+  | .exprItem _ none => none
+
+/-- Extract table name/alias from TableRef -/
+def getTableName (t : TableRef) : String := t.alias.getD t.name
+
+/-- Check if an expression refers to a specific column -/
+def exprRefersToColumn (col : ColumnRef) : Expr → Bool
+  | .col c => c.column == col.column && (c.table == col.table || c.table.isNone || col.table.isNone)
+  | .binOp _ l r => exprRefersToColumn col l || exprRefersToColumn col r
+  | .unaryOp _ e => exprRefersToColumn col e
+  | .func _ args => args.any (exprRefersToColumn col)
+  | .case branches else_ =>
+    branches.any (fun (c, r) => exprRefersToColumn col c || exprRefersToColumn col r) ||
+    (else_.map (exprRefersToColumn col) |>.getD false)
+  | _ => false
 ```
 
 **Axioms**: None needed (these are pure structural utilities).
@@ -182,8 +212,30 @@ partial def normalizeExprCanonical : Expr → Expr
     let disjuncts := (flattenOr (.binOp .or l r)).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenOr sorted |>.getD (.lit (.bool false))
-  -- ... other commutative ops (add, mul, eq) ...
-  | e => e  -- Non-commutative: just recurse
+  | .binOp .add l r =>
+    -- Commutative: sort operands
+    let nl := normalizeExprCanonical l; let nr := normalizeExprCanonical r
+    if exprCompare nl nr == .gt then .binOp .add nr nl else .binOp .add nl nr
+  | .binOp .mul l r =>
+    let nl := normalizeExprCanonical l; let nr := normalizeExprCanonical r
+    if exprCompare nl nr == .gt then .binOp .mul nr nl else .binOp .mul nl nr
+  | .binOp .eq l r =>
+    let nl := normalizeExprCanonical l; let nr := normalizeExprCanonical r
+    if exprCompare nl nr == .gt then .binOp .eq nr nl else .binOp .eq nl nr
+  -- Non-commutative binary ops: recurse into children
+  | .binOp op l r => .binOp op (normalizeExprCanonical l) (normalizeExprCanonical r)
+  -- Unary ops: recurse
+  | .unaryOp op e => .unaryOp op (normalizeExprCanonical e)
+  -- Functions: recurse into args
+  | .func name args => .func name (args.map normalizeExprCanonical)
+  -- Aggregates: recurse into arg
+  | .agg fn (some e) distinct => .agg fn (some (normalizeExprCanonical e)) distinct
+  -- Case expressions: recurse into branches and else
+  | .case branches else_ =>
+    .case (branches.map fun (c, r) => (normalizeExprCanonical c, normalizeExprCanonical r))
+          (else_.map normalizeExprCanonical)
+  -- Leaves and subqueries: unchanged
+  | e => e
 ```
 
 **Key decisions**:
@@ -236,10 +288,10 @@ def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
   predCols.all (fun c => availableCols.contains c.column)
 
 /-- Can push predicate past GROUP BY?
-    Uses hasAggregate (existing in Semantics.lean) -/
+    Uses hasAggregate (existing in Semantics.lean) and exprRefersToColumn (PR 0) -/
 def canPushPastGroupBy (pred : Expr) (groupBy : List Expr) : Bool :=
-  !hasAggregate pred &&  -- existing utility
-  (getReferencedColumns pred).all (fun c => groupBy.any (exprRefersToColumn c))
+  !hasAggregate pred &&  -- existing utility from Semantics.lean
+  (getReferencedColumns pred).all (fun c => groupBy.any (exprRefersToColumn c))  -- PR 0 utilities
 
 /-- Can push to left side of join? -/
 def canPushLeftThroughJoin (jtype : JoinType) : Bool :=
@@ -316,13 +368,31 @@ def edgeConnects (edge : JoinEdge) (n1 n2 : JoinNode) : Bool :=
   (n1.originalTables.contains edge.rightTable && n2.originalTables.contains edge.leftTable)
 ```
 
-**Safety gate**:
+**Safety gate and algorithm**:
 ```lean
+/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder) -/
+partial def hasOnlyInnerJoins : FromClause → Bool
+  | .table _ => true
+  | .subquery _ _ => true
+  | .join left jtype right _ =>
+    (jtype == .inner || jtype == .cross) &&
+    hasOnlyInnerJoins left && hasOnlyInnerJoins right
+
 /-- Only reorder if all joins are INNER/CROSS -/
 def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerJoins from_
+
+/-- Reorder joins using greedy cost-based selection.
+    At each step, pick the cheapest pair of nodes to join. -/
+partial def reorderJoins (from_ : FromClause) : FromClause :=
+  -- 1. Extract leaf tables into JoinNode list
+  -- 2. Extract join predicates into JoinEdge list
+  -- 3. Greedily combine cheapest pair until single node remains
+  -- 4. Rebuild FromClause from result
+  -- (Full implementation in PR C)
+  from_  -- placeholder: returns unchanged if not implemented
 ```
 
-**Algorithm**: Greedy selection of cheapest join pair at each step.
+**Algorithm**: Greedy selection of cheapest join pair at each step. Note: This may miss globally optimal plans; a future DP-based optimizer could replace this.
 
 **Axiom**:
 ```lean
@@ -413,6 +483,10 @@ To avoid signature changes mid-review:
 | `flattenAnd/Or` | `Expr → List Expr` | ✓ Straightforward |
 | `unflattenAnd/Or` | `List Expr → Option Expr` | ✓ Returns Option for empty list |
 | `exprStructuralCmp` | `Expr → Expr → Ordering` | ✓ Standard comparison signature |
+| `getSelectItemAlias` | `SelectItem → Option String` | ✓ Simple extraction |
+| `getTableName` | `TableRef → String` | ✓ Mirrors existing `t.alias.getD t.name` pattern |
+| `exprRefersToColumn` | `ColumnRef → Expr → Bool` | ✓ Standard predicate |
+| `hasOnlyInnerJoins` | `FromClause → Bool` | ✓ Simple recursive check |
 | `normalizeExprCanonical` | `Expr → Expr` | ✓ Same as existing `normalizeExpr` |
 | `PushdownResult` | `{ pushedFrom : FromClause, remaining : Option Expr }` | ✓ Designed correctly upfront |
 | `pushPredicateDown` | `Expr → FromClause → PushdownResult` | ✓ Non-optional pred, returns struct |
