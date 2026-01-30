@@ -244,14 +244,16 @@ def exprCompare : Expr → Expr → Ordering :=
 
 /-- Normalize to canonical form. Idempotent: normalize (normalize e) = normalize e -/
 partial def normalizeExprCanonical : Expr → Expr
-  | e@(.binOp .and _ _) =>
-    -- Flatten the full AND expression, then normalize and sort conjuncts.
-    let conjuncts := flattenAnd e |>.map normalizeExprCanonical
+  | .binOp .and l r =>
+    -- We've already decomposed the top-level AND in the pattern match, so we
+    -- can flatten l and r directly, then normalize and sort conjuncts.
+    let conjuncts := (flattenAnd l ++ flattenAnd r).map normalizeExprCanonical
     let sorted := conjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenAnd sorted |>.getD (.lit (.bool true))
-  | e@(.binOp .or _ _) =>
-    -- Flatten the full OR expression, then normalize and sort disjuncts.
-    let disjuncts := flattenOr e |>.map normalizeExprCanonical
+  | .binOp .or l r =>
+    -- We've already decomposed the top-level OR in the pattern match, so we
+    -- can flatten l and r directly, then normalize and sort disjuncts.
+    let disjuncts := (flattenOr l ++ flattenOr r).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenOr sorted |>.getD (.lit (.bool false))
   | .binOp .add l r =>
@@ -578,8 +580,8 @@ To avoid signature changes mid-review:
 | `normalizeExprCanonical` | `Expr → Expr` | ✓ Same as existing `normalizeExpr` |
 | `PushdownResult` | `{ pushedFrom : FromClause, remaining : Option Expr }` | ✓ Designed correctly upfront |
 | `pushPredicateDown` | `Expr → FromClause → PushdownResult` | ✓ Non-optional pred, returns struct |
-| `JoinNode` | `{ table, estimatedRows, originalTables }` | ✓ All fields designed in |
-| `JoinEdge` | `{ leftTable, rightTable, predicate, selectivity }` | ✓ All fields designed in |
+| `JoinNode` | `{ table : TableRef, estimatedRows : Nat, originalTables : List String }` | ✓ All fields designed in |
+| `JoinEdge` | `{ leftTable : String, rightTable : String, predicate : Expr, selectivity : Float }` | ✓ All fields designed in |
 
 **Enforcement**: Each PR should include a "Public API" section listing exported functions with signatures. Reviewers should flag any signature changes.
 
