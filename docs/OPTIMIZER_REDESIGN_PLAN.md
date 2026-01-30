@@ -492,13 +492,18 @@ structure JoinNode where
   originalTables : List String
   deriving Repr, BEq
 
+/-- Default cardinality estimate for tables without statistics -/
+def defaultCardinality : Nat := 1000
+
 /-- Initialize a leaf node from a table -/
 def JoinNode.leaf (t : TableRef) : JoinNode :=
   { table := t, estimatedRows := defaultCardinality, originalTables := [getTableName t] }
 
-/-- Combine two nodes after joining them -/
+/-- Combine two nodes after joining them.
+    The synthetic TableRef uses the combined name as the name field (for lookups)
+    and "__combined__" as alias to mark it as synthetic. -/
 def JoinNode.combine (n1 n2 : JoinNode) (cost : Nat) : JoinNode :=
-  { table := ⟨"__combined__", some s!"{n1.table.name}_{n2.table.name}"⟩
+  { table := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
   , estimatedRows := cost
   , originalTables := n1.originalTables ++ n2.originalTables }
 ```
