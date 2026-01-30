@@ -6,6 +6,73 @@ This document outlines a cleaner implementation plan for advanced query optimiza
 
 ---
 
+## Development Approach: Hybrid (Keep + Rewrite with Proofs)
+
+This project is a learning exercise with no deadlines, aiming to explore formal verification as deeply as practical. We use a **hybrid approach** that preserves valuable existing infrastructure while rewriting the optimizer components with verification in mind.
+
+### What We Keep
+
+The existing codebase has well-designed, stable components that don't need rewriting:
+
+| Component | Location | Rationale |
+|-----------|----------|-----------|
+| AST types | `Ast.lean` | Mature, stable, already well-structured for pattern matching |
+| Parser | `Parser.lean` | Working, tested, not relevant to semantic verification |
+| Pretty printer | `PrettyPrint.lean` | Utility code, orthogonal to correctness |
+| Basic semantics | `Semantics.lean` | Existing `evalExpr`, `evalFrom` form the foundation for proofs |
+| Existing equivalence axioms | `Equiv.lean` | `join_assoc`, `join_comm`, etc. already capture key properties |
+
+### What We Rewrite with Verification Focus
+
+The new optimizer utilities (PR 0 and beyond) will be written fresh with formal verification as a first-class concern:
+
+1. **Use `termination_by` instead of `partial`** where possible
+   - `partial` functions can't be used in proofs (they're opaque)
+   - `termination_by` with explicit measures enables Lean to verify termination
+   - Example: `getReferencedColumns` can use structural recursion on `Expr`
+
+2. **Design for provability from the start**
+   - Functions should have clear preconditions and postconditions
+   - Avoid complex state or side effects
+   - Prefer total functions over partial functions
+
+3. **Develop proofs alongside implementations**
+   - Each utility function gets its key property proven immediately
+   - Catch design issues early rather than discovering unprovable theorems later
+   - Build up a library of lemmas incrementally
+
+4. **Use the existing semantics as specification**
+   - Prove optimizer transformations correct against `evalFrom`, `evalExpr`
+   - The existing semantics become the "ground truth" for verification
+
+### Verification Strategy
+
+| Component | Verification Level | Approach |
+|-----------|-------------------|----------|
+| PR 0 utilities | **Full proofs** | Structural properties, roundtrip theorems |
+| PR A (normalization) | **Full proofs** | Semantic equivalence via `≃ₑ` |
+| PR B (pushdown) | **Axiom + key lemmas** | Safety checks proven, main theorem axiomatized initially |
+| PR C (join reorder) | **Axiom + key lemmas** | Leverage existing `join_assoc`/`join_comm` axioms |
+
+### Benefits of This Approach
+
+1. **Learning value maximized**: We prove what's tractable and learn where proofs become difficult
+2. **Incremental progress**: Each PR adds verified code without requiring everything to be proven upfront
+3. **Existing code as oracle**: We can test new implementations against existing behavior
+4. **Clear separation**: New `OptimizerUtils.lean` is "clean" code written for verification, distinct from legacy code
+
+### Migration Path
+
+```
+Phase 1: PR 0 with proofs → Establishes verification patterns
+Phase 2: PRs A/B/C with axioms → Gets optimizer working
+Phase 3: Replace axioms with proofs → Deepens verification as time permits
+```
+
+This approach lets us make steady progress while learning, without getting blocked on difficult proofs early.
+
+---
+
 ## Codebase Analysis (Added 2026-01-30)
 
 ### Existing Utilities That Can Be Reused
