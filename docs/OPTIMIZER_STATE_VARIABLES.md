@@ -13,7 +13,7 @@ This document defines all state variables in the optimizer system for formal ver
 | `FromClause` | Inductive | FROM clause: `.table`, `.subquery`, `.join` | Immutable |
 | `ColumnRef` | Structure | `{ column : String, table : Option String }` | Immutable |
 | `TableRef` | Structure | `{ name : String, alias : Option String }` | Immutable |
-| `WindowSpec` | Inductive | `{ partitionBy : List Expr, orderBy : List OrderByItem }` | Immutable |
+| `WindowSpec` | Inductive | `WindowSpec.mk (partitionBy : List Expr) (orderBy : List OrderByItem)` | Immutable |
 | `JoinType` | Inductive | `.inner`, `.left`, `.right`, `.full`, `.cross` | Immutable |
 
 ---
