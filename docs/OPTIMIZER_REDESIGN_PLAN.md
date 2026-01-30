@@ -71,7 +71,7 @@ def isGroupingKey : ColumnRef → Expr → Bool
 - `exprStructuralCmp`: PR A can use this instead of `toString (repr e)` for deterministic ordering
 - `getSelectItemAlias`: PR B needs this for `canPushPastProjection` to check column availability
 - `getTableName`: PR C needs this for `JoinNode.leaf` to extract table names
-- `exprRefersToColumn`: PR B needs this for `canPushPastGroupBy` to check column membership
+- `exprRefersToColumn`: General utility for checking if an expression references a column; used by PR B for predicate analysis and could be used internally by other helpers
 
 ### Function Signature Concerns
 
