@@ -11,7 +11,7 @@ This document defines all state variables in the optimizer system for formal ver
 | `Expr` | Inductive | Expression AST (lit, col, binOp, unaryOp, func, agg, case, etc.) | Immutable |
 | `SelectStmt` | Structure | Full SELECT statement (distinct, items, from, where, groupBy, having, orderBy, limit, offset) | Immutable |
 | `FromClause` | Inductive | FROM clause: `.table`, `.subquery`, `.join` | Immutable |
-| `ColumnRef` | Structure | `{ column : String, table : Option String }` | Immutable |
+| `ColumnRef` | Structure | `{ table : Option String, column : String }` | Immutable |
 | `TableRef` | Structure | `{ name : String, alias : Option String }` | Immutable |
 | `WindowSpec` | Inductive | `WindowSpec.mk (partitionBy : List Expr) (orderBy : List OrderByItem)` | Immutable |
 | `JoinType` | Inductive | `.inner`, `.left`, `.right`, `.full`, `.cross` | Immutable |

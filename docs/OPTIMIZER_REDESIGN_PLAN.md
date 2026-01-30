@@ -125,7 +125,7 @@ mutual
     | .agg _ (some e) _ => getReferencedColumns e
     | .agg _ none _ => []
     | .countStar => []
-    | .case branches else_ =>
+    | .«case» branches else_ =>
       branches.flatMap (fun (c, r) => getReferencedColumns c ++ getReferencedColumns r) ++
       (else_.map getReferencedColumns |>.getD [])
     | .inList e _ vals => getReferencedColumns e ++ vals.flatMap getReferencedColumns
@@ -185,7 +185,7 @@ partial def exprRefersToColumn (col : ColumnRef) : Expr → Bool
   | .agg _ (some e) _ => exprRefersToColumn col e
   | .agg _ none _ => false
   | .countStar => false
-  | .case branches else_ =>
+  | .«case» branches else_ =>
     branches.any (fun (c, r) => exprRefersToColumn col c || exprRefersToColumn col r) ||
     (else_.map (exprRefersToColumn col) |>.getD false)
   | .inList e _ vals => exprRefersToColumn col e || vals.any (exprRefersToColumn col)
@@ -275,8 +275,8 @@ partial def normalizeExprCanonical : Expr → Expr
   -- Aggregates: recurse into arg
   | .agg fn arg distinct => .agg fn (arg.map normalizeExprCanonical) distinct
   -- Case expressions: recurse into branches and else
-  | .case branches else_ =>
-    .case (branches.map fun (c, r) => (normalizeExprCanonical c, normalizeExprCanonical r))
+  | .«case» branches else_ =>
+    .«case» (branches.map fun (c, r) => (normalizeExprCanonical c, normalizeExprCanonical r))
           (else_.map normalizeExprCanonical)
   -- IN list: recurse into expression and values
   | .inList e neg vals =>
