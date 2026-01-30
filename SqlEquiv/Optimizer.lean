@@ -611,7 +611,7 @@ partial def exprReferencesTable (tableName : String) : Expr -> Bool
   | .func _ args => args.any (exprReferencesTable tableName)
   | .case branches else_ =>
     branches.any (fun (c, r) => exprReferencesTable tableName c || exprReferencesTable tableName r) ||
-    else_.map (exprReferencesTable tableName) |>.getD false
+    (else_.map (exprReferencesTable tableName)).getD false
   | .between e lo hi =>
     exprReferencesTable tableName e || exprReferencesTable tableName lo || exprReferencesTable tableName hi
   | _ => false
@@ -690,9 +690,12 @@ def findBestJoinPair (nodes : List JoinNode) (edges : List JoinEdge) : Option (J
         | some e => estimateJoinCost n1.estimatedRows n2.estimatedRows e.selectivity
         | none => n1.estimatedRows * n2.estimatedRows  -- Cross join cost
       (cost, n1, n2, edge)
-    match scored.minimum? (·.1 < ·.1) with
-    | some (_, n1, n2, edge) => some (n1, n2, edge)
-    | none => none
+    -- Find minimum by folding (since minimum? with custom comparator isn't available)
+    match scored with
+    | [] => none
+    | first :: rest =>
+      let (_, n1, n2, edge) := rest.foldl (fun acc x => if x.1 < acc.1 then x else acc) first
+      some (n1, n2, edge)
 
 /-- Construct a FROM clause from a join ordering.
     IMPORTANT: This function creates INNER joins only. It should only be called
@@ -799,18 +802,18 @@ partial def exprCompare (e1 e2 : Expr) : Ordering :=
   if w1 < w2 then .lt
   else if w1 > w2 then .gt
   else
-    -- Same weight, compare structurally
+    -- Same weight, compare structurally (convert repr to String for comparison)
     match e1, e2 with
-    | .lit v1, .lit v2 => compare (repr v1) (repr v2)
-    | .col c1, .col c2 => compare (repr c1) (repr c2)
+    | .lit v1, .lit v2 => compare (toString (repr v1)) (toString (repr v2))
+    | .col c1, .col c2 => compare (toString (repr c1)) (toString (repr c2))
     | .binOp op1 l1 r1, .binOp op2 l2 r2 =>
-      match compare (repr op1) (repr op2) with
-      | .eq =>
+      match compare (toString (repr op1)) (toString (repr op2)) with
+      | Ordering.eq =>
         match exprCompare l1 l2 with
-        | .eq => exprCompare r1 r2
+        | Ordering.eq => exprCompare r1 r2
         | ord => ord
       | ord => ord
-    | _, _ => compare (repr e1).length (repr e2).length
+    | _, _ => compare (toString (repr e1)).length (toString (repr e2)).length
 
 /-- Check if a binary operator is commutative -/
 def isCommutative : BinOp -> Bool
@@ -841,13 +844,13 @@ def rebuildBoolOp (op : BinOp) (exprs : List Expr) : Option Expr :=
   | e :: es =>
     es.foldl (fun acc e' => .binOp op acc e') e |> some
 
-/-- Normalize an expression to canonical form -/
-partial def normalizeExpr : Expr -> Expr
+/-- Normalize an expression to canonical form (advanced version with flattening/sorting) -/
+partial def normalizeExprAdvanced : Expr -> Expr
   | .lit v => .lit v
   | .col c => .col c
   | .binOp op l r =>
-    let l' := normalizeExpr l
-    let r' := normalizeExpr r
+    let l' := normalizeExprAdvanced l
+    let r' := normalizeExprAdvanced r
     -- For AND/OR, flatten, sort, and rebuild
     if op == .and || op == .or then
       -- Note: l' and r' are already normalized, so flattenBoolOp produces
@@ -859,18 +862,18 @@ partial def normalizeExpr : Expr -> Expr
       | none => .binOp op l' r'
     else
       normalizeCommutative op l' r'
-  | .unaryOp op e => .unaryOp op (normalizeExpr e)
-  | .func name args => .func name (args.map normalizeExpr)
-  | .agg fn arg distinct => .agg fn (arg.map normalizeExpr) distinct
+  | .unaryOp op e => .unaryOp op (normalizeExprAdvanced e)
+  | .func name args => .func name (args.map normalizeExprAdvanced)
+  | .agg fn arg distinct => .agg fn (arg.map normalizeExprAdvanced) distinct
   | .countStar => .countStar
   | .case branches else_ =>
-    .case (branches.map fun (c, r) => (normalizeExpr c, normalizeExpr r)) (else_.map normalizeExpr)
-  | .inList e neg vals => .inList (normalizeExpr e) neg (vals.map normalizeExpr)
-  | .inSubquery e neg sel => .inSubquery (normalizeExpr e) neg (optimizeSelectStmt sel)
+    .case (branches.map fun (c, r) => (normalizeExprAdvanced c, normalizeExprAdvanced r)) (else_.map normalizeExprAdvanced)
+  | .inList e neg vals => .inList (normalizeExprAdvanced e) neg (vals.map normalizeExprAdvanced)
+  | .inSubquery e neg sel => .inSubquery (normalizeExprAdvanced e) neg (optimizeSelectStmt sel)
   | .exists neg sel => .exists neg (optimizeSelectStmt sel)
   | .subquery sel => .subquery (optimizeSelectStmt sel)
-  | .between e lo hi => .between (normalizeExpr e) (normalizeExpr lo) (normalizeExpr hi)
-  | .windowFn fn arg spec => .windowFn fn (arg.map normalizeExpr) spec
+  | .between e lo hi => .between (normalizeExprAdvanced e) (normalizeExprAdvanced lo) (normalizeExprAdvanced hi)
+  | .windowFn fn arg spec => .windowFn fn (arg.map normalizeExprAdvanced) spec
 
 -- ============================================================================
 -- Subquery Decorrelation
@@ -889,7 +892,7 @@ partial def hasCorrelatedRef (outerTables : List String) : Expr -> Bool
   | .func _ args => args.any (hasCorrelatedRef outerTables)
   | .case branches else_ =>
     branches.any (fun (c, r) => hasCorrelatedRef outerTables c || hasCorrelatedRef outerTables r) ||
-    else_.map (hasCorrelatedRef outerTables) |>.getD false
+    (else_.map (hasCorrelatedRef outerTables)).getD false
   | .between e lo hi =>
     hasCorrelatedRef outerTables e || hasCorrelatedRef outerTables lo || hasCorrelatedRef outerTables hi
   | .inList e _ vals => hasCorrelatedRef outerTables e || vals.any (hasCorrelatedRef outerTables)
@@ -931,7 +934,7 @@ def decorrelateExists (outerTables : List String) (neg : Bool) (sel : SelectStmt
 def decorrelateIn (outerTables : List String) (e : Expr) (neg : Bool) (sel : SelectStmt)
     : Option (FromClause × Option Expr) :=
   -- Check if the subquery selects a single column
-  match sel.selectItems, sel.fromClause with
+  match sel.items, sel.fromClause with
   | [.exprItem innerExpr _], some innerFrom =>
     let eqCond := Expr.binOp .eq e innerExpr
     let fullCond := match sel.whereClause with
@@ -946,6 +949,19 @@ def decorrelateIn (outerTables : List String) (e : Expr) (neg : Bool) (sel : Sel
 -- ============================================================================
 -- Enhanced Predicate Pushdown
 -- ============================================================================
+
+/-- Extract all column references from an expression -/
+partial def getColumnRefs : Expr -> List ColumnRef
+  | .col c => [c]
+  | .binOp _ l r => getColumnRefs l ++ getColumnRefs r
+  | .unaryOp _ e => getColumnRefs e
+  | .func _ args => args.flatMap getColumnRefs
+  | .case branches else_ =>
+    branches.flatMap (fun (c, r) => getColumnRefs c ++ getColumnRefs r) ++
+    (else_.map getColumnRefs |>.getD [])
+  | .between e lo hi => getColumnRefs e ++ getColumnRefs lo ++ getColumnRefs hi
+  | .inList e _ vals => getColumnRefs e ++ vals.flatMap getColumnRefs
+  | _ => []
 
 /-- Extract column references that pass through a projection unchanged -/
 def getPassthroughColumns (items : List SelectItem) : List ColumnRef :=
@@ -974,19 +990,6 @@ def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
       passThroughCols.any fun ptc =>
         -- Match by column name (table qualifier may differ due to aliasing)
         pc.column == ptc.column
-
-/-- Extract all column references from an expression -/
-partial def getColumnRefs : Expr -> List ColumnRef
-  | .col c => [c]
-  | .binOp _ l r => getColumnRefs l ++ getColumnRefs r
-  | .unaryOp _ e => getColumnRefs e
-  | .func _ args => args.flatMap getColumnRefs
-  | .case branches else_ =>
-    branches.flatMap (fun (c, r) => getColumnRefs c ++ getColumnRefs r) ++
-    (else_.map getColumnRefs |>.getD [])
-  | .between e lo hi => getColumnRefs e ++ getColumnRefs lo ++ getColumnRefs hi
-  | .inList e _ vals => getColumnRefs e ++ vals.flatMap getColumnRefs
-  | _ => []
 
 /-- Check if a predicate can be pushed below a GROUP BY.
     Only predicates on grouping columns can be pushed. -/
@@ -1025,13 +1028,16 @@ partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
   | .table t => .table t  -- Can't push into base table
   | .subquery sel alias =>
     -- Only push predicate into subquery when it is safe w.r.t. projection and GROUP BY
-    let canProj := canPushPastProjection pred sel.selectItems
+    let canProj := canPushPastProjection pred sel.items
     let canGroup := canPushPastGroupBy pred sel.groupBy
     if canProj && canGroup then
       let newWhere := match sel.whereClause with
         | some w => some (Expr.binOp .and w pred)
         | none => some pred
-      .subquery { sel with whereClause := newWhere } alias
+      -- Reconstruct SelectStmt with new WHERE clause
+      let newSel := SelectStmt.mk sel.distinct sel.items sel.fromClause newWhere
+                                   sel.groupBy sel.having sel.orderBy sel.limitVal sel.offsetVal
+      .subquery newSel alias
     else
       -- Leave subquery unchanged; caller should keep predicate at outer level
       .subquery sel alias
@@ -1068,7 +1074,7 @@ def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
   let sel1 := optimizeSelectStmt sel
 
   -- Normalize WHERE clause for better matching
-  let where' := sel1.whereClause.map normalizeExpr
+  let where' := sel1.whereClause.map normalizeExprAdvanced
 
   -- Apply join reordering for multi-table joins
   let from' := match sel1.fromClause with
@@ -1086,10 +1092,9 @@ def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
       (some (pushPredicateDown w f), none)
     | f, w => (f, w)
 
-  -- Return optimized statement
-  { sel1 with
-    fromClause := from''
-    whereClause := finalWhere }
+  -- Return optimized statement (reconstruct since SelectStmt is an inductive, not a structure)
+  SelectStmt.mk sel1.distinct sel1.items from'' finalWhere
+                sel1.groupBy sel1.having sel1.orderBy sel1.limitVal sel1.offsetVal
 
 /-- Apply advanced optimization to a full statement -/
 def optimizeAdvanced (s : Stmt) : Stmt :=
@@ -1158,9 +1163,7 @@ theorem or_true_correct (e : Expr) :
 -- Theorems for New Optimizations
 -- ============================================================================
 
-/-- Expression normalization preserves semantics.
-    Axiom: Reordering commutative operations doesn't change evaluation. -/
-axiom normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e
+-- Note: normalizeExpr_equiv is defined in Equiv.lean
 
 /-- Normalize expression with proof of equivalence -/
 def normalizeExprWithProof (e : Expr) : { e' : Expr // e ≃ₑ e' } :=
@@ -1182,7 +1185,7 @@ axiom join_reorder_equiv (from1 from2 : FromClause) :
     This ensures NULL-extended rows from outer joins are handled correctly. -/
 axiom predicate_pushdown_equiv (pred : Expr) (from_ : FromClause) :
   ∀ db, evalFrom db (pushPredicateDown pred from_) =
-        evalFrom db from_ |>.filter (fun row => evalExprToBool pred row db)
+        (evalFrom db from_).filter (fun row => evalExprWithDb db row pred == some (.bool true))
 
 /-- Commutativity of addition is preserved by normalization. -/
 theorem normalize_add_comm (a b : Expr) :

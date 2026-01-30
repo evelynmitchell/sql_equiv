@@ -472,9 +472,9 @@ def testJoinGraphWithWhereClause : TestResult :=
 -- ============================================================================
 
 def testNormalizeCommutativeAdd : TestResult :=
-  -- x + 1 should normalize to 1 + x (literal before column)
+  -- x + 1 should normalize to 1 + x (literal before column) using advanced normalization
   let expr := Expr.binOp .add (col "x") (intLit 1)
-  let normalized := normalizeExpr expr
+  let normalized := normalizeExprAdvanced expr
   match normalized with
   | .binOp .add (.lit _) (.col _) => .pass "Normalize: x + 1 -> 1 + x"
   | _ => .fail "Normalize commutative add" s!"Expected 1 + x, got {repr normalized}"
