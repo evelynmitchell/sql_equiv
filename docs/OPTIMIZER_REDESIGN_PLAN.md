@@ -51,6 +51,18 @@ def unflattenOr : List Expr → Option Expr
 
 /-- Structural comparison for expressions (more stable than toString repr) -/
 partial def exprStructuralCmp : Expr → Expr → Ordering
+
+/-- Extract alias from SelectItem if present -/
+def getSelectItemAlias : SelectItem → Option String
+
+/-- Extract table name/alias from TableRef -/
+def getTableName : TableRef → String
+
+/-- Check if an expression refers to a specific column -/
+partial def exprRefersToColumn : ColumnRef → Expr → Bool
+
+/-- Check if expression is a column reference matching a given column -/
+def isGroupingKey : ColumnRef → Expr → Bool
 ```
 
 **Why these matter:**
@@ -94,6 +106,13 @@ These serve different purposes and should coexist.
 ```lean
 -- In a new file: SqlEquiv/OptimizerUtils.lean
 
+/-- Extract columns from WindowSpec (PARTITION BY and ORDER BY) -/
+def getWindowSpecColumns (spec : WindowSpec) : List ColumnRef :=
+  match spec with
+  | .mk partBy orderBy =>
+    partBy.flatMap getReferencedColumns ++
+    orderBy.flatMap (fun item => getReferencedColumns item.expr)
+
 /-- Extract all column references from an expression (complete coverage) -/
 partial def getReferencedColumns : Expr → List ColumnRef
   | .lit _ => []
@@ -112,7 +131,9 @@ partial def getReferencedColumns : Expr → List ColumnRef
   | .exists _ _ => []  -- subquery has own scope
   | .subquery _ => []  -- subquery has own scope
   | .between e lo hi => getReferencedColumns e ++ getReferencedColumns lo ++ getReferencedColumns hi
-  | .windowFn _ args _ => args.flatMap getReferencedColumns
+  | .windowFn _ arg spec =>
+    -- windowFn : WindowFunc → Option Expr → WindowSpec → Expr
+    (arg.map getReferencedColumns |>.getD []) ++ getWindowSpecColumns spec
 
 /-- Flatten nested ANDs: (a AND (b AND c)) → [a, b, c] -/
 partial def flattenAnd : Expr → List Expr
@@ -151,15 +172,33 @@ def getSelectItemAlias : SelectItem → Option String
 /-- Extract table name/alias from TableRef -/
 def getTableName (t : TableRef) : String := t.alias.getD t.name
 
-/-- Check if an expression refers to a specific column -/
-def exprRefersToColumn (col : ColumnRef) : Expr → Bool
+/-- Check if an expression refers to a specific column (complete coverage) -/
+partial def exprRefersToColumn (col : ColumnRef) : Expr → Bool
+  | .lit _ => false
   | .col c => c.column == col.column && (c.table == col.table || c.table.isNone || col.table.isNone)
   | .binOp _ l r => exprRefersToColumn col l || exprRefersToColumn col r
   | .unaryOp _ e => exprRefersToColumn col e
   | .func _ args => args.any (exprRefersToColumn col)
+  | .agg _ (some e) _ => exprRefersToColumn col e
+  | .agg _ none _ => false
+  | .countStar => false
   | .case branches else_ =>
     branches.any (fun (c, r) => exprRefersToColumn col c || exprRefersToColumn col r) ||
     (else_.map (exprRefersToColumn col) |>.getD false)
+  | .inList e _ vals => exprRefersToColumn col e || vals.any (exprRefersToColumn col)
+  | .inSubquery e _ _ => exprRefersToColumn col e
+  | .exists _ _ => false  -- subquery scope
+  | .subquery _ => false  -- subquery scope
+  | .between e lo hi => exprRefersToColumn col e || exprRefersToColumn col lo || exprRefersToColumn col hi
+  | .windowFn _ arg spec =>
+    (arg.map (exprRefersToColumn col) |>.getD false) ||
+    (match spec with | .mk partBy orderBy =>
+      partBy.any (exprRefersToColumn col) ||
+      orderBy.any (fun item => exprRefersToColumn col item.expr))
+
+/-- Check if expression is exactly a column reference (for GROUP BY key matching) -/
+def isGroupingKey (col : ColumnRef) : Expr → Bool
+  | .col c => c.column == col.column && (c.table == col.table || c.table.isNone || col.table.isNone)
   | _ => false
 ```
 
@@ -203,13 +242,13 @@ def exprCompare : Expr → Expr → Ordering :=
 /-- Normalize to canonical form. Idempotent: normalize (normalize e) = normalize e -/
 partial def normalizeExprCanonical : Expr → Expr
   | .binOp .and l r =>
-    -- Use flattenAnd from PR 0, sort, rebuild with unflattenAnd
-    let conjuncts := (flattenAnd (.binOp .and l r)).map normalizeExprCanonical
+    -- Flatten directly without reconstructing first (avoid redundancy)
+    let conjuncts := (flattenAnd l ++ flattenAnd r).map normalizeExprCanonical
     let sorted := conjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenAnd sorted |>.getD (.lit (.bool true))
   | .binOp .or l r =>
-    -- Similar for OR
-    let disjuncts := (flattenOr (.binOp .or l r)).map normalizeExprCanonical
+    -- Flatten directly without reconstructing first
+    let disjuncts := (flattenOr l ++ flattenOr r).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenOr sorted |>.getD (.lit (.bool false))
   | .binOp .add l r =>
@@ -229,12 +268,26 @@ partial def normalizeExprCanonical : Expr → Expr
   -- Functions: recurse into args
   | .func name args => .func name (args.map normalizeExprCanonical)
   -- Aggregates: recurse into arg
-  | .agg fn (some e) distinct => .agg fn (some (normalizeExprCanonical e)) distinct
+  | .agg fn arg distinct => .agg fn (arg.map normalizeExprCanonical) distinct
   -- Case expressions: recurse into branches and else
   | .case branches else_ =>
     .case (branches.map fun (c, r) => (normalizeExprCanonical c, normalizeExprCanonical r))
           (else_.map normalizeExprCanonical)
-  -- Leaves and subqueries: unchanged
+  -- IN list: recurse into expression and values
+  | .inList e neg vals =>
+    .inList (normalizeExprCanonical e) neg (vals.map normalizeExprCanonical)
+  -- BETWEEN: recurse into all three expressions
+  | .between e lo hi =>
+    .between (normalizeExprCanonical e) (normalizeExprCanonical lo) (normalizeExprCanonical hi)
+  -- Window functions: recurse into arg and spec expressions
+  | .windowFn fn arg spec =>
+    let normArg := arg.map normalizeExprCanonical
+    let normSpec := match spec with
+      | .mk partBy orderBy =>
+        WindowSpec.mk (partBy.map normalizeExprCanonical)
+                      (orderBy.map fun item => OrderByItem.mk (normalizeExprCanonical item.expr) item.dir)
+    .windowFn fn normArg normSpec
+  -- Leaves (lit, col, countStar) and subqueries (own scope): unchanged
   | e => e
 ```
 
@@ -288,10 +341,13 @@ def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
   predCols.all (fun c => availableCols.contains c.column)
 
 /-- Can push predicate past GROUP BY?
-    Uses hasAggregate (existing in Semantics.lean) and exprRefersToColumn (PR 0) -/
+    Uses hasAggregate (existing in Semantics.lean) and isGroupingKey (PR 0).
+    A predicate can be pushed if:
+    1. It contains no aggregates
+    2. All referenced columns are actual grouping keys (not just mentioned in GROUP BY exprs) -/
 def canPushPastGroupBy (pred : Expr) (groupBy : List Expr) : Bool :=
   !hasAggregate pred &&  -- existing utility from Semantics.lean
-  (getReferencedColumns pred).all (fun c => groupBy.any (exprRefersToColumn c))  -- PR 0 utilities
+  (getReferencedColumns pred).all (fun c => groupBy.any (isGroupingKey c))  -- PR 0 utility
 
 /-- Can push to left side of join? -/
 def canPushLeftThroughJoin (jtype : JoinType) : Bool :=
@@ -368,12 +424,28 @@ def edgeConnects (edge : JoinEdge) (n1 n2 : JoinNode) : Bool :=
   (n1.originalTables.contains edge.rightTable && n2.originalTables.contains edge.leftTable)
 ```
 
+**JoinEdge structure** (for tracking join predicates):
+```lean
+/-- An edge in the join graph representing a join predicate -/
+structure JoinEdge where
+  /-- Table name on the left side of the predicate -/
+  leftTable : String
+  /-- Table name on the right side of the predicate -/
+  rightTable : String
+  /-- The join predicate expression -/
+  predicate : Expr
+  /-- Estimated selectivity (0.0 to 1.0) -/
+  selectivity : Float := 0.1
+  deriving Repr, BEq
+```
+
 **Safety gate and algorithm**:
 ```lean
-/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder) -/
+/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder).
+    Conservative: returns false for subqueries since we can't inspect their internal joins. -/
 partial def hasOnlyInnerJoins : FromClause → Bool
   | .table _ => true
-  | .subquery _ _ => true
+  | .subquery _ _ => false  -- conservative: don't reorder across subquery boundaries
   | .join left jtype right _ =>
     (jtype == .inner || jtype == .cross) &&
     hasOnlyInnerJoins left && hasOnlyInnerJoins right
@@ -486,11 +558,14 @@ To avoid signature changes mid-review:
 | `getSelectItemAlias` | `SelectItem → Option String` | ✓ Simple extraction |
 | `getTableName` | `TableRef → String` | ✓ Mirrors existing `t.alias.getD t.name` pattern |
 | `exprRefersToColumn` | `ColumnRef → Expr → Bool` | ✓ Standard predicate |
+| `isGroupingKey` | `ColumnRef → Expr → Bool` | ✓ Simple column equality check |
+| `getWindowSpecColumns` | `WindowSpec → List ColumnRef` | ✓ Helper for windowFn handling |
 | `hasOnlyInnerJoins` | `FromClause → Bool` | ✓ Simple recursive check |
 | `normalizeExprCanonical` | `Expr → Expr` | ✓ Same as existing `normalizeExpr` |
 | `PushdownResult` | `{ pushedFrom : FromClause, remaining : Option Expr }` | ✓ Designed correctly upfront |
 | `pushPredicateDown` | `Expr → FromClause → PushdownResult` | ✓ Non-optional pred, returns struct |
 | `JoinNode` | `{ table, estimatedRows, originalTables }` | ✓ All fields designed in |
+| `JoinEdge` | `{ leftTable, rightTable, predicate, selectivity }` | ✓ All fields designed in |
 
 **Enforcement**: Each PR should include a "Public API" section listing exported functions with signatures. Reviewers should flag any signature changes.
 
