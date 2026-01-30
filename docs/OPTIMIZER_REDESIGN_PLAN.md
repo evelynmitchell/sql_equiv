@@ -106,34 +106,37 @@ These serve different purposes and should coexist.
 ```lean
 -- In a new file: SqlEquiv/OptimizerUtils.lean
 
-/-- Extract columns from WindowSpec (PARTITION BY and ORDER BY) -/
-def getWindowSpecColumns (spec : WindowSpec) : List ColumnRef :=
-  match spec with
-  | .mk partBy orderBy =>
-    partBy.flatMap getReferencedColumns ++
-    orderBy.flatMap (fun item => getReferencedColumns item.expr)
+-- Mutually recursive: getReferencedColumns and getWindowSpecColumns
+mutual
+  /-- Extract columns from WindowSpec (PARTITION BY and ORDER BY) -/
+  def getWindowSpecColumns (spec : WindowSpec) : List ColumnRef :=
+    match spec with
+    | .mk partBy orderBy =>
+      partBy.flatMap getReferencedColumns ++
+      orderBy.flatMap (fun item => getReferencedColumns item.expr)
 
-/-- Extract all column references from an expression (complete coverage) -/
-partial def getReferencedColumns : Expr → List ColumnRef
-  | .lit _ => []
-  | .col c => [c]
-  | .binOp _ l r => getReferencedColumns l ++ getReferencedColumns r
-  | .unaryOp _ e => getReferencedColumns e
-  | .func _ args => args.flatMap getReferencedColumns
-  | .agg _ (some e) _ => getReferencedColumns e
-  | .agg _ none _ => []
-  | .countStar => []
-  | .case branches else_ =>
-    branches.flatMap (fun (c, r) => getReferencedColumns c ++ getReferencedColumns r) ++
-    (else_.map getReferencedColumns |>.getD [])
-  | .inList e _ vals => getReferencedColumns e ++ vals.flatMap getReferencedColumns
-  | .inSubquery e _ _ => getReferencedColumns e  -- subquery has own scope
-  | .exists _ _ => []  -- subquery has own scope
-  | .subquery _ => []  -- subquery has own scope
-  | .between e lo hi => getReferencedColumns e ++ getReferencedColumns lo ++ getReferencedColumns hi
-  | .windowFn _ arg spec =>
-    -- windowFn : WindowFunc → Option Expr → WindowSpec → Expr
-    (arg.map getReferencedColumns |>.getD []) ++ getWindowSpecColumns spec
+  /-- Extract all column references from an expression (complete coverage) -/
+  partial def getReferencedColumns : Expr → List ColumnRef
+    | .lit _ => []
+    | .col c => [c]
+    | .binOp _ l r => getReferencedColumns l ++ getReferencedColumns r
+    | .unaryOp _ e => getReferencedColumns e
+    | .func _ args => args.flatMap getReferencedColumns
+    | .agg _ (some e) _ => getReferencedColumns e
+    | .agg _ none _ => []
+    | .countStar => []
+    | .case branches else_ =>
+      branches.flatMap (fun (c, r) => getReferencedColumns c ++ getReferencedColumns r) ++
+      (else_.map getReferencedColumns |>.getD [])
+    | .inList e _ vals => getReferencedColumns e ++ vals.flatMap getReferencedColumns
+    | .inSubquery e _ _ => getReferencedColumns e  -- subquery has own scope
+    | .exists _ _ => []  -- subquery has own scope
+    | .subquery _ => []  -- subquery has own scope
+    | .between e lo hi => getReferencedColumns e ++ getReferencedColumns lo ++ getReferencedColumns hi
+    | .windowFn _ arg spec =>
+      -- windowFn : WindowFunc → Option Expr → WindowSpec → Expr
+      (arg.map getReferencedColumns |>.getD []) ++ getWindowSpecColumns spec
+end
 
 /-- Flatten nested ANDs: (a AND (b AND c)) → [a, b, c] -/
 partial def flattenAnd : Expr → List Expr
