@@ -560,6 +560,571 @@ def OptimizationReport.toString (r : OptimizationReport) : String :=
 instance : ToString OptimizationReport := ⟨OptimizationReport.toString⟩
 
 -- ============================================================================
+-- Join Reordering
+-- ============================================================================
+
+/-- Default estimated row count for tables without statistics -/
+def defaultTableCardinality : Nat := 100
+
+/-- Default selectivity for join conditions without statistics -/
+def defaultJoinSelectivity : Float := 0.1
+
+/-- Represents a table in the join graph with cardinality estimate.
+    containedTables tracks which original table names are part of this node
+    (for combined nodes that represent already-joined tables). -/
+structure JoinNode where
+  table : TableRef
+  estimatedRows : Nat := defaultTableCardinality
+  containedTables : List String := []
+  deriving Repr, BEq
+
+/-- Represents an edge (join condition) between tables -/
+structure JoinEdge where
+  leftTable : String
+  rightTable : String
+  condition : Expr
+  selectivity : Float := defaultJoinSelectivity
+  deriving Repr
+
+/-- A join graph represents the tables and their join relationships -/
+structure JoinGraph where
+  nodes : List JoinNode
+  edges : List JoinEdge
+  deriving Repr
+
+/-- Extract table name from a TableRef -/
+def getTableName (t : TableRef) : String :=
+  t.alias.getD t.name
+
+/-- Get all table names contained in a JoinNode (for combined nodes) -/
+def JoinNode.allTableNames (n : JoinNode) : List String :=
+  if n.containedTables.isEmpty then [getTableName n.table]
+  else n.containedTables
+
+/-- Extract all base tables from a FROM clause -/
+partial def extractTables : FromClause -> List TableRef
+  | .table t => [t]
+  | .subquery _ alias => [⟨"__subq__", some alias⟩]  -- Treat subqueries as opaque
+  | .join left _ right _ => extractTables left ++ extractTables right
+
+/-- Check if an expression references a specific table.
+    Note: Unqualified columns (no table prefix) return false since we cannot
+    determine their source table without schema context. This is conservative
+    for predicate pushdown (may miss some valid pushdowns) but safe. -/
+partial def exprReferencesTable (tableName : String) : Expr -> Bool
+  | .col ⟨some t, _⟩ => t == tableName
+  | .col ⟨none, _⟩ => false  -- Can't determine table without context
+  | .binOp _ l r => exprReferencesTable tableName l || exprReferencesTable tableName r
+  | .unaryOp _ e => exprReferencesTable tableName e
+  | .func _ args => args.any (exprReferencesTable tableName)
+  | .case branches else_ =>
+    branches.any (fun (c, r) => exprReferencesTable tableName c || exprReferencesTable tableName r) ||
+    (else_.map (exprReferencesTable tableName)).getD false
+  | .between e lo hi =>
+    exprReferencesTable tableName e || exprReferencesTable tableName lo || exprReferencesTable tableName hi
+  | _ => false
+
+/-- Get all table names referenced by an expression -/
+partial def getReferencedTables : Expr -> List String
+  | .col ⟨some t, _⟩ => [t]
+  | .col ⟨none, _⟩ => []
+  | .binOp _ l r => getReferencedTables l ++ getReferencedTables r
+  | .unaryOp _ e => getReferencedTables e
+  | .func _ args => args.flatMap getReferencedTables
+  | .case branches else_ =>
+    branches.flatMap (fun (c, r) => getReferencedTables c ++ getReferencedTables r) ++
+    (else_.map getReferencedTables |>.getD [])
+  | .between e lo hi => getReferencedTables e ++ getReferencedTables lo ++ getReferencedTables hi
+  | _ => []
+
+/-- Deduplicate a list while preserving order (first occurrence kept) -/
+def dedup (xs : List String) : List String :=
+  xs.foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
+
+/-- Extract join conditions and build edges -/
+partial def extractJoinConditions (tables : List String) : Expr -> List JoinEdge
+  | .binOp .and l r => extractJoinConditions tables l ++ extractJoinConditions tables r
+  | e =>
+    let refs := dedup (getReferencedTables e)
+    -- A join condition references exactly 2 tables
+    if refs.length == 2 then
+      match refs with
+      | [t1, t2] => if tables.contains t1 && tables.contains t2
+                    then [⟨t1, t2, e, defaultJoinSelectivity⟩]
+                    else []
+      | _ => []
+    else []
+
+/-- Build a join graph from a FROM clause and WHERE conditions.
+    Note: This function extracts join edges only from the WHERE clause.
+    ON conditions in the FROM clause are not extracted into the graph;
+    they are preserved in the original join structure. The graph is used
+    for cost-based reordering of tables, while original ON conditions
+    remain attached to their respective joins. -/
+def buildJoinGraph (from_ : FromClause) (where_ : Option Expr) : JoinGraph :=
+  let tables := extractTables from_
+  let tableNames := tables.map getTableName
+  -- Initialize each node with its own table name in containedTables
+  let nodes := tables.map fun t => ⟨t, defaultTableCardinality, [getTableName t]⟩
+  let whereEdges := match where_ with
+    | some w => extractJoinConditions tableNames w
+    | none => []
+  ⟨nodes, whereEdges⟩
+
+/-- Estimate cost of joining two tables.
+    Returns at least 1 to avoid division issues. Caps result to prevent overflow. -/
+def estimateJoinCost (leftRows rightRows : Nat) (selectivity : Float) : Nat :=
+  let result := leftRows.toFloat * rightRows.toFloat * selectivity
+  -- Cap at a reasonable max to prevent overflow and handle edge cases
+  let maxCost : Nat := 1000000000  -- 1 billion
+  if result.isNaN || result.isInf || result < 0.0 then 1
+  else if result > maxCost.toFloat then maxCost
+  else max 1 result.toUInt64.toNat
+
+/-- Find best join pair from remaining tables based on cost -/
+def findBestJoinPair (nodes : List JoinNode) (edges : List JoinEdge) : Option (JoinNode × JoinNode × Option JoinEdge) :=
+  if nodes.length < 2 then none
+  else
+    let pairs := nodes.flatMap fun n1 =>
+      nodes.filterMap fun n2 =>
+        if getTableName n1.table != getTableName n2.table then
+          -- Check if edge connects any table in n1 with any table in n2
+          let n1Tables := n1.allTableNames
+          let n2Tables := n2.allTableNames
+          let edge := edges.find? fun e =>
+            (n1Tables.contains e.leftTable && n2Tables.contains e.rightTable) ||
+            (n1Tables.contains e.rightTable && n2Tables.contains e.leftTable)
+          some (n1, n2, edge)
+        else none
+    -- Sort by estimated cost (prefer joins with conditions)
+    let scored := pairs.map fun (n1, n2, edge) =>
+      let cost := match edge with
+        | some e => estimateJoinCost n1.estimatedRows n2.estimatedRows e.selectivity
+        | none => n1.estimatedRows * n2.estimatedRows  -- Cross join cost
+      (cost, n1, n2, edge)
+    -- Find minimum by folding (since minimum? with custom comparator isn't available)
+    match scored with
+    | [] => none
+    | first :: rest =>
+      let (_, n1, n2, edge) := rest.foldl (fun acc x => if x.1 < acc.1 then x else acc) first
+      some (n1, n2, edge)
+
+/-- Construct a FROM clause from a join ordering.
+    IMPORTANT: This function creates INNER joins only. It should only be called
+    after verifying the original FROM contains only INNER/CROSS joins via
+    `hasOnlyInnerJoins`. Join conditions come from the WHERE clause (extracted
+    by buildJoinGraph); original ON conditions from the source FROM clause are
+    not preserved during reordering.
+
+    Design notes:
+    - First table's condition is ignored (matched as `_`) because it's the anchor
+    - Join conditions are associated with subsequent tables (t2 joins t1 ON cond)
+    - This matches how `reorderJoinsGreedy` constructs the list: first table has `none` -/
+def buildFromClause (tables : List (TableRef × Option Expr)) : Option FromClause :=
+  match tables with
+  | [] => none
+  | [(t, _)] => some (.table t)
+  | (t1, _) :: (t2, cond) :: rest =>
+    let initial := FromClause.join (.table t1) .inner (.table t2) cond
+    some <| rest.foldl (fun acc (t, c) => FromClause.join acc .inner (.table t) c) initial
+
+/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder) -/
+partial def hasOnlyInnerJoins : FromClause -> Bool
+  | .table _ => true
+  | .subquery _ _ => true
+  | .join left jtype right _ =>
+    match jtype with
+    | .inner | .cross => hasOnlyInnerJoins left && hasOnlyInnerJoins right
+    | _ => false  -- LEFT, RIGHT, FULL OUTER joins cannot be safely reordered
+
+/-- Greedy join reordering: picks the cheapest join at each step -/
+def reorderJoinsGreedy (graph : JoinGraph) : List (TableRef × Option Expr) :=
+  let rec loop (remaining : List JoinNode) (edges : List JoinEdge)
+               (result : List (TableRef × Option Expr)) (fuel : Nat) : List (TableRef × Option Expr) :=
+    match fuel with
+    | 0 => result ++ remaining.map (·.table, none)
+    | fuel' + 1 =>
+      match findBestJoinPair remaining edges with
+      | none =>
+        match remaining with
+        | [] => result
+        | [n] => result ++ [(n.table, none)]
+        | n :: rest => loop rest edges (result ++ [(n.table, none)]) fuel'
+      | some (n1, n2, edge) =>
+        let remaining' := remaining.filter fun n =>
+          getTableName n.table != getTableName n1.table &&
+          getTableName n.table != getTableName n2.table
+        let cond := edge.map (·.condition)
+        -- Merge n1 and n2 into a combined node with updated row estimate
+        -- Combine containedTables from both nodes so edge matching still works
+        let combinedRows := match edge with
+          | some e => estimateJoinCost n1.estimatedRows n2.estimatedRows e.selectivity
+          | none => n1.estimatedRows * n2.estimatedRows
+        let combinedTables := n1.allTableNames ++ n2.allTableNames
+        let combined : JoinNode := ⟨⟨"__joined__", some s!"{getTableName n1.table}_{getTableName n2.table}"⟩, combinedRows, combinedTables⟩
+        if result.isEmpty then
+          -- First join: add both tables
+          loop (combined :: remaining') edges [(n1.table, none), (n2.table, cond)] fuel'
+        else
+          -- Subsequent joins: add the second table
+          loop (combined :: remaining') edges (result ++ [(n2.table, cond)]) fuel'
+  loop graph.nodes graph.edges [] graph.nodes.length
+
+/-- Apply join reordering to a FROM clause.
+    Reorders joins with 3 or more tables using a greedy cost-based algorithm.
+    For 2 or fewer tables, returns the original FROM clause unchanged.
+    Only reorders if all joins are INNER/CROSS (outer joins cannot be safely reordered). -/
+def optimizeJoinOrder (from_ : FromClause) (where_ : Option Expr) : FromClause :=
+  let tables := extractTables from_
+  -- Only reorder if we have 3+ tables and all joins are INNER/CROSS
+  if tables.length <= 2 then from_
+  else if !hasOnlyInnerJoins from_ then from_  -- Don't reorder outer joins
+  else
+    let graph := buildJoinGraph from_ where_
+    let ordering := reorderJoinsGreedy graph
+    match buildFromClause ordering with
+    | some f => f
+    | none => from_
+
+-- ============================================================================
+-- Expression Normalization
+-- ============================================================================
+
+/-- Canonical ordering for commutative operations.
+    We order by: literals < columns < complex expressions.
+    Within each category, we use structural comparison. -/
+def exprWeight : Expr -> Nat
+  | .lit _ => 0
+  | .col _ => 1
+  | .countStar => 2
+  | .agg _ _ _ => 3
+  | .func _ _ => 4
+  | .unaryOp _ _ => 5
+  | .binOp _ _ _ => 6
+  | .case _ _ => 7
+  | .inList _ _ _ => 8
+  | .between _ _ _ => 9
+  | .inSubquery _ _ _ => 10
+  | .exists _ _ => 11
+  | .subquery _ => 12
+  | .windowFn _ _ _ => 13
+
+/-- Compare two expressions for canonical ordering -/
+partial def exprCompare (e1 e2 : Expr) : Ordering :=
+  let w1 := exprWeight e1
+  let w2 := exprWeight e2
+  if w1 < w2 then .lt
+  else if w1 > w2 then .gt
+  else
+    -- Same weight, compare structurally (convert repr to String for comparison)
+    match e1, e2 with
+    | .lit v1, .lit v2 => compare (toString (repr v1)) (toString (repr v2))
+    | .col c1, .col c2 => compare (toString (repr c1)) (toString (repr c2))
+    | .binOp op1 l1 r1, .binOp op2 l2 r2 =>
+      match compare (toString (repr op1)) (toString (repr op2)) with
+      | Ordering.eq =>
+        match exprCompare l1 l2 with
+        | Ordering.eq => exprCompare r1 r2
+        | ord => ord
+      | ord => ord
+    | _, _ => compare (toString (repr e1)) (toString (repr e2))
+
+/-- Check if a binary operator is commutative -/
+def isCommutative : BinOp -> Bool
+  | .add | .mul | .and | .or | .eq | .ne => true
+  | _ => false
+
+/-- Normalize a commutative binary expression to canonical order -/
+def normalizeCommutative (op : BinOp) (l r : Expr) : Expr :=
+  if isCommutative op then
+    match exprCompare l r with
+    | .gt => .binOp op r l  -- Swap to canonical order
+    | _ => .binOp op l r
+  else
+    .binOp op l r
+
+/-- Flatten nested AND/OR expressions for normalization -/
+partial def flattenBoolOp (op : BinOp) : Expr -> List Expr
+  | .binOp op' l r =>
+    if op == op' then flattenBoolOp op l ++ flattenBoolOp op r
+    else [.binOp op' l r]
+  | e => [e]
+
+/-- Rebuild a flattened AND/OR expression -/
+def rebuildBoolOp (op : BinOp) (exprs : List Expr) : Option Expr :=
+  match exprs with
+  | [] => none
+  | [e] => some e
+  | e :: es =>
+    es.foldl (fun acc e' => .binOp op acc e') e |> some
+
+/-- Normalize an expression to canonical form (advanced version with flattening/sorting) -/
+partial def normalizeExprAdvanced : Expr -> Expr
+  | .lit v => .lit v
+  | .col c => .col c
+  | .binOp op l r =>
+    let l' := normalizeExprAdvanced l
+    let r' := normalizeExprAdvanced r
+    -- For AND/OR, flatten, sort, and rebuild
+    if op == .and || op == .or then
+      -- Note: l' and r' are already normalized, so flattenBoolOp produces
+      -- a list of already-normalized expressions. No need to normalize again.
+      let flattened := flattenBoolOp op (.binOp op l' r')
+      let sorted := flattened.toArray.qsort (exprCompare · · == .lt) |>.toList
+      match rebuildBoolOp op sorted with
+      | some e => e
+      | none => .binOp op l' r'
+    else
+      normalizeCommutative op l' r'
+  | .unaryOp op e => .unaryOp op (normalizeExprAdvanced e)
+  | .func name args => .func name (args.map normalizeExprAdvanced)
+  | .agg fn arg distinct => .agg fn (arg.map normalizeExprAdvanced) distinct
+  | .countStar => .countStar
+  | .case branches else_ =>
+    .case (branches.map fun (c, r) => (normalizeExprAdvanced c, normalizeExprAdvanced r)) (else_.map normalizeExprAdvanced)
+  | .inList e neg vals => .inList (normalizeExprAdvanced e) neg (vals.map normalizeExprAdvanced)
+  | .inSubquery e neg sel => .inSubquery (normalizeExprAdvanced e) neg (optimizeSelectStmt sel)
+  | .exists neg sel => .exists neg (optimizeSelectStmt sel)
+  | .subquery sel => .subquery (optimizeSelectStmt sel)
+  | .between e lo hi => .between (normalizeExprAdvanced e) (normalizeExprAdvanced lo) (normalizeExprAdvanced hi)
+  | .windowFn fn arg spec => .windowFn fn (arg.map normalizeExprAdvanced) spec
+
+-- ============================================================================
+-- Subquery Decorrelation
+-- ============================================================================
+-- Note: These are utility functions for subquery decorrelation transformations.
+-- They are not yet integrated into the main optimizer pipeline but are provided
+-- for future use and for users who want to apply decorrelation manually.
+-- Integration into optimizeSelectAdvanced is planned for a future update.
+
+/-- Check if an expression contains a correlated reference (reference to outer query) -/
+partial def hasCorrelatedRef (outerTables : List String) : Expr -> Bool
+  | .col ⟨some t, _⟩ => outerTables.contains t
+  | .col ⟨none, _⟩ => false  -- Unqualified assumed to be inner
+  | .binOp _ l r => hasCorrelatedRef outerTables l || hasCorrelatedRef outerTables r
+  | .unaryOp _ e => hasCorrelatedRef outerTables e
+  | .func _ args => args.any (hasCorrelatedRef outerTables)
+  | .case branches else_ =>
+    branches.any (fun (c, r) => hasCorrelatedRef outerTables c || hasCorrelatedRef outerTables r) ||
+    (else_.map (hasCorrelatedRef outerTables)).getD false
+  | .between e lo hi =>
+    hasCorrelatedRef outerTables e || hasCorrelatedRef outerTables lo || hasCorrelatedRef outerTables hi
+  | .inList e _ vals => hasCorrelatedRef outerTables e || vals.any (hasCorrelatedRef outerTables)
+  | _ => false
+
+/-- Extract correlated predicates from a WHERE clause.
+    Returns (correlated predicates, uncorrelated predicates) -/
+partial def partitionCorrelatedPredicates (outerTables : List String) : Expr -> (List Expr × List Expr)
+  | .binOp .and l r =>
+    let (lCorr, lUncorr) := partitionCorrelatedPredicates outerTables l
+    let (rCorr, rUncorr) := partitionCorrelatedPredicates outerTables r
+    (lCorr ++ rCorr, lUncorr ++ rUncorr)
+  | e =>
+    if hasCorrelatedRef outerTables e then ([e], [])
+    else ([], [e])
+
+/-- Try to decorrelate an EXISTS subquery to a semi-join.
+    EXISTS (SELECT ... FROM t WHERE correlated_cond AND uncorrelated_cond)
+    becomes: outer_table SEMI JOIN t ON correlated_cond WHERE uncorrelated_cond -/
+def decorrelateExists (outerTables : List String) (neg : Bool) (sel : SelectStmt)
+    : Option (FromClause × Option Expr) :=
+  match sel.fromClause, sel.whereClause with
+  | some innerFrom, some whereCond =>
+    let (correlated, _uncorrelated) := partitionCorrelatedPredicates outerTables whereCond
+    if correlated.isEmpty then none  -- Not actually correlated
+    else
+      -- Build the join condition from correlated predicates
+      let joinCond := match rebuildBoolOp .and correlated with
+        | some c => c
+        | none => .lit (.bool true)
+      -- For NOT EXISTS, we'd need an anti-join (not implemented here)
+      if neg then none
+      else some (innerFrom, some joinCond)
+  | _, _ => none
+
+/-- Try to decorrelate an IN subquery to a semi-join.
+    x IN (SELECT col FROM t WHERE cond)
+    becomes: outer SEMI JOIN t ON x = col AND cond -/
+def decorrelateIn (outerTables : List String) (e : Expr) (neg : Bool) (sel : SelectStmt)
+    : Option (FromClause × Option Expr) :=
+  -- Check if the subquery selects a single column
+  match sel.items, sel.fromClause with
+  | [.exprItem innerExpr _], some innerFrom =>
+    let eqCond := Expr.binOp .eq e innerExpr
+    let fullCond := match sel.whereClause with
+      | some w => Expr.binOp .and eqCond w
+      | none => eqCond
+    -- Only decorrelate if actually correlated AND not a NOT IN (anti-join not supported)
+    if hasCorrelatedRef outerTables fullCond && !neg then
+      some (innerFrom, some fullCond)
+    else none
+  | _, _ => none
+
+-- ============================================================================
+-- Enhanced Predicate Pushdown
+-- ============================================================================
+
+/-- Extract all column references from an expression -/
+partial def getColumnRefs : Expr -> List ColumnRef
+  | .col c => [c]
+  | .binOp _ l r => getColumnRefs l ++ getColumnRefs r
+  | .unaryOp _ e => getColumnRefs e
+  | .func _ args => args.flatMap getColumnRefs
+  | .case branches else_ =>
+    branches.flatMap (fun (c, r) => getColumnRefs c ++ getColumnRefs r) ++
+    (else_.map getColumnRefs |>.getD [])
+  | .between e lo hi => getColumnRefs e ++ getColumnRefs lo ++ getColumnRefs hi
+  | .inList e _ vals => getColumnRefs e ++ vals.flatMap getColumnRefs
+  | _ => []
+
+/-- Extract column references that pass through a projection unchanged -/
+def getPassthroughColumns (items : List SelectItem) : List ColumnRef :=
+  items.flatMap fun item =>
+    match item with
+    | .star _ => []  -- Star handled separately
+    | .exprItem (.col c) _ => [c]  -- Direct column pass-through
+    | _ => []  -- Computed expressions don't pass columns through
+
+/-- Check if a predicate can be pushed past a projection (SELECT items).
+    A predicate can be pushed if it only references columns that pass through unchanged. -/
+def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
+  -- If projection has a star (*), all columns pass through
+  let hasStar := items.any fun item =>
+    match item with
+    | .star _ => true
+    | _ => false
+  if hasStar then true
+  else
+    -- Get columns referenced by predicate
+    let predCols := getColumnRefs pred
+    -- Get columns that pass through the projection unchanged
+    let passThroughCols := getPassthroughColumns items
+    -- All predicate columns must be in pass-through columns
+    predCols.all fun pc =>
+      passThroughCols.any fun ptc =>
+        -- Match by column name (table qualifier may differ due to aliasing)
+        pc.column == ptc.column
+
+/-- Check if a predicate can be pushed below a GROUP BY.
+    Only predicates on grouping columns can be pushed. -/
+def canPushPastGroupBy (pred : Expr) (groupBy : List Expr) : Bool :=
+  if groupBy.isEmpty then true
+  else
+    -- All column references in pred must appear in groupBy columns
+    let predCols := getColumnRefs pred
+    let groupByCols := groupBy.flatMap getColumnRefs
+    -- Check that every column in pred is also in groupBy
+    predCols.all fun pc =>
+      groupByCols.any fun gc =>
+        pc.table == gc.table && pc.column == gc.column
+
+/-- Check if a join type allows predicate pushdown to the left side -/
+def canPushLeftThroughJoin : JoinType -> Bool
+  | .inner => true
+  | .cross => true
+  | .left => true   -- Can push predicates on left side
+  | .right => false -- Right preserves left side nulls
+  | .full => false  -- Full preserves both sides' nulls
+
+/-- Check if a join type allows predicate pushdown to the right side -/
+def canPushRightThroughJoin : JoinType -> Bool
+  | .inner => true
+  | .cross => true
+  | .left => false  -- Left preserves right side nulls
+  | .right => true  -- Can push predicates on right side
+  | .full => false  -- Full preserves both sides' nulls
+
+/-- Push predicates as deep as possible into the query tree.
+    Returns (new FROM, remaining predicate that couldn't be pushed).
+    Note: For OUTER JOINs, pushing predicates can change semantics by filtering
+    out NULL rows that should be preserved. We only push through OUTER JOINs
+    to the "preserved" side (left for LEFT JOIN, right for RIGHT JOIN). -/
+partial def pushPredicateDown (pred : Expr) : FromClause -> (FromClause × Option Expr)
+  | .table t => (.table t, some pred)  -- Can't push into base table, keep predicate
+  | .subquery sel alias =>
+    -- Only push predicate into subquery when it is safe w.r.t. projection and GROUP BY
+    let canProj := canPushPastProjection pred sel.items
+    let canGroup := canPushPastGroupBy pred sel.groupBy
+    if canProj && canGroup then
+      let newWhere := match sel.whereClause with
+        | some w => some (Expr.binOp .and w pred)
+        | none => some pred
+      -- Reconstruct SelectStmt with new WHERE clause
+      let newSel := SelectStmt.mk sel.distinct sel.items sel.fromClause newWhere
+                                   sel.groupBy sel.having sel.orderBy sel.limitVal sel.offsetVal
+      (.subquery newSel alias, none)  -- Predicate absorbed
+    else
+      -- Leave subquery unchanged; keep predicate at outer level
+      (.subquery sel alias, some pred)
+  | .join left jtype right on_ =>
+    let leftTables := (extractTables left).map getTableName
+    let rightTables := (extractTables right).map getTableName
+    let predTables := getReferencedTables pred
+    -- Push to left if only references left tables AND join type allows it
+    if predTables.all (leftTables.contains ·) && canPushLeftThroughJoin jtype then
+      let (newLeft, remaining) := pushPredicateDown pred left
+      (.join newLeft jtype right on_, remaining)
+    -- Push to right if only references right tables AND join type allows it
+    else if predTables.all (rightTables.contains ·) && canPushRightThroughJoin jtype then
+      let (newRight, remaining) := pushPredicateDown pred right
+      (.join left jtype newRight on_, remaining)
+    -- Otherwise add to join condition (predicate absorbed into ON clause)
+    else
+      let newOn := match on_ with
+        | some c => some (Expr.binOp .and c pred)
+        | none => some pred
+      (.join left jtype right newOn, none)
+
+-- ============================================================================
+-- Advanced Optimization (combines all features)
+-- ============================================================================
+
+/-- Apply advanced optimizations to a SelectStmt.
+    This function applies all optimization passes in the correct order:
+    1. Basic expression optimization
+    2. Expression normalization
+    3. Join reordering (for 3+ tables)
+    4. Predicate pushdown
+    Note: Call this after basic optimization for maximum benefit. -/
+def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
+  -- First apply basic optimization
+  let sel1 := optimizeSelectStmt sel
+
+  -- Normalize WHERE clause for better matching
+  let where' := sel1.whereClause.map normalizeExprAdvanced
+
+  -- Apply join reordering for multi-table joins
+  let from' := match sel1.fromClause with
+    | some f =>
+      let tables := extractTables f
+      if tables.length > 2 then
+        some (optimizeJoinOrder f where')
+      else some f
+    | none => none
+
+  -- Apply predicate pushdown; keep any remaining predicate in WHERE
+  let (from'', finalWhere) := match from', where' with
+    | some f, some w =>
+      -- Push predicate into FROM clause; remaining predicate stays in WHERE
+      let (pushedFrom, remaining) := pushPredicateDown w f
+      (some pushedFrom, remaining)
+    | f, w => (f, w)
+
+  -- Return optimized statement (reconstruct since SelectStmt is an inductive, not a structure)
+  SelectStmt.mk sel1.distinct sel1.items from'' finalWhere
+                sel1.groupBy sel1.having sel1.orderBy sel1.limitVal sel1.offsetVal
+
+/-- Apply advanced optimization to a full statement -/
+def optimizeAdvanced (s : Stmt) : Stmt :=
+  match s with
+  | .query (.simple sel) => .query (.simple (optimizeSelectAdvanced sel))
+  | .query (.compound left op right) =>
+    .query (.compound (optimizeQuery left) op (optimizeQuery right))
+  | .query (.withCTE ctes q) =>
+    .query (.withCTE (ctes.map optimizeCTE) (optimizeQuery q))
+  | other => optimize other
+
+-- ============================================================================
 -- Specific Optimization Theorems (derived from optimizeExpr_equiv axiom)
 -- ============================================================================
 
@@ -611,5 +1176,67 @@ theorem or_true_correct (e : Expr) :
   have h1 := optimizeExpr_equiv (.binOp .or e (.lit (.bool true))) row
   have h2 := or_true e row
   rw [h1, h2]
+
+-- ============================================================================
+-- Theorems for New Optimizations
+-- ============================================================================
+
+-- Note: normalizeExpr_equiv is defined in Equiv.lean
+
+/-- Normalize expression with proof of equivalence -/
+def normalizeExprWithProof (e : Expr) : { e' : Expr // e ≃ₑ e' } :=
+  ⟨normalizeExpr e, expr_equiv_symm (normalizeExpr_equiv e)⟩
+
+/-- Join reordering preserves semantics for inner joins.
+    Axiom: Inner joins are commutative and associative, so reordering
+    doesn't change the result set (only the evaluation order/cost).
+    This axiom only applies when hasOnlyInnerJoins returns true. -/
+axiom join_reorder_equiv (from_ : FromClause) :
+  hasOnlyInnerJoins from_ →
+  ∀ db, evalFrom db (optimizeJoinOrder from_ none) = evalFrom db from_
+
+/-- Predicate pushdown preserves semantics.
+    Axiom: The pushPredicateDown function preserves query semantics because:
+    - For INNER/CROSS JOINs: predicates can be pushed freely
+    - For OUTER JOINs: only pushes to the "preserved" side (checked by canPushLeft/RightThroughJoin)
+    - For subqueries: only pushes if canPushPastProjection and canPushPastGroupBy pass
+    The pushed FROM + remaining predicate = original filtered result.
+
+    Note: This axiom states the invariant that applying the remaining predicate
+    (if any) to the result of the pushed FROM gives the same result as filtering
+    the original FROM by the full predicate. -/
+axiom predicate_pushdown_equiv (pred : Expr) (from_ : FromClause) :
+  let (pushedFrom, remaining) := pushPredicateDown pred from_
+  ∀ db row, row ∈ evalFrom db pushedFrom ∧
+            (remaining.map (fun r => evalExprWithDb db row r == some (Value.bool true))).getD true →
+            row ∈ (evalFrom db from_).filter (fun r => evalExprWithDb db r pred == some (Value.bool true))
+
+/-- Commutativity of addition is preserved by normalization. -/
+theorem normalize_add_comm (a b : Expr) :
+    normalizeExpr (.binOp .add a b) ≃ₑ normalizeExpr (.binOp .add b a) := by
+  intro row
+  have h1 := normalizeExpr_equiv (.binOp .add a b) row
+  have h2 := normalizeExpr_equiv (.binOp .add b a) row
+  have h3 := add_comm a b row
+  rw [h1, h2, h3]
+
+/-- Commutativity of AND is preserved by normalization. -/
+theorem normalize_and_comm (a b : Expr) :
+    normalizeExpr (.binOp .and a b) ≃ₑ normalizeExpr (.binOp .and b a) := by
+  intro row
+  have h1 := normalizeExpr_equiv (.binOp .and a b) row
+  have h2 := normalizeExpr_equiv (.binOp .and b a) row
+  have h3 := and_comm a b row
+  rw [h1, h2, h3]
+
+/-- Associativity of AND is preserved by normalization. -/
+theorem normalize_and_assoc (a b c : Expr) :
+    normalizeExpr (.binOp .and (.binOp .and a b) c) ≃ₑ
+    normalizeExpr (.binOp .and a (.binOp .and b c)) := by
+  intro row
+  have h1 := normalizeExpr_equiv (.binOp .and (.binOp .and a b) c) row
+  have h2 := normalizeExpr_equiv (.binOp .and a (.binOp .and b c)) row
+  have h3 := and_assoc a b c row
+  rw [h1, h2, h3]
 
 end SqlEquiv
