@@ -569,10 +569,13 @@ def defaultTableCardinality : Nat := 100
 /-- Default selectivity for join conditions without statistics -/
 def defaultJoinSelectivity : Float := 0.1
 
-/-- Represents a table in the join graph with cardinality estimate -/
+/-- Represents a table in the join graph with cardinality estimate.
+    containedTables tracks which original table names are part of this node
+    (for combined nodes that represent already-joined tables). -/
 structure JoinNode where
   table : TableRef
   estimatedRows : Nat := defaultTableCardinality
+  containedTables : List String := []
   deriving Repr, BEq
 
 /-- Represents an edge (join condition) between tables -/
@@ -592,6 +595,11 @@ structure JoinGraph where
 /-- Extract table name from a TableRef -/
 def getTableName (t : TableRef) : String :=
   t.alias.getD t.name
+
+/-- Get all table names contained in a JoinNode (for combined nodes) -/
+def JoinNode.allTableNames (n : JoinNode) : List String :=
+  if n.containedTables.isEmpty then [getTableName n.table]
+  else n.containedTables
 
 /-- Extract all base tables from a FROM clause -/
 partial def extractTables : FromClause -> List TableRef
@@ -656,7 +664,8 @@ partial def extractJoinConditions (tables : List String) : Expr -> List JoinEdge
 def buildJoinGraph (from_ : FromClause) (where_ : Option Expr) : JoinGraph :=
   let tables := extractTables from_
   let tableNames := tables.map getTableName
-  let nodes := tables.map fun t => ⟨t, defaultTableCardinality⟩
+  -- Initialize each node with its own table name in containedTables
+  let nodes := tables.map fun t => ⟨t, defaultTableCardinality, [getTableName t]⟩
   let whereEdges := match where_ with
     | some w => extractJoinConditions tableNames w
     | none => []
@@ -679,9 +688,12 @@ def findBestJoinPair (nodes : List JoinNode) (edges : List JoinEdge) : Option (J
     let pairs := nodes.flatMap fun n1 =>
       nodes.filterMap fun n2 =>
         if getTableName n1.table != getTableName n2.table then
+          -- Check if edge connects any table in n1 with any table in n2
+          let n1Tables := n1.allTableNames
+          let n2Tables := n2.allTableNames
           let edge := edges.find? fun e =>
-            (e.leftTable == getTableName n1.table && e.rightTable == getTableName n2.table) ||
-            (e.leftTable == getTableName n2.table && e.rightTable == getTableName n1.table)
+            (n1Tables.contains e.leftTable && n2Tables.contains e.rightTable) ||
+            (n1Tables.contains e.rightTable && n2Tables.contains e.leftTable)
           some (n1, n2, edge)
         else none
     -- Sort by estimated cost (prefer joins with conditions)
@@ -744,10 +756,12 @@ def reorderJoinsGreedy (graph : JoinGraph) : List (TableRef × Option Expr) :=
           getTableName n.table != getTableName n2.table
         let cond := edge.map (·.condition)
         -- Merge n1 and n2 into a combined node with updated row estimate
+        -- Combine containedTables from both nodes so edge matching still works
         let combinedRows := match edge with
           | some e => estimateJoinCost n1.estimatedRows n2.estimatedRows e.selectivity
           | none => n1.estimatedRows * n2.estimatedRows
-        let combined : JoinNode := ⟨⟨"__joined__", some s!"{getTableName n1.table}_{getTableName n2.table}"⟩, combinedRows⟩
+        let combinedTables := n1.allTableNames ++ n2.allTableNames
+        let combined : JoinNode := ⟨⟨"__joined__", some s!"{getTableName n1.table}_{getTableName n2.table}"⟩, combinedRows, combinedTables⟩
         if result.isEmpty then
           -- First join: add both tables
           loop (combined :: remaining') edges [(n1.table, none), (n2.table, cond)] fuel'
@@ -813,7 +827,7 @@ partial def exprCompare (e1 e2 : Expr) : Ordering :=
         | Ordering.eq => exprCompare r1 r2
         | ord => ord
       | ord => ord
-    | _, _ => compare (toString (repr e1)).length (toString (repr e2)).length
+    | _, _ => compare (toString (repr e1)) (toString (repr e2))
 
 /-- Check if a binary operator is commutative -/
 def isCommutative : BinOp -> Bool
@@ -1170,19 +1184,19 @@ def normalizeExprWithProof (e : Expr) : { e' : Expr // e ≃ₑ e' } :=
   ⟨normalizeExpr e, expr_equiv_symm (normalizeExpr_equiv e)⟩
 
 /-- Join reordering preserves semantics for inner joins.
-    Axiom: Inner joins are commutative and associative. -/
-axiom join_reorder_equiv (from1 from2 : FromClause) :
-  ∀ db, evalFrom db from1 = evalFrom db from2 →
-        evalFrom db (optimizeJoinOrder from1 none) = evalFrom db from2
+    Axiom: Inner joins are commutative and associative, so reordering
+    doesn't change the result set (only the evaluation order/cost).
+    This axiom only applies when hasOnlyInnerJoins returns true. -/
+axiom join_reorder_equiv (from_ : FromClause) :
+  hasOnlyInnerJoins from_ →
+  ∀ db, evalFrom db (optimizeJoinOrder from_ none) = evalFrom db from_
 
-/-- Predicate pushdown preserves semantics for INNER JOINs.
-    Axiom: Pushing predicates into INNER JOINs/CROSS JOINs/subqueries doesn't
-    change results. For OUTER JOINs (LEFT/RIGHT/FULL), pushPredicateDown only
-    pushes to the "preserved" side, so semantics are preserved:
-    - LEFT JOIN: predicates on left side only are pushed left
-    - RIGHT JOIN: predicates on right side only are pushed right
-    - FULL JOIN: predicates are kept in the join condition, not pushed
-    This ensures NULL-extended rows from outer joins are handled correctly. -/
+/-- Predicate pushdown preserves semantics.
+    Axiom: The pushPredicateDown function preserves query semantics because:
+    - For INNER/CROSS JOINs: predicates can be pushed freely
+    - For OUTER JOINs: only pushes to the "preserved" side (checked by canPushLeft/RightThroughJoin)
+    - For subqueries: only pushes if canPushPastProjection and canPushPastGroupBy pass
+    The result is equivalent to filtering the FROM result by the predicate. -/
 axiom predicate_pushdown_equiv (pred : Expr) (from_ : FromClause) :
   ∀ db, evalFrom db (pushPredicateDown pred from_) =
         (evalFrom db from_).filter (fun row => evalExprWithDb db row pred == some (.bool true))
