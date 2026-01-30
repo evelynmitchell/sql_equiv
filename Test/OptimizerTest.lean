@@ -551,8 +551,8 @@ def testPushPredicateIntoSubquery : TestResult :=
     none
   let from_ := FromClause.subquery inner "sub"  -- alias is String, not Option String
   let pred := Expr.binOp .eq (col "x") (intLit 1)
-  let pushed := pushPredicateDown pred from_
-  match pushed with
+  let (pushedFrom, _remaining) := pushPredicateDown pred from_
+  match pushedFrom with
   | .subquery sel _ =>
     if sel.whereClause.isSome then
       .pass "Predicate pushed into subquery"
@@ -624,9 +624,9 @@ def testPushPredicateOuterJoin : TestResult :=
     (FromClause.table ⟨"right", none⟩)
     (some (Expr.binOp .eq (Expr.col ⟨some "left", "id"⟩) (Expr.col ⟨some "right", "lid"⟩)))
   let predOnRight := Expr.binOp .eq (Expr.col ⟨some "right", "status"⟩) (strLit "active")
-  let result := pushPredicateDown predOnRight from_
+  let (resultFrom, _remaining) := pushPredicateDown predOnRight from_
   -- The predicate should be in the ON clause, not pushed into right side
-  match result with
+  match resultFrom with
   | .join _ .left _ (some _) => .pass "Predicate on null-extended side kept in ON clause"
   | _ => .fail "Outer join pushdown" "Predicate incorrectly pushed"
 

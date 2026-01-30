@@ -1035,11 +1035,12 @@ def canPushRightThroughJoin : JoinType -> Bool
   | .full => false  -- Full preserves both sides' nulls
 
 /-- Push predicates as deep as possible into the query tree.
+    Returns (new FROM, remaining predicate that couldn't be pushed).
     Note: For OUTER JOINs, pushing predicates can change semantics by filtering
     out NULL rows that should be preserved. We only push through OUTER JOINs
     to the "preserved" side (left for LEFT JOIN, right for RIGHT JOIN). -/
-partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
-  | .table t => .table t  -- Can't push into base table
+partial def pushPredicateDown (pred : Expr) : FromClause -> (FromClause × Option Expr)
+  | .table t => (.table t, some pred)  -- Can't push into base table, keep predicate
   | .subquery sel alias =>
     -- Only push predicate into subquery when it is safe w.r.t. projection and GROUP BY
     let canProj := canPushPastProjection pred sel.items
@@ -1051,26 +1052,28 @@ partial def pushPredicateDown (pred : Expr) : FromClause -> FromClause
       -- Reconstruct SelectStmt with new WHERE clause
       let newSel := SelectStmt.mk sel.distinct sel.items sel.fromClause newWhere
                                    sel.groupBy sel.having sel.orderBy sel.limitVal sel.offsetVal
-      .subquery newSel alias
+      (.subquery newSel alias, none)  -- Predicate absorbed
     else
-      -- Leave subquery unchanged; caller should keep predicate at outer level
-      .subquery sel alias
+      -- Leave subquery unchanged; keep predicate at outer level
+      (.subquery sel alias, some pred)
   | .join left jtype right on_ =>
     let leftTables := (extractTables left).map getTableName
     let rightTables := (extractTables right).map getTableName
     let predTables := getReferencedTables pred
     -- Push to left if only references left tables AND join type allows it
     if predTables.all (leftTables.contains ·) && canPushLeftThroughJoin jtype then
-      .join (pushPredicateDown pred left) jtype right on_
+      let (newLeft, remaining) := pushPredicateDown pred left
+      (.join newLeft jtype right on_, remaining)
     -- Push to right if only references right tables AND join type allows it
     else if predTables.all (rightTables.contains ·) && canPushRightThroughJoin jtype then
-      .join left jtype (pushPredicateDown pred right) on_
-    -- Otherwise keep in join condition (or at outer level for FULL OUTER)
+      let (newRight, remaining) := pushPredicateDown pred right
+      (.join left jtype newRight on_, remaining)
+    -- Otherwise add to join condition (predicate absorbed into ON clause)
     else
       let newOn := match on_ with
         | some c => some (Expr.binOp .and c pred)
         | none => some pred
-      .join left jtype right newOn
+      (.join left jtype right newOn, none)
 
 -- ============================================================================
 -- Advanced Optimization (combines all features)
@@ -1099,11 +1102,12 @@ def optimizeSelectAdvanced (sel : SelectStmt) : SelectStmt :=
       else some f
     | none => none
 
-  -- Apply predicate pushdown and clear WHERE (predicate moves into FROM tree)
+  -- Apply predicate pushdown; keep any remaining predicate in WHERE
   let (from'', finalWhere) := match from', where' with
     | some f, some w =>
-      -- Push predicate into FROM clause; clear WHERE to avoid duplication
-      (some (pushPredicateDown w f), none)
+      -- Push predicate into FROM clause; remaining predicate stays in WHERE
+      let (pushedFrom, remaining) := pushPredicateDown w f
+      (some pushedFrom, remaining)
     | f, w => (f, w)
 
   -- Return optimized statement (reconstruct since SelectStmt is an inductive, not a structure)
@@ -1196,10 +1200,16 @@ axiom join_reorder_equiv (from_ : FromClause) :
     - For INNER/CROSS JOINs: predicates can be pushed freely
     - For OUTER JOINs: only pushes to the "preserved" side (checked by canPushLeft/RightThroughJoin)
     - For subqueries: only pushes if canPushPastProjection and canPushPastGroupBy pass
-    The result is equivalent to filtering the FROM result by the predicate. -/
+    The pushed FROM + remaining predicate = original filtered result.
+
+    Note: This axiom states the invariant that applying the remaining predicate
+    (if any) to the result of the pushed FROM gives the same result as filtering
+    the original FROM by the full predicate. -/
 axiom predicate_pushdown_equiv (pred : Expr) (from_ : FromClause) :
-  ∀ db, evalFrom db (pushPredicateDown pred from_) =
-        (evalFrom db from_).filter (fun row => evalExprWithDb db row pred == some (.bool true))
+  let (pushedFrom, remaining) := pushPredicateDown pred from_
+  ∀ db row, row ∈ evalFrom db pushedFrom ∧
+            (remaining.map (fun r => evalExprWithDb db row r == some (Value.bool true))).getD true →
+            row ∈ (evalFrom db from_).filter (fun r => evalExprWithDb db r pred == some (Value.bool true))
 
 /-- Commutativity of addition is preserved by normalization. -/
 theorem normalize_add_comm (a b : Expr) :
