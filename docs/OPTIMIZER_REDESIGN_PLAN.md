@@ -242,12 +242,14 @@ def exprCompare : Expr → Expr → Ordering :=
 /-- Normalize to canonical form. Idempotent: normalize (normalize e) = normalize e -/
 partial def normalizeExprCanonical : Expr → Expr
   | .binOp .and l r =>
-    -- Flatten directly without reconstructing first (avoid redundancy)
+    -- Flatten l and r separately since we've already matched the top-level AND.
+    -- This avoids reconstructing the binOp just to pass it to flattenAnd.
+    -- flattenAnd will recursively handle nested ANDs in l and r.
     let conjuncts := (flattenAnd l ++ flattenAnd r).map normalizeExprCanonical
     let sorted := conjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenAnd sorted |>.getD (.lit (.bool true))
   | .binOp .or l r =>
-    -- Flatten directly without reconstructing first
+    -- Same approach for OR
     let disjuncts := (flattenOr l ++ flattenOr r).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort (exprCompare · · == .lt) |>.toList
     unflattenOr sorted |>.getD (.lit (.bool false))
@@ -280,13 +282,11 @@ partial def normalizeExprCanonical : Expr → Expr
   | .between e lo hi =>
     .between (normalizeExprCanonical e) (normalizeExprCanonical lo) (normalizeExprCanonical hi)
   -- Window functions: recurse into arg and spec expressions
-  | .windowFn fn arg spec =>
+  | .windowFn fn arg (.mk partBy orderBy) =>
     let normArg := arg.map normalizeExprCanonical
-    let normSpec := match spec with
-      | .mk partBy orderBy =>
-        WindowSpec.mk (partBy.map normalizeExprCanonical)
-                      (orderBy.map fun item => OrderByItem.mk (normalizeExprCanonical item.expr) item.dir)
-    .windowFn fn normArg normSpec
+    let normPartBy := partBy.map normalizeExprCanonical
+    let normOrderBy := orderBy.map fun item => OrderByItem.mk (normalizeExprCanonical item.expr) item.dir
+    .windowFn fn normArg (.mk normPartBy normOrderBy)
   -- Leaves (lit, col, countStar) and subqueries (own scope): unchanged
   | e => e
 ```
@@ -333,12 +333,25 @@ def pushPredicateDown (pred : Expr) (from_ : FromClause) : PushdownResult
 
 **Safety checks** (call before pushing):
 ```lean
+/-- Extract column reference info from SelectItem (name and optional table qualifier) -/
+def getSelectItemColumnRef : SelectItem → Option ColumnRef
+  | .star _ => none
+  | .exprItem (.col c) _ => some c  -- preserve full column reference
+  | .exprItem _ (some alias) => some { column := alias, table := none }
+  | .exprItem _ none => none
+
 /-- Can push predicate past SELECT projection?
-    Uses getReferencedColumns (PR 0) to check column availability -/
+    Uses getReferencedColumns (PR 0) to check column availability.
+    Handles table qualifiers: unqualified columns match any table,
+    qualified columns must match exactly. -/
 def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
   let predCols := getReferencedColumns pred  -- from PR 0
-  let availableCols := items.filterMap getSelectItemAlias
-  predCols.all (fun c => availableCols.contains c.column)
+  let availableCols := items.filterMap getSelectItemColumnRef
+  predCols.all fun predCol =>
+    availableCols.any fun availCol =>
+      predCol.column == availCol.column &&
+      -- Table qualifier check: match if either is unqualified or both match
+      (predCol.table.isNone || availCol.table.isNone || predCol.table == availCol.table)
 
 /-- Can push predicate past GROUP BY?
     Uses hasAggregate (existing in Semantics.lean) and isGroupingKey (PR 0).
