@@ -6,6 +6,7 @@ import Test.SemanticsTest
 import Test.EquivTest
 import Test.PropertyTest
 import Test.OptimizerTest
+import Test.ExprNormalizationTest
 
 def main : IO Unit := do
   IO.println "╔═══════════════════════════════════╗"
@@ -25,6 +26,9 @@ def main : IO Unit := do
   IO.println ""
 
   let _ ← OptimizerTest.runOptimizerTests
+  IO.println ""
+
+  let _ ← ExprNormalizationTest.runExprNormalizationTests
   IO.println ""
 
   IO.println "═══════════════════════════════════"
