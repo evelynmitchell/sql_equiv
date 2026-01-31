@@ -92,10 +92,14 @@ partial def getFromTables : FromClause → List String
   | .subquery _ alias => [alias]
   | .join left _ right _ => getFromTables left ++ getFromTables right
 
-/-- Check if predicate references only tables in the given list -/
+/-- Check if predicate references only tables in the given list.
+    Unqualified columns (with table = none) are treated as potentially
+    referring to multiple tables and therefore cause this check to fail. -/
 def predReferencesOnlyTables (pred : Expr) (tables : List String) : Bool :=
   (getReferencedColumns pred).all fun col =>
-    col.table.isNone || tables.any (· == col.table.getD "")
+    match col.table with
+    | some t => tables.any (· == t)
+    | none => false  -- Unqualified columns could reference any table
 
 -- ============================================================================
 -- Predicate Pushdown Implementation
@@ -110,8 +114,11 @@ partial def pushSinglePredicate (pred : Expr) (from_ : FromClause) : PushdownRes
 
   -- Subquery: try to push into the subquery's WHERE if the predicate
   -- only references columns available in the subquery's SELECT
+  -- and respects GROUP BY constraints
   | .subquery sel alias =>
-    if canPushPastProjection pred sel.items then
+    let canPushProjection := canPushPastProjection pred sel.items
+    let canPushGroupBy := sel.groupBy.isEmpty || canPushPastGroupBy pred sel.groupBy
+    if canPushProjection && canPushGroupBy then
       -- Can push: add to subquery's WHERE clause
       let newWhere := match sel.whereClause with
         | none => some pred
@@ -147,12 +154,17 @@ partial def pushSinglePredicate (pred : Expr) (from_ : FromClause) : PushdownRes
         -- Successfully pushed into left subtree
         { pushedFrom := .join result.pushedFrom jtype right on_, remaining := none }
       | some r =>
-        -- Couldn't push further into left subtree; add to ON clause
-        -- Safe for INNER, CROSS, and LEFT (left-only predicates in ON are fine)
-        let newOn := match on_ with
-          | none => some r
-          | some o => some (Expr.binOp .and o r)
-        { pushedFrom := .join result.pushedFrom jtype right newOn, remaining := none }
+        -- Couldn't push further into left subtree
+        if jtype == .inner || jtype == .cross then
+          -- For INNER/CROSS, safe to add to ON clause
+          let newOn := match on_ with
+            | none => some r
+            | some o => some (Expr.binOp .and o r)
+          { pushedFrom := .join result.pushedFrom jtype right newOn, remaining := none }
+        else
+          -- For LEFT join, predicates on left table must stay in WHERE
+          -- (adding to ON would change semantics: unmatched rows still appear)
+          { pushedFrom := .join result.pushedFrom jtype right on_, remaining := some r }
     else if refsOnlyRight && canPushRightThroughJoin jtype then
       -- Push to right side
       let result := pushSinglePredicate pred right
@@ -161,12 +173,17 @@ partial def pushSinglePredicate (pred : Expr) (from_ : FromClause) : PushdownRes
         -- Successfully pushed into right subtree
         { pushedFrom := .join left jtype result.pushedFrom on_, remaining := none }
       | some r =>
-        -- Couldn't push further into right subtree; add to ON clause
-        -- Safe for INNER, CROSS, and RIGHT (right-only predicates in ON are fine)
-        let newOn := match on_ with
-          | none => some r
-          | some o => some (Expr.binOp .and o r)
-        { pushedFrom := .join left jtype result.pushedFrom newOn, remaining := none }
+        -- Couldn't push further into right subtree
+        if jtype == .inner || jtype == .cross then
+          -- For INNER/CROSS, safe to add to ON clause
+          let newOn := match on_ with
+            | none => some r
+            | some o => some (Expr.binOp .and o r)
+          { pushedFrom := .join left jtype result.pushedFrom newOn, remaining := none }
+        else
+          -- For RIGHT join, predicates on right table must stay in WHERE
+          -- (adding to ON would change semantics: unmatched rows still appear)
+          { pushedFrom := .join left jtype result.pushedFrom on_, remaining := some r }
     else if jtype == .inner || jtype == .cross then
       -- For inner/cross joins, add to ON clause
       let newOn := match on_ with

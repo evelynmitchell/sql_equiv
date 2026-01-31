@@ -109,16 +109,16 @@ def testLeftJoinNoRightPush : TestResult :=
     | .join _ .left _ (some _) => .pass "Left join: right predicate added to ON"
     | _ => .fail "Left join safety" "Predicate should remain or go to ON"
 
-def testLeftJoinLeftPush : TestResult :=
-  -- Can push predicate on left table through LEFT JOIN
+def testLeftJoinLeftPredicateBaseTable : TestResult :=
+  -- For LEFT JOIN with base table on left, left predicates should remain
+  -- (can't push into base table, and adding to ON would change semantics)
   let from_ := leftJoin (tableAs "users" "u") (tableAs "orders" "o") none
   let pred := Expr.binOp .eq (qcol "u" "active") (boolLit true)
   let result := pushPredicateDown pred from_
-  -- Should be pushed to left side
-  if result.remaining.isNone then
-    .pass "Left join: left predicate pushed"
-  else
-    .fail "Left join left push" "Left predicate should have been pushed"
+  -- Should remain in WHERE (not pushed to ON, as that changes LEFT JOIN semantics)
+  match result.remaining with
+  | some _ => .pass "Left join base table: left predicate remains in WHERE"
+  | none => .fail "Left join base table" "Predicate should remain, not be added to ON"
 
 def testRightJoinNoLeftPush : TestResult :=
   -- Can't push predicate on left table through RIGHT JOIN
@@ -234,7 +234,7 @@ def allTests : List TestResult := [
   testPushdownToRightSide,
   -- Outer join safety
   testLeftJoinNoRightPush,
-  testLeftJoinLeftPush,
+  testLeftJoinLeftPredicateBaseTable,
   testRightJoinNoLeftPush,
   -- Multiple conjuncts
   testMultipleConjuncts,
