@@ -1,0 +1,6 @@
+# SQL Anonymizer Dependencies
+# Required
+sqlparse>=0.4.4
+
+# Optional (for encrypted mappings)
+cryptography>=41.0.0
