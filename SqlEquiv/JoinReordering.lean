@@ -161,16 +161,21 @@ partial def extractOnPredicates : FromClause → List Expr
 -- Greedy Join Reordering Algorithm
 -- ============================================================================
 
+/-- Generate unique pairs from a list (each unordered pair appears once) -/
+def uniquePairs (nodes : List JoinNode) : List (JoinNode × JoinNode) :=
+  match nodes with
+  | [] => []
+  | [_] => []
+  | n :: rest => (rest.map (n, ·)) ++ uniquePairs rest
+
 /-- Find the cheapest pair of nodes to join -/
 def findCheapestPair (nodes : List JoinNode) (edges : List JoinEdge) :
     Option (JoinNode × JoinNode × Nat) :=
   if nodes.length < 2 then none
   else
-    -- Generate all pairs and find minimum cost
-    let pairs := nodes.flatMap fun n1 =>
-      nodes.filterMap fun n2 =>
-        if n1 == n2 then none
-        else some (n1, n2, estimateJoinCost n1 n2 edges)
+    -- Generate unique pairs (each unordered pair once) and compute costs
+    let pairs := (uniquePairs nodes).map fun (n1, n2) =>
+      (n1, n2, estimateJoinCost n1 n2 edges)
     -- Find minimum (by cost)
     List.foldl (fun acc pair =>
       match acc with
@@ -187,17 +192,25 @@ def removeNode (nodes : List JoinNode) (node : JoinNode) : List JoinNode :=
 def collectConnectingEdges (n1 n2 : JoinNode) (edges : List JoinEdge) : List Expr :=
   (edges.filter (edgeConnects · n1 n2)).map (·.predicate)
 
-/-- Greedy join reordering: repeatedly join the cheapest pair -/
-partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge) :
-    Option (JoinNode × List Expr) :=
+/-- A join step: which nodes to join and with what predicates -/
+structure JoinStep where
+  left : JoinNode
+  right : JoinNode
+  predicates : List Expr
+  deriving Repr
+
+/-- Greedy join reordering: repeatedly join the cheapest pair.
+    Returns the sequence of join steps in the order they should be performed. -/
+partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge)
+    (allPreds : List Expr) : Option (List JoinStep) :=
   match nodes with
   | [] => none
-  | [n] => some (n, [])  -- Single node: no joins needed
+  | [_] => some []  -- Single node: no joins needed
   | _ =>
     match findCheapestPair nodes edges with
     | none => none  -- Shouldn't happen if nodes.length >= 2
     | some (n1, n2, cost) =>
-      -- Collect predicates for this join
+      -- Collect join predicates for this pair
       let joinPreds := collectConnectingEdges n1 n2 edges
       -- Remove edges that were used
       let remainingEdges := edges.filter (fun e => !edgeConnects e n1 n2)
@@ -206,72 +219,95 @@ partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge) :
       -- Remove old nodes, add combined
       let newNodes := removeNode (removeNode nodes n1) n2 ++ [combined]
       -- Recurse
-      match greedyReorder newNodes remainingEdges with
+      match greedyReorder newNodes remainingEdges allPreds with
       | none => none
-      | some (finalNode, morePreds) => some (finalNode, joinPreds ++ morePreds)
+      | some moreSteps =>
+        some ({ left := n1, right := n2, predicates := joinPreds } :: moreSteps)
 
 -- ============================================================================
 -- FROM Clause Reconstruction
 -- ============================================================================
 
-/-- Build a FromClause from a list of tables and join predicates.
-    Uses the order determined by the greedy algorithm. -/
-def buildFromClause (tables : List TableRef) (predicates : List Expr) : Option FromClause :=
-  match tables with
-  | [] => none
-  | [t] => some (.table t)
-  | t :: ts =>
-    match buildFromClause ts predicates with
-    | none => none
-    | some rest =>
-      -- Join with an inner join, combining predicates
-      let on_ := unflattenAnd predicates
-      some (.join (.table t) .inner rest on_)
+/-- Map from table name to its FromClause (initially just base tables) -/
+def buildTableMap (nodes : List JoinNode) : List (String × FromClause) :=
+  nodes.flatMap fun node =>
+    node.originalTables.map fun t => (t, FromClause.table node.table)
 
-/-- Reconstruct FROM clause preserving original table structure but in new order -/
-partial def reconstructFromClause (node : JoinNode) (allPreds : List Expr)
-    (originalTables : List TableRef) : FromClause :=
-  -- For simplicity, just create a left-deep join tree with all predicates in ON
-  match originalTables with
-  | [] => .table node.table  -- Shouldn't happen
-  | [t] => .table t
-  | t :: ts =>
-    let rest := reconstructFromClause node allPreds ts
-    let on_ := unflattenAnd allPreds
-    .join (.table t) .inner rest on_
+/-- Build FROM clause from join steps, using the computed order.
+    Each step combines two subtrees with an INNER JOIN. -/
+def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option FromClause :=
+  match nodes with
+  | [] => none
+  | [n] => some (FromClause.table n.table)
+  | _ =>
+    -- Build a map from table names to their current FromClause
+    -- Start with leaf tables, then combine as we process steps
+    let rec go (remaining : List JoinStep)
+               (nodeMap : List (List String × FromClause)) : Option FromClause :=
+      match remaining with
+      | [] =>
+        -- All steps done, should have exactly one entry
+        match nodeMap with
+        | [(_, fc)] => some fc
+        | _ => none  -- Shouldn't happen
+      | step :: rest =>
+        -- Find the FromClauses for left and right nodes
+        let leftTables := step.left.originalTables
+        let rightTables := step.right.originalTables
+        let leftFC := nodeMap.find? (fun (ts, _) => ts == leftTables)
+        let rightFC := nodeMap.find? (fun (ts, _) => ts == rightTables)
+        match leftFC, rightFC with
+        | some (_, lfc), some (_, rfc) =>
+          -- Create the join
+          let on_ := unflattenAnd step.predicates
+          let combined := FromClause.join lfc .inner rfc on_
+          let combinedTables := leftTables ++ rightTables
+          -- Update the map: remove old entries, add combined
+          let newMap := nodeMap.filter (fun (ts, _) =>
+            ts != leftTables && ts != rightTables)
+          go rest ((combinedTables, combined) :: newMap)
+        | _, _ => none  -- Shouldn't happen
+    let initialMap := nodes.map fun n => (n.originalTables, FromClause.table n.table)
+    go steps initialMap
 
 -- ============================================================================
 -- Main Reordering Function
 -- ============================================================================
 
 /-- Reorder joins in a FROM clause using greedy cost-based selection.
-    Only reorders if all joins are INNER/CROSS; otherwise returns unchanged. -/
+    Only reorders if all joins are INNER/CROSS; otherwise returns unchanged.
+    Preserves all ON predicates (both join conditions and filters). -/
 def reorderJoins (from_ : FromClause) : FromClause :=
   if !canReorderJoins from_ then from_
   else
-    -- Extract leaves and predicates
+    -- Extract leaves and all predicates
     let leaves := extractLeafTables from_
-    let preds := extractOnPredicates from_
-    let edges := extractJoinEdges preds
+    let allPreds := extractOnPredicates from_
+    let edges := extractJoinEdges allPreds
+
+    -- Identify non-join predicates (filters that aren't column=column joins)
+    let joinPredSet := edges.map (·.predicate)
+    let nonJoinPreds := allPreds.filter (fun p => !joinPredSet.any (· == p))
 
     -- Run greedy reordering
-    match greedyReorder leaves edges with
+    match greedyReorder leaves edges allPreds with
     | none => from_  -- Fallback: return original
-    | some (_, allPreds) =>
-      -- Reconstruct with new order
-      -- For now, create a simple left-deep tree with all predicates at the root
-      match leaves with
-      | [] => from_
-      | [t] => .table t.table
-      | first :: rest =>
-        let restFrom := rest.foldl (fun acc node =>
-          FromClause.join acc .inner (.table node.table) none
-        ) (FromClause.table first.table)
-        -- Add all predicates to the top join
-        match restFrom with
-        | .join left jt right _ =>
-          .join left jt right (unflattenAnd allPreds)
-        | other => other
+    | some steps =>
+      -- Build FROM clause using the computed join order
+      match buildFromSteps steps leaves with
+      | none => from_  -- Fallback
+      | some result =>
+        -- Add non-join predicates to the top-level ON clause
+        if nonJoinPreds.isEmpty then result
+        else
+          match result with
+          | .join left jt right on_ =>
+            let existingPreds := match on_ with
+              | some p => flattenAnd p
+              | none => []
+            let allOn := unflattenAnd (existingPreds ++ nonJoinPreds)
+            .join left jt right allOn
+          | other => other  -- Single table, no join to add predicates to
 
 -- ============================================================================
 -- Semantic Preservation Axiom
