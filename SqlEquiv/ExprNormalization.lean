@@ -7,7 +7,7 @@
   Key features:
   - Weight-based ordering: literals < columns < complex expressions
   - Flattens AND/OR chains and sorts conjuncts/disjuncts
-  - Normalizes commutative operators (AND, OR, ADD, MUL, EQ)
+  - Normalizes commutative operators (AND, OR, ADD, MUL, EQ, NE)
   - Idempotent: normalize (normalize e) = normalize e
 
   Depends on PR 0 utilities: flattenAnd, flattenOr, unflattenAnd, unflattenOr, exprStructuralCmp
@@ -65,7 +65,7 @@ def exprLt (e1 e2 : Expr) : Bool :=
 
 /-- Normalize an expression to canonical form.
     - Flattens AND/OR chains and sorts conjuncts/disjuncts
-    - Reorders commutative binary operators (AND, OR, ADD, MUL, EQ)
+    - Reorders commutative binary operators (AND, OR, ADD, MUL, EQ, NE)
     - Recursively normalizes subexpressions
     - Idempotent: normalizeExprCanonical (normalizeExprCanonical e) = normalizeExprCanonical e -/
 partial def normalizeExprCanonical : Expr → Expr
@@ -100,6 +100,11 @@ partial def normalizeExprCanonical : Expr → Expr
     let nl := normalizeExprCanonical l
     let nr := normalizeExprCanonical r
     if exprCompare nl nr == .gt then .binOp .eq nr nl else .binOp .eq nl nr
+
+  | .binOp .ne l r =>
+    let nl := normalizeExprCanonical l
+    let nr := normalizeExprCanonical r
+    if exprCompare nl nr == .gt then .binOp .ne nr nl else .binOp .ne nl nr
 
   -- Non-commutative binary ops: just recurse into children
   | .binOp op l r => .binOp op (normalizeExprCanonical l) (normalizeExprCanonical r)

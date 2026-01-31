@@ -138,6 +138,16 @@ def testCommutativityEq : TestResult :=
   else
     .fail "Commutativity: EQ" s!"{repr norm1} != {repr norm2}"
 
+def testCommutativityNe : TestResult :=
+  let expr1 := Expr.binOp .ne (col "a") (col "b")
+  let expr2 := Expr.binOp .ne (col "b") (col "a")
+  let norm1 := normalizeExprCanonical expr1
+  let norm2 := normalizeExprCanonical expr2
+  if norm1 == norm2 then
+    .pass "Commutativity: a != b <==> b != a"
+  else
+    .fail "Commutativity: NE" s!"{repr norm1} != {repr norm2}"
+
 def testCommutativityNestedAnd : TestResult :=
   -- (a AND b) AND c should equal c AND (b AND a) after normalization
   let expr1 := Expr.binOp .and (Expr.binOp .and (col "a") (col "b")) (col "c")
@@ -256,6 +266,24 @@ def testNormalizeBetween : TestResult :=
   else
     .fail "BETWEEN normalization" s!"Expected {repr expected}, got {repr norm}"
 
+def testNormalizeWindowFn : TestResult :=
+  -- Window function with commutative expressions in arg and partition by
+  let expr := Expr.windowFn .sum
+    (some (Expr.binOp .add (col "b") (col "a")))
+    (WindowSpec.mk
+      [Expr.binOp .mul (col "y") (col "x")]  -- partition by
+      [OrderByItem.mk (col "z") .asc])        -- order by
+  let norm := normalizeExprCanonical expr
+  let expected := Expr.windowFn .sum
+    (some (Expr.binOp .add (col "a") (col "b")))  -- normalized
+    (WindowSpec.mk
+      [Expr.binOp .mul (col "x") (col "y")]       -- normalized
+      [OrderByItem.mk (col "z") .asc])
+  if norm == expected then
+    .pass "Window function: normalizes arg and partition by"
+  else
+    .fail "Window function normalization" s!"Expected {repr expected}, got {repr norm}"
+
 -- ============================================================================
 -- Weight-Based Ordering Tests
 -- ============================================================================
@@ -335,6 +363,7 @@ def allTests : List TestResult := [
   testCommutativityAdd,
   testCommutativityMul,
   testCommutativityEq,
+  testCommutativityNe,
   testCommutativityNestedAnd,
   -- Determinism
   testDeterminism,
@@ -348,6 +377,7 @@ def allTests : List TestResult := [
   testNormalizeCase,
   testNormalizeInList,
   testNormalizeBetween,
+  testNormalizeWindowFn,
   -- Weight-based ordering
   testWeightLiteralBeforeColumn,
   testWeightColumnBeforeBinOp,
