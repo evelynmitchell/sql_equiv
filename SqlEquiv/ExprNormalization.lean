@@ -25,12 +25,17 @@ namespace SqlEquiv
 -- ============================================================================
 
 /-- Weight-based ordering: literals < columns < simple ops < functions < aggregates < complex.
-    Used as primary sort key for canonical ordering. -/
+    Used as primary sort key for canonical ordering.
+
+    Rationale for weight assignments:
+    - binOp and unaryOp share weight 2 because they represent similar complexity
+      (simple arithmetic/logical operations). Within the same weight class,
+      exprStructuralCmp provides deterministic ordering by constructor tag. -/
 def exprWeight : Expr → Nat
   | .lit _ => 0
   | .col _ => 1
-  | .binOp _ _ _ => 2
-  | .unaryOp _ _ => 2
+  | .binOp _ _ _ => 2   -- same weight as unaryOp: both are simple operations
+  | .unaryOp _ _ => 2   -- same weight as binOp: both are simple operations
   | .func _ _ => 3
   | .agg _ _ _ => 4
   | .countStar => 4
@@ -68,12 +73,16 @@ partial def normalizeExprCanonical : Expr → Expr
   | .binOp .and l r =>
     let conjuncts := (flattenAnd l ++ flattenAnd r).map normalizeExprCanonical
     let sorted := conjuncts.toArray.qsort exprLt |>.toList
+    -- Note: .getD should never trigger because flattenAnd always returns non-empty list
+    -- (proven by flattenAnd_nonempty axiom in OptimizerUtils). The default is defensive.
     unflattenAnd sorted |>.getD (.lit (.bool true))
 
   -- OR: flatten, normalize each disjunct, sort, rebuild
   | .binOp .or l r =>
     let disjuncts := (flattenOr l ++ flattenOr r).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort exprLt |>.toList
+    -- Note: .getD should never trigger because flattenOr always returns non-empty list
+    -- (proven by flattenOr_nonempty axiom in OptimizerUtils). The default is defensive.
     unflattenOr sorted |>.getD (.lit (.bool false))
 
   -- Commutative binary ops: normalize children, then order them
@@ -124,8 +133,16 @@ partial def normalizeExprCanonical : Expr → Expr
     let normOrderBy := orderBy.map fun item => OrderByItem.mk (normalizeExprCanonical item.expr) item.dir
     .windowFn fn normArg (.mk normPartBy normOrderBy)
 
-  -- Leaves (lit, col, countStar) and subqueries (own scope): unchanged
-  | e => e
+  -- Leaf expressions: no subexpressions to normalize
+  | .lit v => .lit v
+  | .col c => .col c
+  | .countStar => .countStar
+
+  -- Subquery expressions: have their own scope, don't normalize into them
+  -- (normalization is per-query, subqueries would be normalized separately)
+  | .inSubquery e neg sq => .inSubquery (normalizeExprCanonical e) neg sq
+  | .exists neg sq => .exists neg sq
+  | .subquery sq => .subquery sq
 
 -- ============================================================================
 -- Semantic Equivalence Axiom
