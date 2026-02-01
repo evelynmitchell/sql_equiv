@@ -294,12 +294,6 @@ def testReorderCrossJoinsPreservesType : TestResult :=
     (crossJoin (tableAs "a" "a") (tableAs "b" "b"))
     (tableAs "c" "c")
   let reordered := reorderJoins from_
-  -- Helper to check if all joins in result are CROSS
-  let rec allCross : FromClause → Bool
-    | .table _ => true
-    | .subquery _ _ => true
-    | .join l jt r _ =>
-      (jt == .cross || jt == .inner) && allCross l && allCross r
   -- Helper to count CROSS joins specifically
   let rec countCross : FromClause → Nat
     | .table _ => 0
