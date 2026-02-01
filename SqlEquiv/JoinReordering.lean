@@ -35,7 +35,7 @@ structure JoinNode where
   estimatedRows : Nat
   /-- All original table names contained in this node (for edge matching) -/
   originalTables : List String
-  deriving Repr, BEq, Nonempty
+  deriving Repr, BEq
 
 /-- An edge in the join graph representing a join predicate -/
 structure JoinEdge where
@@ -47,7 +47,7 @@ structure JoinEdge where
   predicate : Expr
   /-- Estimated selectivity (0.0 to 1.0, default 0.1 for equality) -/
   selectivity : Float := 0.1
-  deriving Repr, BEq, Nonempty
+  deriving Repr, BEq
 
 -- ============================================================================
 -- JoinNode Operations
