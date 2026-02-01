@@ -96,18 +96,16 @@ def testPushdownToRightSide : TestResult :=
 -- ============================================================================
 
 def testLeftJoinNoRightPush : TestResult :=
-  -- Can't push predicate on right table through LEFT JOIN
+  -- Can't push predicate on right (null-producing) table through LEFT JOIN.
+  -- Adding to ON would change semantics: ON filters before join (unmatched
+  -- left rows appear with NULL), WHERE filters after (eliminates those rows).
   let from_ := leftJoin (tableAs "users" "u") (tableAs "orders" "o") none
   let pred := Expr.binOp .gt (qcol "o" "amount") (intLit 100)
   let result := pushPredicateDown pred from_
-  -- Should remain at current level, not pushed to right
+  -- Should remain in WHERE, not be added to ON
   match result.remaining with
-  | some _ => .pass "Left join: right predicate not pushed through"
-  | none =>
-    -- Check if pushed to ON instead (which is also valid for left join)
-    match result.pushedFrom with
-    | .join _ .left _ (some _) => .pass "Left join: right predicate added to ON"
-    | _ => .fail "Left join safety" "Predicate should remain or go to ON"
+  | some _ => .pass "Left join: right predicate remains in WHERE"
+  | none => .fail "Left join safety" "Predicate should remain in WHERE, not be added to ON"
 
 def testLeftJoinLeftPredicateBaseTable : TestResult :=
   -- For LEFT JOIN with base table on left, left predicates should remain

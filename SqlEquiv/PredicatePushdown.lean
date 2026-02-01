@@ -41,11 +41,12 @@ structure PushdownResult where
 
 /-- Extract column reference info from SelectItem.
     For aliased expressions, returns the alias as the column name.
-    For unaliased column references, returns the full column reference. -/
+    For unaliased column references, returns an unqualified column reference
+    (the inner table qualifier is not visible from outside the subquery). -/
 def getSelectItemColumnRef : SelectItem → Option ColumnRef
   | .star _ => none
   | .exprItem (.col _) (some alias) => some { column := alias, table := none }
-  | .exprItem (.col c) none => some c
+  | .exprItem (.col c) none => some { column := c.column, table := none }
   | .exprItem _ (some alias) => some { column := alias, table := none }
   | .exprItem _ none => none
 
@@ -147,7 +148,19 @@ partial def transformColumnRefs (expr : Expr) (subqueryAlias : String)
             (else_.map (transformColumnRefs · subqueryAlias items))
   | .func name args => .func name (args.map (transformColumnRefs · subqueryAlias items))
   | .agg fn arg distinct => .agg fn (arg.map (transformColumnRefs · subqueryAlias items)) distinct
-  | other => other  -- Literals, subqueries, etc. - keep as-is
+  | .inSubquery e neg subq =>
+    -- Transform the outer expression, but leave the subquery unchanged (different scope)
+    .inSubquery (transformColumnRefs e subqueryAlias items) neg subq
+  | .windowFn fn arg spec =>
+    -- Transform the argument and window spec expressions
+    let newArg := arg.map (transformColumnRefs · subqueryAlias items)
+    let newPartitionBy := spec.partitionBy.map (transformColumnRefs · subqueryAlias items)
+    let newOrderBy := spec.orderBy.map fun item =>
+      match item with
+      | .mk e dir => OrderByItem.mk (transformColumnRefs e subqueryAlias items) dir
+    let newSpec := WindowSpec.mk newPartitionBy newOrderBy
+    .windowFn fn newArg newSpec
+  | other => other  -- Literals, exists, scalar subqueries - keep as-is
 
 -- ============================================================================
 -- Predicate Pushdown Implementation
