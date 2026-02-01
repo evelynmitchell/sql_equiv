@@ -241,6 +241,50 @@ def testReorderJoinsMultipleTables : TestResult :=
   | .join _ .inner _ _ => .pass "reorderJoins: produces inner join"
   | _ => .fail "reorderJoins" "Expected inner join result"
 
+/-- Test that greedy algorithm joins smallest tables first (cost-based ordering).
+    With three tables of sizes 10, 100, 1000, the greedy algorithm should:
+    1. First join the two smallest (10 × 100 = 1000 result)
+    2. Then join with the largest (1000 × 1000 = 1M result)
+    Rather than joining largest first which would give worse intermediates. -/
+def testGreedyJoinOrder : TestResult :=
+  -- Create nodes with different cardinalities
+  let small : JoinNode := { table := ⟨"small", some "s"⟩, estimatedRows := 10, originalTables := ["s"] }
+  let medium : JoinNode := { table := ⟨"medium", some "m"⟩, estimatedRows := 100, originalTables := ["m"] }
+  let large : JoinNode := { table := ⟨"large", some "l"⟩, estimatedRows := 1000, originalTables := ["l"] }
+  let nodes := [small, medium, large]
+  -- No edges = cross joins, cost is purely row count product
+  match greedyReorder nodes [] with
+  | none => .fail "greedyReorder" "Expected Some result"
+  | some steps =>
+    match steps with
+    | [firstStep, _] =>
+      -- First step should join the two smallest tables (s and m)
+      let firstTables := firstStep.left.originalTables ++ firstStep.right.originalTables
+      -- The first join should be between s and m (not involving l)
+      if firstTables.contains "s" && firstTables.contains "m" && !firstTables.contains "l" then
+        .pass "greedyReorder: joins smallest tables first"
+      else
+        .fail "greedyReorder" s!"First step should join s and m, got {firstTables}"
+    | _ => .fail "greedyReorder" s!"Expected 2 steps, got {steps.length}"
+
+/-- Test that predicates are preserved after reordering -/
+def testReorderJoinsPreservesPredicates : TestResult :=
+  -- Create a join with predicates
+  let pred1 := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let pred2 := Expr.binOp .eq (qcol "o" "id") (qcol "i" "order_id")
+  let from_ := innerJoin
+    (tableAs "users" "u")
+    (innerJoin (tableAs "orders" "o") (tableAs "items" "i") (some pred2))
+    (some pred1)
+  let reordered := reorderJoins from_
+  -- Extract all predicates from the reordered result
+  let reorderedPreds := extractOnPredicates reordered
+  -- Should have the same number of predicates
+  if reorderedPreds.length == 2 then
+    .pass "reorderJoins: preserves predicate count"
+  else
+    .fail "reorderJoins" s!"Expected 2 predicates, got {reorderedPreds.length}"
+
 -- ============================================================================
 -- Cost Estimation Tests
 -- ============================================================================
@@ -300,6 +344,8 @@ def allTests : List TestResult := [
   testReorderJoinsPreservesStructure,
   testReorderJoinsSkipsOuterJoin,
   testReorderJoinsMultipleTables,
+  testGreedyJoinOrder,
+  testReorderJoinsPreservesPredicates,
   -- Cost estimation
   testEstimateJoinCostNoEdges,
   testEstimateJoinCostWithEdge

@@ -16,6 +16,7 @@
 
 import SqlEquiv.OptimizerUtils
 import SqlEquiv.Ast
+import SqlEquiv.Semantics
 
 namespace SqlEquiv
 
@@ -201,8 +202,7 @@ structure JoinStep where
 
 /-- Greedy join reordering: repeatedly join the cheapest pair.
     Returns the sequence of join steps in the order they should be performed. -/
-partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge)
-    (allPreds : List Expr) : Option (List JoinStep) :=
+partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge) : Option (List JoinStep) :=
   match nodes with
   | [] => none
   | [_] => some []  -- Single node: no joins needed
@@ -219,7 +219,7 @@ partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge)
       -- Remove old nodes, add combined
       let newNodes := removeNode (removeNode nodes n1) n2 ++ [combined]
       -- Recurse
-      match greedyReorder newNodes remainingEdges allPreds with
+      match greedyReorder newNodes remainingEdges with
       | none => none
       | some moreSteps =>
         some ({ left := n1, right := n2, predicates := joinPreds } :: moreSteps)
@@ -227,11 +227,6 @@ partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge)
 -- ============================================================================
 -- FROM Clause Reconstruction
 -- ============================================================================
-
-/-- Map from table name to its FromClause (initially just base tables) -/
-def buildTableMap (nodes : List JoinNode) : List (String × FromClause) :=
-  nodes.flatMap fun node =>
-    node.originalTables.map fun t => (t, FromClause.table node.table)
 
 /-- Build FROM clause from join steps, using the computed order.
     Each step combines two subtrees with an INNER JOIN. -/
@@ -290,7 +285,7 @@ def reorderJoins (from_ : FromClause) : FromClause :=
     let nonJoinPreds := allPreds.filter (fun p => !joinPredSet.any (· == p))
 
     -- Run greedy reordering
-    match greedyReorder leaves edges allPreds with
+    match greedyReorder leaves edges with
     | none => from_  -- Fallback: return original
     | some steps =>
       -- Build FROM clause using the computed join order
@@ -316,16 +311,17 @@ def reorderJoins (from_ : FromClause) : FromClause :=
 /-- Join reordering preserves semantics for inner/cross joins.
     Relies on the commutativity and associativity of inner joins.
 
-    Informally: For any database db and FROM clause from_ containing only
-    INNER/CROSS joins, reorderJoins produces an equivalent FROM clause
-    that evaluates to the same result set.
+    For any database db and FROM clause from_ containing only INNER/CROSS joins,
+    reorderJoins produces an equivalent FROM clause that evaluates to the same
+    result set (up to row ordering).
 
     This is an axiom because a full proof would require formalizing
     join evaluation semantics and proving commutativity/associativity
     of inner joins (which are already axiomatized in Equiv.lean). -/
-axiom join_reorder_preserves_semantics (from_ : FromClause) :
+axiom join_reorder_preserves_semantics (db : Database) (from_ : FromClause) :
   canReorderJoins from_ →
-  -- The reordered FROM clause produces the same result as the original
-  True
+  -- The reordered FROM clause produces the same rows as the original
+  ∀ row ∈ evalFrom db (reorderJoins from_),
+    ∃ row2 ∈ evalFrom db from_, (∀ p, p ∈ row ↔ p ∈ row2)
 
 end SqlEquiv
