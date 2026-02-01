@@ -11,8 +11,9 @@
   - Respect outer join semantics (don't push through wrong side)
   - Handle GROUP BY correctly (only push if predicate uses grouping keys)
 
-  Uses utilities from OptimizerUtils (getReferencedColumns, flattenAnd)
-  and existing functions (hasAggregate, isGroupingKey).
+  Uses utilities from:
+  - OptimizerUtils: getReferencedColumns, flattenAnd, unflattenAnd, isGroupingKey
+  - Semantics: hasAggregate, exprHasWindowFn
 
   See docs/OPTIMIZER_REDESIGN_PLAN.md for full specification.
 -/
@@ -42,9 +43,14 @@ structure PushdownResult where
 /-- Extract column reference info from SelectItem.
     For aliased expressions, returns the alias as the column name.
     For unaliased column references, returns an unqualified column reference
-    (the inner table qualifier is not visible from outside the subquery). -/
+    (the inner table qualifier is not visible from outside the subquery).
+
+    Note: Star projections (SELECT *) return none, which conservatively blocks
+    pushdown into subqueries using them. While such pushdown could be valid,
+    it would require resolving the star against the subquery's FROM clause
+    to determine available columns. This is a deliberate simplification. -/
 def getSelectItemColumnRef : SelectItem → Option ColumnRef
-  | .star _ => none
+  | .star _ => none  -- Conservative: block pushdown for star projections
   | .exprItem (.col _) (some alias) => some { column := alias, table := none }
   | .exprItem (.col c) none => some { column := c.column, table := none }
   | .exprItem _ (some alias) => some { column := alias, table := none }
@@ -63,10 +69,12 @@ def canPushPastProjection (pred : Expr) (items : List SelectItem) : Bool :=
 
 /-- Can push predicate past GROUP BY?
     A predicate can be pushed past GROUP BY if:
-    1. It contains no aggregates
-    2. All referenced columns are grouping keys (bare column references in GROUP BY) -/
+    1. It contains no aggregates (computed during grouping)
+    2. It contains no window functions (computed after grouping)
+    3. All referenced columns are grouping keys (bare column references in GROUP BY) -/
 def canPushPastGroupBy (pred : Expr) (groupBy : List Expr) : Bool :=
   !hasAggregate pred &&
+  !exprHasWindowFn pred &&
   (getReferencedColumns pred).all fun c => groupBy.any (isGroupingKey c)
 
 /-- Can push predicate to left side of join?

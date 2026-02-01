@@ -311,6 +311,24 @@ def testSubqueryPushdownBlockedByAggregate : TestResult :=
   | some _ => .pass "Subquery: aggregate in predicate blocked"
   | none => .fail "Subquery aggregate" "Predicate with aggregate should be blocked"
 
+def testSubqueryPushdownBlockedByWindowFn : TestResult :=
+  -- Don't push predicate containing window function
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (col "category") (some "category"),
+     SelectItem.exprItem (col "amount") (some "amount")]
+    (some (tableAs "products" "p"))
+    none
+    [col "category"]
+  let from_ := subquery innerSel "sub"
+  -- Predicate uses window function which shouldn't be pushed past GROUP BY
+  let windowSpec := WindowSpec.mk [col "category"] []
+  let pred := Expr.binOp .gt (Expr.windowFn .sum (some (col "amount")) windowSpec) (intLit 1000)
+  let result := pushPredicateDown pred from_
+  -- Should remain (predicate contains window function)
+  match result.remaining with
+  | some _ => .pass "Subquery: window function in predicate blocked"
+  | none => .fail "Subquery window fn" "Predicate with window function should be blocked"
+
 -- ============================================================================
 -- Multiple Conjunct Tests
 -- ============================================================================
@@ -368,9 +386,12 @@ def testCanPushPastGroupBy : TestResult :=
   let pred1 := Expr.binOp .eq (col "category") (Expr.lit (.string "A"))
   let pred2 := Expr.agg .sum (some (col "amount")) false  -- aggregate: can't push
   let pred3 := Expr.binOp .eq (col "price") (intLit 100)  -- non-grouping column
+  let windowSpec := WindowSpec.mk [col "category"] []
+  let pred4 := Expr.windowFn .sum (some (col "amount")) windowSpec  -- window fn: can't push
   if canPushPastGroupBy pred1 groupBy &&
      !canPushPastGroupBy pred2 groupBy &&
-     !canPushPastGroupBy pred3 groupBy then
+     !canPushPastGroupBy pred3 groupBy &&
+     !canPushPastGroupBy pred4 groupBy then
     .pass "canPushPastGroupBy: correct results"
   else
     .fail "canPushPastGroupBy" "Incorrect GROUP BY check"
@@ -428,6 +449,7 @@ def allTests : List TestResult := [
   testSubqueryPushdownBlockedByGroupBy,
   testSubqueryPushdownQualifiedPredicate,
   testSubqueryPushdownBlockedByAggregate,
+  testSubqueryPushdownBlockedByWindowFn,
   -- Multiple conjuncts
   testMultipleConjuncts,
   testNestedConjuncts,
