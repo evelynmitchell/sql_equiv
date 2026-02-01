@@ -12,7 +12,7 @@
   - Handle GROUP BY correctly (only push if predicate uses grouping keys)
 
   Uses utilities from OptimizerUtils (getReferencedColumns, flattenAnd)
-  and existing functions (hasAggregate, exprReferencesOnlyTable).
+  and existing functions (hasAggregate, isGroupingKey).
 
   See docs/OPTIMIZER_REDESIGN_PLAN.md for full specification.
 -/
@@ -83,14 +83,8 @@ def canPushRightThroughJoin (jtype : JoinType) : Bool :=
   | .left | .full => false
 
 -- ============================================================================
--- Table Name Extraction
+-- Table Reference Checking
 -- ============================================================================
-
-/-- Get all table names/aliases from a FROM clause -/
-partial def getFromTables : FromClause → List String
-  | .table t => [getTableName t]
-  | .subquery _ alias => [alias]
-  | .join left _ right _ => getFromTables left ++ getFromTables right
 
 /-- Check if predicate references only tables in the given list.
     Unqualified columns (with table = none) are treated as potentially
@@ -133,18 +127,14 @@ partial def pushSinglePredicate (pred : Expr) (from_ : FromClause) : PushdownRes
 
   -- Join: try to push to left, right, or add to ON clause
   | .join left jtype right on_ =>
-    let leftTables := getFromTables left
-    let rightTables := getFromTables right
+    let leftTables := getFromClauseTableNames left
+    let rightTables := getFromClauseTableNames right
 
-    -- Check if predicate references only left tables
-    let refsOnlyLeft := predReferencesOnlyTables pred leftTables &&
-                        !(getReferencedColumns pred).any fun c =>
-                          rightTables.any (· == c.table.getD "")
-
-    -- Check if predicate references only right tables
-    let refsOnlyRight := predReferencesOnlyTables pred rightTables &&
-                         !(getReferencedColumns pred).any fun c =>
-                           leftTables.any (· == c.table.getD "")
+    -- Check if predicate references only left or right tables
+    -- Note: predReferencesOnlyTables returns false for unqualified columns,
+    -- so they won't match either side and will fall through to the ON clause
+    let refsOnlyLeft := predReferencesOnlyTables pred leftTables
+    let refsOnlyRight := predReferencesOnlyTables pred rightTables
 
     if refsOnlyLeft && canPushLeftThroughJoin jtype then
       -- Push to left side
@@ -218,21 +208,30 @@ def pushPredicateDown (pred : Expr) (from_ : FromClause) : PushdownResult :=
 -- Semantic Preservation Axiom
 -- ============================================================================
 
+/-- Helper: filter rows by a predicate -/
+def filterRows (db : Database) (rows : Table) (pred : Option Expr) : Table :=
+  match pred with
+  | none => rows
+  | some p => rows.filter fun row =>
+    match evalExprWithDb db row p with
+    | some (.bool true) => true
+    | _ => false
+
 /-- Pushdown preserves semantics: the pushed FROM clause with remaining predicate
     applied produces the same result as the original FROM with the full predicate.
 
-    Informally: For any database db and predicate pred on FROM clause from_,
-    if result = pushPredicateDown pred from_, then:
-      filter(evalFrom(db, result.pushedFrom), result.remaining) =
-      filter(evalFrom(db, from_), pred)
+    For any database db and predicate pred on FROM clause from_,
+    if result = pushPredicateDown pred from_, then filtering the pushed FROM
+    by the remaining predicate yields the same rows as filtering the original
+    FROM by the full predicate.
 
-    Note: This is stated as an axiom because a full proof requires formalizing
-    the semantics of FROM clause evaluation with predicates, which is complex
-    due to join semantics. The axiom captures the key correctness property. -/
-axiom pushdown_preserves_semantics (pred : Expr) (from_ : FromClause) :
-  let _result := pushPredicateDown pred from_
-  -- The transformation preserves the set of rows that satisfy the predicate
-  -- This is a placeholder type; full formalization would use evalFrom
-  True
+    This is an axiom because a full proof requires complex reasoning about
+    join semantics, but captures the key correctness property. -/
+axiom pushdown_preserves_semantics (db : Database) (pred : Expr) (from_ : FromClause) :
+  let result := pushPredicateDown pred from_
+  -- Filtering the pushed FROM by remaining predicate equals
+  -- filtering the original FROM by the full predicate
+  filterRows db (evalFrom db result.pushedFrom) result.remaining =
+  filterRows db (evalFrom db from_) (some pred)
 
 end SqlEquiv

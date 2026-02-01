@@ -125,13 +125,167 @@ def testRightJoinNoLeftPush : TestResult :=
   let from_ := rightJoin (tableAs "users" "u") (tableAs "orders" "o") none
   let pred := Expr.binOp .eq (qcol "u" "active") (boolLit true)
   let result := pushPredicateDown pred from_
-  -- Should remain at current level
+  -- Should remain at current level (not pushed to ON, as that changes semantics)
   match result.remaining with
-  | some _ => .pass "Right join: left predicate not pushed through"
-  | none =>
-    match result.pushedFrom with
-    | .join _ .right _ (some _) => .pass "Right join: left predicate added to ON"
-    | _ => .fail "Right join safety" "Predicate should remain or go to ON"
+  | some _ => .pass "Right join: left predicate remains in WHERE"
+  | none => .fail "Right join safety" "Predicate should remain, not be added to ON"
+
+def testRightJoinRightPredicateBaseTable : TestResult :=
+  -- For RIGHT JOIN with base table on right, right predicates should remain
+  let from_ := rightJoin (tableAs "users" "u") (tableAs "orders" "o") none
+  let pred := Expr.binOp .gt (qcol "o" "amount") (intLit 100)
+  let result := pushPredicateDown pred from_
+  -- Should remain in WHERE (not pushed to ON, as that changes RIGHT JOIN semantics)
+  match result.remaining with
+  | some _ => .pass "Right join base table: right predicate remains in WHERE"
+  | none => .fail "Right join base table" "Predicate should remain, not be added to ON"
+
+/-- Create a full outer join -/
+def fullJoin (left : FromClause) (right : FromClause) (on_ : Option Expr) : FromClause :=
+  .join left .full right on_
+
+/-- Create a cross join -/
+def crossJoin (left : FromClause) (right : FromClause) : FromClause :=
+  .join left .cross right none
+
+def testFullJoinNoPush : TestResult :=
+  -- FULL OUTER JOIN: predicates should not be pushed to either side
+  let from_ := fullJoin (tableAs "users" "u") (tableAs "orders" "o") none
+  let pred := Expr.binOp .eq (qcol "u" "active") (boolLit true)
+  let result := pushPredicateDown pred from_
+  -- Should remain (can't push through FULL join)
+  match result.remaining with
+  | some _ => .pass "Full join: predicate remains in WHERE"
+  | none => .fail "Full join safety" "Predicate should not be pushed"
+
+def testCrossJoinPush : TestResult :=
+  -- CROSS JOIN: predicates can be pushed (similar to INNER)
+  let from_ := crossJoin (tableAs "users" "u") (tableAs "orders" "o")
+  let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let result := pushPredicateDown pred from_
+  -- Should be pushed to ON clause
+  match result.pushedFrom with
+  | .join _ .cross _ (some _) =>
+    if result.remaining.isNone then
+      .pass "Cross join: predicate pushed to ON"
+    else
+      .fail "Cross join" "Predicate should not remain"
+  | _ => .fail "Cross join" "Expected cross join with ON clause"
+
+def testPushToExistingOnClause : TestResult :=
+  -- Pushing to a join that already has an ON clause should extend it
+  let existingOn := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") (some existingOn)
+  let newPred := Expr.binOp .gt (qcol "o" "amount") (intLit 100)
+  let result := pushPredicateDown newPred from_
+  -- Should add to existing ON clause with AND
+  match result.pushedFrom with
+  | .join _ .inner _ (some (.binOp .and _ _)) =>
+    if result.remaining.isNone then
+      .pass "Existing ON: predicate combined with AND"
+    else
+      .fail "Existing ON" "Predicate should not remain"
+  | _ => .fail "Existing ON" "Expected ON clause with AND"
+
+-- ============================================================================
+-- Subquery Pushdown Tests
+-- ============================================================================
+
+/-- Create a simple subquery FROM clause -/
+def subquery (sel : SelectStmt) (alias : String) : FromClause := .subquery sel alias
+
+/-- Create a simple SELECT statement -/
+def simpleSelect (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) : SelectStmt :=
+  SelectStmt.mk false items from_ where_ groupBy none [] none none
+
+def testSubqueryPushdownSimple : TestResult :=
+  -- Push predicate into subquery when column is in SELECT
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (qcol "t" "id") (some "id"),
+     SelectItem.exprItem (qcol "t" "name") (some "name")]
+    (some (tableAs "table" "t"))
+    none
+    []
+  let from_ := subquery innerSel "sub"
+  let pred := Expr.binOp .eq (col "id") (intLit 1)
+  let result := pushPredicateDown pred from_
+  -- Should be pushed into subquery's WHERE
+  match result.pushedFrom with
+  | .subquery sel _ =>
+    if sel.whereClause.isSome && result.remaining.isNone then
+      .pass "Subquery: predicate pushed to WHERE"
+    else
+      .fail "Subquery pushdown" "Predicate should be in subquery WHERE"
+  | _ => .fail "Subquery pushdown" "Expected subquery"
+
+def testSubqueryPushdownBlockedByProjection : TestResult :=
+  -- Don't push predicate if column not in SELECT
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (qcol "t" "id") (some "id")]  -- only id, no email
+    (some (tableAs "table" "t"))
+    none
+    []
+  let from_ := subquery innerSel "sub"
+  let pred := Expr.binOp .eq (col "email") (Expr.lit (.string "test"))
+  let result := pushPredicateDown pred from_
+  -- Should remain (email not in projection)
+  match result.remaining with
+  | some _ => .pass "Subquery projection: predicate blocked"
+  | none => .fail "Subquery projection" "Predicate should be blocked"
+
+def testSubqueryPushdownWithGroupBy : TestResult :=
+  -- Push predicate on grouping key into subquery with GROUP BY
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (col "category") (some "category"),
+     SelectItem.exprItem (Expr.agg .count none false) (some "cnt")]
+    (some (tableAs "products" "p"))
+    none
+    [col "category"]  -- GROUP BY category
+  let from_ := subquery innerSel "sub"
+  let pred := Expr.binOp .eq (col "category") (Expr.lit (.string "Electronics"))
+  let result := pushPredicateDown pred from_
+  -- Should be pushed (category is a grouping key)
+  match result.pushedFrom with
+  | .subquery sel _ =>
+    if sel.whereClause.isSome && result.remaining.isNone then
+      .pass "Subquery GROUP BY: grouping key predicate pushed"
+    else
+      .fail "Subquery GROUP BY" "Predicate on grouping key should be pushed"
+  | _ => .fail "Subquery GROUP BY" "Expected subquery"
+
+def testSubqueryPushdownBlockedByGroupBy : TestResult :=
+  -- Don't push predicate on non-grouping column
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (col "category") (some "category"),
+     SelectItem.exprItem (Expr.agg .sum (some (col "price")) false) (some "total")]
+    (some (tableAs "products" "p"))
+    none
+    [col "category"]  -- GROUP BY category only
+  let from_ := subquery innerSel "sub"
+  -- total is an aggregate result, not available for pushdown
+  let pred := Expr.binOp .gt (col "total") (intLit 1000)
+  let result := pushPredicateDown pred from_
+  -- Should remain (total is aggregate, not in GROUP BY)
+  match result.remaining with
+  | some _ => .pass "Subquery GROUP BY: aggregate predicate blocked"
+  | none => .fail "Subquery GROUP BY" "Aggregate predicate should be blocked"
+
+def testSubqueryPushdownBlockedByAggregate : TestResult :=
+  -- Don't push predicate containing aggregate
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (col "category") (some "category")]
+    (some (tableAs "products" "p"))
+    none
+    [col "category"]
+  let from_ := subquery innerSel "sub"
+  -- Predicate uses COUNT which shouldn't be pushed past GROUP BY
+  let pred := Expr.binOp .gt (Expr.agg .count none false) (intLit 5)
+  let result := pushPredicateDown pred from_
+  -- Should remain (predicate contains aggregate)
+  match result.remaining with
+  | some _ => .pass "Subquery: aggregate in predicate blocked"
+  | none => .fail "Subquery aggregate" "Predicate with aggregate should be blocked"
 
 -- ============================================================================
 -- Multiple Conjunct Tests
@@ -236,6 +390,17 @@ def allTests : List TestResult := [
   testLeftJoinNoRightPush,
   testLeftJoinLeftPredicateBaseTable,
   testRightJoinNoLeftPush,
+  testRightJoinRightPredicateBaseTable,
+  testFullJoinNoPush,
+  -- Cross join and existing ON
+  testCrossJoinPush,
+  testPushToExistingOnClause,
+  -- Subquery pushdown
+  testSubqueryPushdownSimple,
+  testSubqueryPushdownBlockedByProjection,
+  testSubqueryPushdownWithGroupBy,
+  testSubqueryPushdownBlockedByGroupBy,
+  testSubqueryPushdownBlockedByAggregate,
   -- Multiple conjuncts
   testMultipleConjuncts,
   testNestedConjuncts,
