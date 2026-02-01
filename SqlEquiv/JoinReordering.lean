@@ -305,23 +305,42 @@ def reorderJoins (from_ : FromClause) : FromClause :=
           | other => other  -- Single table, no join to add predicates to
 
 -- ============================================================================
--- Semantic Preservation Axiom
+-- Semantic Preservation Axioms
 -- ============================================================================
 
-/-- Join reordering preserves semantics for inner/cross joins.
+/-- Join reordering preserves semantics (forward direction):
+    every row in the reordered result has a corresponding row in the original. -/
+axiom join_reorder_preserves_forward (db : Database) (from_ : FromClause) :
+  canReorderJoins from_ →
+  ∀ row ∈ evalFrom db (reorderJoins from_),
+    ∃ row2 ∈ evalFrom db from_, (∀ p, p ∈ row ↔ p ∈ row2)
+
+/-- Join reordering preserves semantics (backward direction):
+    every row in the original has a corresponding row in the reordered result. -/
+axiom join_reorder_preserves_backward (db : Database) (from_ : FromClause) :
+  canReorderJoins from_ →
+  ∀ row ∈ evalFrom db from_,
+    ∃ row2 ∈ evalFrom db (reorderJoins from_), (∀ p, p ∈ row ↔ p ∈ row2)
+
+/-- Join reordering produces an equivalent FROM clause.
     Relies on the commutativity and associativity of inner joins.
 
     For any database db and FROM clause from_ containing only INNER/CROSS joins,
     reorderJoins produces an equivalent FROM clause that evaluates to the same
-    result set (up to row ordering).
+    result set (up to row ordering). This is the conjunction of the forward
+    and backward preservation axioms.
 
     This is an axiom because a full proof would require formalizing
     join evaluation semantics and proving commutativity/associativity
     of inner joins (which are already axiomatized in Equiv.lean). -/
-axiom join_reorder_preserves_semantics (db : Database) (from_ : FromClause) :
+theorem join_reorder_preserves_semantics (db : Database) (from_ : FromClause) :
   canReorderJoins from_ →
-  -- The reordered FROM clause produces the same rows as the original
-  ∀ row ∈ evalFrom db (reorderJoins from_),
-    ∃ row2 ∈ evalFrom db from_, (∀ p, p ∈ row ↔ p ∈ row2)
+  -- Bidirectional: reordered and original produce the same rows
+  (∀ row ∈ evalFrom db (reorderJoins from_),
+    ∃ row2 ∈ evalFrom db from_, (∀ p, p ∈ row ↔ p ∈ row2)) ∧
+  (∀ row ∈ evalFrom db from_,
+    ∃ row2 ∈ evalFrom db (reorderJoins from_), (∀ p, p ∈ row ↔ p ∈ row2)) :=
+  fun h => ⟨join_reorder_preserves_forward db from_ h,
+            join_reorder_preserves_backward db from_ h⟩
 
 end SqlEquiv
