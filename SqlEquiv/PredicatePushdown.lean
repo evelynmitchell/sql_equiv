@@ -96,6 +96,60 @@ def predReferencesOnlyTables (pred : Expr) (tables : List String) : Bool :=
     | none => false  -- Unqualified columns could reference any table
 
 -- ============================================================================
+-- Column Reference Transformation for Subquery Pushdown
+-- ============================================================================
+
+/-- Find the inner expression for a column reference in a subquery's SELECT items.
+    For example, if the subquery has `SELECT t.id AS id` and we're looking for
+    column `sub.id` (where `sub` is the subquery alias), return the inner `t.id`. -/
+def findInnerColumnExpr (colName : String) (items : List SelectItem) : Option Expr :=
+  items.findSome? fun item =>
+    match item with
+    | .exprItem expr (some alias) =>
+      if alias == colName then some expr else none
+    | .exprItem (.col c) none =>
+      if c.column == colName then some (.col c) else none
+    | _ => none
+
+/-- Transform column references in an expression to use inner subquery references.
+    Columns qualified with the subquery alias are transformed to their inner form.
+    For example, `sub.id = 1` becomes `t.id = 1` if the subquery is
+    `(SELECT t.id AS id FROM t) AS sub`. -/
+partial def transformColumnRefs (expr : Expr) (subqueryAlias : String)
+    (items : List SelectItem) : Expr :=
+  match expr with
+  | .col c =>
+    match c.table with
+    | some t =>
+      if t == subqueryAlias then
+        -- Column uses subquery alias, find inner expression
+        match findInnerColumnExpr c.column items with
+        | some innerExpr => innerExpr
+        | none => expr  -- Keep as-is if not found (shouldn't happen if canPush passed)
+      else expr  -- Different table qualifier, keep as-is
+    | none => expr  -- Unqualified, keep as-is
+  | .binOp op l r =>
+    .binOp op (transformColumnRefs l subqueryAlias items)
+              (transformColumnRefs r subqueryAlias items)
+  | .unaryOp op e => .unaryOp op (transformColumnRefs e subqueryAlias items)
+  | .between e low high =>
+    .between (transformColumnRefs e subqueryAlias items)
+             (transformColumnRefs low subqueryAlias items)
+             (transformColumnRefs high subqueryAlias items)
+  | .inList e neg vals =>
+    .inList (transformColumnRefs e subqueryAlias items)
+            neg
+            (vals.map (transformColumnRefs · subqueryAlias items))
+  | .«case» whens else_ =>
+    .«case» (whens.map fun (cond, result) =>
+               (transformColumnRefs cond subqueryAlias items,
+                transformColumnRefs result subqueryAlias items))
+            (else_.map (transformColumnRefs · subqueryAlias items))
+  | .func name args => .func name (args.map (transformColumnRefs · subqueryAlias items))
+  | .agg fn arg distinct => .agg fn (arg.map (transformColumnRefs · subqueryAlias items)) distinct
+  | other => other  -- Literals, subqueries, etc. - keep as-is
+
+-- ============================================================================
 -- Predicate Pushdown Implementation
 -- ============================================================================
 
@@ -113,10 +167,13 @@ partial def pushSinglePredicate (pred : Expr) (from_ : FromClause) : PushdownRes
     let canPushProjection := canPushPastProjection pred sel.items
     let canPushGroupBy := sel.groupBy.isEmpty || canPushPastGroupBy pred sel.groupBy
     if canPushProjection && canPushGroupBy then
+      -- Transform column references to match inner subquery columns
+      -- e.g., `sub.id = 1` becomes `t.id = 1` if subquery is `(SELECT t.id AS id) AS sub`
+      let transformedPred := transformColumnRefs pred alias sel.items
       -- Can push: add to subquery's WHERE clause
       let newWhere := match sel.whereClause with
-        | none => some pred
-        | some w => some (Expr.binOp .and w pred)
+        | none => some transformedPred
+        | some w => some (Expr.binOp .and w transformedPred)
       -- Reconstruct SelectStmt with new WHERE clause
       let newSel := SelectStmt.mk sel.distinct sel.items sel.fromClause newWhere
                       sel.groupBy sel.having sel.orderBy sel.limitVal sel.offsetVal

@@ -271,6 +271,32 @@ def testSubqueryPushdownBlockedByGroupBy : TestResult :=
   | some _ => .pass "Subquery GROUP BY: aggregate predicate blocked"
   | none => .fail "Subquery GROUP BY" "Aggregate predicate should be blocked"
 
+def testSubqueryPushdownQualifiedPredicate : TestResult :=
+  -- Push predicate using subquery alias (e.g., sub.id = 1)
+  -- The column reference should be transformed to match inner columns
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (qcol "t" "id") (some "id"),
+     SelectItem.exprItem (qcol "t" "name") (some "name")]
+    (some (tableAs "table" "t"))
+    none
+    []
+  let from_ := subquery innerSel "sub"
+  -- Use qualified column: sub.id (references the subquery alias)
+  let pred := Expr.binOp .eq (qcol "sub" "id") (intLit 1)
+  let result := pushPredicateDown pred from_
+  -- Should be pushed, and column should be transformed to t.id
+  match result.pushedFrom with
+  | .subquery sel _ =>
+    match sel.whereClause with
+    | some (.binOp .eq (.col c) _) =>
+      -- The column should now reference 't' (inner table), not 'sub'
+      if c.table == some "t" && c.column == "id" && result.remaining.isNone then
+        .pass "Subquery qualified: column transformed correctly"
+      else
+        .fail "Subquery qualified" s!"Expected t.id, got {repr c}"
+    | _ => .fail "Subquery qualified" "Expected equality predicate in WHERE"
+  | _ => .fail "Subquery qualified" "Expected subquery"
+
 def testSubqueryPushdownBlockedByAggregate : TestResult :=
   -- Don't push predicate containing aggregate
   let innerSel := simpleSelect
@@ -356,15 +382,17 @@ def testCanPushPastGroupBy : TestResult :=
 -- ============================================================================
 
 def testUnqualifiedColumn : TestResult :=
-  -- Unqualified columns should match any table
+  -- Unqualified columns don't match any specific table (predReferencesOnlyTables
+  -- returns false), so they can't be pushed to left or right side specifically.
+  -- For INNER joins, they fall through to be added to the ON clause.
   let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") none
   let pred := Expr.binOp .eq (col "id") (intLit 1)  -- unqualified
   let result := pushPredicateDown pred from_
-  -- Should be pushed (inner join allows pushing to ON)
+  -- Should be pushed to ON clause (inner join allows this)
   if result.remaining.isNone then
-    .pass "Unqualified column: pushed to ON"
+    .pass "Unqualified column: added to ON clause"
   else
-    .fail "Unqualified column" "Should have been pushed"
+    .fail "Unqualified column" "Should have been added to ON"
 
 def testEmptyPredicate : TestResult :=
   -- A simple literal predicate
@@ -400,6 +428,7 @@ def allTests : List TestResult := [
   testSubqueryPushdownBlockedByProjection,
   testSubqueryPushdownWithGroupBy,
   testSubqueryPushdownBlockedByGroupBy,
+  testSubqueryPushdownQualifiedPredicate,
   testSubqueryPushdownBlockedByAggregate,
   -- Multiple conjuncts
   testMultipleConjuncts,
