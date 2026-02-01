@@ -237,9 +237,11 @@ def testReorderJoinsMultipleTables : TestResult :=
     none
   let reordered := reorderJoins from_
   -- Should produce some valid join structure
+  -- Note: With no predicates, CROSS and INNER are semantically equivalent
   match reordered with
   | .join _ .inner _ _ => .pass "reorderJoins: produces inner join"
-  | _ => .fail "reorderJoins" "Expected inner join result"
+  | .join _ .cross _ _ => .pass "reorderJoins: produces cross join (no predicates)"
+  | _ => .fail "reorderJoins" "Expected join result"
 
 /-- Test that greedy algorithm joins smallest tables first (cost-based ordering).
     With three tables of sizes 10, 100, 1000, the greedy algorithm should:
@@ -284,6 +286,32 @@ def testReorderJoinsPreservesPredicates : TestResult :=
     .pass "reorderJoins: preserves predicate count"
   else
     .fail "reorderJoins" s!"Expected 2 predicates, got {reorderedPreds.length}"
+
+/-- Test that CROSS JOINs are preserved as CROSS (not converted to INNER) -/
+def testReorderCrossJoinsPreservesType : TestResult :=
+  -- Create a chain of CROSS JOINs (no predicates)
+  let from_ := crossJoin
+    (crossJoin (tableAs "a" "a") (tableAs "b" "b"))
+    (tableAs "c" "c")
+  let reordered := reorderJoins from_
+  -- Helper to check if all joins in result are CROSS
+  let rec allCross : FromClause → Bool
+    | .table _ => true
+    | .subquery _ _ => true
+    | .join l jt r _ =>
+      (jt == .cross || jt == .inner) && allCross l && allCross r
+  -- Helper to count CROSS joins specifically
+  let rec countCross : FromClause → Nat
+    | .table _ => 0
+    | .subquery _ _ => 0
+    | .join l jt r _ =>
+      (if jt == .cross then 1 else 0) + countCross l + countCross r
+  -- With no predicates, all joins should be CROSS
+  let crossCount := countCross reordered
+  if crossCount == 2 then
+    .pass "reorderJoins: preserves CROSS JOIN type"
+  else
+    .fail "reorderJoins" s!"Expected 2 CROSS joins, got {crossCount}"
 
 -- ============================================================================
 -- Cost Estimation Tests
@@ -346,6 +374,7 @@ def allTests : List TestResult := [
   testReorderJoinsMultipleTables,
   testGreedyJoinOrder,
   testReorderJoinsPreservesPredicates,
+  testReorderCrossJoinsPreservesType,
   -- Cost estimation
   testEstimateJoinCostNoEdges,
   testEstimateJoinCostWithEdge

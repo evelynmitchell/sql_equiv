@@ -254,8 +254,10 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
         match leftFC, rightFC with
         | some (_, lfc), some (_, rfc) =>
           -- Create the join
+          -- Preserve CROSS vs INNER semantics: no predicates => CROSS JOIN
           let on_ := unflattenAnd step.predicates
-          let combined := FromClause.join lfc .inner rfc on_
+          let joinType := if step.predicates.isEmpty then JoinType.cross else JoinType.inner
+          let combined := FromClause.join lfc joinType rfc on_
           let combinedTables := leftTables ++ rightTables
           -- Update the map: remove old entries, add combined
           let newMap := nodeMap.filter (fun (ts, _) =>
