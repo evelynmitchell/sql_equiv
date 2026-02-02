@@ -104,10 +104,13 @@ def extractJoinEdges (preds : List Expr) : List JoinEdge :=
 -- ============================================================================
 
 /-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder).
-    Returns false for subqueries (conservative: don't reorder across boundaries). -/
+    Returns false for subqueries because they introduce scoping boundaries that
+    complicate predicate placement and alias resolution. This is conservative:
+    the entire FROM clause is rejected if any subquery is present, even though
+    subqueries could theoretically be treated as leaf nodes. -/
 partial def hasOnlyInnerJoins : FromClause → Bool
   | .table _ => true
-  | .subquery _ _ => false  -- conservative: subqueries have their own scope
+  | .subquery _ _ => false  -- conservative: subqueries introduce scope boundaries
   | .join left jtype right _ =>
     (jtype == .inner || jtype == .cross) &&
     hasOnlyInnerJoins left && hasOnlyInnerJoins right
@@ -185,9 +188,11 @@ def findCheapestPair (nodes : List JoinNode) (edges : List JoinEdge) :
         if pair.2.2 < minCost then some pair else acc
     ) none pairs
 
-/-- Remove a node from the list -/
+/-- Remove a single occurrence of a node from the list.
+    Uses erase to remove only the first match, avoiding issues when
+    duplicate table references exist in the FROM clause. -/
 def removeNode (nodes : List JoinNode) (node : JoinNode) : List JoinNode :=
-  nodes.filter (· != node)
+  nodes.erase node
 
 /-- Collect edges that connect the given nodes -/
 def collectConnectingEdges (n1 n2 : JoinNode) (edges : List JoinEdge) : List Expr :=
@@ -229,7 +234,8 @@ partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge) : Opti
 -- ============================================================================
 
 /-- Build FROM clause from join steps, using the computed order.
-    Each step combines two subtrees with an INNER JOIN. -/
+    Each step combines two subtrees with either an INNER or CROSS JOIN,
+    depending on whether the step has join predicates. -/
 def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option FromClause :=
   match nodes with
   | [] => none
@@ -303,7 +309,12 @@ def reorderJoins (from_ : FromClause) : FromClause :=
               | some p => flattenAnd p
               | none => []
             let allOn := unflattenAnd (existingPreds ++ nonJoinPreds)
-            .join left jt right allOn
+            -- Ensure we never produce a CROSS join with a non-empty ON clause,
+            -- since evalFrom ignores ON for CROSS joins.
+            let jt' := match jt, allOn with
+              | .cross, some _ => .inner
+              | _, _ => jt
+            .join left jt' right allOn
           | other => other  -- Single table, no join to add predicates to
 
 -- ============================================================================
