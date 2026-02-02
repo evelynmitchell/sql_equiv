@@ -29,6 +29,8 @@ def defaultCardinality : Nat := 1000
 
 /-- A node in the join graph. Tracks all original tables it represents. -/
 structure JoinNode where
+  /-- Unique identifier for this node (used for map lookups) -/
+  id : Nat
   /-- The table reference (original or synthetic for combined nodes) -/
   table : TableRef
   /-- Estimated row count -/
@@ -53,16 +55,19 @@ structure JoinEdge where
 -- JoinNode Operations
 -- ============================================================================
 
-/-- Initialize a leaf node from a table reference -/
-def JoinNode.leaf (t : TableRef) : JoinNode :=
-  { table := t
+/-- Initialize a leaf node from a table reference with a given ID -/
+def JoinNode.leaf (id : Nat) (t : TableRef) : JoinNode :=
+  { id := id
+  , table := t
   , estimatedRows := defaultCardinality
   , originalTables := [getTableName t] }
 
 /-- Combine two nodes after joining them.
-    Creates a synthetic TableRef and merges the original tables lists. -/
+    Creates a synthetic TableRef and merges the original tables lists.
+    The new node gets a fresh ID computed from the combined IDs. -/
 def JoinNode.combine (n1 n2 : JoinNode) (resultRows : Nat) : JoinNode :=
-  { table := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
+  { id := n1.id * 1000 + n2.id  -- synthetic unique ID for combined node
+  , table := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
   , estimatedRows := resultRows
   , originalTables := n1.originalTables ++ n2.originalTables }
 
@@ -103,7 +108,39 @@ def extractJoinEdges (preds : List Expr) : List JoinEdge :=
 -- Safety Check
 -- ============================================================================
 
-/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder).
+/-- Detect whether an expression contains any unqualified column reference.
+    An unqualified column is one whose `table` field is `none`. Since the
+    evaluation semantics resolve such columns by scanning the row list in
+    order, their meaning can change if join order changes. We conservatively
+    allow reordering only when all column references are table-qualified. -/
+partial def exprHasUnqualifiedColumnRef : Expr → Bool
+  | .col c => c.table.isNone
+  | .lit _ => false
+  | .countStar => false
+  | .binOp _ e1 e2 => exprHasUnqualifiedColumnRef e1 || exprHasUnqualifiedColumnRef e2
+  | .unaryOp _ e => exprHasUnqualifiedColumnRef e
+  | .between e1 e2 e3 => exprHasUnqualifiedColumnRef e1 || exprHasUnqualifiedColumnRef e2 || exprHasUnqualifiedColumnRef e3
+  | .inList e _ es => exprHasUnqualifiedColumnRef e || es.any exprHasUnqualifiedColumnRef
+  | .inSubquery e _ _ => exprHasUnqualifiedColumnRef e
+  | .exists _ _ => false  -- subqueries have their own scope
+  | .subquery _ => false  -- scalar subqueries have their own scope
+  | .«case» cases else_ =>
+    cases.any (fun (c, r) => exprHasUnqualifiedColumnRef c || exprHasUnqualifiedColumnRef r) ||
+    (else_.map exprHasUnqualifiedColumnRef).getD false
+  | .func _ args => args.any exprHasUnqualifiedColumnRef
+  | .agg _ e _ => e.map exprHasUnqualifiedColumnRef |>.getD false
+  | .windowFn _ e spec =>
+    (e.map exprHasUnqualifiedColumnRef |>.getD false) ||
+    spec.partitionBy.any exprHasUnqualifiedColumnRef ||
+    spec.orderBy.any (fun o => exprHasUnqualifiedColumnRef o.expr)
+
+/-- Check if an optional expression has unqualified column references -/
+def optExprHasUnqualifiedColumnRef : Option Expr → Bool
+  | none => false
+  | some e => exprHasUnqualifiedColumnRef e
+
+/-- Check if a FROM clause contains only INNER/CROSS joins whose ON predicates
+    use only qualified column references (safe to reorder).
     Returns false for subqueries because they introduce scoping boundaries that
     complicate predicate placement and alias resolution. This is conservative:
     the entire FROM clause is rejected if any subquery is present, even though
@@ -111,8 +148,10 @@ def extractJoinEdges (preds : List Expr) : List JoinEdge :=
 partial def hasOnlyInnerJoins : FromClause → Bool
   | .table _ => true
   | .subquery _ _ => false  -- conservative: subqueries introduce scope boundaries
-  | .join left jtype right _ =>
+  | .join left jtype right onExpr =>
     (jtype == .inner || jtype == .cross) &&
+    -- Reject if the ON predicate contains any unqualified column reference
+    !optExprHasUnqualifiedColumnRef onExpr &&
     hasOnlyInnerJoins left && hasOnlyInnerJoins right
 
 /-- Check if we can safely reorder joins in this FROM clause -/
@@ -138,16 +177,30 @@ def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
 -- Join Graph Extraction
 -- ============================================================================
 
-/-- Extract leaf tables from a FROM clause -/
-partial def extractLeafTables : FromClause → List JoinNode
-  | .table t => [JoinNode.leaf t]
+/-- Extract leaf tables from a FROM clause, returning nodes without IDs -/
+partial def extractLeafTablesRaw : FromClause → List (TableRef × List String)
+  | .table t => [(t, [getTableName t])]
   | .subquery _sel alias =>
     -- Treat subquery as a single leaf node
-    [{ table := ⟨alias, some alias⟩
-     , estimatedRows := defaultCardinality
-     , originalTables := [alias] }]
+    [(⟨alias, some alias⟩, [alias])]
   | .join left _ right _ =>
-    extractLeafTables left ++ extractLeafTables right
+    extractLeafTablesRaw left ++ extractLeafTablesRaw right
+
+/-- Assign unique IDs to a list of items, starting from 0 -/
+def assignIds {α : Type} (items : List α) : List (Nat × α) :=
+  let rec go (idx : Nat) : List α → List (Nat × α)
+    | [] => []
+    | x :: xs => (idx, x) :: go (idx + 1) xs
+  go 0 items
+
+/-- Extract leaf tables from a FROM clause with unique IDs assigned -/
+def extractLeafTables (from_ : FromClause) : List JoinNode :=
+  let raw := extractLeafTablesRaw from_
+  (assignIds raw).map fun (idx, (t, tables)) =>
+    { id := idx
+    , table := t
+    , estimatedRows := defaultCardinality
+    , originalTables := tables }
 
 /-- Extract all predicates from ON clauses in a FROM clause -/
 partial def extractOnPredicates : FromClause → List Expr
@@ -241,10 +294,11 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
   | [] => none
   | [n] => some (FromClause.table n.table)
   | _ =>
-    -- Build a map from table names to their current FromClause
+    -- Build a map from node IDs to their current FromClause
+    -- Using ID as key guarantees uniqueness even with duplicate table names
     -- Start with leaf tables, then combine as we process steps
     let rec go (remaining : List JoinStep)
-               (nodeMap : List (List String × FromClause)) : Option FromClause :=
+               (nodeMap : List (Nat × FromClause)) : Option FromClause :=
       match remaining with
       | [] =>
         -- All steps done, should have exactly one entry
@@ -252,11 +306,11 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
         | [(_, fc)] => some fc
         | _ => none  -- Shouldn't happen
       | step :: rest =>
-        -- Find the FromClauses for left and right nodes
-        let leftTables := step.left.originalTables
-        let rightTables := step.right.originalTables
-        let leftFC := nodeMap.find? (fun (ts, _) => ts == leftTables)
-        let rightFC := nodeMap.find? (fun (ts, _) => ts == rightTables)
+        -- Find the FromClauses for left and right nodes by their unique IDs
+        let leftId := step.left.id
+        let rightId := step.right.id
+        let leftFC := nodeMap.find? (fun (id, _) => id == leftId)
+        let rightFC := nodeMap.find? (fun (id, _) => id == rightId)
         match leftFC, rightFC with
         | some (_, lfc), some (_, rfc) =>
           -- Create the join
@@ -264,13 +318,14 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
           let on_ := unflattenAnd step.predicates
           let joinType := if step.predicates.isEmpty then JoinType.cross else JoinType.inner
           let combined := FromClause.join lfc joinType rfc on_
-          let combinedTables := leftTables ++ rightTables
+          -- Combined node ID (same formula as JoinNode.combine)
+          let combinedId := leftId * 1000 + rightId
           -- Update the map: remove old entries, add combined
-          let newMap := nodeMap.filter (fun (ts, _) =>
-            ts != leftTables && ts != rightTables)
-          go rest ((combinedTables, combined) :: newMap)
+          let newMap := nodeMap.filter (fun (id, _) =>
+            id != leftId && id != rightId)
+          go rest ((combinedId, combined) :: newMap)
         | _, _ => none  -- Shouldn't happen
-    let initialMap := nodes.map fun n => (n.originalTables, FromClause.table n.table)
+    let initialMap := nodes.map fun n => (n.id, FromClause.table n.table)
     go steps initialMap
 
 -- ============================================================================

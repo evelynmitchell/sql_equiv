@@ -106,26 +106,27 @@ def testCanReorderJoins : TestResult :=
 
 def testJoinNodeLeaf : TestResult :=
   let t := TableRef.mk "users" (some "u")
-  let node := JoinNode.leaf t
-  if node.originalTables == ["u"] && node.estimatedRows == defaultCardinality then
+  let node := JoinNode.leaf 0 t
+  if node.originalTables == ["u"] && node.estimatedRows == defaultCardinality && node.id == 0 then
     .pass "JoinNode.leaf: correct initialization"
   else
     .fail "JoinNode.leaf" s!"Got {repr node}"
 
 def testJoinNodeCombine : TestResult :=
-  let n1 := JoinNode.leaf ⟨"users", some "u"⟩
-  let n2 := JoinNode.leaf ⟨"orders", some "o"⟩
+  let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
+  let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
   let combined := JoinNode.combine n1 n2 500
   if combined.originalTables == ["u", "o"] &&
      combined.estimatedRows == 500 &&
-     combined.table.alias == some "__combined__" then
+     combined.table.alias == some "__combined__" &&
+     combined.id == 1 * 1000 + 2 then
     .pass "JoinNode.combine: correct merge"
   else
     .fail "JoinNode.combine" s!"Got {repr combined}"
 
 def testJoinNodeContainsTable : TestResult :=
-  let n1 := JoinNode.leaf ⟨"users", some "u"⟩
-  let n2 := JoinNode.leaf ⟨"orders", some "o"⟩
+  let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
+  let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
   let combined := JoinNode.combine n1 n2 500
   if combined.containsTable "u" &&
      combined.containsTable "o" &&
@@ -165,9 +166,9 @@ def testMkJoinEdge : TestResult :=
   | none => .fail "mkJoinEdge" "Expected Some"
 
 def testEdgeConnects : TestResult :=
-  let n1 := JoinNode.leaf ⟨"users", some "u"⟩
-  let n2 := JoinNode.leaf ⟨"orders", some "o"⟩
-  let n3 := JoinNode.leaf ⟨"items", some "i"⟩
+  let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
+  let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
+  let n3 := JoinNode.leaf 3 ⟨"items", some "i"⟩
   let edge : JoinEdge := {
     leftTable := "u",
     rightTable := "o",
@@ -250,9 +251,9 @@ def testReorderJoinsMultipleTables : TestResult :=
     Rather than joining largest first which would give worse intermediates. -/
 def testGreedyJoinOrder : TestResult :=
   -- Create nodes with different cardinalities
-  let small : JoinNode := { table := ⟨"small", some "s"⟩, estimatedRows := 10, originalTables := ["s"] }
-  let medium : JoinNode := { table := ⟨"medium", some "m"⟩, estimatedRows := 100, originalTables := ["m"] }
-  let large : JoinNode := { table := ⟨"large", some "l"⟩, estimatedRows := 1000, originalTables := ["l"] }
+  let small : JoinNode := { id := 1, table := ⟨"small", some "s"⟩, estimatedRows := 10, originalTables := ["s"] }
+  let medium : JoinNode := { id := 2, table := ⟨"medium", some "m"⟩, estimatedRows := 100, originalTables := ["m"] }
+  let large : JoinNode := { id := 3, table := ⟨"large", some "l"⟩, estimatedRows := 1000, originalTables := ["l"] }
   let nodes := [small, medium, large]
   -- No edges = cross joins, cost is purely row count product
   match greedyReorder nodes [] with
@@ -312,8 +313,8 @@ def testReorderCrossJoinsPreservesType : TestResult :=
 -- ============================================================================
 
 def testEstimateJoinCostNoEdges : TestResult :=
-  let n1 : JoinNode := { table := ⟨"a", none⟩, estimatedRows := 100, originalTables := ["a"] }
-  let n2 : JoinNode := { table := ⟨"b", none⟩, estimatedRows := 200, originalTables := ["b"] }
+  let n1 : JoinNode := { id := 1, table := ⟨"a", none⟩, estimatedRows := 100, originalTables := ["a"] }
+  let n2 : JoinNode := { id := 2, table := ⟨"b", none⟩, estimatedRows := 200, originalTables := ["b"] }
   let cost := estimateJoinCost n1 n2 []
   -- Cross join: 100 * 200 = 20000
   if cost == 20000 then
@@ -322,8 +323,8 @@ def testEstimateJoinCostNoEdges : TestResult :=
     .fail "estimateJoinCost" s!"Expected 20000, got {cost}"
 
 def testEstimateJoinCostWithEdge : TestResult :=
-  let n1 : JoinNode := { table := ⟨"a", none⟩, estimatedRows := 100, originalTables := ["a"] }
-  let n2 : JoinNode := { table := ⟨"b", none⟩, estimatedRows := 200, originalTables := ["b"] }
+  let n1 : JoinNode := { id := 1, table := ⟨"a", none⟩, estimatedRows := 100, originalTables := ["a"] }
+  let n2 : JoinNode := { id := 2, table := ⟨"b", none⟩, estimatedRows := 200, originalTables := ["b"] }
   let edge : JoinEdge := {
     leftTable := "a",
     rightTable := "b",

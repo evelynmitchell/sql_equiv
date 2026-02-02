@@ -19,7 +19,7 @@ Use this checklist when implementing new optimizer modules to ensure comprehensi
 
 ### Join Types
 - [ ] INNER JOIN - predicate pushed to ON clause
-- [ ] CROSS JOIN - predicate pushed to ON clause
+- [ ] CROSS JOIN - converted to INNER JOIN when predicate added (CROSS ignores ON)
 - [ ] LEFT JOIN - right-side predicate remains in WHERE (not ON)
 - [ ] LEFT JOIN - left-side predicate to base table remains in WHERE
 - [ ] RIGHT JOIN - left-side predicate remains in WHERE (not ON)
