@@ -10,37 +10,6 @@ open SqlEquiv
 open Test
 
 -- ============================================================================
--- Helper Functions
--- ============================================================================
-
-/-- Create a simple column reference -/
-def col (name : String) : Expr := .col ⟨none, name⟩
-
-/-- Create a qualified column reference -/
-def qcol (table : String) (name : String) : Expr := .col ⟨some table, name⟩
-
-/-- Create an integer literal -/
-def intLit (n : Int) : Expr := .lit (.int n)
-
-/-- Create a simple table FROM clause -/
-def table (name : String) : FromClause := .table ⟨name, none⟩
-
-/-- Create a table with alias -/
-def tableAs (name : String) (alias : String) : FromClause := .table ⟨name, some alias⟩
-
-/-- Create an inner join -/
-def innerJoin (left : FromClause) (right : FromClause) (on_ : Option Expr) : FromClause :=
-  .join left .inner right on_
-
-/-- Create a cross join -/
-def crossJoin (left : FromClause) (right : FromClause) : FromClause :=
-  .join left .cross right none
-
-/-- Create a left join -/
-def leftJoin (left : FromClause) (right : FromClause) (on_ : Option Expr) : FromClause :=
-  .join left .left right on_
-
--- ============================================================================
 -- Safety Check Tests
 -- ============================================================================
 

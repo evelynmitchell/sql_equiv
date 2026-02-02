@@ -88,18 +88,6 @@ open Test
 -- Syntactic Equivalence Tests
 -- ============================================================================
 
-/-- Helper to create column expression -/
-def col (name : String) : Expr := .col { table := none, column := name }
-
-/-- Helper to create qualified column expression -/
-def qcol (table name : String) : Expr := .col { table := some table, column := name }
-
-/-- Helper to create integer literal -/
-def intLit (n : Int) : Expr := .lit (.int n)
-
-/-- Helper to create string literal -/
-def strLit (s : String) : Expr := .lit (.string s)
-
 /-- Test that two expressions are syntactically equivalent after normalization -/
 def testSyntacticEquiv (name : String) (e1 e2 : Expr) : TestResult :=
   if syntacticEquiv e1 e2 then .pass name

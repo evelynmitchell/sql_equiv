@@ -2215,23 +2215,7 @@ axiom intersect_union_distrib (a b c : Query) :
 -- JOIN Theorems
 -- ============================================================================
 
-/-- Helper: Create a FROM clause for a single table -/
-def fromTable (name : String) (alias : Option String := none) : FromClause :=
-  .table ⟨name, alias⟩
-
-/-- Helper: Create an INNER JOIN FROM clause -/
-def innerJoin (left right : FromClause) (on_ : Option Expr) : FromClause :=
-  .join left .inner right on_
-
-/-- Helper: Create a LEFT JOIN FROM clause -/
-def leftJoin (left right : FromClause) (on_ : Option Expr) : FromClause :=
-  .join left .left right on_
-
-/-- Helper: Create a CROSS JOIN FROM clause -/
-def crossJoin (left right : FromClause) : FromClause :=
-  .join left .cross right none
-
-/-- CROSS JOIN cardinality is symmetric: |A × B| = |B × A| -/
+/-- CROSS JOIN cardinality is symmetric: |A x B| = |B x A| -/
 axiom cross_join_cardinality_comm (db : Database) (a b : FromClause) :
     let rowsAB := evalFrom db (.join a .cross b none)
     let rowsBA := evalFrom db (.join b .cross a none)
