@@ -231,15 +231,12 @@ def assignIds {α : Type} (items : List α) : List (Nat × α) :=
   go 0 items
 
 /-- Extract leaf tables from a FROM clause with unique IDs assigned.
-    Uses even-tagged IDs (2 * idx) consistent with JoinNode.leaf to ensure
-    no collisions with combined node IDs (which are odd via pairIds). -/
+    Delegates to JoinNode.leaf for consistent ID tagging and initialization. -/
 def extractLeafTables (from_ : FromClause) : List JoinNode :=
   let raw := extractLeafTablesRaw from_
   (assignIds raw).map fun (idx, (t, tables)) =>
-    { id := 2 * idx  -- even: leaf nodes (matches JoinNode.leaf tagging)
-    , table := t
-    , estimatedRows := defaultCardinality
-    , originalTables := tables }
+    let node := JoinNode.leaf idx t  -- handles even-tagging (2*idx) and defaults
+    { node with originalTables := tables }
 
 /-- Extract all predicates from ON clauses in a FROM clause -/
 partial def extractOnPredicates : FromClause → List Expr

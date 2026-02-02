@@ -100,6 +100,48 @@ def testCanReorderJoins : TestResult :=
   else
     .fail "canReorderJoins" "Incorrect result"
 
+/-- Test that FROM with subquery blocks reordering -/
+def testSubqueryInFromBlocksReorder : TestResult :=
+  let subq := SelectStmt.mk false [.star none] (some (table "x")) none [] none [] none none
+  let from_ := innerJoin
+    (table "a")
+    (.subquery subq "sub")
+    none
+  if !canReorderJoins from_ then
+    .pass "Subquery in FROM: blocks reordering"
+  else
+    .fail "Subquery in FROM" "Should block reordering"
+
+/-- Test that unqualified column in ON blocks reordering -/
+def testUnqualifiedColumnBlocksReorder : TestResult :=
+  -- col "id" without table qualifier
+  let unqualPred := Expr.binOp .eq (col "id") (qcol "b" "id")
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some unqualPred)
+  if !canReorderJoins from_ then
+    .pass "Unqualified column in ON: blocks reordering"
+  else
+    .fail "Unqualified column" "Should block reordering"
+
+/-- Test that EXISTS in ON blocks reordering -/
+def testExistsInOnBlocksReorder : TestResult :=
+  let subq := SelectStmt.mk false [.star none] (some (table "x")) none [] none [] none none
+  let existsPred := Expr.exists false subq
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some existsPred)
+  if !canReorderJoins from_ then
+    .pass "EXISTS in ON: blocks reordering"
+  else
+    .fail "EXISTS in ON" "Should block reordering"
+
+/-- Test that IN subquery in ON blocks reordering -/
+def testInSubqueryInOnBlocksReorder : TestResult :=
+  let subq := SelectStmt.mk false [.exprItem (col "x") none] (some (table "x")) none [] none [] none none
+  let inPred := Expr.inSubquery (qcol "a" "id") false subq
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some inPred)
+  if !canReorderJoins from_ then
+    .pass "IN subquery in ON: blocks reordering"
+  else
+    .fail "IN subquery in ON" "Should block reordering"
+
 -- ============================================================================
 -- JoinNode Tests
 -- ============================================================================
@@ -311,6 +353,29 @@ def testReorderCrossJoinsPreservesType : TestResult :=
   else
     .fail "reorderJoins" s!"Expected 2 CROSS joins, got {crossCount}"
 
+/-- Test that CROSS becomes INNER when non-join predicates are added.
+    When the ON clause contains a filter (not a join condition like a.id = b.id),
+    it's a "non-join predicate" that must be preserved. Since evalFrom ignores
+    ON clauses for CROSS joins, we must convert to INNER. -/
+def testCrossToInnerWithNonJoinPred : TestResult :=
+  -- INNER JOIN with a filter predicate (not a join condition)
+  -- a.x > 5 is a filter, not a t1.col = t2.col join predicate
+  let filterPred := Expr.binOp .gt (qcol "a" "x") (intLit 5)
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some filterPred)
+  let reordered := reorderJoins from_
+  -- After reordering: no edges detected (filter isn't a join pred),
+  -- so buildFromSteps would make CROSS, but nonJoinPreds forces INNER
+  match reordered with
+  | .join _ jt _ (some _) =>
+    if jt == .inner then
+      .pass "reorderJoins: CROSS becomes INNER with non-join predicate"
+    else
+      .fail "reorderJoins" s!"Expected INNER join, got {repr jt}"
+  | .join _ _ _ none =>
+    .fail "reorderJoins" "Expected ON clause with predicate"
+  | _ =>
+    .fail "reorderJoins" "Expected join structure"
+
 -- ============================================================================
 -- Cost Estimation Tests
 -- ============================================================================
@@ -354,6 +419,11 @@ def allTests : List TestResult := [
   testHasOnlyInnerJoinsLeftJoin,
   testHasOnlyInnerJoinsMixed,
   testCanReorderJoins,
+  -- Safety check edge cases
+  testSubqueryInFromBlocksReorder,
+  testUnqualifiedColumnBlocksReorder,
+  testExistsInOnBlocksReorder,
+  testInSubqueryInOnBlocksReorder,
   -- JoinNode
   testJoinNodeLeaf,
   testJoinNodeCombine,
@@ -373,6 +443,7 @@ def allTests : List TestResult := [
   testGreedyJoinOrder,
   testReorderJoinsPreservesPredicates,
   testReorderCrossJoinsPreservesType,
+  testCrossToInnerWithNonJoinPred,
   -- Cost estimation
   testEstimateJoinCostNoEdges,
   testEstimateJoinCostWithEdge
