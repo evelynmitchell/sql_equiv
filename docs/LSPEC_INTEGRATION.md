@@ -125,24 +125,15 @@ open SqlEquiv.Ast
 namespace LSpecTests.Generators
 
 -- Generate random SQL values
+-- Note: Value has constructors: int, string, bool, null (no float)
 instance : Gen Value where
   gen := do
-    let choice ← Gen.chooseNat 0 4
+    let choice ← Gen.chooseNat 0 3
     match choice with
-    | 0 => return .null none
-    | 1 => do
-        let b ← Gen.bool
-        return .bool b
-    | 2 => do
-        let n ← Gen.int
-        return .int n
-    | 3 => do
-        let s ← Gen.string
-        return .string s
-    | _ => do
-        -- Generate a simple float-like value
-        let n ← Gen.int
-        return .float (Float.ofInt n)
+    | 0 => return .null none          -- NULL with unknown type
+    | 1 => return .bool (← Gen.bool)  -- Boolean
+    | 2 => return .int (← Gen.int)    -- Integer
+    | _ => return .string (← Gen.string)  -- String
 
 -- Generate random column names
 def genColumnName : Gen String := do
@@ -151,23 +142,30 @@ def genColumnName : Gen String := do
   let suffix ← Gen.chooseNat 0 9
   return s!"{prefixes[idx]!}{suffix}"
 
+-- Generate a ColumnRef (table qualifier is optional)
+def genColumnRef : Gen ColumnRef := do
+  let colName ← genColumnName
+  return { table := none, column := colName }
+
 -- Generate random expressions (with bounded depth to avoid infinite recursion)
+-- Note: Expr constructors are: lit, col, binOp, unaryOp, func, agg, countStar, case, etc.
 partial def genExpr (depth : Nat := 3) : Gen Expr := do
   if depth == 0 then
     -- Base cases only at depth 0
     let choice ← Gen.chooseNat 0 2
     match choice with
-    | 0 => return .literal (← Gen.gen)
-    | 1 => return .column (← genColumnName)
-    | _ => return .null
+    | 0 => return .lit (← Gen.gen)           -- Literal value
+    | 1 => return .col (← genColumnRef)      -- Column reference
+    | _ => return .lit (.null none)          -- NULL literal
   else
     let choice ← Gen.chooseNat 0 6
     match choice with
-    | 0 => return .literal (← Gen.gen)
-    | 1 => return .column (← genColumnName)
-    | 2 => return .null
+    | 0 => return .lit (← Gen.gen)
+    | 1 => return .col (← genColumnRef)
+    | 2 => return .lit (.null none)
     | 3 => do
-        let op ← Gen.elements #[BinOp.and, .or, .eq, .neq, .lt, .gt, .le, .ge, .add, .sub, .mul]
+        -- BinOp: ne (not neq), and other operators
+        let op ← Gen.elements #[BinOp.and, .or, .eq, .ne, .lt, .gt, .le, .ge, .add, .sub, .mul]
         let left ← genExpr (depth - 1)
         let right ← genExpr (depth - 1)
         return .binOp op left right
@@ -179,8 +177,8 @@ partial def genExpr (depth : Nat := 3) : Gen Expr := do
         let cond ← genExpr (depth - 1)
         let thenE ← genExpr (depth - 1)
         let elseE ← genExpr (depth - 1)
-        return .caseWhen [(cond, thenE)] (some elseE)
-    | _ => return .null
+        return .case [(cond, thenE)] (some elseE)  -- CASE expression
+    | _ => return .lit (.null none)
 
 instance : Gen Expr where
   gen := genExpr 3
@@ -218,6 +216,11 @@ open SqlEquiv.Semantics
 
 namespace LSpecTests.ExprProperties
 
+/-!
+Note: evalExpr returns `Option Value`, not `Value` directly.
+Properties should compare Option Value results using `==`.
+-/
+
 -- Property: AND is commutative
 def prop_and_commutative (a b : Expr) (row : Row) : Bool :=
   evalExpr row (.binOp .and a b) == evalExpr row (.binOp .and b a)
@@ -227,24 +230,26 @@ def prop_or_commutative (a b : Expr) (row : Row) : Bool :=
   evalExpr row (.binOp .or a b) == evalExpr row (.binOp .or b a)
 
 -- Property: Double negation elimination
+-- Note: May not hold for NULL due to three-valued logic
 def prop_double_negation (a : Expr) (row : Row) : Bool :=
   evalExpr row (.unaryOp .not (.unaryOp .not a)) == evalExpr row a
 
 -- Property: x AND true == x
 def prop_and_identity (a : Expr) (row : Row) : Bool :=
-  evalExpr row (.binOp .and a (.literal (.bool true))) == evalExpr row a
+  evalExpr row (.binOp .and a (.lit (.bool true))) == evalExpr row a
 
 -- Property: x OR false == x
 def prop_or_identity (a : Expr) (row : Row) : Bool :=
-  evalExpr row (.binOp .or a (.literal (.bool false))) == evalExpr row a
+  evalExpr row (.binOp .or a (.lit (.bool false))) == evalExpr row a
 
 -- Property: x AND false == false
+-- Note: Compare against `some (.bool false)` since evalExpr returns Option Value
 def prop_and_annihilator (a : Expr) (row : Row) : Bool :=
-  evalExpr row (.binOp .and a (.literal (.bool false))) == .bool false
+  evalExpr row (.binOp .and a (.lit (.bool false))) == some (.bool false)
 
 -- Property: x OR true == true
 def prop_or_annihilator (a : Expr) (row : Row) : Bool :=
-  evalExpr row (.binOp .or a (.literal (.bool true))) == .bool true
+  evalExpr row (.binOp .or a (.lit (.bool true))) == some (.bool true)
 
 -- Property: De Morgan's law: NOT (a AND b) == (NOT a) OR (NOT b)
 def prop_demorgan_and (a b : Expr) (row : Row) : Bool :=
@@ -374,10 +379,11 @@ Example:
 ```
 -- Found 2024-01-15: prop_double_negation failed with NULL handling
 def test_double_neg_null : TestResult :=
-  let expr := Expr.unaryOp .not (.unaryOp .not .null)
+  let nullExpr := Expr.lit (.null none)  -- NULL literal
+  let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
   let row := []
   let result := evalExpr row expr
-  let expected := evalExpr row .null
+  let expected := evalExpr row nullExpr
   if result == expected then .pass "double_neg_null"
   else .fail "double_neg_null" s!"Expected {expected}, got {result}"
 ```
@@ -392,11 +398,15 @@ namespace Test.RegressionTest
 -- Placeholder: Add NULL-related counterexamples here
 -- Example discovered edge case:
 -- def test_null_and_true : TestResult :=
---   let expr := Expr.binOp .and .null (.literal (.bool true))
+--   let nullExpr := Expr.lit (.null none)
+--   let trueExpr := Expr.lit (.bool true)
+--   let expr := Expr.binOp .and nullExpr trueExpr
 --   let result := evalExpr [] expr
 --   -- NULL AND TRUE should be NULL (three-valued logic)
---   if result == .null none then .pass "null_and_true"
---   else .fail "null_and_true" s!"Expected null, got {result}"
+--   -- evalExpr returns Option Value, so compare with some/none
+--   match result with
+--   | some (.null _) => .pass "null_and_true"
+--   | _ => .fail "null_and_true" s!"Expected null, got {result}"
 
 -- ============================================================================
 -- Arithmetic Edge Cases
@@ -424,8 +434,9 @@ def regressionTests : List TestResult := [
 def runRegressionTests : IO Unit := do
   IO.println "Running regression tests (captured LSpec counterexamples)..."
   let results := regressionTests
-  let passed := results.filter (· matches .pass _) |>.length
-  let failed := results.filter (· matches .fail _ _) |>.length
+  -- Use TestResult.isPass helper from Test.Common (avoids pattern matching syntax issues)
+  let passed := results.filter TestResult.isPass |>.length
+  let failed := results.filter (fun r => !r.isPass) |>.length
   IO.println s!"  Passed: {passed}, Failed: {failed}"
   for result in results do
     match result with
@@ -463,7 +474,7 @@ let _ ← RegressionTest.runRegressionTests
 │         │                                                        │
 │         ▼                                                        │
 │  3. LSpec shrinks    Finds minimal counterexample:              │
-│         │            a = .null, b = .literal (.bool true)       │
+│         │            a = .lit (.null none), b = .lit (.bool true)│
 │         │            row = []                                    │
 │         ▼                                                        │
 │  4. Investigate      Is this a bug or expected behavior?        │
@@ -495,11 +506,11 @@ $ lake exe sql_equiv_lspec
 
 ✗ Double Negation: NOT (NOT x) == x
   Counterexample after 47 shrinks:
-    a   = Expr.null
+    a   = Expr.lit (.null none)
     row = []
 
-  evalExpr [] (NOT (NOT NULL)) = bool false
-  evalExpr [] NULL             = null
+  evalExpr [] (NOT (NOT NULL)) = some (.bool false)
+  evalExpr [] NULL             = some (.null none)
 ```
 
 **Step 2**: Investigate
@@ -515,18 +526,21 @@ This reveals that `NOT NULL` returns a boolean instead of propagating NULL (thre
 -- NOT NULL should return NULL, not a boolean
 -- Bug was in evalUnaryOp .not case
 def test_not_null_returns_null : TestResult :=
-  let expr := Expr.unaryOp .not .null
+  let nullExpr := Expr.lit (.null none)
+  let expr := Expr.unaryOp .not nullExpr
   let result := evalExpr [] expr
+  -- evalExpr returns Option Value
   match result with
-  | .null _ => .pass "not_null_returns_null"
+  | some (.null _) => .pass "not_null_returns_null"
   | other => .fail "not_null_returns_null"
       s!"NOT NULL should be NULL, got {other}"
 
 def test_double_not_null : TestResult :=
-  let expr := Expr.unaryOp .not (.unaryOp .not .null)
+  let nullExpr := Expr.lit (.null none)
+  let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
   let result := evalExpr [] expr
   match result with
-  | .null _ => .pass "double_not_null"
+  | some (.null _) => .pass "double_not_null"
   | other => .fail "double_not_null"
       s!"NOT (NOT NULL) should be NULL, got {other}"
 ```
@@ -678,16 +692,20 @@ def test_demorgan_with_nulls : TestResult := ...
 
 ## Appendix: LSpec API Reference
 
+> **Note**: The LSpec API may vary between versions. The examples in this document
+> are illustrative; consult the [LSpec repository](https://github.com/argumentcomputer/LSpec)
+> for the current API. Adapt the code patterns to match your installed version.
+
 ### Core Types
 
 ```lean
 -- Generator monad
 def Gen (α : Type) : Type
 
--- Property type
-def Property : Type := ... -- Depends on LSpec version
+-- Property type (varies by LSpec version)
+def Property : Type := ...
 
--- Test configuration
+-- Test configuration (if supported)
 structure Config where
   numTests : Nat := 100
   maxShrinks : Nat := 100
@@ -697,8 +715,11 @@ structure Config where
 ### Key Functions
 
 ```lean
--- Run a test suite
+-- Run a test suite (basic version)
 def LSpec.run (suite : TestSuite) : IO TestResult
+
+-- Run with configuration (if available in your LSpec version)
+def LSpec.runWith (config : Config) (suite : TestSuite) : IO TestResult
 
 -- Check a property
 def LSpec.check (name : String) (prop : Property) : Test
@@ -713,8 +734,21 @@ def Gen.nat : Gen Nat
 def Gen.string : Gen String
 def Gen.list (g : Gen α) : Gen (List α)
 def Gen.choose (lo hi : Int) : Gen Int
+def Gen.chooseNat (lo hi : Nat) : Gen Nat
 def Gen.elements (xs : Array α) : Gen α
 def Gen.frequency (weighted : List (Nat × Gen α)) : Gen α
+```
+
+### Adapting to API Changes
+
+If `LSpec.runWith` is not available, use `LSpec.run` instead:
+
+```lean
+-- If runWith is available:
+let result ← LSpec.runWith testConfig suite
+
+-- If only run is available:
+let result ← LSpec.run suite
 ```
 
 ## Summary
