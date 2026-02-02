@@ -11,8 +11,13 @@
   - Cost-based selection using estimated row counts
   - Extracts join predicates from ON clauses for edge detection
 
-  Limitations:
-  - Subqueries in FROM clause block reordering entirely (conservative approach)
+  Limitations (intentionally conservative for correctness):
+  - Subqueries in FROM clause block reordering entirely. While subqueries
+    could theoretically be treated as opaque leaf nodes, this would require
+    tracking the original FromClause (not just TableRef) and careful handling
+    of correlated references. The current implementation prioritizes safety.
+  - Subqueries in ON predicates (.exists, .inSubquery, scalar subqueries)
+    also block reordering, as correlated subqueries may depend on join order.
   - Unqualified column references in ON predicates block reordering
     (since column resolution depends on row order in current semantics)
 
@@ -179,18 +184,24 @@ def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerJoins from_
 
 /-- Estimate the cost of joining two nodes.
     Uses a simple model: result size = n1.rows * n2.rows * selectivity.
-    The float estimate is converted to Nat with a safeguard: when both inputs
-    have non-zero estimated row counts, we clamp any truncated estimate of 0
-    up to 1 to avoid propagating spurious zero-row estimates. -/
+    The float estimate is converted to Nat with safeguards:
+    - Clamp zero to 1 when both inputs are non-zero (avoid spurious zero-row estimates)
+    - Handle overflow: if result exceeds UInt64 range, clamp to UInt64.max + 1 -/
 def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
   -- Find edges that connect these two nodes
   let connectingEdges := edges.filter (edgeConnects · n1 n2)
   -- Use product of selectivities (or 1.0 if no edges = cross join)
   let selectivity := if connectingEdges.isEmpty then 1.0
     else connectingEdges.foldl (fun acc e => acc * e.selectivity) 1.0
-  -- Estimate result rows as a float and convert to Nat
+  -- Estimate result rows as a float
   let resultFloat := (n1.estimatedRows.toFloat * n2.estimatedRows.toFloat * selectivity)
-  let approx := resultFloat.toUInt64.toNat
+  -- Safely convert to Nat with overflow protection
+  -- UInt64.size = 2^64, so max representable value is UInt64.size - 1
+  let overflowThreshold : Float := UInt64.size.toFloat
+  let approx :=
+    if resultFloat <= 0.0 then 0
+    else if resultFloat >= overflowThreshold then UInt64.size  -- clamp to just above max
+    else resultFloat.toUInt64.toNat
   -- Clamp tiny positive estimates away from 0 when both inputs are non-empty
   if approx == 0 && n1.estimatedRows != 0 && n2.estimatedRows != 0 then 1
   else approx
@@ -219,11 +230,13 @@ def assignIds {α : Type} (items : List α) : List (Nat × α) :=
     | x :: xs => (idx, x) :: go (idx + 1) xs
   go 0 items
 
-/-- Extract leaf tables from a FROM clause with unique IDs assigned -/
+/-- Extract leaf tables from a FROM clause with unique IDs assigned.
+    Uses even-tagged IDs (2 * idx) consistent with JoinNode.leaf to ensure
+    no collisions with combined node IDs (which are odd via pairIds). -/
 def extractLeafTables (from_ : FromClause) : List JoinNode :=
   let raw := extractLeafTablesRaw from_
   (assignIds raw).map fun (idx, (t, tables)) =>
-    { id := idx
+    { id := 2 * idx  -- even: leaf nodes (matches JoinNode.leaf tagging)
     , table := t
     , estimatedRows := defaultCardinality
     , originalTables := tables }
