@@ -120,7 +120,7 @@ import LSpec
 import SqlEquiv
 
 open LSpec
-open SqlEquiv.Ast
+open SqlEquiv  -- Note: SqlEquiv is the main namespace (not SqlEquiv.Ast)
 
 namespace LSpecTests.Generators
 
@@ -148,7 +148,8 @@ def genColumnRef : Gen ColumnRef := do
   return { table := none, column := colName }
 
 -- Generate random expressions (with bounded depth to avoid infinite recursion)
--- Note: Expr constructors are: lit, col, binOp, unaryOp, func, agg, countStar, case, etc.
+-- Note: Expr constructors are: lit, col, binOp, unaryOp, func, agg, countStar, «case», etc.
+-- The case constructor uses «» because 'case' is a Lean keyword
 partial def genExpr (depth : Nat := 3) : Gen Expr := do
   if depth == 0 then
     -- Base cases only at depth 0
@@ -177,7 +178,7 @@ partial def genExpr (depth : Nat := 3) : Gen Expr := do
         let cond ← genExpr (depth - 1)
         let thenE ← genExpr (depth - 1)
         let elseE ← genExpr (depth - 1)
-        return .case [(cond, thenE)] (some elseE)  -- CASE expression
+        return .«case» [(cond, thenE)] (some elseE)  -- CASE expression
     | _ => return .lit (.null none)
 
 instance : Gen Expr where
@@ -211,8 +212,7 @@ import SqlEquiv
 import LSpecTests.Generators
 
 open LSpec
-open SqlEquiv.Ast
-open SqlEquiv.Semantics
+open SqlEquiv  -- All types (Expr, Value, Row, etc.) and functions (evalExpr) are in SqlEquiv namespace
 
 namespace LSpecTests.ExprProperties
 
@@ -276,7 +276,7 @@ import LSpecTests.Generators
 import LSpecTests.ExprProperties
 
 open LSpec
-open SqlEquiv.Ast
+open SqlEquiv  -- All types are in SqlEquiv namespace
 open LSpecTests.Generators
 open LSpecTests.ExprProperties
 
@@ -312,26 +312,28 @@ def main : IO UInt32 := do
 
   -- Run property tests
   -- Note: Actual LSpec API may vary; adapt to current version
-  let suite := LSpec.group "Expression Properties" $
+  -- Groups are nested within lists, not concatenated with ++
+  let suite := LSpec.group "Expression Properties" [
     LSpec.group "Commutativity" [
       LSpec.check "AND is commutative" (∀ a b row, prop_and_commutative a b row),
       LSpec.check "OR is commutative" (∀ a b row, prop_or_commutative a b row)
-    ] ++
+    ],
     LSpec.group "Identity Laws" [
       LSpec.check "x AND true == x" (∀ a row, prop_and_identity a row),
       LSpec.check "x OR false == x" (∀ a row, prop_or_identity a row)
-    ] ++
+    ],
     LSpec.group "Annihilator Laws" [
       LSpec.check "x AND false == false" (∀ a row, prop_and_annihilator a row),
       LSpec.check "x OR true == true" (∀ a row, prop_or_annihilator a row)
-    ] ++
+    ],
     LSpec.group "De Morgan's Laws" [
       LSpec.check "NOT (a AND b) == (NOT a) OR (NOT b)" (∀ a b row, prop_demorgan_and a b row),
       LSpec.check "NOT (a OR b) == (NOT a) AND (NOT b)" (∀ a b row, prop_demorgan_or a b row)
-    ] ++
+    ],
     LSpec.group "Double Negation" [
       LSpec.check "NOT (NOT x) == x" (∀ a row, prop_double_negation a row)
     ]
+  ]
 
   let result ← LSpec.runWith testConfig suite
 
@@ -357,9 +359,8 @@ Create `Test/RegressionTest.lean` to hold captured counterexamples:
 import SqlEquiv
 import Test.Common
 
-open SqlEquiv.Ast
-open SqlEquiv.Semantics
-open Test.Common
+open SqlEquiv  -- All types and functions are in SqlEquiv namespace
+open Test      -- Test.Common defines namespace Test with TestResult, runTests, etc.
 
 /-!
 # Regression Tests from LSpec Counterexamples
@@ -389,7 +390,8 @@ def test_double_neg_null : TestResult :=
 ```
 -/
 
-namespace Test.RegressionTest
+-- Following the pattern of other test modules (ParserTest, SemanticsTest, etc.)
+namespace RegressionTest
 
 -- ============================================================================
 -- NULL Handling Edge Cases
@@ -431,19 +433,11 @@ def regressionTests : List TestResult := [
   -- etc.
 ]
 
-def runRegressionTests : IO Unit := do
-  IO.println "Running regression tests (captured LSpec counterexamples)..."
-  let results := regressionTests
-  -- Use TestResult.isPass helper from Test.Common (avoids pattern matching syntax issues)
-  let passed := results.filter TestResult.isPass |>.length
-  let failed := results.filter (fun r => !r.isPass) |>.length
-  IO.println s!"  Passed: {passed}, Failed: {failed}"
-  for result in results do
-    match result with
-    | .fail name msg => IO.println s!"  ✗ {name}: {msg}"
-    | .pass _ => pure ()
+-- Use the existing runTests helper from Test.Common instead of reimplementing
+def runRegressionTests : IO (Nat × Nat) := do
+  Test.runTests "Regression Tests (LSpec Counterexamples)" regressionTests
 
-end Test.RegressionTest
+end RegressionTest
 ```
 
 ### Step 5: Wire Regression Tests into Main Suite
