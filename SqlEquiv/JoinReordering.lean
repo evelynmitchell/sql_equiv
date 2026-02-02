@@ -60,20 +60,23 @@ structure JoinEdge where
 -- JoinNode Operations
 -- ============================================================================
 
-/-- Initialize a leaf node from a table reference with a given ID -/
+/-- Initialize a leaf node from a table reference with a given ID.
+    Leaf IDs are tagged as even numbers (2 * id) so that combined node IDs,
+    which are tagged as odd numbers, cannot collide with them. -/
 def JoinNode.leaf (id : Nat) (t : TableRef) : JoinNode :=
-  { id := id
+  { id := 2 * id  -- even: leaf nodes
   , table := t
   , estimatedRows := defaultCardinality
   , originalTables := [getTableName t] }
 
-/-- Generate a unique ID for combined join nodes using Cantor pairing with offset.
-    The offset ensures combined node IDs don't collide with leaf node IDs (0, 1, 2, ...).
+/-- Generate a unique ID for combined join nodes using Cantor pairing.
+    Combined node IDs are tagged as odd numbers to avoid collisions with
+    leaf node IDs (which are even per JoinNode.leaf).
     For any two distinct ordered pairs (a,b) and (c,d), pairIds a b ≠ pairIds c d. -/
 def pairIds (a b : Nat) : Nat :=
   let s := a + b
-  -- Offset by 1000000 to avoid collision with leaf node IDs (0, 1, 2, ...)
-  1000000 + (s * (s + 1)) / 2 + b
+  let p := (s * (s + 1)) / 2 + b
+  2 * p + 1  -- odd: combined nodes
 
 /-- Combine two nodes after joining them.
     Creates a synthetic TableRef and merges the original tables lists.
@@ -134,9 +137,9 @@ partial def exprHasUnqualifiedColumnRef : Expr → Bool
   | .unaryOp _ e => exprHasUnqualifiedColumnRef e
   | .between e1 e2 e3 => exprHasUnqualifiedColumnRef e1 || exprHasUnqualifiedColumnRef e2 || exprHasUnqualifiedColumnRef e3
   | .inList e _ es => exprHasUnqualifiedColumnRef e || es.any exprHasUnqualifiedColumnRef
-  | .inSubquery e _ _ => exprHasUnqualifiedColumnRef e
-  | .exists _ _ => false  -- subqueries have their own scope
-  | .subquery _ => false  -- scalar subqueries have their own scope
+  | .inSubquery _ _ _ => true  -- conservatively block: correlated subqueries may depend on join order
+  | .exists _ _ => true        -- conservatively block: correlated subqueries may depend on join order
+  | .subquery _ => true        -- conservatively block: scalar subqueries may depend on join order
   | .«case» cases else_ =>
     cases.any (fun (c, r) => exprHasUnqualifiedColumnRef c || exprHasUnqualifiedColumnRef r) ||
     (else_.map exprHasUnqualifiedColumnRef).getD false
@@ -196,11 +199,15 @@ def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
 -- Join Graph Extraction
 -- ============================================================================
 
-/-- Extract leaf tables from a FROM clause, returning nodes without IDs -/
+/-- Extract leaf tables from a FROM clause, returning nodes without IDs.
+    Note: The subquery case is currently unreachable because hasOnlyInnerJoins
+    rejects any FROM clause containing subqueries. It's kept for potential
+    future relaxation of that constraint. -/
 partial def extractLeafTablesRaw : FromClause → List (TableRef × List String)
   | .table t => [(t, [getTableName t])]
   | .subquery _sel alias =>
-    -- Treat subquery as a single leaf node
+    -- Currently unreachable (hasOnlyInnerJoins blocks subqueries)
+    -- If enabled, would need JoinNode to carry original FromClause, not just TableRef
     [(⟨alias, some alias⟩, [alias])]
   | .join left _ right _ =>
     extractLeafTablesRaw left ++ extractLeafTablesRaw right

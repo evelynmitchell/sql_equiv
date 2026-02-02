@@ -107,6 +107,7 @@ def testCanReorderJoins : TestResult :=
 def testJoinNodeLeaf : TestResult :=
   let t := TableRef.mk "users" (some "u")
   let node := JoinNode.leaf 0 t
+  -- Leaf IDs are tagged even: 2 * 0 = 0
   if node.originalTables == ["u"] && node.estimatedRows == defaultCardinality && node.id == 0 then
     .pass "JoinNode.leaf: correct initialization"
   else
@@ -116,11 +117,12 @@ def testJoinNodeCombine : TestResult :=
   let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
   let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
   let combined := JoinNode.combine n1 n2 500
-  -- pairIds 1 2 = 1000000 + (1+2)*(1+2+1)/2 + 2 = 1000000 + 6 + 2 = 1000008
+  -- n1.id = 2*1 = 2, n2.id = 2*2 = 4
+  -- pairIds 2 4 = 2 * ((2+4)*(7)/2 + 4) + 1 = 2 * (21 + 4) + 1 = 51
   if combined.originalTables == ["u", "o"] &&
      combined.estimatedRows == 500 &&
      combined.table.alias == some "__combined__" &&
-     combined.id == pairIds 1 2 then  -- Uses pairIds directly for correctness
+     combined.id == pairIds n1.id n2.id then  -- Uses actual node IDs
     .pass "JoinNode.combine: correct merge"
   else
     .fail "JoinNode.combine" s!"Got {repr combined}"
