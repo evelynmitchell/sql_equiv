@@ -7,6 +7,11 @@ name = "batteries"
 git = "https://github.com/leanprover-community/batteries"
 rev = "main"
 
+[[require]]
+name = "LSpec"
+git = "https://github.com/argumentcomputer/LSpec"
+rev = "main"
+
 [[lean_lib]]
 name = "SqlEquiv"
 
@@ -21,3 +26,11 @@ root = "Main"
 [[lean_exe]]
 name = "sql_equiv_test"
 root = "Test.Main"
+
+[[lean_lib]]
+name = "LSpecTests"
+globs = ["LSpecTests.*"]
+
+[[lean_exe]]
+name = "sql_equiv_lspec"
+root = "LSpecTests.Main"
