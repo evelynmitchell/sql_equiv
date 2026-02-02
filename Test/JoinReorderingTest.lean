@@ -100,6 +100,17 @@ def testCanReorderJoins : TestResult :=
   else
     .fail "canReorderJoins" "Incorrect result"
 
+def testCanReorderJoinsBlocksUnqualifiedCols : TestResult :=
+  -- Unqualified column references make reordering unsafe (resolution depends on join order)
+  let qualifiedPred := Expr.binOp .eq (qcol "a" "id") (qcol "b" "a_id")
+  let unqualifiedPred := Expr.binOp .eq (col "id") (intLit 1)  -- Unqualified!
+  let safeFrom := innerJoin (tableAs "users" "a") (tableAs "orders" "b") (some qualifiedPred)
+  let unsafeFrom := innerJoin (tableAs "users" "a") (tableAs "orders" "b") (some unqualifiedPred)
+  if canReorderJoins safeFrom && !canReorderJoins unsafeFrom then
+    .pass "canReorderJoins: blocks unqualified column refs"
+  else
+    .fail "canReorderJoins unqualified" s!"safe={canReorderJoins safeFrom}, unsafe={canReorderJoins unsafeFrom}"
+
 -- ============================================================================
 -- JoinNode Tests
 -- ============================================================================
@@ -297,12 +308,6 @@ def testReorderCrossJoinsPreservesType : TestResult :=
     (crossJoin (tableAs "a" "a") (tableAs "b" "b"))
     (tableAs "c" "c")
   let reordered := reorderJoins from_
-  -- Helper to check if all joins in result are CROSS
-  let rec allCross : FromClause → Bool
-    | .table _ => true
-    | .subquery _ _ => true
-    | .join l jt r _ =>
-      (jt == .cross || jt == .inner) && allCross l && allCross r
   -- Helper to count CROSS joins specifically
   let rec countCross : FromClause → Nat
     | .table _ => 0
@@ -339,18 +344,19 @@ def testReorderJoinsWithSubquery : TestResult :=
   let from_ := innerJoin subq (tableAs "orders" "o") none
   -- hasOnlyInnerOrCrossJoins should return true (subquery is a valid leaf)
   if !hasOnlyInnerOrCrossJoins from_ then
-    return .fail "Subquery leaf" "hasOnlyInnerOrCrossJoins should return true"
-  -- Reorder should preserve the subquery
-  let reordered := reorderJoins from_
-  -- Check that reordered result still contains a subquery
-  let rec hasSubquery : FromClause → Bool
-    | .table _ => false
-    | .subquery _ _ => true
-    | .join l _ r _ => hasSubquery l || hasSubquery r
-  if hasSubquery reordered then
-    .pass "reorderJoins: preserves subquery as leaf"
+    .fail "Subquery leaf" "hasOnlyInnerOrCrossJoins should return true"
   else
-    .fail "Subquery preservation" "Subquery was lost during reordering"
+    -- Reorder should preserve the subquery
+    let reordered := reorderJoins from_
+    -- Check that reordered result still contains a subquery
+    let rec hasSubquery : FromClause → Bool
+      | .table _ => false
+      | .subquery _ _ => true
+      | .join l _ r _ => hasSubquery l || hasSubquery r
+    if hasSubquery reordered then
+      .pass "reorderJoins: preserves subquery as leaf"
+    else
+      .fail "Subquery preservation" "Subquery was lost during reordering"
 
 /-- Test that extractLeafTables correctly extracts subquery as a leaf -/
 def testExtractLeafTablesWithSubquery : TestResult :=
@@ -362,9 +368,9 @@ def testExtractLeafTablesWithSubquery : TestResult :=
   let leaves := extractLeafTables from_
   -- Should have 2 leaves: users and the subquery
   if leaves.length != 2 then
-    return .fail "extractLeafTables subquery" s!"Expected 2 leaves, got {leaves.length}"
-  -- Check that one of the leaves has the subquery's alias
-  if leaves.any (fun n => n.originalTables == ["sub"]) then
+    .fail "extractLeafTables subquery" s!"Expected 2 leaves, got {leaves.length}"
+  else if leaves.any (fun n => n.originalTables == ["sub"]) then
+    -- Check that one of the leaves has the subquery's alias
     .pass "extractLeafTables: includes subquery leaf"
   else
     .fail "extractLeafTables subquery" "Subquery leaf not found"
@@ -432,6 +438,7 @@ def allTests : List TestResult := [
   testHasOnlyInnerJoinsLeftJoin,
   testHasOnlyInnerJoinsMixed,
   testCanReorderJoins,
+  testCanReorderJoinsBlocksUnqualifiedCols,
   -- JoinNode
   testJoinNodeLeaf,
   testJoinNodeCombine,

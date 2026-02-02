@@ -122,8 +122,47 @@ partial def hasOnlyInnerOrCrossJoins : FromClause → Bool
 /-- Backwards-compatible alias for hasOnlyInnerOrCrossJoins -/
 abbrev hasOnlyInnerJoins := hasOnlyInnerOrCrossJoins
 
-/-- Check if we can safely reorder joins in this FROM clause -/
-def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerOrCrossJoins from_
+/-- Check if an expression contains any unqualified column references.
+    Unqualified columns (table = none) are resolved by Row.getQualified taking
+    the first matching key, which depends on join order. Reordering changes the
+    order of key/value pairs, so unqualified column references make reordering unsafe. -/
+partial def exprHasUnqualifiedColumnRef : Expr → Bool
+  | .col c => c.table.isNone
+  | .binOp _ l r => exprHasUnqualifiedColumnRef l || exprHasUnqualifiedColumnRef r
+  | .unaryOp _ e => exprHasUnqualifiedColumnRef e
+  | .between e low high =>
+    exprHasUnqualifiedColumnRef e || exprHasUnqualifiedColumnRef low ||
+    exprHasUnqualifiedColumnRef high
+  | .inList e _ vals =>
+    exprHasUnqualifiedColumnRef e || vals.any exprHasUnqualifiedColumnRef
+  | .case whens else_ =>
+    whens.any (fun (c, r) => exprHasUnqualifiedColumnRef c || exprHasUnqualifiedColumnRef r) ||
+    else_.map exprHasUnqualifiedColumnRef |>.getD false
+  | .func _ args => args.any exprHasUnqualifiedColumnRef
+  | .agg _ arg _ => arg.map exprHasUnqualifiedColumnRef |>.getD false
+  | .exists _ => false  -- Subquery has its own scope
+  | .inSubquery e _ _ => exprHasUnqualifiedColumnRef e  -- Only check outer expr
+  | .windowFn _ arg spec =>
+    arg.map exprHasUnqualifiedColumnRef |>.getD false ||
+    spec.partitionBy.any exprHasUnqualifiedColumnRef ||
+    spec.orderBy.any (fun item => exprHasUnqualifiedColumnRef item.expr)
+  | _ => false  -- Literals, scalar subqueries
+
+/-- Check if any ON clause in a FROM clause contains unqualified column references -/
+partial def hasUnqualifiedColumnRefs : FromClause → Bool
+  | .table _ => false
+  | .subquery _ _ => false
+  | .join left _ right on_ =>
+    let onHasUnqualified := match on_ with
+      | some pred => exprHasUnqualifiedColumnRef pred
+      | none => false
+    onHasUnqualified || hasUnqualifiedColumnRefs left || hasUnqualifiedColumnRefs right
+
+/-- Check if we can safely reorder joins in this FROM clause.
+    Requires: (1) only INNER/CROSS joins, (2) no unqualified column references in ON clauses.
+    Unqualified columns are resolved by taking the first match, which depends on join order. -/
+def canReorderJoins (from_ : FromClause) : Bool :=
+  hasOnlyInnerOrCrossJoins from_ && !hasUnqualifiedColumnRefs from_
 
 -- ============================================================================
 -- Cost Estimation
