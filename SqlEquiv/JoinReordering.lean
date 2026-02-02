@@ -11,6 +11,11 @@
   - Cost-based selection using estimated row counts
   - Extracts join predicates from ON clauses for edge detection
 
+  Limitations:
+  - Subqueries in FROM clause block reordering entirely (conservative approach)
+  - Unqualified column references in ON predicates block reordering
+    (since column resolution depends on row order in current semantics)
+
   See docs/OPTIMIZER_REDESIGN_PLAN.md for full specification.
 -/
 
@@ -62,11 +67,19 @@ def JoinNode.leaf (id : Nat) (t : TableRef) : JoinNode :=
   , estimatedRows := defaultCardinality
   , originalTables := [getTableName t] }
 
+/-- Generate a unique ID for combined join nodes using Cantor pairing with offset.
+    The offset ensures combined node IDs don't collide with leaf node IDs (0, 1, 2, ...).
+    For any two distinct ordered pairs (a,b) and (c,d), pairIds a b ≠ pairIds c d. -/
+def pairIds (a b : Nat) : Nat :=
+  let s := a + b
+  -- Offset by 1000000 to avoid collision with leaf node IDs (0, 1, 2, ...)
+  1000000 + (s * (s + 1)) / 2 + b
+
 /-- Combine two nodes after joining them.
     Creates a synthetic TableRef and merges the original tables lists.
-    The new node gets a fresh ID computed from the combined IDs. -/
+    The new node gets a fresh ID computed via Cantor pairing. -/
 def JoinNode.combine (n1 n2 : JoinNode) (resultRows : Nat) : JoinNode :=
-  { id := n1.id * 1000 + n2.id  -- synthetic unique ID for combined node
+  { id := pairIds n1.id n2.id  -- collision-free synthetic ID
   , table := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
   , estimatedRows := resultRows
   , originalTables := n1.originalTables ++ n2.originalTables }
@@ -162,16 +175,22 @@ def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerJoins from_
 -- ============================================================================
 
 /-- Estimate the cost of joining two nodes.
-    Uses a simple model: result size = n1.rows * n2.rows * selectivity -/
+    Uses a simple model: result size = n1.rows * n2.rows * selectivity.
+    The float estimate is converted to Nat with a safeguard: when both inputs
+    have non-zero estimated row counts, we clamp any truncated estimate of 0
+    up to 1 to avoid propagating spurious zero-row estimates. -/
 def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
   -- Find edges that connect these two nodes
   let connectingEdges := edges.filter (edgeConnects · n1 n2)
   -- Use product of selectivities (or 1.0 if no edges = cross join)
   let selectivity := if connectingEdges.isEmpty then 1.0
     else connectingEdges.foldl (fun acc e => acc * e.selectivity) 1.0
-  -- Estimate result rows
+  -- Estimate result rows as a float and convert to Nat
   let resultFloat := (n1.estimatedRows.toFloat * n2.estimatedRows.toFloat * selectivity)
-  resultFloat.toUInt64.toNat
+  let approx := resultFloat.toUInt64.toNat
+  -- Clamp tiny positive estimates away from 0 when both inputs are non-empty
+  if approx == 0 && n1.estimatedRows != 0 && n2.estimatedRows != 0 then 1
+  else approx
 
 -- ============================================================================
 -- Join Graph Extraction
@@ -318,8 +337,8 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
           let on_ := unflattenAnd step.predicates
           let joinType := if step.predicates.isEmpty then JoinType.cross else JoinType.inner
           let combined := FromClause.join lfc joinType rfc on_
-          -- Combined node ID (same formula as JoinNode.combine)
-          let combinedId := leftId * 1000 + rightId
+          -- Combined node ID (same Cantor pairing as JoinNode.combine)
+          let combinedId := pairIds leftId rightId
           -- Update the map: remove old entries, add combined
           let newMap := nodeMap.filter (fun (id, _) =>
             id != leftId && id != rightId)

@@ -116,10 +116,11 @@ def testJoinNodeCombine : TestResult :=
   let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
   let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
   let combined := JoinNode.combine n1 n2 500
+  -- pairIds 1 2 = 1000000 + (1+2)*(1+2+1)/2 + 2 = 1000000 + 6 + 2 = 1000008
   if combined.originalTables == ["u", "o"] &&
      combined.estimatedRows == 500 &&
      combined.table.alias == some "__combined__" &&
-     combined.id == 1 * 1000 + 2 then
+     combined.id == pairIds 1 2 then  -- Uses pairIds directly for correctness
     .pass "JoinNode.combine: correct merge"
   else
     .fail "JoinNode.combine" s!"Got {repr combined}"
