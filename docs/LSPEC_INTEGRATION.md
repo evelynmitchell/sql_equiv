@@ -1,0 +1,732 @@
+# Integrating LSpec Property-Based Testing into sql_equiv
+
+This document describes how to incorporate LSpec property-based testing alongside the existing test suite, with a workflow for capturing shrunk counterexamples as permanent unit tests.
+
+## Overview
+
+### Goals
+
+1. **Run LSpec separately** from the existing test suite (`lake exe sql_equiv_test`)
+2. **Discover edge cases** through randomized property testing
+3. **Capture shrunk counterexamples** as permanent regression tests in the regular unit test suite
+4. **Maintain two complementary testing approaches**:
+   - Fast, deterministic unit tests for CI (existing suite)
+   - Longer-running property tests for deeper exploration (LSpec)
+
+### Why This Approach?
+
+Property-based testing excels at finding unexpected edge cases, but:
+- It's non-deterministic (different runs may find different issues)
+- It can be slow (running thousands of test cases)
+- Shrinking takes time but produces minimal failing examples
+
+By capturing shrunk counterexamples as unit tests, we get:
+- **Reproducibility**: The exact failing case is preserved
+- **Speed**: Unit tests run instantly in CI
+- **Documentation**: Each captured test documents a discovered edge case
+- **Regression prevention**: The bug can never silently return
+
+## Setup
+
+### 1. Add LSpec Dependency
+
+Update `lakefile.toml`:
+
+```toml
+name = "sql_equiv"
+version = "0.1.0"
+defaultTargets = ["sql_equiv"]
+
+[[require]]
+name = "batteries"
+git = "https://github.com/leanprover-community/batteries"
+rev = "main"
+
+[[require]]
+name = "LSpec"
+git = "https://github.com/argumentcomputer/LSpec"
+rev = "main"
+
+[[lean_lib]]
+name = "SqlEquiv"
+
+[[lean_lib]]
+name = "Test"
+globs = ["Test.*"]
+
+[[lean_lib]]
+name = "LSpecTests"
+globs = ["LSpecTests.*"]
+
+[[lean_exe]]
+name = "sql_equiv"
+root = "Main"
+
+[[lean_exe]]
+name = "sql_equiv_test"
+root = "Test.Main"
+
+# Separate executable for LSpec property tests
+[[lean_exe]]
+name = "sql_equiv_lspec"
+root = "LSpecTests.Main"
+```
+
+### 2. Fetch Dependencies
+
+```bash
+lake update LSpec
+lake build
+```
+
+## Project Structure
+
+```
+sql_equiv/
+├── SqlEquiv/                    # Main library (unchanged)
+├── Test/                        # Existing unit test suite (unchanged)
+│   ├── Main.lean
+│   ├── Common.lean
+│   ├── ParserTest.lean
+│   ├── SemanticsTest.lean
+│   ├── EquivTest.lean
+│   ├── PropertyTest.lean        # Existing custom property tests
+│   ├── OptimizerTest.lean
+│   ├── ExprNormalizationTest.lean
+│   ├── PredicatePushdownTest.lean
+│   └── RegressionTest.lean      # NEW: Captured counterexamples go here
+│
+├── LSpecTests/                  # NEW: LSpec property test suite
+│   ├── Main.lean                # LSpec test runner
+│   ├── Generators.lean          # Gen instances for SqlEquiv types
+│   ├── ExprProperties.lean      # Expression properties
+│   ├── ParserProperties.lean    # Parser round-trip properties
+│   ├── SemanticsProperties.lean # Semantic equivalence properties
+│   └── OptimizerProperties.lean # Optimizer correctness properties
+│
+└── docs/
+    └── LSPEC_INTEGRATION.md     # This document
+```
+
+## Implementation Guide
+
+### Step 1: Create Generator Instances
+
+Create `LSpecTests/Generators.lean` with `Gen` instances for your types:
+
+```lean
+-- LSpecTests/Generators.lean
+import LSpec
+import SqlEquiv
+
+open LSpec
+open SqlEquiv.Ast
+
+namespace LSpecTests.Generators
+
+-- Generate random SQL values
+instance : Gen Value where
+  gen := do
+    let choice ← Gen.chooseNat 0 4
+    match choice with
+    | 0 => return .null none
+    | 1 => do
+        let b ← Gen.bool
+        return .bool b
+    | 2 => do
+        let n ← Gen.int
+        return .int n
+    | 3 => do
+        let s ← Gen.string
+        return .string s
+    | _ => do
+        -- Generate a simple float-like value
+        let n ← Gen.int
+        return .float (Float.ofInt n)
+
+-- Generate random column names
+def genColumnName : Gen String := do
+  let prefixes := #["id", "name", "value", "count", "flag", "col"]
+  let idx ← Gen.chooseNat 0 (prefixes.size - 1)
+  let suffix ← Gen.chooseNat 0 9
+  return s!"{prefixes[idx]!}{suffix}"
+
+-- Generate random expressions (with bounded depth to avoid infinite recursion)
+partial def genExpr (depth : Nat := 3) : Gen Expr := do
+  if depth == 0 then
+    -- Base cases only at depth 0
+    let choice ← Gen.chooseNat 0 2
+    match choice with
+    | 0 => return .literal (← Gen.gen)
+    | 1 => return .column (← genColumnName)
+    | _ => return .null
+  else
+    let choice ← Gen.chooseNat 0 6
+    match choice with
+    | 0 => return .literal (← Gen.gen)
+    | 1 => return .column (← genColumnName)
+    | 2 => return .null
+    | 3 => do
+        let op ← Gen.elements #[BinOp.and, .or, .eq, .neq, .lt, .gt, .le, .ge, .add, .sub, .mul]
+        let left ← genExpr (depth - 1)
+        let right ← genExpr (depth - 1)
+        return .binOp op left right
+    | 4 => do
+        let op ← Gen.elements #[UnaryOp.not, .neg, .isNull, .isNotNull]
+        let inner ← genExpr (depth - 1)
+        return .unaryOp op inner
+    | 5 => do
+        let cond ← genExpr (depth - 1)
+        let thenE ← genExpr (depth - 1)
+        let elseE ← genExpr (depth - 1)
+        return .caseWhen [(cond, thenE)] (some elseE)
+    | _ => return .null
+
+instance : Gen Expr where
+  gen := genExpr 3
+
+-- Generate a row (list of column name/value pairs)
+def genRow (columns : List String) : Gen Row := do
+  let values ← columns.mapM fun col => do
+    let v ← Gen.gen
+    return (col, v)
+  return values
+
+-- Generate a simple table schema and data
+def genTable (numRows : Nat := 5) : Gen (List String × List Row) := do
+  let numCols ← Gen.chooseNat 1 5
+  let cols ← (List.range numCols).mapM fun _ => genColumnName
+  let rows ← (List.range numRows).mapM fun _ => genRow cols
+  return (cols, rows)
+
+end LSpecTests.Generators
+```
+
+### Step 2: Define Properties
+
+Create property modules for different areas. Example `LSpecTests/ExprProperties.lean`:
+
+```lean
+-- LSpecTests/ExprProperties.lean
+import LSpec
+import SqlEquiv
+import LSpecTests.Generators
+
+open LSpec
+open SqlEquiv.Ast
+open SqlEquiv.Semantics
+
+namespace LSpecTests.ExprProperties
+
+-- Property: AND is commutative
+def prop_and_commutative (a b : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .and a b) == evalExpr row (.binOp .and b a)
+
+-- Property: OR is commutative
+def prop_or_commutative (a b : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .or a b) == evalExpr row (.binOp .or b a)
+
+-- Property: Double negation elimination
+def prop_double_negation (a : Expr) (row : Row) : Bool :=
+  evalExpr row (.unaryOp .not (.unaryOp .not a)) == evalExpr row a
+
+-- Property: x AND true == x
+def prop_and_identity (a : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .and a (.literal (.bool true))) == evalExpr row a
+
+-- Property: x OR false == x
+def prop_or_identity (a : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .or a (.literal (.bool false))) == evalExpr row a
+
+-- Property: x AND false == false
+def prop_and_annihilator (a : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .and a (.literal (.bool false))) == .bool false
+
+-- Property: x OR true == true
+def prop_or_annihilator (a : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .or a (.literal (.bool true))) == .bool true
+
+-- Property: De Morgan's law: NOT (a AND b) == (NOT a) OR (NOT b)
+def prop_demorgan_and (a b : Expr) (row : Row) : Bool :=
+  evalExpr row (.unaryOp .not (.binOp .and a b)) ==
+  evalExpr row (.binOp .or (.unaryOp .not a) (.unaryOp .not b))
+
+-- Property: De Morgan's law: NOT (a OR b) == (NOT a) AND (NOT b)
+def prop_demorgan_or (a b : Expr) (row : Row) : Bool :=
+  evalExpr row (.unaryOp .not (.binOp .or a b)) ==
+  evalExpr row (.binOp .and (.unaryOp .not a) (.unaryOp .not b))
+
+end LSpecTests.ExprProperties
+```
+
+### Step 3: Create the LSpec Test Runner
+
+Create `LSpecTests/Main.lean`:
+
+```lean
+-- LSpecTests/Main.lean
+import LSpec
+import SqlEquiv
+import LSpecTests.Generators
+import LSpecTests.ExprProperties
+
+open LSpec
+open SqlEquiv.Ast
+open LSpecTests.Generators
+open LSpecTests.ExprProperties
+
+/-!
+# LSpec Property-Based Test Suite
+
+This suite runs randomized property tests to discover edge cases.
+When a test fails, LSpec will shrink the counterexample to a minimal
+reproducing case.
+
+## Capturing Counterexamples
+
+When you find a failing case, add it to `Test/RegressionTest.lean`
+using the shrunk counterexample. See the "Counterexample Workflow"
+section in docs/LSPEC_INTEGRATION.md.
+-/
+
+-- Configuration for property tests
+def testConfig : LSpec.Config := {
+  numTests := 1000      -- Number of random tests per property
+  maxShrinks := 100     -- Maximum shrinking iterations
+  seed := none          -- Use random seed (or set for reproducibility)
+}
+
+def main : IO UInt32 := do
+  IO.println "╔═══════════════════════════════════════════╗"
+  IO.println "║   SQL Equiv LSpec Property Test Suite     ║"
+  IO.println "╠═══════════════════════════════════════════╣"
+  IO.println "║  Running randomized property tests...     ║"
+  IO.println "║  Failures will be shrunk automatically.   ║"
+  IO.println "╚═══════════════════════════════════════════╝"
+  IO.println ""
+
+  -- Run property tests
+  -- Note: Actual LSpec API may vary; adapt to current version
+  let suite := LSpec.group "Expression Properties" $
+    LSpec.group "Commutativity" [
+      LSpec.check "AND is commutative" (∀ a b row, prop_and_commutative a b row),
+      LSpec.check "OR is commutative" (∀ a b row, prop_or_commutative a b row)
+    ] ++
+    LSpec.group "Identity Laws" [
+      LSpec.check "x AND true == x" (∀ a row, prop_and_identity a row),
+      LSpec.check "x OR false == x" (∀ a row, prop_or_identity a row)
+    ] ++
+    LSpec.group "Annihilator Laws" [
+      LSpec.check "x AND false == false" (∀ a row, prop_and_annihilator a row),
+      LSpec.check "x OR true == true" (∀ a row, prop_or_annihilator a row)
+    ] ++
+    LSpec.group "De Morgan's Laws" [
+      LSpec.check "NOT (a AND b) == (NOT a) OR (NOT b)" (∀ a b row, prop_demorgan_and a b row),
+      LSpec.check "NOT (a OR b) == (NOT a) AND (NOT b)" (∀ a b row, prop_demorgan_or a b row)
+    ] ++
+    LSpec.group "Double Negation" [
+      LSpec.check "NOT (NOT x) == x" (∀ a row, prop_double_negation a row)
+    ]
+
+  let result ← LSpec.runWith testConfig suite
+
+  if result.failures.isEmpty then
+    IO.println "\n✓ All property tests passed!"
+    return 0
+  else
+    IO.println "\n✗ Some tests failed. Shrunk counterexamples:"
+    for (name, counterexample) in result.failures do
+      IO.println s!"  - {name}:"
+      IO.println s!"    {counterexample}"
+      IO.println ""
+    IO.println "Add these counterexamples to Test/RegressionTest.lean"
+    return 1
+```
+
+### Step 4: Create the Regression Test File
+
+Create `Test/RegressionTest.lean` to hold captured counterexamples:
+
+```lean
+-- Test/RegressionTest.lean
+import SqlEquiv
+import Test.Common
+
+open SqlEquiv.Ast
+open SqlEquiv.Semantics
+open Test.Common
+
+/-!
+# Regression Tests from LSpec Counterexamples
+
+This file contains minimal test cases discovered by LSpec property testing.
+Each test represents a shrunk counterexample that revealed a bug or edge case.
+
+## Adding New Tests
+
+When LSpec finds a failing property and shrinks it, add the counterexample here:
+
+1. Copy the shrunk expression/values from LSpec output
+2. Create a new test function with a descriptive name
+3. Include a comment noting which property failed and when
+
+Example:
+```
+-- Found 2024-01-15: prop_double_negation failed with NULL handling
+def test_double_neg_null : TestResult :=
+  let expr := Expr.unaryOp .not (.unaryOp .not .null)
+  let row := []
+  let result := evalExpr row expr
+  let expected := evalExpr row .null
+  if result == expected then .pass "double_neg_null"
+  else .fail "double_neg_null" s!"Expected {expected}, got {result}"
+```
+-/
+
+namespace Test.RegressionTest
+
+-- ============================================================================
+-- NULL Handling Edge Cases
+-- ============================================================================
+
+-- Placeholder: Add NULL-related counterexamples here
+-- Example discovered edge case:
+-- def test_null_and_true : TestResult :=
+--   let expr := Expr.binOp .and .null (.literal (.bool true))
+--   let result := evalExpr [] expr
+--   -- NULL AND TRUE should be NULL (three-valued logic)
+--   if result == .null none then .pass "null_and_true"
+--   else .fail "null_and_true" s!"Expected null, got {result}"
+
+-- ============================================================================
+-- Arithmetic Edge Cases
+-- ============================================================================
+
+-- Placeholder: Add arithmetic counterexamples here
+
+-- ============================================================================
+-- String Handling Edge Cases
+-- ============================================================================
+
+-- Placeholder: Add string counterexamples here
+
+-- ============================================================================
+-- Test Runner
+-- ============================================================================
+
+def regressionTests : List TestResult := [
+  -- Add tests here as they are discovered
+  -- test_null_and_true,
+  -- test_division_by_zero,
+  -- etc.
+]
+
+def runRegressionTests : IO Unit := do
+  IO.println "Running regression tests (captured LSpec counterexamples)..."
+  let results := regressionTests
+  let passed := results.filter (· matches .pass _) |>.length
+  let failed := results.filter (· matches .fail _ _) |>.length
+  IO.println s!"  Passed: {passed}, Failed: {failed}"
+  for result in results do
+    match result with
+    | .fail name msg => IO.println s!"  ✗ {name}: {msg}"
+    | .pass _ => pure ()
+
+end Test.RegressionTest
+```
+
+### Step 5: Wire Regression Tests into Main Suite
+
+Update `Test/Main.lean` to include regression tests:
+
+```lean
+-- Add import
+import Test.RegressionTest
+
+-- Add to main function, after other test suites:
+let _ ← RegressionTest.runRegressionTests
+```
+
+## Workflow: Capturing Counterexamples
+
+### The Process
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    LSpec Discovery Workflow                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. Run LSpec        lake exe sql_equiv_lspec                   │
+│         │                                                        │
+│         ▼                                                        │
+│  2. Property fails   "prop_and_commutative failed"              │
+│         │                                                        │
+│         ▼                                                        │
+│  3. LSpec shrinks    Finds minimal counterexample:              │
+│         │            a = .null, b = .literal (.bool true)       │
+│         │            row = []                                    │
+│         ▼                                                        │
+│  4. Investigate      Is this a bug or expected behavior?        │
+│         │                                                        │
+│         ├─── Bug ───► Fix the code, then add regression test    │
+│         │                                                        │
+│         └─ Expected ► Update property or document behavior      │
+│                                                                  │
+│  5. Add to           Test/RegressionTest.lean                   │
+│     unit tests       (prevents regression)                       │
+│                                                                  │
+│  6. CI runs fast     lake exe sql_equiv_test                    │
+│     deterministic    (includes captured counterexamples)         │
+│     tests                                                        │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Example: From Failure to Regression Test
+
+**Step 1**: Run LSpec and observe failure
+
+```bash
+$ lake exe sql_equiv_lspec
+
+╔═══════════════════════════════════════════╗
+║   SQL Equiv LSpec Property Test Suite     ║
+╚═══════════════════════════════════════════╝
+
+✗ Double Negation: NOT (NOT x) == x
+  Counterexample after 47 shrinks:
+    a   = Expr.null
+    row = []
+
+  evalExpr [] (NOT (NOT NULL)) = bool false
+  evalExpr [] NULL             = null
+```
+
+**Step 2**: Investigate
+
+This reveals that `NOT NULL` returns a boolean instead of propagating NULL (three-valued logic issue).
+
+**Step 3**: Fix the bug in `SqlEquiv/Semantics.lean`
+
+**Step 4**: Add regression test to `Test/RegressionTest.lean`
+
+```lean
+-- Found 2024-01-15: prop_double_negation failed
+-- NOT NULL should return NULL, not a boolean
+-- Bug was in evalUnaryOp .not case
+def test_not_null_returns_null : TestResult :=
+  let expr := Expr.unaryOp .not .null
+  let result := evalExpr [] expr
+  match result with
+  | .null _ => .pass "not_null_returns_null"
+  | other => .fail "not_null_returns_null"
+      s!"NOT NULL should be NULL, got {other}"
+
+def test_double_not_null : TestResult :=
+  let expr := Expr.unaryOp .not (.unaryOp .not .null)
+  let result := evalExpr [] expr
+  match result with
+  | .null _ => .pass "double_not_null"
+  | other => .fail "double_not_null"
+      s!"NOT (NOT NULL) should be NULL, got {other}"
+```
+
+**Step 5**: Verify both suites pass
+
+```bash
+$ lake exe sql_equiv_test      # Fast, deterministic (includes new regression tests)
+$ lake exe sql_equiv_lspec     # Randomized (should now pass)
+```
+
+## Running the Test Suites
+
+### Commands
+
+```bash
+# Build everything
+lake build
+
+# Run fast deterministic tests (CI)
+lake exe sql_equiv_test
+
+# Run LSpec property tests (exploratory)
+lake exe sql_equiv_lspec
+
+# Run LSpec with specific seed (reproducible)
+LSPEC_SEED=12345 lake exe sql_equiv_lspec
+
+# Run LSpec with more iterations (thorough)
+LSPEC_NUM_TESTS=10000 lake exe sql_equiv_lspec
+```
+
+### CI Configuration
+
+Keep the existing CI workflow for fast tests. Add a separate workflow for LSpec:
+
+```yaml
+# .github/workflows/lspec.yml
+name: LSpec Property Tests
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sundays
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  lspec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Cache Lake packages
+        uses: actions/cache@v4
+        with:
+          path: .lake
+          key: lake-lspec-${{ hashFiles('lakefile.toml') }}-${{ hashFiles('lean-toolchain') }}
+
+      - name: Build LSpec tests
+        run: lake build sql_equiv_lspec
+
+      - name: Run LSpec property tests
+        run: lake exe sql_equiv_lspec
+        env:
+          LSPEC_NUM_TESTS: 5000
+```
+
+## Best Practices
+
+### 1. Property Design
+
+Write properties that test **semantic invariants**, not implementation details:
+
+```lean
+-- Good: Tests a mathematical property
+def prop_addition_commutative (a b : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .add a b) == evalExpr row (.binOp .add b a)
+
+-- Bad: Tests implementation detail
+def prop_uses_hashmap_internally : Bool := ...
+```
+
+### 2. Generator Quality
+
+Ensure generators produce good coverage:
+
+```lean
+-- Good: Covers edge cases
+instance : Gen Value where
+  gen := Gen.frequency [
+    (1, pure (.null none)),           -- NULL (important edge case)
+    (3, .bool <$> Gen.bool),          -- Booleans
+    (3, .int <$> Gen.int),            -- Integers
+    (2, .string <$> Gen.string),      -- Strings
+    (1, pure (.int 0)),               -- Zero (edge case)
+    (1, pure (.string "")),           -- Empty string (edge case)
+  ]
+```
+
+### 3. Shrinking
+
+LSpec's shrinking works best when types have `Shrink` instances:
+
+```lean
+instance : Shrink Value where
+  shrink v := match v with
+    | .int n => (.int <$> Shrink.shrink n) ++ [.null none]
+    | .string s => (.string <$> Shrink.shrink s) ++ [.null none]
+    | .bool b => [.null none]
+    | .null _ => []
+    | _ => [.null none]
+```
+
+### 4. Regression Test Naming
+
+Use descriptive names that indicate the origin:
+
+```lean
+-- Good: Clear origin and purpose
+def test_lspec_null_and_true_three_valued_logic : TestResult := ...
+def test_lspec_empty_string_comparison : TestResult := ...
+
+-- Bad: Unclear
+def test1 : TestResult := ...
+def test_bug_fix : TestResult := ...
+```
+
+### 5. Documentation
+
+Document each regression test with:
+- Date discovered
+- Which property failed
+- Brief explanation of the edge case
+
+```lean
+/--
+Found: 2024-01-15
+Property: prop_demorgan_and
+Issue: De Morgan's law doesn't hold when operands are NULL
+       because NULL AND NULL ≠ NULL (should be NULL)
+Fix: Updated evalBinOp to propagate NULL correctly
+-/
+def test_demorgan_with_nulls : TestResult := ...
+```
+
+## Appendix: LSpec API Reference
+
+### Core Types
+
+```lean
+-- Generator monad
+def Gen (α : Type) : Type
+
+-- Property type
+def Property : Type := ... -- Depends on LSpec version
+
+-- Test configuration
+structure Config where
+  numTests : Nat := 100
+  maxShrinks : Nat := 100
+  seed : Option Nat := none
+```
+
+### Key Functions
+
+```lean
+-- Run a test suite
+def LSpec.run (suite : TestSuite) : IO TestResult
+
+-- Check a property
+def LSpec.check (name : String) (prop : Property) : Test
+
+-- Group tests
+def LSpec.group (name : String) (tests : List Test) : TestSuite
+
+-- Basic generators
+def Gen.bool : Gen Bool
+def Gen.int : Gen Int
+def Gen.nat : Gen Nat
+def Gen.string : Gen String
+def Gen.list (g : Gen α) : Gen (List α)
+def Gen.choose (lo hi : Int) : Gen Int
+def Gen.elements (xs : Array α) : Gen α
+def Gen.frequency (weighted : List (Nat × Gen α)) : Gen α
+```
+
+## Summary
+
+| Aspect | Existing Suite | LSpec Suite |
+|--------|---------------|-------------|
+| **Purpose** | Fast CI validation | Edge case discovery |
+| **Determinism** | Deterministic | Randomized |
+| **Speed** | Fast (~seconds) | Slower (~minutes) |
+| **When to run** | Every commit | Weekly / on-demand |
+| **Failure handling** | Fix immediately | Shrink → capture → fix |
+| **Location** | `Test/` | `LSpecTests/` |
+| **Command** | `lake exe sql_equiv_test` | `lake exe sql_equiv_lspec` |
+
+The two approaches complement each other: LSpec discovers new edge cases through randomization, and the captured counterexamples become permanent regression tests that run quickly in CI.
