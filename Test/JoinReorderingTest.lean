@@ -250,9 +250,12 @@ def testReorderJoinsMultipleTables : TestResult :=
     Rather than joining largest first which would give worse intermediates. -/
 def testGreedyJoinOrder : TestResult :=
   -- Create nodes with different cardinalities
-  let small : JoinNode := { table := ⟨"small", some "s"⟩, estimatedRows := 10, originalTables := ["s"] }
-  let medium : JoinNode := { table := ⟨"medium", some "m"⟩, estimatedRows := 100, originalTables := ["m"] }
-  let large : JoinNode := { table := ⟨"large", some "l"⟩, estimatedRows := 1000, originalTables := ["l"] }
+  let smallTable : TableRef := ⟨"small", some "s"⟩
+  let mediumTable : TableRef := ⟨"medium", some "m"⟩
+  let largeTable : TableRef := ⟨"large", some "l"⟩
+  let small : JoinNode := { table := smallTable, estimatedRows := 10, originalTables := ["s"], originalFrom := .table smallTable }
+  let medium : JoinNode := { table := mediumTable, estimatedRows := 100, originalTables := ["m"], originalFrom := .table mediumTable }
+  let large : JoinNode := { table := largeTable, estimatedRows := 1000, originalTables := ["l"], originalFrom := .table largeTable }
   let nodes := [small, medium, large]
   -- No edges = cross joins, cost is purely row count product
   match greedyReorder nodes [] with
@@ -314,12 +317,83 @@ def testReorderCrossJoinsPreservesType : TestResult :=
     .fail "reorderJoins" s!"Expected 2 CROSS joins, got {crossCount}"
 
 -- ============================================================================
+-- Subquery Handling Tests
+-- ============================================================================
+
+/-- Helper: create a simple subquery FROM clause -/
+def subqueryFrom (sel : SelectStmt) (alias : String) : FromClause := .subquery sel alias
+
+/-- Helper: create a simple SELECT statement -/
+def simpleSelect (items : List SelectItem) (from_ : Option FromClause) : SelectStmt :=
+  SelectStmt.mk false items from_ none [] none [] none none
+
+/-- Test that subqueries are treated as opaque leaf nodes and preserved during reordering -/
+def testReorderJoinsWithSubquery : TestResult :=
+  -- Create a subquery: (SELECT id, name FROM users) AS sub
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (qcol "users" "id") (some "id"),
+     SelectItem.exprItem (qcol "users" "name") (some "name")]
+    (some (table "users"))
+  let subq := subqueryFrom innerSel "sub"
+  -- Join subquery with a regular table: sub INNER JOIN orders
+  let from_ := innerJoin subq (tableAs "orders" "o") none
+  -- hasOnlyInnerOrCrossJoins should return true (subquery is a valid leaf)
+  if !hasOnlyInnerOrCrossJoins from_ then
+    return .fail "Subquery leaf" "hasOnlyInnerOrCrossJoins should return true"
+  -- Reorder should preserve the subquery
+  let reordered := reorderJoins from_
+  -- Check that reordered result still contains a subquery
+  let rec hasSubquery : FromClause → Bool
+    | .table _ => false
+    | .subquery _ _ => true
+    | .join l _ r _ => hasSubquery l || hasSubquery r
+  if hasSubquery reordered then
+    .pass "reorderJoins: preserves subquery as leaf"
+  else
+    .fail "Subquery preservation" "Subquery was lost during reordering"
+
+/-- Test that extractLeafTables correctly extracts subquery as a leaf -/
+def testExtractLeafTablesWithSubquery : TestResult :=
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (qcol "t" "id") (some "id")]
+    (some (table "t"))
+  let subq := subqueryFrom innerSel "sub"
+  let from_ := innerJoin (tableAs "users" "u") subq none
+  let leaves := extractLeafTables from_
+  -- Should have 2 leaves: users and the subquery
+  if leaves.length != 2 then
+    return .fail "extractLeafTables subquery" s!"Expected 2 leaves, got {leaves.length}"
+  -- Check that one of the leaves has the subquery's alias
+  if leaves.any (fun n => n.originalTables == ["sub"]) then
+    .pass "extractLeafTables: includes subquery leaf"
+  else
+    .fail "extractLeafTables subquery" "Subquery leaf not found"
+
+/-- Test that subquery's originalFrom is preserved (not converted to base table) -/
+def testSubqueryOriginalFromPreserved : TestResult :=
+  let innerSel := simpleSelect
+    [SelectItem.exprItem (qcol "t" "id") (some "id")]
+    (some (table "t"))
+  let subq := subqueryFrom innerSel "sub"
+  let leaves := extractLeafTables subq
+  match leaves with
+  | [node] =>
+    -- The originalFrom should be the subquery, not a table
+    match node.originalFrom with
+    | .subquery _ _ => .pass "extractLeafTables: preserves subquery in originalFrom"
+    | .table _ => .fail "Subquery originalFrom" "originalFrom should be subquery, not table"
+    | _ => .fail "Subquery originalFrom" "Unexpected FromClause type"
+  | _ => .fail "Subquery extraction" s!"Expected 1 leaf, got {leaves.length}"
+
+-- ============================================================================
 -- Cost Estimation Tests
 -- ============================================================================
 
 def testEstimateJoinCostNoEdges : TestResult :=
-  let n1 : JoinNode := { table := ⟨"a", none⟩, estimatedRows := 100, originalTables := ["a"] }
-  let n2 : JoinNode := { table := ⟨"b", none⟩, estimatedRows := 200, originalTables := ["b"] }
+  let t1 : TableRef := ⟨"a", none⟩
+  let t2 : TableRef := ⟨"b", none⟩
+  let n1 : JoinNode := { table := t1, estimatedRows := 100, originalTables := ["a"], originalFrom := .table t1 }
+  let n2 : JoinNode := { table := t2, estimatedRows := 200, originalTables := ["b"], originalFrom := .table t2 }
   let cost := estimateJoinCost n1 n2 []
   -- Cross join: 100 * 200 = 20000
   if cost == 20000 then
@@ -328,8 +402,10 @@ def testEstimateJoinCostNoEdges : TestResult :=
     .fail "estimateJoinCost" s!"Expected 20000, got {cost}"
 
 def testEstimateJoinCostWithEdge : TestResult :=
-  let n1 : JoinNode := { table := ⟨"a", none⟩, estimatedRows := 100, originalTables := ["a"] }
-  let n2 : JoinNode := { table := ⟨"b", none⟩, estimatedRows := 200, originalTables := ["b"] }
+  let t1 : TableRef := ⟨"a", none⟩
+  let t2 : TableRef := ⟨"b", none⟩
+  let n1 : JoinNode := { table := t1, estimatedRows := 100, originalTables := ["a"], originalFrom := .table t1 }
+  let n2 : JoinNode := { table := t2, estimatedRows := 200, originalTables := ["b"], originalFrom := .table t2 }
   let edge : JoinEdge := {
     leftTable := "a",
     rightTable := "b",
@@ -375,6 +451,10 @@ def allTests : List TestResult := [
   testGreedyJoinOrder,
   testReorderJoinsPreservesPredicates,
   testReorderCrossJoinsPreservesType,
+  -- Subquery handling
+  testReorderJoinsWithSubquery,
+  testExtractLeafTablesWithSubquery,
+  testSubqueryOriginalFromPreserved,
   -- Cost estimation
   testEstimateJoinCostNoEdges,
   testEstimateJoinCostWithEdge

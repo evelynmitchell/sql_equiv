@@ -35,6 +35,8 @@ structure JoinNode where
   estimatedRows : Nat
   /-- All original table names contained in this node (for edge matching) -/
   originalTables : List String
+  /-- The original FromClause for leaf nodes (used during reconstruction) -/
+  originalFrom : FromClause
   deriving Repr, BEq
 
 /-- An edge in the join graph representing a join predicate -/
@@ -57,14 +59,18 @@ structure JoinEdge where
 def JoinNode.leaf (t : TableRef) : JoinNode :=
   { table := t
   , estimatedRows := defaultCardinality
-  , originalTables := [getTableName t] }
+  , originalTables := [getTableName t]
+  , originalFrom := .table t }
 
 /-- Combine two nodes after joining them.
-    Creates a synthetic TableRef and merges the original tables lists. -/
+    Creates a synthetic TableRef and merges the original tables lists.
+    The originalFrom is a placeholder (combined nodes are not used as leaves). -/
 def JoinNode.combine (n1 n2 : JoinNode) (resultRows : Nat) : JoinNode :=
-  { table := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
+  let syntheticTable : TableRef := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
+  { table := syntheticTable
   , estimatedRows := resultRows
-  , originalTables := n1.originalTables ++ n2.originalTables }
+  , originalTables := n1.originalTables ++ n2.originalTables
+  , originalFrom := .table syntheticTable }  -- Placeholder, not used for combined nodes
 
 /-- Check if a node contains a specific table -/
 def JoinNode.containsTable (node : JoinNode) (tableName : String) : Bool :=
@@ -106,15 +112,18 @@ def extractJoinEdges (preds : List Expr) : List JoinEdge :=
 /-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder).
     Subqueries are treated as opaque leaf nodes - we don't reorder within them,
     but they can participate in reordering at their containing level. -/
-partial def hasOnlyInnerJoins : FromClause → Bool
+partial def hasOnlyInnerOrCrossJoins : FromClause → Bool
   | .table _ => true
   | .subquery _ _ => true  -- Treat subquery as opaque leaf node
   | .join left jtype right _ =>
     (jtype == .inner || jtype == .cross) &&
-    hasOnlyInnerJoins left && hasOnlyInnerJoins right
+    hasOnlyInnerOrCrossJoins left && hasOnlyInnerOrCrossJoins right
+
+/-- Backwards-compatible alias for hasOnlyInnerOrCrossJoins -/
+abbrev hasOnlyInnerJoins := hasOnlyInnerOrCrossJoins
 
 /-- Check if we can safely reorder joins in this FROM clause -/
-def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerJoins from_
+def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerOrCrossJoins from_
 
 -- ============================================================================
 -- Cost Estimation
@@ -144,14 +153,17 @@ def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
 -- Join Graph Extraction
 -- ============================================================================
 
-/-- Extract leaf tables from a FROM clause -/
+/-- Extract leaf tables from a FROM clause.
+    Preserves original FromClause for each leaf (including subqueries) so that
+    reconstruction produces semantically equivalent results. -/
 partial def extractLeafTables : FromClause → List JoinNode
-  | .table t => [JoinNode.leaf t]
-  | .subquery _sel alias =>
-    -- Treat subquery as a single leaf node
-    [{ table := ⟨alias, some alias⟩
+  | fc@(.table t) => [JoinNode.leaf t]
+  | fc@(.subquery sel alias) =>
+    -- Treat subquery as a single leaf node, preserving the original FromClause
+    [{ table := ⟨alias, none⟩  -- Use none to avoid base table lookup confusion
      , estimatedRows := defaultCardinality
-     , originalTables := [alias] }]
+     , originalTables := [alias]
+     , originalFrom := fc }]  -- Preserve the actual subquery
   | .join left _ right _ =>
     extractLeafTables left ++ extractLeafTables right
 
@@ -241,14 +253,16 @@ partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge) : Opti
 -- ============================================================================
 
 /-- Build FROM clause from join steps, using the computed order.
-    Each step combines two subtrees with an INNER JOIN. -/
+    Each step combines two subtrees with an INNER JOIN when predicates are present,
+    or a CROSS JOIN when there are no predicates. Uses originalFrom to preserve
+    subqueries and other leaf types during reconstruction. -/
 def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option FromClause :=
   match nodes with
   | [] => none
-  | [n] => some (FromClause.table n.table)
+  | [n] => some n.originalFrom  -- Use preserved FromClause (handles subqueries)
   | _ =>
     -- Build a map from table names to their current FromClause
-    -- Start with leaf tables, then combine as we process steps
+    -- Start with leaf FromClauses (preserved in originalFrom), then combine as we process steps
     let rec go (remaining : List JoinStep)
                (nodeMap : List (List String × FromClause)) : Option FromClause :=
       match remaining with
@@ -276,7 +290,8 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
             ts != leftTables && ts != rightTables)
           go rest ((combinedTables, combined) :: newMap)
         | _, _ => none  -- Shouldn't happen
-    let initialMap := nodes.map fun n => (n.originalTables, FromClause.table n.table)
+    -- Initialize with preserved FromClauses (handles subqueries correctly)
+    let initialMap := nodes.map fun n => (n.originalTables, n.originalFrom)
     go steps initialMap
 
 -- ============================================================================
