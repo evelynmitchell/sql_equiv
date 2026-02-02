@@ -10,14 +10,9 @@
   - Tracks original tables through combined nodes for predicate placement
   - Cost-based selection using estimated row counts
   - Extracts join predicates from ON clauses for edge detection
+  - Subqueries are treated as opaque leaf nodes (preserved during reconstruction)
 
-  Limitations (intentionally conservative for correctness):
-  - Subqueries in FROM clause block reordering entirely. While subqueries
-    could theoretically be treated as opaque leaf nodes, this would require
-    tracking the original FromClause (not just TableRef) and careful handling
-    of correlated references. The current implementation prioritizes safety.
-  - Subqueries in ON predicates (.exists, .inSubquery, scalar subqueries)
-    also block reordering, as correlated subqueries may depend on join order.
+  Safety constraints:
   - Unqualified column references in ON predicates block reordering
     (since column resolution depends on row order in current semantics)
 
@@ -47,6 +42,8 @@ structure JoinNode where
   estimatedRows : Nat
   /-- All original table names contained in this node (for edge matching) -/
   originalTables : List String
+  /-- The original FromClause for leaf nodes (used during reconstruction to preserve subqueries) -/
+  originalFrom : FromClause
   deriving Repr, BEq
 
 /-- An edge in the join graph representing a join predicate -/
@@ -68,11 +65,12 @@ structure JoinEdge where
 /-- Initialize a leaf node from a table reference with a given ID.
     Leaf IDs are tagged as even numbers (2 * id) so that combined node IDs,
     which are tagged as odd numbers, cannot collide with them. -/
-def JoinNode.leaf (id : Nat) (t : TableRef) : JoinNode :=
+def JoinNode.leaf (id : Nat) (t : TableRef) (from_ : FromClause := .table t) : JoinNode :=
   { id := 2 * id  -- even: leaf nodes
   , table := t
   , estimatedRows := defaultCardinality
-  , originalTables := [getTableName t] }
+  , originalTables := [getTableName t]
+  , originalFrom := from_ }
 
 /-- Generate a unique ID for combined join nodes using Cantor pairing.
     Combined node IDs are tagged as odd numbers to avoid collisions with
@@ -85,12 +83,15 @@ def pairIds (a b : Nat) : Nat :=
 
 /-- Combine two nodes after joining them.
     Creates a synthetic TableRef and merges the original tables lists.
-    The new node gets a fresh ID computed via Cantor pairing. -/
+    The new node gets a fresh ID computed via Cantor pairing.
+    The originalFrom is a placeholder (combined nodes are not used as leaves). -/
 def JoinNode.combine (n1 n2 : JoinNode) (resultRows : Nat) : JoinNode :=
+  let syntheticTable : TableRef := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
   { id := pairIds n1.id n2.id  -- collision-free synthetic ID
-  , table := ⟨s!"{n1.table.name}_{n2.table.name}", some "__combined__"⟩
+  , table := syntheticTable
   , estimatedRows := resultRows
-  , originalTables := n1.originalTables ++ n2.originalTables }
+  , originalTables := n1.originalTables ++ n2.originalTables
+  , originalFrom := .table syntheticTable }  -- Placeholder, not used for combined nodes
 
 /-- Check if a node contains a specific table -/
 def JoinNode.containsTable (node : JoinNode) (tableName : String) : Bool :=
@@ -142,9 +143,9 @@ partial def exprHasUnqualifiedColumnRef : Expr → Bool
   | .unaryOp _ e => exprHasUnqualifiedColumnRef e
   | .between e1 e2 e3 => exprHasUnqualifiedColumnRef e1 || exprHasUnqualifiedColumnRef e2 || exprHasUnqualifiedColumnRef e3
   | .inList e _ es => exprHasUnqualifiedColumnRef e || es.any exprHasUnqualifiedColumnRef
-  | .inSubquery _ _ _ => true  -- conservatively block: correlated subqueries may depend on join order
-  | .exists _ _ => true        -- conservatively block: correlated subqueries may depend on join order
-  | .subquery _ => true        -- conservatively block: scalar subqueries may depend on join order
+  | .inSubquery e _ _ => exprHasUnqualifiedColumnRef e  -- Only check outer expr; subquery has own scope
+  | .exists _ _ => false        -- Subquery has its own scope
+  | .subquery _ => false        -- Scalar subquery has its own scope
   | .«case» cases else_ =>
     cases.any (fun (c, r) => exprHasUnqualifiedColumnRef c || exprHasUnqualifiedColumnRef r) ||
     (else_.map exprHasUnqualifiedColumnRef).getD false
@@ -160,23 +161,26 @@ def optExprHasUnqualifiedColumnRef : Option Expr → Bool
   | none => false
   | some e => exprHasUnqualifiedColumnRef e
 
-/-- Check if a FROM clause contains only INNER/CROSS joins whose ON predicates
-    use only qualified column references (safe to reorder).
-    Returns false for subqueries because they introduce scoping boundaries that
-    complicate predicate placement and alias resolution. This is conservative:
-    the entire FROM clause is rejected if any subquery is present, even though
-    subqueries could theoretically be treated as leaf nodes. -/
-partial def hasOnlyInnerJoins : FromClause → Bool
+/-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder).
+    Subqueries are treated as opaque leaf nodes - we don't reorder within them,
+    but they can participate in reordering at their containing level. -/
+partial def hasOnlyInnerOrCrossJoins : FromClause → Bool
   | .table _ => true
-  | .subquery _ _ => false  -- conservative: subqueries introduce scope boundaries
+  | .subquery _ _ => true  -- Treat subquery as opaque leaf node
   | .join left jtype right onExpr =>
     (jtype == .inner || jtype == .cross) &&
     -- Reject if the ON predicate contains any unqualified column reference
     !optExprHasUnqualifiedColumnRef onExpr &&
-    hasOnlyInnerJoins left && hasOnlyInnerJoins right
+    hasOnlyInnerOrCrossJoins left && hasOnlyInnerOrCrossJoins right
+
+/-- Backwards-compatible alias for hasOnlyInnerOrCrossJoins.
+    @deprecated: Name is misleading as it returns true for CROSS joins too.
+    Use hasOnlyInnerOrCrossJoins for clarity in new code. -/
+@[deprecated hasOnlyInnerOrCrossJoins (since := "2026-02-02")]
+abbrev hasOnlyInnerJoins := hasOnlyInnerOrCrossJoins
 
 /-- Check if we can safely reorder joins in this FROM clause -/
-def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerJoins from_
+def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerOrCrossJoins from_
 
 -- ============================================================================
 -- Cost Estimation
@@ -210,16 +214,14 @@ def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
 -- Join Graph Extraction
 -- ============================================================================
 
-/-- Extract leaf tables from a FROM clause, returning nodes without IDs.
-    Note: The subquery case is currently unreachable because hasOnlyInnerJoins
-    rejects any FROM clause containing subqueries. It's kept for potential
-    future relaxation of that constraint. -/
-partial def extractLeafTablesRaw : FromClause → List (TableRef × List String)
-  | .table t => [(t, [getTableName t])]
-  | .subquery _sel alias =>
-    -- Currently unreachable (hasOnlyInnerJoins blocks subqueries)
-    -- If enabled, would need JoinNode to carry original FromClause, not just TableRef
-    [(⟨alias, some alias⟩, [alias])]
+/-- Extract leaf tables from a FROM clause, returning (TableRef, originalTables, originalFromClause).
+    Preserves original FromClause for each leaf (including subqueries) so that
+    reconstruction produces semantically equivalent results. -/
+partial def extractLeafTablesRaw : FromClause → List (TableRef × List String × FromClause)
+  | fc@(.table t) => [(t, [getTableName t], fc)]
+  | fc@(.subquery _sel alias) =>
+    -- Treat subquery as a single leaf node, preserving the original FromClause
+    [(⟨alias, none⟩, [alias], fc)]
   | .join left _ right _ =>
     extractLeafTablesRaw left ++ extractLeafTablesRaw right
 
@@ -231,11 +233,12 @@ def assignIds {α : Type} (items : List α) : List (Nat × α) :=
   go 0 items
 
 /-- Extract leaf tables from a FROM clause with unique IDs assigned.
-    Delegates to JoinNode.leaf for consistent ID tagging and initialization. -/
+    Delegates to JoinNode.leaf for consistent ID tagging and initialization.
+    Preserves originalFrom for subquery reconstruction. -/
 def extractLeafTables (from_ : FromClause) : List JoinNode :=
   let raw := extractLeafTablesRaw from_
-  (assignIds raw).map fun (idx, (t, tables)) =>
-    let node := JoinNode.leaf idx t  -- handles even-tagging (2*idx) and defaults
+  (assignIds raw).map fun (idx, (t, tables, origFrom)) =>
+    let node := JoinNode.leaf idx t origFrom  -- handles even-tagging (2*idx) and defaults
     { node with originalTables := tables }
 
 /-- Extract all predicates from ON clauses in a FROM clause -/
@@ -324,15 +327,16 @@ partial def greedyReorder (nodes : List JoinNode) (edges : List JoinEdge) : Opti
 
 /-- Build FROM clause from join steps, using the computed order.
     Each step combines two subtrees with either an INNER or CROSS JOIN,
-    depending on whether the step has join predicates. -/
+    depending on whether the step has join predicates. Uses originalFrom to
+    preserve subqueries and other leaf types during reconstruction. -/
 def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option FromClause :=
   match nodes with
   | [] => none
-  | [n] => some (FromClause.table n.table)
+  | [n] => some n.originalFrom  -- Use preserved FromClause (handles subqueries)
   | _ =>
     -- Build a map from node IDs to their current FromClause
     -- Using ID as key guarantees uniqueness even with duplicate table names
-    -- Start with leaf tables, then combine as we process steps
+    -- Start with leaf FromClauses (preserved in originalFrom), then combine as we process steps
     let rec go (remaining : List JoinStep)
                (nodeMap : List (Nat × FromClause)) : Option FromClause :=
       match remaining with
@@ -361,7 +365,8 @@ def buildFromSteps (steps : List JoinStep) (nodes : List JoinNode) : Option From
             id != leftId && id != rightId)
           go rest ((combinedId, combined) :: newMap)
         | _, _ => none  -- Shouldn't happen
-    let initialMap := nodes.map fun n => (n.id, FromClause.table n.table)
+    -- Initialize with preserved FromClauses (handles subqueries correctly)
+    let initialMap := nodes.map fun n => (n.id, n.originalFrom)
     go steps initialMap
 
 -- ============================================================================
