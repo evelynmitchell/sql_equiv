@@ -9,6 +9,7 @@ import SqlEquiv.Equiv
 import SqlEquiv.OptimizerUtils
 import SqlEquiv.ExprNormalization
 import SqlEquiv.JoinReordering
+import SqlEquiv.PredicatePushdown
 
 -- All types and functions are already in the SqlEquiv namespace
 -- Just import this module to get everything
