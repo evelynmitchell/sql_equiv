@@ -104,10 +104,11 @@ def extractJoinEdges (preds : List Expr) : List JoinEdge :=
 -- ============================================================================
 
 /-- Check if a FROM clause contains only INNER/CROSS joins (safe to reorder).
-    Returns false for subqueries (conservative: don't reorder across boundaries). -/
+    Subqueries are treated as opaque leaf nodes - we don't reorder within them,
+    but they can participate in reordering at their containing level. -/
 partial def hasOnlyInnerJoins : FromClause → Bool
   | .table _ => true
-  | .subquery _ _ => false  -- conservative: subqueries have their own scope
+  | .subquery _ _ => true  -- Treat subquery as opaque leaf node
   | .join left jtype right _ =>
     (jtype == .inner || jtype == .cross) &&
     hasOnlyInnerJoins left && hasOnlyInnerJoins right
@@ -119,17 +120,25 @@ def canReorderJoins (from_ : FromClause) : Bool := hasOnlyInnerJoins from_
 -- Cost Estimation
 -- ============================================================================
 
+/-- Maximum cardinality estimate to prevent overflow in cost calculations -/
+def maxCardinality : Nat := 1000000000  -- 1 billion
+
 /-- Estimate the cost of joining two nodes.
-    Uses a simple model: result size = n1.rows * n2.rows * selectivity -/
+    Uses a simple model: result size = n1.rows * n2.rows * selectivity.
+    Clamps result to maxCardinality to prevent overflow on large intermediate results. -/
 def estimateJoinCost (n1 n2 : JoinNode) (edges : List JoinEdge) : Nat :=
   -- Find edges that connect these two nodes
   let connectingEdges := edges.filter (edgeConnects · n1 n2)
   -- Use product of selectivities (or 1.0 if no edges = cross join)
   let selectivity := if connectingEdges.isEmpty then 1.0
     else connectingEdges.foldl (fun acc e => acc * e.selectivity) 1.0
-  -- Estimate result rows
+  -- Estimate result rows, clamping to prevent overflow
   let resultFloat := (n1.estimatedRows.toFloat * n2.estimatedRows.toFloat * selectivity)
-  resultFloat.toUInt64.toNat
+  -- Clamp to maxCardinality to avoid UInt64 overflow
+  let clamped := min resultFloat maxCardinality.toFloat
+  -- Ensure at least 1 row if both inputs were non-zero
+  let result := clamped.toUInt64.toNat
+  if result == 0 && n1.estimatedRows > 0 && n2.estimatedRows > 0 then 1 else result
 
 -- ============================================================================
 -- Join Graph Extraction
@@ -185,9 +194,12 @@ def findCheapestPair (nodes : List JoinNode) (edges : List JoinEdge) :
         if pair.2.2 < minCost then some pair else acc
     ) none pairs
 
-/-- Remove a node from the list -/
+/-- Remove only the first occurrence of a node from the list.
+    Uses explicit recursion to stop after first match, unlike filter which removes all. -/
 def removeNode (nodes : List JoinNode) (node : JoinNode) : List JoinNode :=
-  nodes.filter (· != node)
+  match nodes with
+  | [] => []
+  | n :: rest => if n == node then rest else n :: removeNode rest node
 
 /-- Collect edges that connect the given nodes -/
 def collectConnectingEdges (n1 n2 : JoinNode) (edges : List JoinEdge) : List Expr :=
@@ -303,7 +315,9 @@ def reorderJoins (from_ : FromClause) : FromClause :=
               | some p => flattenAnd p
               | none => []
             let allOn := unflattenAnd (existingPreds ++ nonJoinPreds)
-            .join left jt right allOn
+            -- Convert CROSS to INNER when adding predicates (evalFrom ignores ON for CROSS)
+            let joinType := if jt == .cross then JoinType.inner else jt
+            .join left joinType right allOn
           | other => other  -- Single table, no join to add predicates to
 
 -- ============================================================================
