@@ -119,7 +119,10 @@ partial def hasOnlyInnerOrCrossJoins : FromClause → Bool
     (jtype == .inner || jtype == .cross) &&
     hasOnlyInnerOrCrossJoins left && hasOnlyInnerOrCrossJoins right
 
-/-- Backwards-compatible alias for hasOnlyInnerOrCrossJoins -/
+/-- Backwards-compatible alias for hasOnlyInnerOrCrossJoins.
+    @deprecated: Name is misleading as it returns true for CROSS joins too.
+    Use hasOnlyInnerOrCrossJoins for clarity in new code. -/
+@[deprecated hasOnlyInnerOrCrossJoins]
 abbrev hasOnlyInnerJoins := hasOnlyInnerOrCrossJoins
 
 /-- Check if an expression contains any unqualified column references.
@@ -135,12 +138,12 @@ partial def exprHasUnqualifiedColumnRef : Expr → Bool
     exprHasUnqualifiedColumnRef high
   | .inList e _ vals =>
     exprHasUnqualifiedColumnRef e || vals.any exprHasUnqualifiedColumnRef
-  | .case whens else_ =>
+  | .«case» whens else_ =>
     whens.any (fun (c, r) => exprHasUnqualifiedColumnRef c || exprHasUnqualifiedColumnRef r) ||
     else_.map exprHasUnqualifiedColumnRef |>.getD false
   | .func _ args => args.any exprHasUnqualifiedColumnRef
   | .agg _ arg _ => arg.map exprHasUnqualifiedColumnRef |>.getD false
-  | .exists _ => false  -- Subquery has its own scope
+  | .exists _ _ => false  -- Subquery has its own scope
   | .inSubquery e _ _ => exprHasUnqualifiedColumnRef e  -- Only check outer expr
   | .windowFn _ arg spec =>
     arg.map exprHasUnqualifiedColumnRef |>.getD false ||

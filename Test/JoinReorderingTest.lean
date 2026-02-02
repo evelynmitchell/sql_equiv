@@ -44,51 +44,51 @@ def leftJoin (left : FromClause) (right : FromClause) (on_ : Option Expr) : From
 -- Safety Check Tests
 -- ============================================================================
 
-def testHasOnlyInnerJoinsSimple : TestResult :=
+def testHasOnlyInnerOrCrossJoinsSimple : TestResult :=
   let from_ := table "users"
-  if hasOnlyInnerJoins from_ then
-    .pass "Single table: has only inner joins"
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Single table: only INNER/CROSS joins"
   else
     .fail "Single table" "Should return true"
 
-def testHasOnlyInnerJoinsInner : TestResult :=
+def testHasOnlyInnerOrCrossJoinsInner : TestResult :=
   let from_ := innerJoin (table "users") (table "orders") none
-  if hasOnlyInnerJoins from_ then
-    .pass "Inner join: has only inner joins"
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Inner join: only INNER/CROSS joins"
   else
     .fail "Inner join" "Should return true"
 
-def testHasOnlyInnerJoinsCross : TestResult :=
+def testHasOnlyInnerOrCrossJoinsCross : TestResult :=
   let from_ := crossJoin (table "users") (table "orders")
-  if hasOnlyInnerJoins from_ then
-    .pass "Cross join: has only inner joins"
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Cross join: only INNER/CROSS joins"
   else
     .fail "Cross join" "Should return true"
 
-def testHasOnlyInnerJoinsNested : TestResult :=
+def testHasOnlyInnerOrCrossJoinsNested : TestResult :=
   let from_ := innerJoin
     (innerJoin (table "a") (table "b") none)
     (innerJoin (table "c") (table "d") none)
     none
-  if hasOnlyInnerJoins from_ then
-    .pass "Nested inner joins: has only inner joins"
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Nested inner joins: only INNER/CROSS joins"
   else
     .fail "Nested inner joins" "Should return true"
 
-def testHasOnlyInnerJoinsLeftJoin : TestResult :=
+def testHasOnlyInnerOrCrossJoinsLeftJoin : TestResult :=
   let from_ := leftJoin (table "users") (table "orders") none
-  if !hasOnlyInnerJoins from_ then
-    .pass "Left join: not only inner joins"
+  if !hasOnlyInnerOrCrossJoins from_ then
+    .pass "Left join: not only INNER/CROSS joins"
   else
     .fail "Left join" "Should return false"
 
-def testHasOnlyInnerJoinsMixed : TestResult :=
+def testHasOnlyInnerOrCrossJoinsMixed : TestResult :=
   let from_ := innerJoin
     (table "users")
     (leftJoin (table "orders") (table "items") none)
     none
-  if !hasOnlyInnerJoins from_ then
-    .pass "Mixed joins: not only inner joins"
+  if !hasOnlyInnerOrCrossJoins from_ then
+    .pass "Mixed joins: not only INNER/CROSS joins"
   else
     .fail "Mixed joins" "Should return false"
 
@@ -431,12 +431,12 @@ def testEstimateJoinCostWithEdge : TestResult :=
 
 def allTests : List TestResult := [
   -- Safety checks
-  testHasOnlyInnerJoinsSimple,
-  testHasOnlyInnerJoinsInner,
-  testHasOnlyInnerJoinsCross,
-  testHasOnlyInnerJoinsNested,
-  testHasOnlyInnerJoinsLeftJoin,
-  testHasOnlyInnerJoinsMixed,
+  testHasOnlyInnerOrCrossJoinsSimple,
+  testHasOnlyInnerOrCrossJoinsInner,
+  testHasOnlyInnerOrCrossJoinsCross,
+  testHasOnlyInnerOrCrossJoinsNested,
+  testHasOnlyInnerOrCrossJoinsLeftJoin,
+  testHasOnlyInnerOrCrossJoinsMixed,
   testCanReorderJoins,
   testCanReorderJoinsBlocksUnqualifiedCols,
   -- JoinNode
