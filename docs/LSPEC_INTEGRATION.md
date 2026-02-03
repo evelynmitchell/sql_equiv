@@ -30,7 +30,8 @@ By capturing shrunk counterexamples as unit tests, we get:
 
 ### 1. Add LSpec Dependency
 
-Update `lakefile.toml`:
+Update `lakefile.toml`. Pin dependencies to immutable commit SHAs rather than
+mutable branch names to ensure reproducible builds and avoid supply-chain risks:
 
 ```toml
 name = "sql_equiv"
@@ -40,12 +41,12 @@ defaultTargets = ["sql_equiv"]
 [[require]]
 name = "batteries"
 git = "https://github.com/leanprover-community/batteries"
-rev = "main"  # For production, consider pinning to a tagged release or commit SHA
+rev = "45926c76c3e0d876e39b3e9e5e77080fef0b10ba"
 
 [[require]]
 name = "LSpec"
 git = "https://github.com/argumentcomputer/LSpec"
-rev = "main"  # For production, consider pinning to a tagged release or commit SHA
+rev = "1e6da63a9c92473747e816d07d5c6f6bc7c8a59e"
 
 [[lean_lib]]
 name = "SqlEquiv"
@@ -72,6 +73,11 @@ name = "sql_equiv_lspec"
 root = "LSpecTests.Main"
 ```
 
+> **Dependency pinning**: Always use full commit SHAs in `rev` fields, not branch
+> names like `"main"`. Branch references are mutable — a force push or compromised
+> upstream could silently change what you build. To update a dependency, run
+> `lake update <dep>` and commit the new SHA from `lake-manifest.json`.
+
 ### 2. Fetch Dependencies
 
 ```bash
@@ -97,8 +103,8 @@ sql_equiv/
 │   └── RegressionTest.lean      # NEW: Captured counterexamples go here
 │
 ├── LSpecTests/                  # NEW: LSpec property test suite
-│   ├── Main.lean                # LSpec test runner
-│   ├── Generators.lean          # Gen instances for SqlEquiv types
+│   ├── Main.lean                # LSpec test runner (uses lspecIO)
+│   ├── Generators.lean          # SampleableExt / Shrinkable instances
 │   ├── ExprProperties.lean      # Expression properties
 │   ├── ParserProperties.lean    # Parser round-trip properties
 │   ├── SemanticsProperties.lean # Semantic equivalence properties
@@ -110,93 +116,211 @@ sql_equiv/
 
 ## Implementation Guide
 
-### Step 1: Create Generator Instances
+### Step 1: Create SampleableExt and Shrinkable Instances
 
-Create `LSpecTests/Generators.lean` with `Gen` instances for your types:
+LSpec uses SlimCheck for property-based testing. To generate random instances of
+your types, implement the `SampleableExt` and `Shrinkable` typeclasses.
+
+`SampleableExt` provides random generation; `Shrinkable` enables counterexample
+minimization. Together they give you `Checkable` instances for universally
+quantified propositions like `∀ (x : MyType), prop x`.
+
+Create `LSpecTests/Generators.lean`:
 
 ```lean
 -- LSpecTests/Generators.lean
 import LSpec
 import SqlEquiv
 
-open LSpec
-open SqlEquiv  -- Note: SqlEquiv is the main namespace (not SqlEquiv.Ast)
+open SqlEquiv  -- All types (Value, Expr, Row, etc.) are in SqlEquiv namespace
+open LSpec.SlimCheck
 
 namespace LSpecTests.Generators
 
--- Generate random SQL values
--- Note: Value has constructors: int, string, bool, null (no float)
-instance : Gen Value where
-  gen := do
-    let choice ← Gen.chooseNat 0 3
-    match choice with
-    | 0 => return .null none          -- NULL with unknown type
-    | 1 => return .bool (← Gen.bool)  -- Boolean
-    | 2 => return .int (← Gen.int)    -- Integer
-    | _ => return .string (← Gen.string)  -- String
+-- ============================================================================
+-- Value: Generation and Shrinking
+-- ============================================================================
 
--- Generate random column names
-def genColumnName : Gen String := do
-  let prefixes := #["id", "name", "value", "count", "flag", "col"]
-  let idx ← Gen.chooseNat 0 (prefixes.size - 1)
-  let suffix ← Gen.chooseNat 0 9
-  return s!"{prefixes[idx]!}{suffix}"
+-- Value has constructors: int, string, bool, null (no float).
+-- The null constructor takes `Option SqlType` — `none` means unknown type.
+instance : Repr Value where
+  reprPrec v _ := match v with
+    | .int n => s!"Value.int {repr n}"
+    | .string s => s!"Value.string {repr s}"
+    | .bool b => s!"Value.bool {repr b}"
+    | .null t => s!"Value.null {repr t}"
 
--- Generate a ColumnRef (table qualifier is optional)
+instance : Shrinkable Value where
+  shrink v := match v with
+    | .int n => (Shrinkable.shrink n).map .int
+    | .string s => (Shrinkable.shrink s).map .string
+    | .bool _ => [.null none]
+    | .null _ => []
+
+instance : SampleableExt Value :=
+  SampleableExt.mkSelfContained do
+    let choice ← Gen.chooseAny Bool
+    if choice then
+      -- Generate non-null values
+      let kind ← Gen.choose Int 0 2
+      match kind with
+      | 0 => return .bool (← Gen.chooseAny Bool)
+      | 1 => return .int (← Gen.chooseAny Int)
+      | _ => return .string (← Gen.chooseAny String)
+    else
+      -- Generate NULL (~50% of the time to stress NULL handling)
+      return .null none
+
+-- ============================================================================
+-- ColumnRef: Generation and Shrinking
+-- ============================================================================
+
+instance : Repr ColumnRef where
+  reprPrec c _ := s!"⟨{repr c.table}, {repr c.column}⟩"
+
+instance : Shrinkable ColumnRef where
+  shrink _ := []
+
+def genColumnName : Gen String :=
+  Gen.elements #["id", "name", "value", "count", "flag", "col"]
+
 def genColumnRef : Gen ColumnRef := do
   let colName ← genColumnName
   return { table := none, column := colName }
 
--- Generate random expressions (with bounded depth to avoid infinite recursion)
--- Note: Expr constructors are: lit, col, binOp, unaryOp, func, agg, countStar, «case», etc.
--- The case constructor uses «» because 'case' is a Lean keyword
+-- ============================================================================
+-- Row: Generation and Shrinking
+-- ============================================================================
+
+-- A Row is List (String × Value). We generate small rows with known columns.
+instance : SampleableExt Row :=
+  SampleableExt.mkSelfContained do
+    let numCols ← Gen.choose Nat 0 3
+    let mut row : Row := []
+    for _ in List.range numCols do
+      let col ← genColumnName
+      let v ← SampleableExt.sample (α := Value)
+      row := (col, v) :: row
+    return row
+
+-- ============================================================================
+-- Expr: Generation and Shrinking
+-- ============================================================================
+
+-- IMPORTANT: NULL semantics in this codebase
+--
+-- There are TWO representations of NULL in `Option Value`:
+--   1. `some (.null _)` — an explicit NULL literal (e.g., from `Expr.lit (.null none)`)
+--   2. `none` — evaluation failure or NULL propagation through operators
+--
+-- When evalExpr evaluates `.lit (.null none)`, it returns `some (.null none)`.
+-- But when that value flows into a binary/unary operator (e.g., AND, NOT),
+-- the operator may not match it and returns `none` instead.
+--
+-- This means: `evalExpr row (NOT (lit NULL))` = `none`
+--             `evalExpr row (lit NULL)` = `some (.null none)`
+-- These are NOT equal, even though both represent "null" conceptually.
+--
+-- Properties must account for this. See ExprProperties.lean for strategies.
+
+instance : Repr Expr where
+  reprPrec e _ := match e with
+    | .lit v => s!"Expr.lit {repr v}"
+    | .col c => s!"Expr.col {repr c}"
+    | .binOp op l r => s!"Expr.binOp {repr op} ({repr l}) ({repr r})"
+    | .unaryOp op e => s!"Expr.unaryOp {repr op} ({repr e})"
+    | _ => "Expr.«complex»"
+
+instance : Shrinkable Expr where
+  shrink e := match e with
+    | .binOp _ l r => [l, r]
+    | .unaryOp _ inner => [inner]
+    | .«case» branches _ =>
+      branches.filterMap (fun (_, r) => some r)
+    | .lit (.int n) => (Shrinkable.shrink n).map (fun n => .lit (.int n))
+    | .lit (.string s) => (Shrinkable.shrink s).map (fun s => .lit (.string s))
+    | _ => []
+
+-- Generate boolean-valued expressions (for boolean property testing).
+-- This avoids type mismatches where AND/OR/NOT receive non-boolean operands
+-- and fall through to `none`.
+partial def genBoolExpr (depth : Nat := 3) : Gen Expr := do
+  if depth == 0 then
+    -- Base case: boolean literal or boolean-producing comparison
+    let choice ← Gen.choose Nat 0 1
+    match choice with
+    | 0 => return .lit (.bool (← Gen.chooseAny Bool))
+    | _ =>
+      -- Generate a comparison that produces a Bool result
+      let a ← Gen.chooseAny Int
+      let b ← Gen.chooseAny Int
+      return .binOp .eq (.lit (.int a)) (.lit (.int b))
+  else
+    let choice ← Gen.choose Nat 0 4
+    match choice with
+    | 0 => return .lit (.bool (← Gen.chooseAny Bool))
+    | 1 => do
+        let op ← Gen.elements #[BinOp.and, .or]
+        let left ← genBoolExpr (depth - 1)
+        let right ← genBoolExpr (depth - 1)
+        return .binOp op left right
+    | 2 => do
+        let inner ← genBoolExpr (depth - 1)
+        return .unaryOp .not inner
+    | 3 => do
+        -- Comparison of two int literals (always produces a Bool)
+        let a ← Gen.chooseAny Int
+        let b ← Gen.chooseAny Int
+        let op ← Gen.elements #[BinOp.eq, .ne, .lt, .le, .gt, .ge]
+        return .binOp op (.lit (.int a)) (.lit (.int b))
+    | _ => return .lit (.bool (← Gen.chooseAny Bool))
+
+-- Generate arbitrary expressions (may include NULLs and type mismatches).
+-- Use this for properties that are expected to hold for ALL inputs.
 partial def genExpr (depth : Nat := 3) : Gen Expr := do
   if depth == 0 then
-    -- Base cases only at depth 0
-    let choice ← Gen.chooseNat 0 2
+    let choice ← Gen.choose Nat 0 2
     match choice with
-    | 0 => return .lit (← Gen.gen)           -- Literal value
-    | 1 => return .col (← genColumnRef)      -- Column reference
-    | _ => return .lit (.null none)          -- NULL literal
-  else
-    let choice ← Gen.chooseNat 0 6
-    match choice with
-    | 0 => return .lit (← Gen.gen)
+    | 0 => return .lit (← SampleableExt.sample (α := Value))
     | 1 => return .col (← genColumnRef)
-    | 2 => return .lit (.null none)
-    | 3 => do
-        -- BinOp: ne (not neq), and other operators
+    | _ => return .lit (.null none)
+  else
+    let choice ← Gen.choose Nat 0 5
+    match choice with
+    | 0 => return .lit (← SampleableExt.sample (α := Value))
+    | 1 => return .col (← genColumnRef)
+    | 2 => do
         let op ← Gen.elements #[BinOp.and, .or, .eq, .ne, .lt, .gt, .le, .ge, .add, .sub, .mul]
         let left ← genExpr (depth - 1)
         let right ← genExpr (depth - 1)
         return .binOp op left right
-    | 4 => do
+    | 3 => do
         let op ← Gen.elements #[UnaryOp.not, .neg, .isNull, .isNotNull]
         let inner ← genExpr (depth - 1)
         return .unaryOp op inner
-    | 5 => do
-        let cond ← genExpr (depth - 1)
+    | 4 => do
+        let cond ← genBoolExpr (depth - 1)
         let thenE ← genExpr (depth - 1)
         let elseE ← genExpr (depth - 1)
-        return .«case» [(cond, thenE)] (some elseE)  -- CASE expression
+        return .«case» [(cond, thenE)] (some elseE)
     | _ => return .lit (.null none)
 
-instance : Gen Expr where
-  gen := genExpr 3
+instance : SampleableExt Expr :=
+  SampleableExt.mkSelfContained (genExpr 3)
 
--- Generate a row (list of column name/value pairs)
-def genRow (columns : List String) : Gen Row := do
-  let values ← columns.mapM fun col => do
-    let v ← Gen.gen
-    return (col, v)
-  return values
+-- A wrapper type for boolean-only expressions, used in properties
+-- that require boolean-valued inputs (identity laws, De Morgan's, etc.)
+structure BoolExpr where
+  expr : Expr
+  deriving Repr
 
--- Generate a simple table schema and data
-def genTable (numRows : Nat := 5) : Gen (List String × List Row) := do
-  let numCols ← Gen.chooseNat 1 5
-  let cols ← (List.range numCols).mapM fun _ => genColumnName
-  let rows ← (List.range numRows).mapM fun _ => genRow cols
-  return (cols, rows)
+instance : Shrinkable BoolExpr where
+  shrink be := (Shrinkable.shrink be.expr).map BoolExpr.mk
+
+instance : SampleableExt BoolExpr :=
+  SampleableExt.mkSelfContained do
+    let e ← genBoolExpr 3
+    return ⟨e⟩
 
 end LSpecTests.Generators
 ```
@@ -211,99 +335,121 @@ import LSpec
 import SqlEquiv
 import LSpecTests.Generators
 
-open LSpec
-open SqlEquiv  -- All types (Expr, Value, Row, etc.) and functions (evalExpr) are in SqlEquiv namespace
+open SqlEquiv  -- evalExpr, Expr, Value, Row, BinOp, UnaryOp, etc.
+open LSpecTests.Generators
 
 namespace LSpecTests.ExprProperties
 
 /-!
-Note: evalExpr returns `Option Value`, not `Value` directly.
+## NULL handling strategy for properties
 
-For logical laws (AND, OR, NOT), the evaluator only returns boolean
-results when both operands evaluate to `some (.bool _)`. If either
-operand is non-boolean or `none`, the result is `none`. To avoid
-noisy counterexamples from type mismatches, we use helper functions
-that skip the comparison when operands aren't boolean.
+`evalExpr` returns `Option Value`. There are two null representations:
+- `none`: operator couldn't evaluate (type mismatch, NULL propagation)
+- `some (.null _)`: explicit NULL literal
+
+When `Expr.lit (.null none)` is evaluated, it returns `some (.null none)`.
+But passing that through operators (AND, NOT, etc.) typically yields `none`
+because the operator's pattern match doesn't handle `.null`.
+
+### Consequence for properties
+
+Properties like `x AND true == x` FAIL when `x` evaluates to `some (.null _)`:
+  - LHS: `evalBinOp .and (some (.null none)) (some (.bool true))` → `none`
+  - RHS: `some (.null none)`
+  - `none ≠ some (.null none)` → property fails
+
+### Strategies used here
+
+1. **Commutativity / annihilator properties**: Hold for ALL inputs because
+   both sides go through the same operator and produce the same `none`/value.
+
+2. **Identity / De Morgan's / double negation**: Only hold when operands
+   evaluate to actual booleans. We use `BoolExpr` (from Generators.lean) to
+   restrict inputs to boolean-valued expressions.
+
+3. **NULL-specific properties**: Explicitly test NULL behavior to document
+   the semantics (e.g., "NULL AND TRUE produces none").
 -/
 
-/-- Compare two evaluated expressions as booleans.
-    Returns true iff both are `some (.bool v)` and the `Bool`s are equal.
-    If either side is non-boolean or `none`, we treat the property
-    as not applicable and return `true` to avoid noisy failures. -/
-def boolEq (x y : Option Value) : Bool :=
-  match x, y with
-  | some (.bool vx), some (.bool vy) => vx == vy
-  | _, _ => true
+-- Helper: normalize the dual NULL representation for comparison.
+-- Treats `some (.null _)` as `none` so both null forms are equal.
+def normalizeNull : Option Value → Option Value
+  | some (.null _) => none
+  | other => other
 
-/-- Check that an evaluated expression is a given boolean value.
-    Returns true iff the result is `some (.bool v)` with `v == b`.
-    If evaluation fails or yields a non-boolean, we return `true`
-    so that the property only constrains genuinely boolean cases. -/
-def isBoolVal (b : Bool) (x : Option Value) : Bool :=
-  match x with
-  | some (.bool v) => v == b
-  | _ => true
+-- ============================================================================
+-- Properties that hold for ALL inputs (including NULLs)
+-- ============================================================================
 
--- Property: AND is commutative (when both sides are boolean)
+-- AND is commutative (holds universally: both sides produce the same result)
 def prop_and_commutative (a b : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.binOp .and a b))
-    (evalExpr row (.binOp .and b a))
+  evalExpr row (.binOp .and a b) == evalExpr row (.binOp .and b a)
 
--- Property: OR is commutative (when both sides are boolean)
+-- OR is commutative
 def prop_or_commutative (a b : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.binOp .or a b))
-    (evalExpr row (.binOp .or b a))
+  evalExpr row (.binOp .or a b) == evalExpr row (.binOp .or b a)
 
--- Property: Double negation elimination
--- Note: Only checked when the expression evaluates to a boolean.
--- Does not hold for NULL or non-boolean expressions (NOT returns none for those).
-def prop_double_negation (a : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.unaryOp .not (.unaryOp .not a)))
-    (evalExpr row a)
-
--- Property: x AND true == x (for boolean-typed x)
-def prop_and_identity (a : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.binOp .and a (.lit (.bool true))))
-    (evalExpr row a)
-
--- Property: x OR false == x (for boolean-typed x)
-def prop_or_identity (a : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.binOp .or a (.lit (.bool false))))
-    (evalExpr row a)
-
--- Property: x AND false == false (for boolean-typed x)
+-- x AND false == false (short-circuit matches `_, some (.bool false)`)
 def prop_and_annihilator (a : Expr) (row : Row) : Bool :=
-  isBoolVal false
-    (evalExpr row (.binOp .and a (.lit (.bool false))))
+  evalExpr row (.binOp .and a (.lit (.bool false))) == some (.bool false)
 
--- Property: x OR true == true (for boolean-typed x)
+-- x OR true == true (short-circuit matches `_, some (.bool true)`)
 def prop_or_annihilator (a : Expr) (row : Row) : Bool :=
-  isBoolVal true
-    (evalExpr row (.binOp .or a (.lit (.bool true))))
+  evalExpr row (.binOp .or a (.lit (.bool true))) == some (.bool true)
 
--- Property: De Morgan's law: NOT (a AND b) == (NOT a) OR (NOT b)
--- Checked only when both sides evaluate to booleans.
-def prop_demorgan_and (a b : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.unaryOp .not (.binOp .and a b)))
-    (evalExpr row (.binOp .or (.unaryOp .not a) (.unaryOp .not b)))
+-- EQ is commutative (Value.eq is symmetric)
+def prop_eq_commutative (a b : Expr) (row : Row) : Bool :=
+  evalExpr row (.binOp .eq a b) == evalExpr row (.binOp .eq b a)
 
--- Property: De Morgan's law: NOT (a OR b) == (NOT a) AND (NOT b)
--- Checked only when both sides evaluate to booleans.
-def prop_demorgan_or (a b : Expr) (row : Row) : Bool :=
-  boolEq
-    (evalExpr row (.unaryOp .not (.binOp .or a b)))
-    (evalExpr row (.binOp .and (.unaryOp .not a) (.unaryOp .not b)))
+-- ============================================================================
+-- Properties restricted to boolean-valued expressions
+-- These use BoolExpr to avoid NULL/type-mismatch false positives
+-- ============================================================================
+
+-- x AND true == x (only holds when x evaluates to a Bool, not NULL)
+def prop_and_identity (a : BoolExpr) (row : Row) : Bool :=
+  evalExpr row (.binOp .and a.expr (.lit (.bool true))) == evalExpr row a.expr
+
+-- x OR false == x
+def prop_or_identity (a : BoolExpr) (row : Row) : Bool :=
+  evalExpr row (.binOp .or a.expr (.lit (.bool false))) == evalExpr row a.expr
+
+-- Double negation: NOT (NOT x) == x
+def prop_double_negation (a : BoolExpr) (row : Row) : Bool :=
+  evalExpr row (.unaryOp .not (.unaryOp .not a.expr)) == evalExpr row a.expr
+
+-- De Morgan's: NOT (a AND b) == (NOT a) OR (NOT b)
+def prop_demorgan_and (a b : BoolExpr) (row : Row) : Bool :=
+  evalExpr row (.unaryOp .not (.binOp .and a.expr b.expr)) ==
+  evalExpr row (.binOp .or (.unaryOp .not a.expr) (.unaryOp .not b.expr))
+
+-- De Morgan's: NOT (a OR b) == (NOT a) AND (NOT b)
+def prop_demorgan_or (a b : BoolExpr) (row : Row) : Bool :=
+  evalExpr row (.unaryOp .not (.binOp .or a.expr b.expr)) ==
+  evalExpr row (.binOp .and (.unaryOp .not a.expr) (.unaryOp .not b.expr))
+
+-- ============================================================================
+-- NULL-specific properties (document actual semantics)
+-- ============================================================================
+
+-- NULL propagation: operations on NULL produce none, not some(.null _)
+def prop_null_and_produces_none (a : Expr) (row : Row) : Bool :=
+  let result := evalExpr row (.binOp .and (.lit (.null none)) a)
+  -- Result is either none (NULL propagated) or some (.bool false) (short-circuit)
+  result == none || result == some (.bool false)
+
+-- IS NULL correctly identifies both null representations
+def prop_is_null_detects_null_lit (row : Row) : Bool :=
+  evalExpr row (.unaryOp .isNull (.lit (.null none))) == some (.bool true)
 
 end LSpecTests.ExprProperties
 ```
 
 ### Step 3: Create the LSpec Test Runner
+
+LSpec provides `lspecIO` as the main entry point for compiled test executables.
+Tests are built as `TestSeq` chains using `test` (for decidable propositions)
+and `checkIO` (for property-based tests evaluated at runtime).
 
 Create `LSpecTests/Main.lean`:
 
@@ -315,7 +461,7 @@ import LSpecTests.Generators
 import LSpecTests.ExprProperties
 
 open LSpec
-open SqlEquiv  -- All types are in SqlEquiv namespace
+open SqlEquiv
 open LSpecTests.Generators
 open LSpecTests.ExprProperties
 
@@ -323,8 +469,15 @@ open LSpecTests.ExprProperties
 # LSpec Property-Based Test Suite
 
 This suite runs randomized property tests to discover edge cases.
-When a test fails, LSpec will shrink the counterexample to a minimal
-reproducing case.
+When a test fails, LSpec/SlimCheck will shrink the counterexample to
+a minimal reproducing case.
+
+## Running
+
+```
+lake exe sql_equiv_lspec                    # run all suites
+lake exe sql_equiv_lspec -- expr            # run only "expr" suite
+```
 
 ## Capturing Counterexamples
 
@@ -333,73 +486,74 @@ using the shrunk counterexample. See the "Counterexample Workflow"
 section in docs/LSPEC_INTEGRATION.md.
 -/
 
--- Default configuration for property tests
-def defaultConfig : LSpec.Config := {
-  numTests := 1000      -- Number of random tests per property
-  maxShrinks := 100     -- Maximum shrinking iterations
-  seed := none          -- Use random seed (or set for reproducibility)
-}
+-- Build test sequences using LSpec's TestSeq API.
+-- `group` nests tests; `checkIO` runs SlimCheck at runtime.
+-- Each `checkIO` call generates random inputs, checks the property,
+-- and shrinks any counterexample found.
 
-/-- Read test configuration from environment variables, falling back to defaults.
-    Supports LSPEC_NUM_TESTS and LSPEC_SEED for CLI overrides. -/
-def readConfig : IO LSpec.Config := do
-  let mut config := defaultConfig
-  if let some numTests ← IO.getEnv "LSPEC_NUM_TESTS" then
-    if let some n := numTests.toNat? then
-      config := { config with numTests := n }
-  if let some seed ← IO.getEnv "LSPEC_SEED" then
-    if let some s := seed.toNat? then
-      config := { config with seed := some s }
-  return config
+def commutativityTests : TestSeq :=
+  group "Commutativity" $
+    checkIO "AND is commutative"
+      (∀ (a b : Expr) (row : Row), prop_and_commutative a b row = true) $
+    checkIO "OR is commutative"
+      (∀ (a b : Expr) (row : Row), prop_or_commutative a b row = true) $
+    checkIO "EQ is commutative"
+      (∀ (a b : Expr) (row : Row), prop_eq_commutative a b row = true)
+      .done
 
-def main : IO UInt32 := do
-  let testConfig ← readConfig
-  IO.println "╔═══════════════════════════════════════════╗"
-  IO.println "║   SQL Equiv LSpec Property Test Suite     ║"
-  IO.println "╠═══════════════════════════════════════════╣"
-  IO.println "║  Running randomized property tests...     ║"
-  IO.println "║  Failures will be shrunk automatically.   ║"
-  IO.println "╚═══════════════════════════════════════════╝"
-  IO.println ""
+def identityTests : TestSeq :=
+  group "Identity Laws (bool inputs only)" $
+    checkIO "x AND true == x"
+      (∀ (a : BoolExpr) (row : Row), prop_and_identity a row = true) $
+    checkIO "x OR false == x"
+      (∀ (a : BoolExpr) (row : Row), prop_or_identity a row = true)
+      .done
 
-  -- Run property tests
-  -- Note: Actual LSpec API may vary; adapt to current version
-  -- Groups are nested within lists, not concatenated with ++
-  let suite := LSpec.group "Expression Properties" [
-    LSpec.group "Commutativity" [
-      LSpec.check "AND is commutative" (∀ a b row, prop_and_commutative a b row),
-      LSpec.check "OR is commutative" (∀ a b row, prop_or_commutative a b row)
-    ],
-    LSpec.group "Identity Laws" [
-      LSpec.check "x AND true == x" (∀ a row, prop_and_identity a row),
-      LSpec.check "x OR false == x" (∀ a row, prop_or_identity a row)
-    ],
-    LSpec.group "Annihilator Laws" [
-      LSpec.check "x AND false == false" (∀ a row, prop_and_annihilator a row),
-      LSpec.check "x OR true == true" (∀ a row, prop_or_annihilator a row)
-    ],
-    LSpec.group "De Morgan's Laws" [
-      LSpec.check "NOT (a AND b) == (NOT a) OR (NOT b)" (∀ a b row, prop_demorgan_and a b row),
-      LSpec.check "NOT (a OR b) == (NOT a) AND (NOT b)" (∀ a b row, prop_demorgan_or a b row)
-    ],
-    LSpec.group "Double Negation" [
-      LSpec.check "NOT (NOT x) == x" (∀ a row, prop_double_negation a row)
-    ]
-  ]
+def annihilatorTests : TestSeq :=
+  group "Annihilator Laws" $
+    checkIO "x AND false == false"
+      (∀ (a : Expr) (row : Row), prop_and_annihilator a row = true) $
+    checkIO "x OR true == true"
+      (∀ (a : Expr) (row : Row), prop_or_annihilator a row = true)
+      .done
 
-  let result ← LSpec.runWith testConfig suite
+def demorganTests : TestSeq :=
+  group "De Morgan's Laws (bool inputs only)" $
+    checkIO "NOT (a AND b) == (NOT a) OR (NOT b)"
+      (∀ (a b : BoolExpr) (row : Row), prop_demorgan_and a b row = true) $
+    checkIO "NOT (a OR b) == (NOT a) AND (NOT b)"
+      (∀ (a b : BoolExpr) (row : Row), prop_demorgan_or a b row = true)
+      .done
 
-  if result.failures.isEmpty then
-    IO.println "\n✓ All property tests passed!"
-    return 0
-  else
-    IO.println "\n✗ Some tests failed. Shrunk counterexamples:"
-    for (name, counterexample) in result.failures do
-      IO.println s!"  - {name}:"
-      IO.println s!"    {counterexample}"
-      IO.println ""
-    IO.println "Add these counterexamples to Test/RegressionTest.lean"
-    return 1
+def doubleNegationTests : TestSeq :=
+  group "Double Negation (bool inputs only)" $
+    checkIO "NOT (NOT x) == x"
+      (∀ (a : BoolExpr) (row : Row), prop_double_negation a row = true)
+      .done
+
+def nullTests : TestSeq :=
+  group "NULL Semantics" $
+    checkIO "NULL AND x produces none or false"
+      (∀ (a : Expr) (row : Row), prop_null_and_produces_none a row = true) $
+    test "IS NULL detects null literal"
+      (prop_is_null_detects_null_lit [] = true)
+      .done
+
+-- lspecIO takes a HashMap of suite name → test list, plus CLI args for filtering.
+-- Use @[test_driver] to register with `lake test`.
+def main (args : List String) : IO UInt32 := do
+  lspecIO
+    (Std.HashMap.ofList [
+      ("expr", [
+        commutativityTests,
+        identityTests,
+        annihilatorTests,
+        demorganTests,
+        doubleNegationTests,
+        nullTests
+      ])
+    ])
+    args
 ```
 
 ### Step 4: Create the Regression Test File
@@ -429,16 +583,17 @@ When LSpec finds a failing property and shrinks it, add the counterexample here:
 3. Include a comment noting which property failed and when
 
 Example:
-
-    -- Found 2024-01-15: prop_double_negation failed with NULL handling
-    def test_double_neg_null : TestResult :=
-      let nullExpr := Expr.lit (.null none)  -- NULL literal
-      let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
-      let row := []
-      let result := evalExpr row expr
-      let expected := evalExpr row nullExpr
-      if result == expected then .pass "double_neg_null"
-      else .fail "double_neg_null" s!"Expected {expected}, got {result}"
+```
+-- Found 2024-01-15: prop_double_negation failed with NULL handling
+def test_double_neg_null : TestResult :=
+  let nullExpr := Expr.lit (.null none)  -- NULL literal
+  let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
+  let row := []
+  let result := evalExpr row expr
+  let expected := evalExpr row nullExpr
+  if result == expected then .pass "double_neg_null"
+  else .fail "double_neg_null" s!"Expected {expected}, got {result}"
+```
 -/
 
 -- Following the pattern of other test modules (ParserTest, SemanticsTest, etc.)
@@ -455,11 +610,11 @@ namespace RegressionTest
 --   let trueExpr := Expr.lit (.bool true)
 --   let expr := Expr.binOp .and nullExpr trueExpr
 --   let result := evalExpr [] expr
---   -- NULL AND TRUE should be NULL (three-valued logic)
---   -- evalExpr returns Option Value, so compare with some/none
+--   -- NULL AND TRUE → none (not some (.null _))
+--   -- This is because evalBinOp .and doesn't match (.null _) as a boolean
 --   match result with
---   | some (.null _) => .pass "null_and_true"
---   | _ => .fail "null_and_true" s!"Expected null, got {result}"
+--   | none => .pass "null_and_true"
+--   | other => .fail "null_and_true" s!"Expected none, got {other}"
 
 -- ============================================================================
 -- Arithmetic Edge Cases
@@ -515,18 +670,18 @@ let _ ← RegressionTest.runRegressionTests
 │  1. Run LSpec        lake exe sql_equiv_lspec                   │
 │         │                                                        │
 │         ▼                                                        │
-│  2. Property fails   "prop_and_commutative failed"              │
+│  2. Property fails   "prop_and_identity failed"                 │
 │         │                                                        │
 │         ▼                                                        │
 │  3. LSpec shrinks    Finds minimal counterexample:              │
-│         │            a = .lit (.null none), b = .lit (.bool true)│
+│         │            a = Expr.lit (.null none)                   │
 │         │            row = []                                    │
 │         ▼                                                        │
 │  4. Investigate      Is this a bug or expected behavior?        │
 │         │                                                        │
 │         ├─── Bug ───► Fix the code, then add regression test    │
 │         │                                                        │
-│         └─ Expected ► Update property or document behavior      │
+│         └─ Expected ► Update property preconditions or document │
 │                                                                  │
 │  5. Add to           Test/RegressionTest.lean                   │
 │     unit tests       (prevents regression)                       │
@@ -545,61 +700,44 @@ let _ ← RegressionTest.runRegressionTests
 ```bash
 $ lake exe sql_equiv_lspec
 
-╔═══════════════════════════════════════════╗
-║   SQL Equiv LSpec Property Test Suite     ║
-╚═══════════════════════════════════════════╝
-
-✗ Double Negation: NOT (NOT x) == x
-  Counterexample after 47 shrinks:
-    a   = Expr.lit (.null none)
-    row = []
-
-  evalExpr [] (NOT (NOT NULL)) = none
-  evalExpr [] NULL             = some (.null none)
+  ✗ Identity Laws (bool inputs only) > x AND true == x
+    Found a counter-example!
+    a := BoolExpr.mk (Expr.lit (Value.null none))
+    row := []
+    issue: true ≠ false
 ```
 
 **Step 2**: Investigate
 
-In the current implementation, `evalUnaryOp .not` only handles `some (.bool _)` and
-returns `none` for all other inputs (including NULL). So `NOT NULL` evaluates to `none`,
-and `NOT (NOT NULL)` is `NOT none` which is also `none`. This doesn't match the input
-`some (.null none)`, revealing that double negation doesn't hold for non-boolean values.
+This reveals that when `x` evaluates to `some (.null none)`, the expression
+`x AND true` evaluates to `none` (because `evalBinOp .and` doesn't match
+`(.null _)` as a boolean operand). Meanwhile `x` itself evaluates to
+`some (.null none)`. The two are not equal.
 
-**Step 3**: Decide how to handle this
+This is expected SQL three-valued logic behavior — but it means our property
+needs a precondition. We restrict to `BoolExpr` inputs (see Step 2 above).
 
-This is actually expected behavior in the current evaluator: `NOT` only operates
-on booleans and returns `none` otherwise. Two options:
-- **Fix the evaluator** to propagate NULL through NOT (SQL three-valued logic), or
-- **Update the property** to only test boolean expressions (using `boolEq`).
+If instead this revealed an actual bug (e.g., `NOT NULL` returning `false`
+instead of `NULL`):
 
-If the property was already using `boolEq` (as recommended above), this case would
-be skipped rather than reported as a failure.
+**Step 3**: Fix the bug in `SqlEquiv/Semantics.lean`
 
 **Step 4**: Add regression test to `Test/RegressionTest.lean`
 
 ```lean
--- Found 2024-01-15: prop_double_negation
--- NOT NULL returns none (not null) in current evaluator
--- This documents current behavior; fix evalUnaryOp if SQL NULL propagation is desired
-def test_not_null_returns_none : TestResult :=
+-- Found 2024-01-15: NOT NULL was returning false instead of NULL
+-- Bug was in evalUnaryOp .not — it fell through to none for NULL
+-- but we expected some (.null none) per SQL standard
+def test_not_null_returns_null : TestResult :=
   let nullExpr := Expr.lit (.null none)
   let expr := Expr.unaryOp .not nullExpr
   let result := evalExpr [] expr
-  -- Current behavior: NOT on non-boolean returns none
+  -- In current implementation, NOT NULL → none (operator doesn't match)
+  -- If we wanted SQL-standard behavior, it should be some (.null none)
   match result with
-  | none => .pass "not_null_returns_none"
-  | other => .fail "not_null_returns_none"
-      s!"NOT NULL expected none, got {other}"
-
-def test_double_not_null : TestResult :=
-  let nullExpr := Expr.lit (.null none)
-  let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
-  let result := evalExpr [] expr
-  -- NOT (NOT NULL) = NOT none = none
-  match result with
-  | none => .pass "double_not_null"
-  | other => .fail "double_not_null"
-      s!"NOT (NOT NULL) expected none, got {other}"
+  | none => .pass "not_null_returns_null"
+  | other => .fail "not_null_returns_null"
+      s!"NOT NULL should be none, got {other}"
 ```
 
 **Step 5**: Verify both suites pass
@@ -623,11 +761,8 @@ lake exe sql_equiv_test
 # Run LSpec property tests (exploratory)
 lake exe sql_equiv_lspec
 
-# Run LSpec with specific seed (reproducible)
-LSPEC_SEED=12345 lake exe sql_equiv_lspec
-
-# Run LSpec with more iterations (thorough)
-LSPEC_NUM_TESTS=10000 lake exe sql_equiv_lspec
+# Run only a specific test suite (e.g., "expr")
+lake exe sql_equiv_lspec -- expr
 ```
 
 ### CI Configuration
@@ -665,8 +800,6 @@ jobs:
 
       - name: Run LSpec property tests
         run: lake exe sql_equiv_lspec
-        env:
-          LSPEC_NUM_TESTS: 5000
 ```
 
 ## Best Practices
@@ -684,37 +817,70 @@ def prop_addition_commutative (a b : Expr) (row : Row) : Bool :=
 def prop_uses_hashmap_internally : Bool := ...
 ```
 
-### 2. Generator Quality
+### 2. NULL Awareness
 
-Ensure generators produce good coverage:
+The dual NULL representation (`none` vs `some (.null _)`) is a major source of
+property failures. Apply these guidelines:
+
+| Property type | NULL-safe? | Strategy |
+|---|---|---|
+| Commutativity (`f(a,b) == f(b,a)`) | Yes | Both sides use same operator → same result |
+| Annihilators (`x AND false == false`) | Yes | Short-circuit patterns match regardless of LHS |
+| Identity (`x AND true == x`) | **No** | Use `BoolExpr` to restrict to boolean inputs |
+| Involution (`NOT (NOT x) == x`) | **No** | Use `BoolExpr` to restrict to boolean inputs |
+| De Morgan's laws | **No** | Use `BoolExpr` to restrict to boolean inputs |
+
+If you want to test a property across ALL inputs including NULLs, use the
+`normalizeNull` helper to collapse both null representations:
 
 ```lean
--- Good: Covers edge cases
-instance : Gen Value where
-  gen := Gen.frequency [
-    (1, pure (.null none)),           -- NULL (important edge case)
-    (3, .bool <$> Gen.bool),          -- Booleans
-    (3, .int <$> Gen.int),            -- Integers
-    (2, .string <$> Gen.string),      -- Strings
-    (1, pure (.int 0)),               -- Zero (edge case)
-    (1, pure (.string "")),           -- Empty string (edge case)
-  ]
+def prop_with_null_normalization (a : Expr) (row : Row) : Bool :=
+  normalizeNull (evalExpr row (transform a)) == normalizeNull (evalExpr row a)
 ```
 
-### 3. Shrinking
+### 3. Generator Quality
 
-LSpec's shrinking works best when types have `Shrink` instances:
+Use `SampleableExt.mkSelfContained` with weighted generation to cover edge cases:
 
 ```lean
-instance : Shrink Value where
+-- Good: Weighted toward edge cases, uses actual Gen combinators
+instance : SampleableExt Value :=
+  SampleableExt.mkSelfContained do
+    let choice ← Gen.choose Nat 0 10
+    match choice with
+    | 0 => return .null none           -- NULL (important edge case)
+    | 1 => return .int 0               -- Zero (edge case)
+    | 2 => return .string ""           -- Empty string (edge case)
+    | 3 | 4 | 5 => return .bool (← Gen.chooseAny Bool)
+    | 6 | 7 | 8 => return .int (← Gen.chooseAny Int)
+    | _ => return .string (← Gen.chooseAny String)
+```
+
+### 4. Shrinking
+
+LSpec's shrinking works best when types have `Shrinkable` instances that
+produce structurally smaller values:
+
+```lean
+instance : Shrinkable Value where
   shrink v := match v with
-    | .int n => (.int <$> Shrink.shrink n) ++ [.null none]
-    | .string s => (.string <$> Shrink.shrink s) ++ [.null none]
+    | .int n => (Shrinkable.shrink n).map .int
+    | .string s => (Shrinkable.shrink s).map .string
     | .bool _ => [.null none]
-    | .null _ => []
+    | .null _ => []  -- Can't shrink further
 ```
 
-### 4. Regression Test Naming
+For `Expr`, shrink by extracting subexpressions:
+
+```lean
+instance : Shrinkable Expr where
+  shrink e := match e with
+    | .binOp _ l r => [l, r]         -- Try each operand alone
+    | .unaryOp _ inner => [inner]    -- Try the inner expression
+    | _ => []
+```
+
+### 5. Regression Test Naming
 
 Use descriptive names that indicate the origin:
 
@@ -728,7 +894,7 @@ def test1 : TestResult := ...
 def test_bug_fix : TestResult := ...
 ```
 
-### 5. Documentation
+### 6. Documentation
 
 Document each regression test with:
 - Date discovered
@@ -740,71 +906,100 @@ Document each regression test with:
 Found: 2024-01-15
 Property: prop_demorgan_and
 Issue: De Morgan's law doesn't hold when operands are NULL
-       because NULL AND NULL ≠ NULL (should be NULL)
-Fix: Updated evalBinOp to propagate NULL correctly
+       because NOT NULL → none, but we compared against some (.null _)
+Fix: Restricted property to BoolExpr inputs
 -/
 def test_demorgan_with_nulls : TestResult := ...
 ```
 
 ## Appendix: LSpec API Reference
 
-> **Note**: The LSpec API may vary between versions. The examples in this document
-> are illustrative; consult the [LSpec repository](https://github.com/argumentcomputer/LSpec)
-> for the current API. Adapt the code patterns to match your installed version.
+> **Note**: Based on LSpec commit `1e6da63` (Jan 2026). Consult the
+> [LSpec repository](https://github.com/argumentcomputer/LSpec) if the
+> API has changed.
 
 ### Core Types
 
 ```lean
--- Generator monad
-def Gen (α : Type) : Type
+-- Test sequence (the fundamental test structure)
+inductive TestSeq
+  | individual : String → (prop : Prop) → Testable prop → TestSeq → TestSeq
+  | individualIO : String → IO (Bool × Option String) → TestSeq → TestSeq
+  | group : String → TestSeq → TestSeq → TestSeq
+  | done
 
--- Property type (varies by LSpec version)
-def Property : Type := ...
-
--- Test configuration (if supported)
-structure Config where
-  numTests : Nat := 100
-  maxShrinks : Nat := 100
-  seed : Option Nat := none
+-- Testable: resolves a Prop to pass/fail
+class inductive Testable (p : Prop) where
+  | isTrue (h : p)
+  | isPassed (msg : Option String := none)
+  | isMaybe (msg : Option String := none)
+  | isFalse (h : ¬ p) (msg : Option String := none)
+  | isFailure (msg : Option String := none)
 ```
 
 ### Key Functions
 
 ```lean
--- Run a test suite (basic version)
-def LSpec.run (suite : TestSuite) : IO TestResult
+-- Compile-time test (proposition must be Decidable)
+def test (descr : String) (p : Prop) [Testable p]
+    (next : TestSeq := .done) : TestSeq
 
--- Run with configuration (if available in your LSpec version)
-def LSpec.runWith (config : Config) (suite : TestSuite) : IO TestResult
+-- Property-based test via SlimCheck (compile-time, fixed seed)
+def check (descr : String) (p : Prop) (next : TestSeq := .done)
+    (cfg : Configuration := {}) [Checkable p'] : TestSeq
 
--- Check a property
-def LSpec.check (name : String) (prop : Property) : Test
+-- Property-based test via SlimCheck (runtime, random seed)
+def checkIO (descr : String) (p : Prop) (next : TestSeq := .done)
+    (cfg : Configuration := {}) [Checkable p'] : TestSeq
 
--- Group tests
-def LSpec.group (name : String) (tests : List Test) : TestSuite
+-- Grouping
+def group (descr : String) (groupTests : TestSeq)
+    (next : TestSeq := .done) : TestSeq
 
--- Basic generators
-def Gen.bool : Gen Bool
-def Gen.int : Gen Int
-def Gen.nat : Gen Nat
-def Gen.string : Gen String
-def Gen.list (g : Gen α) : Gen (List α)
-def Gen.choose (lo hi : Int) : Gen Int
-def Gen.chooseNat (lo hi : Nat) : Gen Nat
-def Gen.elements (xs : Array α) : Gen α
-def Gen.frequency (weighted : List (Nat × Gen α)) : Gen α
+-- Main entry point for compiled test executables
+def lspecIO (map : HashMap String (List TestSeq))
+    (args : List String) : IO UInt32
+
+-- Generator monad (ReaderT over Rand with a size parameter)
+abbrev Gen (α : Type u) := ReaderT (ULift Nat) Rand α
+
+-- Basic generator combinators
+def Gen.chooseAny (α : Type u) [Random α] [DefaultRange α] : Gen α
+def Gen.choose (α : Type u) [Random α] (lo hi : α) : Gen α
+def Gen.elements [Inhabited α] (xs : Array α) : Gen α
+def Gen.frequency (weighted : Array (Nat × Gen α)) (fallback : Gen α) : Gen α
+def Gen.oneOf [Inhabited α] (xs : Array (Gen α)) : Gen α
+def Gen.listOf (x : Gen α) : Gen (List α)
+def Gen.arrayOf (x : Gen α) : Gen (Array α)
+
+-- SampleableExt: how to generate random instances for property testing
+class SampleableExt (α : Sort u) where
+  proxy : Type v
+  sample : Gen proxy
+  interp : proxy → α
+
+-- Shrinkable: how to minimize counterexamples
+class Shrinkable (α : Type u) where
+  shrink : (x : α) → List α := fun _ => []
 ```
 
 ### Adapting to API Changes
 
-If `LSpec.runWith` is not available, use `LSpec.run` instead:
+LSpec's `test`, `check`, `checkIO`, and `group` all take an optional `next`
+parameter (defaulting to `.done`) for chaining. Use `$` to chain:
 
 ```lean
--- If runWith is available:
-let result ← LSpec.runWith testConfig suite
+-- Chaining tests:
+def myTests : TestSeq :=
+  test "basic check" (1 + 1 = 2) $
+  checkIO "property" (∀ n : Nat, n + 0 = n) $
+  .done
 
--- If only run is available:
-let result ← LSpec.run suite
+-- Nesting groups:
+def allTests : TestSeq :=
+  group "Arithmetic" myTests $
+  group "Other" otherTests $
+  .done
 ```
 
 ## Summary
