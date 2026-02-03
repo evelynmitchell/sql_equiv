@@ -9,6 +9,7 @@ import Test.OptimizerTest
 import Test.ExprNormalizationTest
 import Test.JoinReorderingTest
 import Test.PredicatePushdownTest
+import Test.AxiomCoverageTest
 
 def main : IO Unit := do
   IO.println "╔═══════════════════════════════════╗"
@@ -37,6 +38,9 @@ def main : IO Unit := do
   IO.println ""
 
   let _ ← PredicatePushdownTest.runPredicatePushdownTests
+  IO.println ""
+
+  let _ ← AxiomCoverageTest.runAxiomCoverageTests
   IO.println ""
 
   IO.println "═══════════════════════════════════"

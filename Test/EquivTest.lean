@@ -98,6 +98,200 @@ open Test
 #check @join_match_implies_in_subquery
 
 -- ============================================================================
+-- Additional #check coverage for all axioms (ensures axioms can't be deleted)
+-- ============================================================================
+
+-- Value-level associativity/distributivity axioms
+#check @evalBinOp_and_assoc
+#check @evalBinOp_or_assoc
+#check @evalBinOp_and_or_distrib_left
+#check @evalBinOp_or_and_distrib_left
+
+-- Boolean algebra axioms
+#check @SqlEquiv.and_self
+#check @SqlEquiv.or_self
+#check @SqlEquiv.and_not_self
+#check @SqlEquiv.or_not_self
+
+-- Identity axioms
+#check @SqlEquiv.and_true
+#check @SqlEquiv.or_false
+
+-- Normalization axioms
+#check @normalizeExpr_equiv
+#check @syntacticEquiv_implies_equiv
+
+-- Ground expression axioms
+#check @ground_expr_eval_independent
+#check @decideGroundExprEquiv_sound
+
+-- Predicate pushdown axioms
+#check @filter_join_left
+#check @filter_join_right
+#check @filter_pushdown_table
+#check @predicate_pushdown
+
+-- Join axioms
+#check @join_assoc
+#check @join_comm_full
+#check @cross_join_assoc
+#check @cross_join_comm
+#check @cross_join_cardinality_comm
+#check @cross_join_cardinality
+#check @cross_join_assoc_cardinality
+#check @inner_join_true_is_cross
+#check @inner_join_false_empty
+#check @inner_join_cardinality_le
+#check @inner_join_empty_left
+#check @inner_join_empty_right
+#check @inner_join_to_where
+#check @inner_subset_cross
+#check @cross_join_empty_left
+#check @cross_join_empty_right
+#check @left_join_false_all_left
+#check @left_join_cardinality_ge
+#check @left_join_preserves_left
+#check @left_join_filter_null_is_inner
+#check @right_join_cardinality_ge
+#check @right_join_preserves_right
+
+-- Filter axioms
+#check @filter_and
+#check @filter_commute
+#check @filter_idempotent
+#check @filter_false_empty'
+
+-- Arithmetic axioms
+#check @expr_add_zero
+#check @expr_zero_add
+#check @expr_mul_one
+#check @expr_one_mul
+#check @expr_mul_zero
+#check @expr_zero_mul
+#check @expr_sub_zero
+
+-- IN/NOT IN axioms
+#check @in_empty_false
+#check @not_in_empty_true
+#check @in_singleton
+#check @not_in_singleton
+#check @in_pair
+#check @not_in_pair
+#check @in_list_or_expansion
+#check @not_in_list_and_expansion
+
+-- BETWEEN axioms
+#check @between_expansion
+#check @between_reflexive
+#check @not_between_expansion
+
+-- LIKE axioms
+#check @like_match_all
+#check @like_empty_pattern
+#check @like_self
+
+-- String function axioms
+#check @concat_empty_left
+#check @concat_empty_right
+#check @upper_idempotent
+#check @lower_idempotent
+#check @upper_lower_upper
+#check @lower_upper_lower
+#check @length_empty
+
+-- Comparison axioms
+#check @eq_reflexive
+#check @ne_irreflexive
+#check @not_eq_is_ne
+#check @not_ne_is_eq
+#check @not_lt_is_ge
+#check @not_le_is_gt
+#check @not_gt_is_le
+#check @not_ge_is_lt
+#check @lt_flip
+#check @le_flip
+#check @gt_flip
+#check @ge_flip
+
+-- CASE expression axioms
+#check @case_when_true
+#check @case_when_false
+#check @case_when_false_no_else
+#check @case_empty_else
+#check @case_empty_no_else
+
+-- Set operation axioms
+#check @union_comm
+#check @union_all_comm
+#check @intersect_comm
+#check @union_assoc
+#check @intersect_assoc
+#check @union_idempotent
+#check @intersect_idempotent
+#check @except_self_empty
+#check @union_empty_right
+#check @intersect_empty_right
+#check @union_all_length
+#check @union_intersect_distrib
+#check @intersect_union_distrib
+
+-- ORDER BY axioms
+#check @order_by_preserves_count
+#check @order_by_empty_identity
+#check @order_by_idempotent
+#check @order_by_last_wins
+#check @order_by_reverse
+#check @order_limit_deterministic
+
+-- LIMIT axioms
+#check @limit_zero_empty
+#check @limit_upper_bound
+#check @limit_none_all_rows
+#check @limit_monotonic
+#check @limit_one_singleton
+
+-- OFFSET axioms
+#check @offset_zero_identity
+#check @offset_too_large_empty
+#check @offset_reduces_count
+#check @offset_monotonic
+
+-- LIMIT + OFFSET combination axioms
+#check @limit_offset_compose
+#check @offset_limit_zero_empty
+#check @pagination_upper_bound
+#check @pagination_identity
+#check @consecutive_pages
+
+-- Subquery axioms
+#check @exists_empty_false
+#check @not_exists_empty_true
+#check @exists_nonempty_true
+#check @not_exists_nonempty_false
+#check @not_not_exists
+#check @in_empty_subquery_false
+#check @not_in_empty_subquery_true
+#check @scalar_subquery_empty_null
+#check @exists_as_count_gt_zero
+#check @not_exists_as_count_eq_zero
+#check @in_subquery_as_exists
+#check @not_in_subquery_as_not_exists
+#check @uncorrelated_subquery_independent
+#check @subquery_limit_one
+#check @scalar_subquery_is_first
+#check @exists_monotonic
+#check @subquery_where_true
+#check @subquery_where_false
+#check @in_singleton_subquery
+#check @correlated_subquery_uses_context
+
+-- Aggregate axioms
+#check @min_le_elem
+#check @max_ge_elem
+#check @distinct_count_le
+#check @distinct_idempotent
+
+-- ============================================================================
 -- Syntactic Equivalence Tests
 -- ============================================================================
 
