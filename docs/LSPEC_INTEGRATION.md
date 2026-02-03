@@ -429,17 +429,16 @@ When LSpec finds a failing property and shrinks it, add the counterexample here:
 3. Include a comment noting which property failed and when
 
 Example:
-```
--- Found 2024-01-15: prop_double_negation failed with NULL handling
-def test_double_neg_null : TestResult :=
-  let nullExpr := Expr.lit (.null none)  -- NULL literal
-  let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
-  let row := []
-  let result := evalExpr row expr
-  let expected := evalExpr row nullExpr
-  if result == expected then .pass "double_neg_null"
-  else .fail "double_neg_null" s!"Expected {expected}, got {result}"
-```
+
+    -- Found 2024-01-15: prop_double_negation failed with NULL handling
+    def test_double_neg_null : TestResult :=
+      let nullExpr := Expr.lit (.null none)  -- NULL literal
+      let expr := Expr.unaryOp .not (.unaryOp .not nullExpr)
+      let row := []
+      let result := evalExpr row expr
+      let expected := evalExpr row nullExpr
+      if result == expected then .pass "double_neg_null"
+      else .fail "double_neg_null" s!"Expected {expected}, got {result}"
 -/
 
 -- Following the pattern of other test modules (ParserTest, SemanticsTest, etc.)
