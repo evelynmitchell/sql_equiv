@@ -78,6 +78,19 @@ open Test
 #check @stmt_equiv_symm
 #check @stmt_equiv_trans
 
+-- Verify COALESCE/NULLIF theorems exist
+#check @coalesce_null_left_nonnull
+#check @coalesce_int_left
+#check @coalesce_string_left
+#check @coalesce_bool_left
+#check @coalesce_single_int
+#check @coalesce_single_string
+#check @coalesce_single_bool
+#check @coalesce_single_null
+#check @coalesce_empty
+#check @nullif_same_int
+#check @nullif_diff_int
+
 -- Verify subquery unnesting theorems exist
 #check @in_subquery_unnest_to_join
 #check @not_in_subquery_unnest_to_antijoin
@@ -358,6 +371,9 @@ def runEquivTests : IO Unit := do
   IO.println "✓ join_comm"
   IO.println "✓ in_subquery_unnest_to_join, not_in_subquery_unnest_to_antijoin"
   IO.println "✓ in_subquery_implies_join_match, join_match_implies_in_subquery"
+  IO.println "✓ coalesce_null_left_nonnull, coalesce_int_left, coalesce_string_left, coalesce_bool_left"
+  IO.println "✓ coalesce_single_int, coalesce_single_string, coalesce_single_bool, coalesce_single_null, coalesce_empty"
+  IO.println "✓ nullif_same_int, nullif_diff_int"
   IO.println "(These are verified at compile time by #check)"
 
   IO.println "\n[Runtime Tests]"

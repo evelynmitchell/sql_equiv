@@ -909,7 +909,7 @@ partial def parseSelectItem : Parser SelectItem := do
       let alias ← parseAlias
       return .exprItem e alias
   | .ident name =>
-    -- Check for table.*
+    -- Check for table.* (need to peek ahead without consuming the ident)
     let _ ← Parser.advance
     let t' ← Parser.peek
     if t' == .dot then
@@ -919,12 +919,61 @@ partial def parseSelectItem : Parser SelectItem := do
         let _ ← Parser.advance
         return .star (some name)
       else
-        -- It's table.column, put back the dot and re-parse as expression
-        -- Actually, we need to handle this differently - parse as column ref
+        -- It's table.column, parse as column ref
         let col ← parseIdent
         let e := Expr.col { table := some name, column := col }
+        let e' ← parsePostfix e
+        let e'' ← continueExprFrom e'
         let alias ← parseAlias
-        return .exprItem e alias
+        return .exprItem e'' alias
+    else if t' == .lparen then
+      -- Function call or aggregate — check for aggregate first
+      match isAggFunc name with
+      | some aggFn =>
+        let _ ← Parser.advance
+        let t'' ← Parser.peek
+        if aggFn == .count && t'' == .star then
+          let _ ← Parser.advance
+          Parser.expect .rparen "Expected )"
+          let e := Expr.countStar
+          let e' ← parsePostfix e
+          let e'' ← continueExprFrom e'
+          let alias ← parseAlias
+          return .exprItem e'' alias
+        else
+          let hasDistinct ←
+            if isKeyword "DISTINCT" t'' then
+              let _ ← Parser.advance
+              Parser.pure true
+            else
+              Parser.pure false
+          let t''' ← Parser.peek
+          if t''' == .star then
+            let _ ← Parser.advance
+            Parser.expect .rparen "Expected )"
+            let e := Expr.countStar
+            let e' ← parsePostfix e
+            let e'' ← continueExprFrom e'
+            let alias ← parseAlias
+            return .exprItem e'' alias
+          else
+            let arg ← parseExpr
+            Parser.expect .rparen "Expected )"
+            let e := Expr.agg aggFn (some arg) hasDistinct
+            let e' ← parsePostfix e
+            let e'' ← continueExprFrom e'
+            let alias ← parseAlias
+            return .exprItem e'' alias
+      | none =>
+        -- Regular function call
+        let _ ← Parser.advance
+        let args ← Parser.sepBy parseExpr (Parser.expect .comma "")
+        Parser.expect .rparen "Expected )"
+        let e := Expr.func name args
+        let e' ← parsePostfix e
+        let e'' ← continueExprFrom e'
+        let alias ← parseAlias
+        return .exprItem e'' alias
     else
       -- It's an identifier, could be column or start of expression
       let e := Expr.col { table := none, column := name }
