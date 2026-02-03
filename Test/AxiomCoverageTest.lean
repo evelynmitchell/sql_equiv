@@ -676,11 +676,11 @@ def orderByTests : List TestResult :=
       (evalSelect testDb selAsc).length
       (evalSelect testDb selNoOrder).length,
 
-    -- order_by_empty_identity: ORDER BY [] is same as no order
-    testSelectEquiv "order_by_empty_identity"
-      (mkSelectFull false "users" none [] none none)
-      (mkSelectFull false "users" none [] none none)
-      testDb,
+    -- order_by_empty_identity: ORDER BY [] produces same result as ORDER BY [col]
+    -- (both should have the same row count; empty ORDER BY doesn't change the set)
+    testLengthEq "order_by_empty_identity"
+      (evalSelect testDb (mkSelectFull false "users" none [] none none)).length
+      (evalSelect testDb selAsc).length,
 
     -- order_by_idempotent: sorting twice by same criteria = once
     let sorted := evalSelect testDb selAsc
@@ -1039,8 +1039,18 @@ def subqueryTests : List TestResult :=
     if inResult == some (.bool true) then .pass "in_singleton_subquery"
     else .fail "in_singleton_subquery" s!"Expected TRUE, got {showOptVal inResult}",
 
-    -- correlated_subquery_uses_context: True (semantic property)
-    .pass "correlated_subquery_uses_context",
+    -- correlated_subquery_uses_context: verify correlated subquery result changes with outer row
+    -- Subquery: SELECT * FROM orders WHERE user_id = <outer>.id
+    let correlatedSel := SelectStmt.mk false [.star none]
+      (some (.table ⟨"orders", none⟩))
+      (some (.binOp .eq (col "user_id") (col "id")))
+      [] none [] none none
+    let r1 := evalSelectWithContext testDb [("id", .int 1)] correlatedSel
+    let r2 := evalSelectWithContext testDb [("id", .int 999)] correlatedSel
+    -- User 1 has orders, user 999 does not — results should differ
+    if r1.length > 0 && r2.length == 0 then .pass "correlated_subquery_uses_context"
+    else .fail "correlated_subquery_uses_context"
+      s!"Expected different results: user1={r1.length} rows, user999={r2.length} rows",
 
     -- exists_monotonic: if subset preserves TRUE
     -- Use empty and nonempty to test: if EXISTS nonempty is TRUE,
@@ -1080,14 +1090,19 @@ def normalizationDecisionTests : List TestResult :=
     else .fail "ground_expr_eval_independent"
       s!"Different on empty vs intRow: {showOptVal r1} vs {showOptVal r2}",
 
-    -- decideGroundExprEquiv_sound: ground equivalence checker
+    -- decideGroundExprEquiv_sound: exercise decideGroundExprEquiv and verify it agrees with eval
     let e1 := Expr.binOp .add (.lit (.int 2)) (.lit (.int 3))
     let e2 := Expr.lit (.int 5)
-    let r1 := evalExpr [] e1
-    let r2 := evalExpr [] e2
-    if r1 == r2 then .pass "decideGroundExprEquiv_sound"
+    let h1 := e1.isGround
+    let h2 := e2.isGround
+    if h1 && h2 then
+      let decided := decideGroundExprEquiv e1 e2 (by native_decide) (by native_decide)
+      let evalsEqual := evalExpr [] e1 == evalExpr [] e2
+      if decided == evalsEqual then .pass "decideGroundExprEquiv_sound"
+      else .fail "decideGroundExprEquiv_sound"
+        s!"decideGroundExprEquiv={decided} but evalExpr equal={evalsEqual}"
     else .fail "decideGroundExprEquiv_sound"
-      s!"2+3 should equal 5: {showOptVal r1} vs {showOptVal r2}"
+      s!"Expressions not ground: e1.isGround={h1}, e2.isGround={h2}"
   ]
 
 -- ============================================================================
