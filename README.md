@@ -413,8 +413,7 @@ inductive Stmt where
 
 | Theorem | Description |
 |---------|-------------|
-| `coalesce_null_left` | `COALESCE(NULL, x) = x` -- **unsound** when x is NULL (see below) |
-| `coalesce_null_left_nonnull` | `COALESCE(NULL, x) = x` (corrected, requires x non-null) |
+| `coalesce_null_left_nonnull` | `COALESCE(NULL, x) = x` (requires x non-null; replaces former unsound axiom) |
 | `coalesce_int_left` | `COALESCE(n, y) = n` for non-null int |
 | `coalesce_string_left` | `COALESCE(s, y) = s` for non-null string |
 | `coalesce_bool_left` | `COALESCE(b, y) = b` for non-null bool |
@@ -423,10 +422,11 @@ inductive Stmt where
 | `nullif_same_int` | `NULLIF(n, n) = NULL` |
 | `nullif_diff_int` | `NULLIF(n, m) = n` when `n ≠ m` |
 
-> **Known issue:** `coalesce_null_left` is an unsound axiom. When the second
-> argument is `some (.null _)`, the implementation returns `none` (no non-null
-> value found), not the null value itself. Use `coalesce_null_left_nonnull`
-> instead, which requires a proof that the second argument is non-null. See
+> **Historical note:** The former `coalesce_null_left` axiom was removed because
+> it was unsound — when the second argument is `some (.null _)`, the
+> implementation returns `none`, not the null value. The unsound axiom was
+> deleted (rather than merely deprecated) to prevent accidental use in proofs.
+> `coalesce_null_left_nonnull` is the sound replacement. See
 > [Pitfalls: COALESCE(NULL, NULL)](docs/tutorials/reference/pitfalls.md#coalescenull-null-and-typed-nulls)
 > for a detailed explanation.
 

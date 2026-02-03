@@ -92,8 +92,8 @@ def evalSelect : Database → SelectStmt → Table
 - `distinct_count_le`, `distinct_idempotent`, `count_distinct_le_count` ✅
 - `filter_and_eq_filter_filter`, `filter_comm` ✅
 
-**Not proved (soundness issue found):**
-- `coalesce_null_left` - unsound for null second argument (see Known Soundness Issues)
+**Removed (was unsound):**
+- `coalesce_null_left` - deleted; was unsound for null second argument (see Known Soundness Issues). Replaced by `coalesce_null_left_nonnull`.
 
 **Approach used:**
 1. Exhaustive case analysis on all `Option Value` constructor triples (for associativity/distributivity)
@@ -372,21 +372,26 @@ This is trivially true by reflexivity, but building toward a non-trivial version
 
 ## Known Soundness Issues
 
-### `coalesce_null_left` is unsound
+### `coalesce_null_left` was unsound (removed)
 
-The axiom `coalesce_null_left` claims `COALESCE(NULL, x) = x` for all `x`,
-but this is false when `x` is itself a null value (`some (.null _)`).
+The axiom `coalesce_null_left` has been **deleted** from the codebase. It
+claimed `COALESCE(NULL, x) = x` for all `x`, but this was false when `x` is
+itself a null value (`some (.null _)`).
 
 The `evalFunc` implementation uses `List.find?` to locate the first non-null
 argument. When both arguments are null, `find?` returns `none`, but the axiom
-claims the result is `some (.null _)`. In Lean's type system, `none ≠ some _`,
-so this axiom introduces an inconsistency.
+claimed the result is `some (.null _)`. In Lean's type system, `none ≠ some _`,
+so the axiom introduced an inconsistency from which `False` could be derived.
 
-**Impact:** Any proof chain applying `coalesce_null_left` with a null second
-argument is unsound. The axiom is used in `Tactics.lean` (`sql_rw_null`).
+**Resolution:** The axiom has been removed entirely. The sound replacement is
+`coalesce_null_left_nonnull`, which adds the precondition
+`isNullValue v = false`. The `sql_rw_null` tactic now uses the sound version.
 
-**Corrected version:** `coalesce_null_left_nonnull` adds the precondition
-`isNullValue v = false`.
+**Why it was removed rather than kept:** Keeping an unsound axiom "for backwards
+compatibility" is dangerous in a proof assistant — any proof depending on it is
+silently invalid, and the axiom could be applied accidentally via tactics.
+Deleting it forces any downstream code to use the sound version, making
+unsoundness a compile error rather than a silent bug.
 
 **Root cause:** The distinction between `none` (evaluation failure / no value)
 and `some (.null _)` (a SQL NULL was produced) is easy to overlook when writing
@@ -405,7 +410,7 @@ five representative values: `some (.int _)`, `some (.string _)`, `some (.bool _)
 2. **NULL handling:** Three-valued logic adds complexity - start with two-valued subset?
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
 4. **Termination:** Some proofs may need well-founded recursion arguments.
-5. **Option Value soundness audit:** Other axioms quantifying over `Option Value` may have similar issues to `coalesce_null_left`. A systematic audit is recommended.
+5. **Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion. A systematic audit is still recommended.
 
 ---
 

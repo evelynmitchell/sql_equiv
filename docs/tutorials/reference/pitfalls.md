@@ -481,13 +481,14 @@ SELECT * FROM t WHERE x IS NULL  -- Use this instead
 
 ### COALESCE(NULL, NULL) and Typed NULLs
 
-The axiom `coalesce_null_left` claims:
+The former axiom `coalesce_null_left` has been **removed** from the codebase.
+It claimed:
 
 ```
 COALESCE(NULL, x) = x   -- for all x
 ```
 
-This is **unsound** when `x` is itself a NULL value (`some (.null _)` in our
+This was **unsound** when `x` is itself a NULL value (`some (.null _)` in our
 representation). The actual `evalFunc` implementation uses `List.find?` to
 locate the first non-null argument, and when both arguments are null, `find?`
 returns `none`. But `none` is not the same as `some (.null t)` in Lean's type
@@ -499,16 +500,21 @@ evalFunc "COALESCE" [some (.null t), some (.null t')]
   = none.join       -- find? found no non-null value
   = none            -- actual result
 
--- But the axiom claims the result is:
+-- But the axiom claimed the result is:
   = some (.null t') -- WRONG
 ```
 
 **Why this matters:** `none` (no value produced) and `some (.null _)` (a typed
 SQL NULL was produced) are distinct in our semantic model. Any proof chain that
-applies `coalesce_null_left` with a null second argument is technically unsound
--- it could derive `False`.
+applied `coalesce_null_left` with a null second argument was unsound — it could
+derive `False`.
 
-**The corrected version** is `coalesce_null_left_nonnull`, which adds the
+**Why it was removed rather than kept:** An unsound axiom in a proof assistant
+is dangerous even when documented. It can be applied accidentally via tactics
+(e.g., `sql_rw_null` previously tried it first), silently invalidating proofs.
+Deleting it turns unsoundness into a compile error.
+
+**The replacement** is `coalesce_null_left_nonnull`, which adds the
 precondition `isNullValue v = false`:
 
 ```lean
