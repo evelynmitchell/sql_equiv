@@ -40,12 +40,12 @@ defaultTargets = ["sql_equiv"]
 [[require]]
 name = "batteries"
 git = "https://github.com/leanprover-community/batteries"
-rev = "main"
+rev = "main"  # For production, consider pinning to a tagged release or commit SHA
 
 [[require]]
 name = "LSpec"
 git = "https://github.com/argumentcomputer/LSpec"
-rev = "main"
+rev = "main"  # For production, consider pinning to a tagged release or commit SHA
 
 [[lean_lib]]
 name = "SqlEquiv"
@@ -711,9 +711,8 @@ instance : Shrink Value where
   shrink v := match v with
     | .int n => (.int <$> Shrink.shrink n) ++ [.null none]
     | .string s => (.string <$> Shrink.shrink s) ++ [.null none]
-    | .bool b => [.null none]
+    | .bool _ => [.null none]
     | .null _ => []
-    | _ => [.null none]
 ```
 
 ### 4. Regression Test Naming
