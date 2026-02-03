@@ -10,22 +10,6 @@ open SqlEquiv
 open Test
 
 -- ============================================================================
--- Helper Functions
--- ============================================================================
-
-/-- Create a simple column reference -/
-def col (name : String) : Expr := .col ⟨none, name⟩
-
-/-- Create an integer literal -/
-def intLit (n : Int) : Expr := .lit (.int n)
-
-/-- Create a boolean literal -/
-def boolLit (b : Bool) : Expr := .lit (.bool b)
-
-/-- Create a string literal -/
-def strLit (s : String) : Expr := .lit (.string s)
-
--- ============================================================================
 -- Constant Folding Tests
 -- ============================================================================
 

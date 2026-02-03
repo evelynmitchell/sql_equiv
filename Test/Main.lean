@@ -7,6 +7,7 @@ import Test.EquivTest
 import Test.PropertyTest
 import Test.OptimizerTest
 import Test.ExprNormalizationTest
+import Test.JoinReorderingTest
 import Test.PredicatePushdownTest
 
 def main : IO Unit := do
@@ -30,6 +31,9 @@ def main : IO Unit := do
   IO.println ""
 
   let _ ← ExprNormalizationTest.runExprNormalizationTests
+  IO.println ""
+
+  let _ ← JoinReorderingTest.runJoinReorderingTests
   IO.println ""
 
   let _ ← PredicatePushdownTest.runPredicatePushdownTests

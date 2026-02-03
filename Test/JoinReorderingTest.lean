@@ -1,0 +1,431 @@
+/-
+  Tests for Join Reordering (PR C)
+-/
+import SqlEquiv
+import Test.Common
+
+namespace JoinReorderingTest
+
+open SqlEquiv
+open Test
+
+-- ============================================================================
+-- Safety Check Tests
+-- ============================================================================
+
+def testHasOnlyInnerOrCrossJoinsSimple : TestResult :=
+  let from_ := table "users"
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Single table: only INNER/CROSS joins"
+  else
+    .fail "Single table" "Should return true"
+
+def testHasOnlyInnerOrCrossJoinsInner : TestResult :=
+  let from_ := innerJoin (table "users") (table "orders") none
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Inner join: only INNER/CROSS joins"
+  else
+    .fail "Inner join" "Should return true"
+
+def testHasOnlyInnerOrCrossJoinsCross : TestResult :=
+  let from_ := crossJoin (table "users") (table "orders")
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Cross join: only INNER/CROSS joins"
+  else
+    .fail "Cross join" "Should return true"
+
+def testHasOnlyInnerOrCrossJoinsNested : TestResult :=
+  let from_ := innerJoin
+    (innerJoin (table "a") (table "b") none)
+    (innerJoin (table "c") (table "d") none)
+    none
+  if hasOnlyInnerOrCrossJoins from_ then
+    .pass "Nested inner joins: only INNER/CROSS joins"
+  else
+    .fail "Nested inner joins" "Should return true"
+
+def testHasOnlyInnerOrCrossJoinsLeftJoin : TestResult :=
+  let from_ := leftJoin (table "users") (table "orders") none
+  if !hasOnlyInnerOrCrossJoins from_ then
+    .pass "Left join: not only INNER/CROSS joins"
+  else
+    .fail "Left join" "Should return false"
+
+def testHasOnlyInnerOrCrossJoinsMixed : TestResult :=
+  let from_ := innerJoin
+    (table "users")
+    (leftJoin (table "orders") (table "items") none)
+    none
+  if !hasOnlyInnerOrCrossJoins from_ then
+    .pass "Mixed joins: not only INNER/CROSS joins"
+  else
+    .fail "Mixed joins" "Should return false"
+
+def testCanReorderJoins : TestResult :=
+  let innerFrom := innerJoin (table "a") (table "b") none
+  let leftFrom := leftJoin (table "a") (table "b") none
+  if canReorderJoins innerFrom && !canReorderJoins leftFrom then
+    .pass "canReorderJoins: correct results"
+  else
+    .fail "canReorderJoins" "Incorrect result"
+
+/-- Test that FROM with subquery allows reordering (subquery treated as opaque leaf) -/
+def testSubqueryInFromAllowsReorder : TestResult :=
+  let subq := SelectStmt.mk false [.star none] (some (table "x")) none [] none [] none none
+  let from_ := innerJoin
+    (table "a")
+    (.subquery subq "sub")
+    none
+  if canReorderJoins from_ then
+    .pass "Subquery in FROM: allows reordering (opaque leaf)"
+  else
+    .fail "Subquery in FROM" "Should allow reordering"
+
+/-- Test that unqualified column in ON blocks reordering -/
+def testUnqualifiedColumnBlocksReorder : TestResult :=
+  -- col "id" without table qualifier
+  let unqualPred := Expr.binOp .eq (col "id") (qcol "b" "id")
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some unqualPred)
+  if !canReorderJoins from_ then
+    .pass "Unqualified column in ON: blocks reordering"
+  else
+    .fail "Unqualified column" "Should block reordering"
+
+/-- Test that EXISTS in ON allows reordering (subquery has its own scope) -/
+def testExistsInOnAllowsReorder : TestResult :=
+  let subq := SelectStmt.mk false [.star none] (some (table "x")) none [] none [] none none
+  let existsPred := Expr.exists false subq
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some existsPred)
+  if canReorderJoins from_ then
+    .pass "EXISTS in ON: allows reordering (subquery has own scope)"
+  else
+    .fail "EXISTS in ON" "Should allow reordering"
+
+/-- Test that IN subquery in ON allows reordering (only outer expr matters) -/
+def testInSubqueryInOnAllowsReorder : TestResult :=
+  let subq := SelectStmt.mk false [.exprItem (col "x") none] (some (table "x")) none [] none [] none none
+  let inPred := Expr.inSubquery (qcol "a" "id") false subq  -- Outer expr is qualified
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some inPred)
+  if canReorderJoins from_ then
+    .pass "IN subquery in ON: allows reordering (outer expr qualified)"
+  else
+    .fail "IN subquery in ON" "Should allow reordering"
+
+-- ============================================================================
+-- JoinNode Tests
+-- ============================================================================
+
+def testJoinNodeLeaf : TestResult :=
+  let t := TableRef.mk "users" (some "u")
+  let node := JoinNode.leaf 0 t
+  -- Leaf IDs are tagged even: 2 * 0 = 0
+  if node.originalTables == ["u"] && node.estimatedRows == defaultCardinality && node.id == 0 then
+    .pass "JoinNode.leaf: correct initialization"
+  else
+    .fail "JoinNode.leaf" s!"Got {repr node}"
+
+def testJoinNodeCombine : TestResult :=
+  let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
+  let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
+  let combined := JoinNode.combine n1 n2 500
+  -- n1.id = 2*1 = 2, n2.id = 2*2 = 4
+  -- pairIds 2 4 = 2 * ((2+4)*(7)/2 + 4) + 1 = 2 * (21 + 4) + 1 = 51
+  if combined.originalTables == ["u", "o"] &&
+     combined.estimatedRows == 500 &&
+     combined.table.alias == some "__combined__" &&
+     combined.id == pairIds n1.id n2.id then  -- Uses actual node IDs
+    .pass "JoinNode.combine: correct merge"
+  else
+    .fail "JoinNode.combine" s!"Got {repr combined}"
+
+def testJoinNodeContainsTable : TestResult :=
+  let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
+  let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
+  let combined := JoinNode.combine n1 n2 500
+  if combined.containsTable "u" &&
+     combined.containsTable "o" &&
+     !combined.containsTable "x" then
+    .pass "JoinNode.containsTable: correct lookups"
+  else
+    .fail "JoinNode.containsTable" "Incorrect result"
+
+-- ============================================================================
+-- Edge Detection Tests
+-- ============================================================================
+
+def testExtractJoinTables : TestResult :=
+  let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  match extractJoinTables pred with
+  | some (t1, t2) =>
+    if (t1 == "u" && t2 == "o") || (t1 == "o" && t2 == "u") then
+      .pass "extractJoinTables: found tables"
+    else
+      .fail "extractJoinTables" s!"Got ({t1}, {t2})"
+  | none => .fail "extractJoinTables" "Expected Some"
+
+def testExtractJoinTablesNonJoin : TestResult :=
+  let pred := Expr.binOp .eq (qcol "u" "id") (intLit 1)
+  match extractJoinTables pred with
+  | none => .pass "extractJoinTables: non-join predicate returns none"
+  | some _ => .fail "extractJoinTables" "Should return none for non-join"
+
+def testMkJoinEdge : TestResult :=
+  let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  match mkJoinEdge pred with
+  | some edge =>
+    if edge.leftTable == "u" && edge.rightTable == "o" then
+      .pass "mkJoinEdge: creates edge correctly"
+    else
+      .fail "mkJoinEdge" s!"Got {repr edge}"
+  | none => .fail "mkJoinEdge" "Expected Some"
+
+def testEdgeConnects : TestResult :=
+  let n1 := JoinNode.leaf 1 ⟨"users", some "u"⟩
+  let n2 := JoinNode.leaf 2 ⟨"orders", some "o"⟩
+  let n3 := JoinNode.leaf 3 ⟨"items", some "i"⟩
+  let edge : JoinEdge := {
+    leftTable := "u",
+    rightTable := "o",
+    predicate := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  }
+  if edgeConnects edge n1 n2 &&
+     edgeConnects edge n2 n1 &&  -- symmetric
+     !edgeConnects edge n1 n3 then
+    .pass "edgeConnects: correct matching"
+  else
+    .fail "edgeConnects" "Incorrect result"
+
+-- ============================================================================
+-- Extraction Tests
+-- ============================================================================
+
+def testExtractLeafTables : TestResult :=
+  let from_ := innerJoin
+    (tableAs "users" "u")
+    (innerJoin (tableAs "orders" "o") (tableAs "items" "i") none)
+    none
+  let leaves := extractLeafTables from_
+  if leaves.length == 3 then
+    .pass "extractLeafTables: found 3 leaves"
+  else
+    .fail "extractLeafTables" s!"Expected 3, got {leaves.length}"
+
+def testExtractOnPredicates : TestResult :=
+  let pred1 := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let pred2 := Expr.binOp .eq (qcol "o" "id") (qcol "i" "order_id")
+  let from_ := innerJoin
+    (tableAs "users" "u")
+    (innerJoin (tableAs "orders" "o") (tableAs "items" "i") (some pred2))
+    (some pred1)
+  let preds := extractOnPredicates from_
+  if preds.length == 2 then
+    .pass "extractOnPredicates: found 2 predicates"
+  else
+    .fail "extractOnPredicates" s!"Expected 2, got {preds.length}"
+
+-- ============================================================================
+-- Reordering Tests
+-- ============================================================================
+
+def testReorderJoinsPreservesStructure : TestResult :=
+  -- Simple case: two tables
+  let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") none
+  let reordered := reorderJoins from_
+  -- Should still be a join
+  match reordered with
+  | .join _ _ _ _ => .pass "reorderJoins: preserves join structure"
+  | _ => .fail "reorderJoins" "Expected join"
+
+def testReorderJoinsSkipsOuterJoin : TestResult :=
+  let from_ := leftJoin (table "users") (table "orders") none
+  let reordered := reorderJoins from_
+  -- Should be unchanged (left join can't be reordered)
+  if reordered == from_ then
+    .pass "reorderJoins: skips outer join"
+  else
+    .fail "reorderJoins" "Should not modify outer join"
+
+def testReorderJoinsMultipleTables : TestResult :=
+  let from_ := innerJoin
+    (innerJoin (tableAs "a" "a") (tableAs "b" "b") none)
+    (tableAs "c" "c")
+    none
+  let reordered := reorderJoins from_
+  -- Should produce some valid join structure
+  -- Note: With no predicates, CROSS and INNER are semantically equivalent
+  match reordered with
+  | .join _ .inner _ _ => .pass "reorderJoins: produces inner join"
+  | .join _ .cross _ _ => .pass "reorderJoins: produces cross join (no predicates)"
+  | _ => .fail "reorderJoins" "Expected join result"
+
+/-- Test that greedy algorithm joins smallest tables first (cost-based ordering).
+    With three tables of sizes 10, 100, 1000, the greedy algorithm should:
+    1. First join the two smallest (10 × 100 = 1000 result)
+    2. Then join with the largest (1000 × 1000 = 1M result)
+    Rather than joining largest first which would give worse intermediates. -/
+def testGreedyJoinOrder : TestResult :=
+  -- Create nodes with different cardinalities
+  let smallTable : TableRef := ⟨"small", some "s"⟩
+  let mediumTable : TableRef := ⟨"medium", some "m"⟩
+  let largeTable : TableRef := ⟨"large", some "l"⟩
+  let small : JoinNode := { id := 1, table := smallTable, estimatedRows := 10, originalTables := ["s"], originalFrom := .table smallTable }
+  let medium : JoinNode := { id := 2, table := mediumTable, estimatedRows := 100, originalTables := ["m"], originalFrom := .table mediumTable }
+  let large : JoinNode := { id := 3, table := largeTable, estimatedRows := 1000, originalTables := ["l"], originalFrom := .table largeTable }
+  let nodes := [small, medium, large]
+  -- No edges = cross joins, cost is purely row count product
+  match greedyReorder nodes [] with
+  | none => .fail "greedyReorder" "Expected Some result"
+  | some steps =>
+    match steps with
+    | [firstStep, _] =>
+      -- First step should join the two smallest tables (s and m)
+      let firstTables := firstStep.left.originalTables ++ firstStep.right.originalTables
+      -- The first join should be between s and m (not involving l)
+      if firstTables.contains "s" && firstTables.contains "m" && !firstTables.contains "l" then
+        .pass "greedyReorder: joins smallest tables first"
+      else
+        .fail "greedyReorder" s!"First step should join s and m, got {firstTables}"
+    | _ => .fail "greedyReorder" s!"Expected 2 steps, got {steps.length}"
+
+/-- Test that predicates are preserved after reordering -/
+def testReorderJoinsPreservesPredicates : TestResult :=
+  -- Create a join with predicates
+  let pred1 := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let pred2 := Expr.binOp .eq (qcol "o" "id") (qcol "i" "order_id")
+  let from_ := innerJoin
+    (tableAs "users" "u")
+    (innerJoin (tableAs "orders" "o") (tableAs "items" "i") (some pred2))
+    (some pred1)
+  let reordered := reorderJoins from_
+  -- Extract all predicates from the reordered result
+  let reorderedPreds := extractOnPredicates reordered
+  -- Should have the same number of predicates
+  if reorderedPreds.length == 2 then
+    .pass "reorderJoins: preserves predicate count"
+  else
+    .fail "reorderJoins" s!"Expected 2 predicates, got {reorderedPreds.length}"
+
+/-- Test that CROSS JOINs are preserved as CROSS (not converted to INNER) -/
+def testReorderCrossJoinsPreservesType : TestResult :=
+  -- Create a chain of CROSS JOINs (no predicates)
+  let from_ := crossJoin
+    (crossJoin (tableAs "a" "a") (tableAs "b" "b"))
+    (tableAs "c" "c")
+  let reordered := reorderJoins from_
+  -- Helper to count CROSS joins specifically
+  let rec countCross : FromClause → Nat
+    | .table _ => 0
+    | .subquery _ _ => 0
+    | .join l jt r _ =>
+      (if jt == .cross then 1 else 0) + countCross l + countCross r
+  -- With no predicates, all joins should be CROSS
+  let crossCount := countCross reordered
+  if crossCount == 2 then
+    .pass "reorderJoins: preserves CROSS JOIN type"
+  else
+    .fail "reorderJoins" s!"Expected 2 CROSS joins, got {crossCount}"
+
+/-- Test that CROSS becomes INNER when non-join predicates are added.
+    When the ON clause contains a filter (not a join condition like a.id = b.id),
+    it's a "non-join predicate" that must be preserved. Since evalFrom ignores
+    ON clauses for CROSS joins, we must convert to INNER. -/
+def testCrossToInnerWithNonJoinPred : TestResult :=
+  -- INNER JOIN with a filter predicate (not a join condition)
+  -- a.x > 5 is a filter, not a t1.col = t2.col join predicate
+  let filterPred := Expr.binOp .gt (qcol "a" "x") (intLit 5)
+  let from_ := innerJoin (tableAs "a" "a") (tableAs "b" "b") (some filterPred)
+  let reordered := reorderJoins from_
+  -- After reordering: no edges detected (filter isn't a join pred),
+  -- so buildFromSteps would make CROSS, but nonJoinPreds forces INNER
+  match reordered with
+  | .join _ jt _ (some _) =>
+    if jt == .inner then
+      .pass "reorderJoins: CROSS becomes INNER with non-join predicate"
+    else
+      .fail "reorderJoins" s!"Expected INNER join, got {repr jt}"
+  | .join _ _ _ none =>
+    .fail "reorderJoins" "Expected ON clause with predicate"
+  | _ =>
+    .fail "reorderJoins" "Expected join structure"
+
+-- ============================================================================
+-- Cost Estimation Tests
+-- ============================================================================
+
+def testEstimateJoinCostNoEdges : TestResult :=
+  let t1 : TableRef := ⟨"a", none⟩
+  let t2 : TableRef := ⟨"b", none⟩
+  let n1 : JoinNode := { id := 1, table := t1, estimatedRows := 100, originalTables := ["a"], originalFrom := .table t1 }
+  let n2 : JoinNode := { id := 2, table := t2, estimatedRows := 200, originalTables := ["b"], originalFrom := .table t2 }
+  let cost := estimateJoinCost n1 n2 []
+  -- Cross join: 100 * 200 = 20000
+  if cost == 20000 then
+    .pass "estimateJoinCost: cross join cost correct"
+  else
+    .fail "estimateJoinCost" s!"Expected 20000, got {cost}"
+
+def testEstimateJoinCostWithEdge : TestResult :=
+  let t1 : TableRef := ⟨"a", none⟩
+  let t2 : TableRef := ⟨"b", none⟩
+  let n1 : JoinNode := { id := 1, table := t1, estimatedRows := 100, originalTables := ["a"], originalFrom := .table t1 }
+  let n2 : JoinNode := { id := 2, table := t2, estimatedRows := 200, originalTables := ["b"], originalFrom := .table t2 }
+  let edge : JoinEdge := {
+    leftTable := "a",
+    rightTable := "b",
+    predicate := Expr.binOp .eq (qcol "a" "id") (qcol "b" "a_id"),
+    selectivity := 0.1
+  }
+  let cost := estimateJoinCost n1 n2 [edge]
+  -- With selectivity 0.1: 100 * 200 * 0.1 = 2000
+  if cost == 2000 then
+    .pass "estimateJoinCost: filtered join cost correct"
+  else
+    .fail "estimateJoinCost" s!"Expected 2000, got {cost}"
+
+-- ============================================================================
+-- Test Runner
+-- ============================================================================
+
+def allTests : List TestResult := [
+  -- Safety checks
+  testHasOnlyInnerOrCrossJoinsSimple,
+  testHasOnlyInnerOrCrossJoinsInner,
+  testHasOnlyInnerOrCrossJoinsCross,
+  testHasOnlyInnerOrCrossJoinsNested,
+  testHasOnlyInnerOrCrossJoinsLeftJoin,
+  testHasOnlyInnerOrCrossJoinsMixed,
+  testCanReorderJoins,
+  -- Safety check edge cases
+  testSubqueryInFromAllowsReorder,
+  testUnqualifiedColumnBlocksReorder,
+  testExistsInOnAllowsReorder,
+  testInSubqueryInOnAllowsReorder,
+  -- JoinNode
+  testJoinNodeLeaf,
+  testJoinNodeCombine,
+  testJoinNodeContainsTable,
+  -- Edge detection
+  testExtractJoinTables,
+  testExtractJoinTablesNonJoin,
+  testMkJoinEdge,
+  testEdgeConnects,
+  -- Extraction
+  testExtractLeafTables,
+  testExtractOnPredicates,
+  -- Reordering
+  testReorderJoinsPreservesStructure,
+  testReorderJoinsSkipsOuterJoin,
+  testReorderJoinsMultipleTables,
+  testGreedyJoinOrder,
+  testReorderJoinsPreservesPredicates,
+  testReorderCrossJoinsPreservesType,
+  testCrossToInnerWithNonJoinPred,
+  -- Cost estimation
+  testEstimateJoinCostNoEdges,
+  testEstimateJoinCostWithEdge
+]
+
+def runJoinReorderingTests : IO (Nat × Nat) := do
+  runTests "Join Reordering Tests" allTests
+
+end JoinReorderingTest
