@@ -2440,14 +2440,14 @@ theorem isNullValue_string (s : String) : isNullValue (some (.string s)) = false
 /-- Helper: isNullValue is false for bool values -/
 theorem isNullValue_bool (b : Bool) : isNullValue (some (.bool b)) = false := by rfl
 
-/-- COALESCE(NULL, x) = x — NOTE: This axiom is unsound when v = some (.null _).
-    In that case, COALESCE skips both null values and returns none, not v.
-    Kept as axiom for backwards compatibility; see coalesce_null_left_nonnull
-    for the corrected version. -/
-axiom coalesce_null_left (t : Option SqlType) (v : Option Value) :
-    evalFunc "COALESCE" [some (.null t), v] = v
+/-- COALESCE(NULL, x) = x, with precondition that x is non-null.
 
-/-- Corrected COALESCE(NULL, x) = x, with precondition that x is non-null. -/
+    This theorem replaces the former `coalesce_null_left` axiom, which was
+    unsound: it claimed `COALESCE(NULL, x) = x` for all `x`, but when
+    `x = some (.null _)`, `evalFunc` returns `none` (no non-null value found
+    by `List.find?`), not `some (.null _)`. Since `none ≠ some _` in Lean,
+    the axiom could derive `False`. The precondition `isNullValue v = false`
+    eliminates that case and makes this theorem provably sound. -/
 theorem coalesce_null_left_nonnull (t : Option SqlType) (v : Option Value)
     (hv : isNullValue v = false) :
     evalFunc "COALESCE" [some (.null t), v] = v := by
