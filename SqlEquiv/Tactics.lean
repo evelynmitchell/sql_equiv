@@ -344,7 +344,7 @@ elab "sql_rw_compare" : tactic => do
 /-- sql_rw_null tactic: Apply NULL handling rules -/
 elab "sql_rw_null" : tactic => do
   evalTactic (← `(tactic| first
-    | exact coalesce_null_left _
+    | exact coalesce_null_left_nonnull _ _ ‹_›
     | exact null_add_left _
     | exact null_add_right _
     | exact null_sub_left _

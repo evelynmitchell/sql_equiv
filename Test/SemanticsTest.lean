@@ -444,6 +444,100 @@ def subqueryUnnestingTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- COALESCE / NULLIF Function Tests
+-- ============================================================================
+
+/-- Database with NULL values for COALESCE testing -/
+def nullTestDb : Database := fun name =>
+  match name with
+  | "employees" => [
+    [("id", .int 1), ("name", .string "Alice"), ("bonus", .int 500)],
+    [("id", .int 2), ("name", .string "Bob"), ("bonus", .null none)],
+    [("id", .int 3), ("name", .string "Carol"), ("bonus", .int 300)],
+    [("id", .int 4), ("name", .string "Dave"), ("bonus", .null none)]
+  ]
+  | _ => []
+
+/-- Parse and evaluate against the null test database -/
+def evalNullQuery (sql : String) : Except String Table :=
+  match parseSelectStr sql with
+  | .error e => .error e
+  | .ok sel => .ok (evalSelect nullTestDb sel)
+
+/-- Test row count against null database -/
+def testNullRowCount (name : String) (sql : String) (expected : Nat) : TestResult :=
+  match evalNullQuery sql with
+  | .error e => .fail name s!"Parse/eval error: {e}"
+  | .ok result =>
+    if result.length == expected then .pass name
+    else .fail name s!"Expected {expected} rows, got {result.length}"
+
+/-- Test that a specific value appears in the first column of null db results -/
+def testNullContainsValue (name : String) (sql : String) (expected : Value) : TestResult :=
+  match evalNullQuery sql with
+  | .error e => .fail name s!"Parse/eval error: {e}"
+  | .ok result =>
+    let values := result.filterMap fun row => row.head?.map (·.2)
+    if values.contains expected then .pass name
+    else .fail name s!"Expected to find {expected.toSql} in results, got {values.map (·.toSql)}"
+
+/-- Test first value in first row of null db results -/
+def testNullFirstValue (name : String) (sql : String) (expected : Value) : TestResult :=
+  match evalNullQuery sql with
+  | .error e => .fail name s!"Parse/eval error: {e}"
+  | .ok result =>
+    match result.head?.bind (·.head?) with
+    | some (_, actual) =>
+      if actual == expected then .pass name
+      else .fail name s!"Expected {expected.toSql}, got {actual.toSql}"
+    | none => .fail name "No result returned"
+
+def coalesceTests : List TestResult := [
+  -- COALESCE with non-null first arg returns first arg
+  testContainsValue "coalesce_nonnull_first"
+    "SELECT COALESCE(1, 2)" (.int 1),
+
+  -- COALESCE with single non-null value
+  testContainsValue "coalesce_single_nonnull"
+    "SELECT COALESCE(42)" (.int 42),
+
+  -- COALESCE with NULL first arg and non-null second returns second
+  testContainsValue "coalesce_null_then_value"
+    "SELECT COALESCE(NULL, 99)" (.int 99),
+
+  -- COALESCE with multiple NULLs then a value
+  testContainsValue "coalesce_multi_null_then_value"
+    "SELECT COALESCE(NULL, NULL, 7)" (.int 7),
+
+  -- COALESCE with string values
+  testContainsValue "coalesce_string"
+    "SELECT COALESCE(NULL, 'fallback')" (.string "fallback"),
+
+  -- COALESCE with non-null string skips rest
+  testContainsValue "coalesce_string_nonnull"
+    "SELECT COALESCE('first', 'second')" (.string "first"),
+
+  -- COALESCE replacing NULLs in column data
+  testNullRowCount "coalesce_column_count"
+    "SELECT COALESCE(bonus, 0) FROM employees" 4,
+
+  -- COALESCE with column: non-null bonus stays, null bonus becomes 0
+  testNullContainsValue "coalesce_column_nonnull"
+    "SELECT COALESCE(bonus, 0) FROM employees" (.int 500),
+
+  testNullContainsValue "coalesce_column_null_replaced"
+    "SELECT COALESCE(bonus, 0) FROM employees" (.int 0),
+
+  -- NULLIF: equal values produce NULL
+  testContainsValue "nullif_equal"
+    "SELECT COALESCE(NULLIF(1, 1), 99)" (.int 99),
+
+  -- NULLIF: different values return first
+  testContainsValue "nullif_different"
+    "SELECT NULLIF(5, 3)" (.int 5)
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -453,7 +547,7 @@ def allSemanticsTests : List TestResult :=
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
-  subqueryUnnestingTests
+  subqueryUnnestingTests ++ coalesceTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
