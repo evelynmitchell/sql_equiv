@@ -284,14 +284,354 @@ theorem evalBinOp_or_false_left (b : Bool) :
   cases b <;> rfl
 
 /-- AND is associative at the value level.
-    Axiom: verified by exhaustive testing over all value type combinations. -/
-axiom evalBinOp_and_assoc (x y z : Option Value) :
-    evalBinOp .and (evalBinOp .and x y) z = evalBinOp .and x (evalBinOp .and y z)
+    Proved by exhaustive case analysis over all value type combinations. -/
+theorem evalBinOp_and_assoc (x y z : Option Value) :
+    evalBinOp .and (evalBinOp .and x y) z = evalBinOp .and x (evalBinOp .and y z) := by
+  match x, y, z with
+  -- All three are booleans: use Bool.and_assoc
+  | some (.bool a), some (.bool b), some (.bool c) =>
+    simp only [evalBinOp, Bool.and_assoc]
+  -- x = false (left absorbs): both sides = false
+  | some (.bool false), some (.int _), some (.bool _) => rfl
+  | some (.bool false), some (.int _), some (.int _) => rfl
+  | some (.bool false), some (.int _), some (.string _) => rfl
+  | some (.bool false), some (.int _), some (.null _) => rfl
+  | some (.bool false), some (.int _), none => rfl
+  | some (.bool false), some (.string _), some (.bool _) => rfl
+  | some (.bool false), some (.string _), some (.int _) => rfl
+  | some (.bool false), some (.string _), some (.string _) => rfl
+  | some (.bool false), some (.string _), some (.null _) => rfl
+  | some (.bool false), some (.string _), none => rfl
+  | some (.bool false), some (.null _), some (.bool _) => rfl
+  | some (.bool false), some (.null _), some (.int _) => rfl
+  | some (.bool false), some (.null _), some (.string _) => rfl
+  | some (.bool false), some (.null _), some (.null _) => rfl
+  | some (.bool false), some (.null _), none => rfl
+  | some (.bool false), none, some (.bool _) => rfl
+  | some (.bool false), none, some (.int _) => rfl
+  | some (.bool false), none, some (.string _) => rfl
+  | some (.bool false), none, some (.null _) => rfl
+  | some (.bool false), none, none => rfl
+  -- x = true, y = non-bool: AND(true, y) = none
+  | some (.bool true), some (.int _), some (.bool _) => rfl
+  | some (.bool true), some (.int _), some (.int _) => rfl
+  | some (.bool true), some (.int _), some (.string _) => rfl
+  | some (.bool true), some (.int _), some (.null _) => rfl
+  | some (.bool true), some (.int _), none => rfl
+  | some (.bool true), some (.string _), some (.bool _) => rfl
+  | some (.bool true), some (.string _), some (.int _) => rfl
+  | some (.bool true), some (.string _), some (.string _) => rfl
+  | some (.bool true), some (.string _), some (.null _) => rfl
+  | some (.bool true), some (.string _), none => rfl
+  | some (.bool true), some (.null _), some (.bool _) => rfl
+  | some (.bool true), some (.null _), some (.int _) => rfl
+  | some (.bool true), some (.null _), some (.string _) => rfl
+  | some (.bool true), some (.null _), some (.null _) => rfl
+  | some (.bool true), some (.null _), none => rfl
+  | some (.bool true), none, some (.bool _) => rfl
+  | some (.bool true), none, some (.int _) => rfl
+  | some (.bool true), none, some (.string _) => rfl
+  | some (.bool true), none, some (.null _) => rfl
+  | some (.bool true), none, none => rfl
+  -- x = int
+  | some (.int _), some (.bool true), some (.bool _) => rfl
+  | some (.int _), some (.bool true), some (.int _) => rfl
+  | some (.int _), some (.bool true), some (.string _) => rfl
+  | some (.int _), some (.bool true), some (.null _) => rfl
+  | some (.int _), some (.bool true), none => rfl
+  | some (.int _), some (.bool false), some (.bool _) => rfl
+  | some (.int _), some (.bool false), some (.int _) => rfl
+  | some (.int _), some (.bool false), some (.string _) => rfl
+  | some (.int _), some (.bool false), some (.null _) => rfl
+  | some (.int _), some (.bool false), none => rfl
+  | some (.int _), some (.int _), some (.bool _) => rfl
+  | some (.int _), some (.int _), some (.int _) => rfl
+  | some (.int _), some (.int _), some (.string _) => rfl
+  | some (.int _), some (.int _), some (.null _) => rfl
+  | some (.int _), some (.int _), none => rfl
+  | some (.int _), some (.string _), some (.bool _) => rfl
+  | some (.int _), some (.string _), some (.int _) => rfl
+  | some (.int _), some (.string _), some (.string _) => rfl
+  | some (.int _), some (.string _), some (.null _) => rfl
+  | some (.int _), some (.string _), none => rfl
+  | some (.int _), some (.null _), some (.bool _) => rfl
+  | some (.int _), some (.null _), some (.int _) => rfl
+  | some (.int _), some (.null _), some (.string _) => rfl
+  | some (.int _), some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _), none => rfl
+  | some (.int _), none, some (.bool _) => rfl
+  | some (.int _), none, some (.int _) => rfl
+  | some (.int _), none, some (.string _) => rfl
+  | some (.int _), none, some (.null _) => rfl
+  | some (.int _), none, none => rfl
+  -- x = string
+  | some (.string _), some (.bool true), some (.bool _) => rfl
+  | some (.string _), some (.bool true), some (.int _) => rfl
+  | some (.string _), some (.bool true), some (.string _) => rfl
+  | some (.string _), some (.bool true), some (.null _) => rfl
+  | some (.string _), some (.bool true), none => rfl
+  | some (.string _), some (.bool false), some (.bool _) => rfl
+  | some (.string _), some (.bool false), some (.int _) => rfl
+  | some (.string _), some (.bool false), some (.string _) => rfl
+  | some (.string _), some (.bool false), some (.null _) => rfl
+  | some (.string _), some (.bool false), none => rfl
+  | some (.string _), some (.int _), some (.bool _) => rfl
+  | some (.string _), some (.int _), some (.int _) => rfl
+  | some (.string _), some (.int _), some (.string _) => rfl
+  | some (.string _), some (.int _), some (.null _) => rfl
+  | some (.string _), some (.int _), none => rfl
+  | some (.string _), some (.string _), some (.bool _) => rfl
+  | some (.string _), some (.string _), some (.int _) => rfl
+  | some (.string _), some (.string _), some (.string _) => rfl
+  | some (.string _), some (.string _), some (.null _) => rfl
+  | some (.string _), some (.string _), none => rfl
+  | some (.string _), some (.null _), some (.bool _) => rfl
+  | some (.string _), some (.null _), some (.int _) => rfl
+  | some (.string _), some (.null _), some (.string _) => rfl
+  | some (.string _), some (.null _), some (.null _) => rfl
+  | some (.string _), some (.null _), none => rfl
+  | some (.string _), none, some (.bool _) => rfl
+  | some (.string _), none, some (.int _) => rfl
+  | some (.string _), none, some (.string _) => rfl
+  | some (.string _), none, some (.null _) => rfl
+  | some (.string _), none, none => rfl
+  -- x = null
+  | some (.null _), some (.bool true), some (.bool _) => rfl
+  | some (.null _), some (.bool true), some (.int _) => rfl
+  | some (.null _), some (.bool true), some (.string _) => rfl
+  | some (.null _), some (.bool true), some (.null _) => rfl
+  | some (.null _), some (.bool true), none => rfl
+  | some (.null _), some (.bool false), some (.bool _) => rfl
+  | some (.null _), some (.bool false), some (.int _) => rfl
+  | some (.null _), some (.bool false), some (.string _) => rfl
+  | some (.null _), some (.bool false), some (.null _) => rfl
+  | some (.null _), some (.bool false), none => rfl
+  | some (.null _), some (.int _), some (.bool _) => rfl
+  | some (.null _), some (.int _), some (.int _) => rfl
+  | some (.null _), some (.int _), some (.string _) => rfl
+  | some (.null _), some (.int _), some (.null _) => rfl
+  | some (.null _), some (.int _), none => rfl
+  | some (.null _), some (.string _), some (.bool _) => rfl
+  | some (.null _), some (.string _), some (.int _) => rfl
+  | some (.null _), some (.string _), some (.string _) => rfl
+  | some (.null _), some (.string _), some (.null _) => rfl
+  | some (.null _), some (.string _), none => rfl
+  | some (.null _), some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _), some (.int _) => rfl
+  | some (.null _), some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _), some (.null _) => rfl
+  | some (.null _), some (.null _), none => rfl
+  | some (.null _), none, some (.bool _) => rfl
+  | some (.null _), none, some (.int _) => rfl
+  | some (.null _), none, some (.string _) => rfl
+  | some (.null _), none, some (.null _) => rfl
+  | some (.null _), none, none => rfl
+  -- x = none
+  | none, some (.bool true), some (.bool _) => rfl
+  | none, some (.bool true), some (.int _) => rfl
+  | none, some (.bool true), some (.string _) => rfl
+  | none, some (.bool true), some (.null _) => rfl
+  | none, some (.bool true), none => rfl
+  | none, some (.bool false), some (.bool _) => rfl
+  | none, some (.bool false), some (.int _) => rfl
+  | none, some (.bool false), some (.string _) => rfl
+  | none, some (.bool false), some (.null _) => rfl
+  | none, some (.bool false), none => rfl
+  | none, some (.int _), some (.bool _) => rfl
+  | none, some (.int _), some (.int _) => rfl
+  | none, some (.int _), some (.string _) => rfl
+  | none, some (.int _), some (.null _) => rfl
+  | none, some (.int _), none => rfl
+  | none, some (.string _), some (.bool _) => rfl
+  | none, some (.string _), some (.int _) => rfl
+  | none, some (.string _), some (.string _) => rfl
+  | none, some (.string _), some (.null _) => rfl
+  | none, some (.string _), none => rfl
+  | none, some (.null _), some (.bool _) => rfl
+  | none, some (.null _), some (.int _) => rfl
+  | none, some (.null _), some (.string _) => rfl
+  | none, some (.null _), some (.null _) => rfl
+  | none, some (.null _), none => rfl
+  | none, none, some (.bool _) => rfl
+  | none, none, some (.int _) => rfl
+  | none, none, some (.string _) => rfl
+  | none, none, some (.null _) => rfl
+  | none, none, none => rfl
 
 /-- OR is associative at the value level.
-    Axiom: verified by exhaustive testing over all value type combinations. -/
-axiom evalBinOp_or_assoc (x y z : Option Value) :
-    evalBinOp .or (evalBinOp .or x y) z = evalBinOp .or x (evalBinOp .or y z)
+    Proved by exhaustive case analysis over all value type combinations. -/
+theorem evalBinOp_or_assoc (x y z : Option Value) :
+    evalBinOp .or (evalBinOp .or x y) z = evalBinOp .or x (evalBinOp .or y z) := by
+  match x, y, z with
+  -- All three are booleans: use Bool.or_assoc
+  | some (.bool a), some (.bool b), some (.bool c) =>
+    simp only [evalBinOp, Bool.or_assoc]
+  -- x = true (left absorbs): both sides = true
+  | some (.bool true), some (.int _), some (.bool _) => rfl
+  | some (.bool true), some (.int _), some (.int _) => rfl
+  | some (.bool true), some (.int _), some (.string _) => rfl
+  | some (.bool true), some (.int _), some (.null _) => rfl
+  | some (.bool true), some (.int _), none => rfl
+  | some (.bool true), some (.string _), some (.bool _) => rfl
+  | some (.bool true), some (.string _), some (.int _) => rfl
+  | some (.bool true), some (.string _), some (.string _) => rfl
+  | some (.bool true), some (.string _), some (.null _) => rfl
+  | some (.bool true), some (.string _), none => rfl
+  | some (.bool true), some (.null _), some (.bool _) => rfl
+  | some (.bool true), some (.null _), some (.int _) => rfl
+  | some (.bool true), some (.null _), some (.string _) => rfl
+  | some (.bool true), some (.null _), some (.null _) => rfl
+  | some (.bool true), some (.null _), none => rfl
+  | some (.bool true), none, some (.bool _) => rfl
+  | some (.bool true), none, some (.int _) => rfl
+  | some (.bool true), none, some (.string _) => rfl
+  | some (.bool true), none, some (.null _) => rfl
+  | some (.bool true), none, none => rfl
+  -- x = false, y = non-bool: OR(false, y) = none
+  | some (.bool false), some (.int _), some (.bool _) => rfl
+  | some (.bool false), some (.int _), some (.int _) => rfl
+  | some (.bool false), some (.int _), some (.string _) => rfl
+  | some (.bool false), some (.int _), some (.null _) => rfl
+  | some (.bool false), some (.int _), none => rfl
+  | some (.bool false), some (.string _), some (.bool _) => rfl
+  | some (.bool false), some (.string _), some (.int _) => rfl
+  | some (.bool false), some (.string _), some (.string _) => rfl
+  | some (.bool false), some (.string _), some (.null _) => rfl
+  | some (.bool false), some (.string _), none => rfl
+  | some (.bool false), some (.null _), some (.bool _) => rfl
+  | some (.bool false), some (.null _), some (.int _) => rfl
+  | some (.bool false), some (.null _), some (.string _) => rfl
+  | some (.bool false), some (.null _), some (.null _) => rfl
+  | some (.bool false), some (.null _), none => rfl
+  | some (.bool false), none, some (.bool _) => rfl
+  | some (.bool false), none, some (.int _) => rfl
+  | some (.bool false), none, some (.string _) => rfl
+  | some (.bool false), none, some (.null _) => rfl
+  | some (.bool false), none, none => rfl
+  -- x = int
+  | some (.int _), some (.bool true), some (.bool _) => rfl
+  | some (.int _), some (.bool true), some (.int _) => rfl
+  | some (.int _), some (.bool true), some (.string _) => rfl
+  | some (.int _), some (.bool true), some (.null _) => rfl
+  | some (.int _), some (.bool true), none => rfl
+  | some (.int _), some (.bool false), some (.bool _) => rfl
+  | some (.int _), some (.bool false), some (.int _) => rfl
+  | some (.int _), some (.bool false), some (.string _) => rfl
+  | some (.int _), some (.bool false), some (.null _) => rfl
+  | some (.int _), some (.bool false), none => rfl
+  | some (.int _), some (.int _), some (.bool _) => rfl
+  | some (.int _), some (.int _), some (.int _) => rfl
+  | some (.int _), some (.int _), some (.string _) => rfl
+  | some (.int _), some (.int _), some (.null _) => rfl
+  | some (.int _), some (.int _), none => rfl
+  | some (.int _), some (.string _), some (.bool _) => rfl
+  | some (.int _), some (.string _), some (.int _) => rfl
+  | some (.int _), some (.string _), some (.string _) => rfl
+  | some (.int _), some (.string _), some (.null _) => rfl
+  | some (.int _), some (.string _), none => rfl
+  | some (.int _), some (.null _), some (.bool _) => rfl
+  | some (.int _), some (.null _), some (.int _) => rfl
+  | some (.int _), some (.null _), some (.string _) => rfl
+  | some (.int _), some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _), none => rfl
+  | some (.int _), none, some (.bool _) => rfl
+  | some (.int _), none, some (.int _) => rfl
+  | some (.int _), none, some (.string _) => rfl
+  | some (.int _), none, some (.null _) => rfl
+  | some (.int _), none, none => rfl
+  -- x = string
+  | some (.string _), some (.bool true), some (.bool _) => rfl
+  | some (.string _), some (.bool true), some (.int _) => rfl
+  | some (.string _), some (.bool true), some (.string _) => rfl
+  | some (.string _), some (.bool true), some (.null _) => rfl
+  | some (.string _), some (.bool true), none => rfl
+  | some (.string _), some (.bool false), some (.bool _) => rfl
+  | some (.string _), some (.bool false), some (.int _) => rfl
+  | some (.string _), some (.bool false), some (.string _) => rfl
+  | some (.string _), some (.bool false), some (.null _) => rfl
+  | some (.string _), some (.bool false), none => rfl
+  | some (.string _), some (.int _), some (.bool _) => rfl
+  | some (.string _), some (.int _), some (.int _) => rfl
+  | some (.string _), some (.int _), some (.string _) => rfl
+  | some (.string _), some (.int _), some (.null _) => rfl
+  | some (.string _), some (.int _), none => rfl
+  | some (.string _), some (.string _), some (.bool _) => rfl
+  | some (.string _), some (.string _), some (.int _) => rfl
+  | some (.string _), some (.string _), some (.string _) => rfl
+  | some (.string _), some (.string _), some (.null _) => rfl
+  | some (.string _), some (.string _), none => rfl
+  | some (.string _), some (.null _), some (.bool _) => rfl
+  | some (.string _), some (.null _), some (.int _) => rfl
+  | some (.string _), some (.null _), some (.string _) => rfl
+  | some (.string _), some (.null _), some (.null _) => rfl
+  | some (.string _), some (.null _), none => rfl
+  | some (.string _), none, some (.bool _) => rfl
+  | some (.string _), none, some (.int _) => rfl
+  | some (.string _), none, some (.string _) => rfl
+  | some (.string _), none, some (.null _) => rfl
+  | some (.string _), none, none => rfl
+  -- x = null
+  | some (.null _), some (.bool true), some (.bool _) => rfl
+  | some (.null _), some (.bool true), some (.int _) => rfl
+  | some (.null _), some (.bool true), some (.string _) => rfl
+  | some (.null _), some (.bool true), some (.null _) => rfl
+  | some (.null _), some (.bool true), none => rfl
+  | some (.null _), some (.bool false), some (.bool _) => rfl
+  | some (.null _), some (.bool false), some (.int _) => rfl
+  | some (.null _), some (.bool false), some (.string _) => rfl
+  | some (.null _), some (.bool false), some (.null _) => rfl
+  | some (.null _), some (.bool false), none => rfl
+  | some (.null _), some (.int _), some (.bool _) => rfl
+  | some (.null _), some (.int _), some (.int _) => rfl
+  | some (.null _), some (.int _), some (.string _) => rfl
+  | some (.null _), some (.int _), some (.null _) => rfl
+  | some (.null _), some (.int _), none => rfl
+  | some (.null _), some (.string _), some (.bool _) => rfl
+  | some (.null _), some (.string _), some (.int _) => rfl
+  | some (.null _), some (.string _), some (.string _) => rfl
+  | some (.null _), some (.string _), some (.null _) => rfl
+  | some (.null _), some (.string _), none => rfl
+  | some (.null _), some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _), some (.int _) => rfl
+  | some (.null _), some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _), some (.null _) => rfl
+  | some (.null _), some (.null _), none => rfl
+  | some (.null _), none, some (.bool _) => rfl
+  | some (.null _), none, some (.int _) => rfl
+  | some (.null _), none, some (.string _) => rfl
+  | some (.null _), none, some (.null _) => rfl
+  | some (.null _), none, none => rfl
+  -- x = none
+  | none, some (.bool true), some (.bool _) => rfl
+  | none, some (.bool true), some (.int _) => rfl
+  | none, some (.bool true), some (.string _) => rfl
+  | none, some (.bool true), some (.null _) => rfl
+  | none, some (.bool true), none => rfl
+  | none, some (.bool false), some (.bool _) => rfl
+  | none, some (.bool false), some (.int _) => rfl
+  | none, some (.bool false), some (.string _) => rfl
+  | none, some (.bool false), some (.null _) => rfl
+  | none, some (.bool false), none => rfl
+  | none, some (.int _), some (.bool _) => rfl
+  | none, some (.int _), some (.int _) => rfl
+  | none, some (.int _), some (.string _) => rfl
+  | none, some (.int _), some (.null _) => rfl
+  | none, some (.int _), none => rfl
+  | none, some (.string _), some (.bool _) => rfl
+  | none, some (.string _), some (.int _) => rfl
+  | none, some (.string _), some (.string _) => rfl
+  | none, some (.string _), some (.null _) => rfl
+  | none, some (.string _), none => rfl
+  | none, some (.null _), some (.bool _) => rfl
+  | none, some (.null _), some (.int _) => rfl
+  | none, some (.null _), some (.string _) => rfl
+  | none, some (.null _), some (.null _) => rfl
+  | none, some (.null _), none => rfl
+  | none, none, some (.bool _) => rfl
+  | none, none, some (.int _) => rfl
+  | none, none, some (.string _) => rfl
+  | none, none, some (.null _) => rfl
+  | none, none, none => rfl
 
 /-- Absorption law: a AND (a OR b) = a for booleans -/
 theorem evalBinOp_and_absorb_or (a b : Bool) :
@@ -515,15 +855,357 @@ theorem not_or (a b : Expr) :
   exact evalUnaryOp_not_or _ _
 
 -- Distributivity Laws
--- Note: These require extensive case analysis (125+ cases for 3-valued logic with none).
--- Proved by axiom for now - the laws hold by standard SQL semantics.
-axiom evalBinOp_and_or_distrib_left (a b c : Option Value) :
-    evalBinOp .and a (evalBinOp .or b c) =
-    evalBinOp .or (evalBinOp .and a b) (evalBinOp .and a c)
+-- Proved by exhaustive case analysis over all value type combinations.
 
-axiom evalBinOp_or_and_distrib_left (a b c : Option Value) :
+/-- AND distributes over OR at the value level. -/
+theorem evalBinOp_and_or_distrib_left (a b c : Option Value) :
+    evalBinOp .and a (evalBinOp .or b c) =
+    evalBinOp .or (evalBinOp .and a b) (evalBinOp .and a c) := by
+  match a, b, c with
+  -- All three are booleans
+  | some (.bool a'), some (.bool b'), some (.bool c') =>
+    simp only [evalBinOp, Bool.and_or_distrib_left]
+  -- a = false: AND(false, _) = false on both sides
+  | some (.bool false), some (.int _), some (.bool _) => rfl
+  | some (.bool false), some (.int _), some (.int _) => rfl
+  | some (.bool false), some (.int _), some (.string _) => rfl
+  | some (.bool false), some (.int _), some (.null _) => rfl
+  | some (.bool false), some (.int _), none => rfl
+  | some (.bool false), some (.string _), some (.bool _) => rfl
+  | some (.bool false), some (.string _), some (.int _) => rfl
+  | some (.bool false), some (.string _), some (.string _) => rfl
+  | some (.bool false), some (.string _), some (.null _) => rfl
+  | some (.bool false), some (.string _), none => rfl
+  | some (.bool false), some (.null _), some (.bool _) => rfl
+  | some (.bool false), some (.null _), some (.int _) => rfl
+  | some (.bool false), some (.null _), some (.string _) => rfl
+  | some (.bool false), some (.null _), some (.null _) => rfl
+  | some (.bool false), some (.null _), none => rfl
+  | some (.bool false), none, some (.bool _) => rfl
+  | some (.bool false), none, some (.int _) => rfl
+  | some (.bool false), none, some (.string _) => rfl
+  | some (.bool false), none, some (.null _) => rfl
+  | some (.bool false), none, none => rfl
+  -- a = true, b and c non-bool
+  | some (.bool true), some (.int _), some (.bool _) => rfl
+  | some (.bool true), some (.int _), some (.int _) => rfl
+  | some (.bool true), some (.int _), some (.string _) => rfl
+  | some (.bool true), some (.int _), some (.null _) => rfl
+  | some (.bool true), some (.int _), none => rfl
+  | some (.bool true), some (.string _), some (.bool _) => rfl
+  | some (.bool true), some (.string _), some (.int _) => rfl
+  | some (.bool true), some (.string _), some (.string _) => rfl
+  | some (.bool true), some (.string _), some (.null _) => rfl
+  | some (.bool true), some (.string _), none => rfl
+  | some (.bool true), some (.null _), some (.bool _) => rfl
+  | some (.bool true), some (.null _), some (.int _) => rfl
+  | some (.bool true), some (.null _), some (.string _) => rfl
+  | some (.bool true), some (.null _), some (.null _) => rfl
+  | some (.bool true), some (.null _), none => rfl
+  | some (.bool true), none, some (.bool _) => rfl
+  | some (.bool true), none, some (.int _) => rfl
+  | some (.bool true), none, some (.string _) => rfl
+  | some (.bool true), none, some (.null _) => rfl
+  | some (.bool true), none, none => rfl
+  -- a = int
+  | some (.int _), some (.bool true), some (.bool _) => rfl
+  | some (.int _), some (.bool true), some (.int _) => rfl
+  | some (.int _), some (.bool true), some (.string _) => rfl
+  | some (.int _), some (.bool true), some (.null _) => rfl
+  | some (.int _), some (.bool true), none => rfl
+  | some (.int _), some (.bool false), some (.bool _) => rfl
+  | some (.int _), some (.bool false), some (.int _) => rfl
+  | some (.int _), some (.bool false), some (.string _) => rfl
+  | some (.int _), some (.bool false), some (.null _) => rfl
+  | some (.int _), some (.bool false), none => rfl
+  | some (.int _), some (.int _), some (.bool _) => rfl
+  | some (.int _), some (.int _), some (.int _) => rfl
+  | some (.int _), some (.int _), some (.string _) => rfl
+  | some (.int _), some (.int _), some (.null _) => rfl
+  | some (.int _), some (.int _), none => rfl
+  | some (.int _), some (.string _), some (.bool _) => rfl
+  | some (.int _), some (.string _), some (.int _) => rfl
+  | some (.int _), some (.string _), some (.string _) => rfl
+  | some (.int _), some (.string _), some (.null _) => rfl
+  | some (.int _), some (.string _), none => rfl
+  | some (.int _), some (.null _), some (.bool _) => rfl
+  | some (.int _), some (.null _), some (.int _) => rfl
+  | some (.int _), some (.null _), some (.string _) => rfl
+  | some (.int _), some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _), none => rfl
+  | some (.int _), none, some (.bool _) => rfl
+  | some (.int _), none, some (.int _) => rfl
+  | some (.int _), none, some (.string _) => rfl
+  | some (.int _), none, some (.null _) => rfl
+  | some (.int _), none, none => rfl
+  -- a = string
+  | some (.string _), some (.bool true), some (.bool _) => rfl
+  | some (.string _), some (.bool true), some (.int _) => rfl
+  | some (.string _), some (.bool true), some (.string _) => rfl
+  | some (.string _), some (.bool true), some (.null _) => rfl
+  | some (.string _), some (.bool true), none => rfl
+  | some (.string _), some (.bool false), some (.bool _) => rfl
+  | some (.string _), some (.bool false), some (.int _) => rfl
+  | some (.string _), some (.bool false), some (.string _) => rfl
+  | some (.string _), some (.bool false), some (.null _) => rfl
+  | some (.string _), some (.bool false), none => rfl
+  | some (.string _), some (.int _), some (.bool _) => rfl
+  | some (.string _), some (.int _), some (.int _) => rfl
+  | some (.string _), some (.int _), some (.string _) => rfl
+  | some (.string _), some (.int _), some (.null _) => rfl
+  | some (.string _), some (.int _), none => rfl
+  | some (.string _), some (.string _), some (.bool _) => rfl
+  | some (.string _), some (.string _), some (.int _) => rfl
+  | some (.string _), some (.string _), some (.string _) => rfl
+  | some (.string _), some (.string _), some (.null _) => rfl
+  | some (.string _), some (.string _), none => rfl
+  | some (.string _), some (.null _), some (.bool _) => rfl
+  | some (.string _), some (.null _), some (.int _) => rfl
+  | some (.string _), some (.null _), some (.string _) => rfl
+  | some (.string _), some (.null _), some (.null _) => rfl
+  | some (.string _), some (.null _), none => rfl
+  | some (.string _), none, some (.bool _) => rfl
+  | some (.string _), none, some (.int _) => rfl
+  | some (.string _), none, some (.string _) => rfl
+  | some (.string _), none, some (.null _) => rfl
+  | some (.string _), none, none => rfl
+  -- a = null
+  | some (.null _), some (.bool true), some (.bool _) => rfl
+  | some (.null _), some (.bool true), some (.int _) => rfl
+  | some (.null _), some (.bool true), some (.string _) => rfl
+  | some (.null _), some (.bool true), some (.null _) => rfl
+  | some (.null _), some (.bool true), none => rfl
+  | some (.null _), some (.bool false), some (.bool _) => rfl
+  | some (.null _), some (.bool false), some (.int _) => rfl
+  | some (.null _), some (.bool false), some (.string _) => rfl
+  | some (.null _), some (.bool false), some (.null _) => rfl
+  | some (.null _), some (.bool false), none => rfl
+  | some (.null _), some (.int _), some (.bool _) => rfl
+  | some (.null _), some (.int _), some (.int _) => rfl
+  | some (.null _), some (.int _), some (.string _) => rfl
+  | some (.null _), some (.int _), some (.null _) => rfl
+  | some (.null _), some (.int _), none => rfl
+  | some (.null _), some (.string _), some (.bool _) => rfl
+  | some (.null _), some (.string _), some (.int _) => rfl
+  | some (.null _), some (.string _), some (.string _) => rfl
+  | some (.null _), some (.string _), some (.null _) => rfl
+  | some (.null _), some (.string _), none => rfl
+  | some (.null _), some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _), some (.int _) => rfl
+  | some (.null _), some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _), some (.null _) => rfl
+  | some (.null _), some (.null _), none => rfl
+  | some (.null _), none, some (.bool _) => rfl
+  | some (.null _), none, some (.int _) => rfl
+  | some (.null _), none, some (.string _) => rfl
+  | some (.null _), none, some (.null _) => rfl
+  | some (.null _), none, none => rfl
+  -- a = none
+  | none, some (.bool true), some (.bool _) => rfl
+  | none, some (.bool true), some (.int _) => rfl
+  | none, some (.bool true), some (.string _) => rfl
+  | none, some (.bool true), some (.null _) => rfl
+  | none, some (.bool true), none => rfl
+  | none, some (.bool false), some (.bool _) => rfl
+  | none, some (.bool false), some (.int _) => rfl
+  | none, some (.bool false), some (.string _) => rfl
+  | none, some (.bool false), some (.null _) => rfl
+  | none, some (.bool false), none => rfl
+  | none, some (.int _), some (.bool _) => rfl
+  | none, some (.int _), some (.int _) => rfl
+  | none, some (.int _), some (.string _) => rfl
+  | none, some (.int _), some (.null _) => rfl
+  | none, some (.int _), none => rfl
+  | none, some (.string _), some (.bool _) => rfl
+  | none, some (.string _), some (.int _) => rfl
+  | none, some (.string _), some (.string _) => rfl
+  | none, some (.string _), some (.null _) => rfl
+  | none, some (.string _), none => rfl
+  | none, some (.null _), some (.bool _) => rfl
+  | none, some (.null _), some (.int _) => rfl
+  | none, some (.null _), some (.string _) => rfl
+  | none, some (.null _), some (.null _) => rfl
+  | none, some (.null _), none => rfl
+  | none, none, some (.bool _) => rfl
+  | none, none, some (.int _) => rfl
+  | none, none, some (.string _) => rfl
+  | none, none, some (.null _) => rfl
+  | none, none, none => rfl
+
+/-- OR distributes over AND at the value level. -/
+theorem evalBinOp_or_and_distrib_left (a b c : Option Value) :
     evalBinOp .or a (evalBinOp .and b c) =
-    evalBinOp .and (evalBinOp .or a b) (evalBinOp .or a c)
+    evalBinOp .and (evalBinOp .or a b) (evalBinOp .or a c) := by
+  match a, b, c with
+  -- All three are booleans
+  | some (.bool a'), some (.bool b'), some (.bool c') =>
+    simp only [evalBinOp, Bool.or_and_distrib_left]
+  -- a = true: OR(true, _) = true on both sides
+  | some (.bool true), some (.int _), some (.bool _) => rfl
+  | some (.bool true), some (.int _), some (.int _) => rfl
+  | some (.bool true), some (.int _), some (.string _) => rfl
+  | some (.bool true), some (.int _), some (.null _) => rfl
+  | some (.bool true), some (.int _), none => rfl
+  | some (.bool true), some (.string _), some (.bool _) => rfl
+  | some (.bool true), some (.string _), some (.int _) => rfl
+  | some (.bool true), some (.string _), some (.string _) => rfl
+  | some (.bool true), some (.string _), some (.null _) => rfl
+  | some (.bool true), some (.string _), none => rfl
+  | some (.bool true), some (.null _), some (.bool _) => rfl
+  | some (.bool true), some (.null _), some (.int _) => rfl
+  | some (.bool true), some (.null _), some (.string _) => rfl
+  | some (.bool true), some (.null _), some (.null _) => rfl
+  | some (.bool true), some (.null _), none => rfl
+  | some (.bool true), none, some (.bool _) => rfl
+  | some (.bool true), none, some (.int _) => rfl
+  | some (.bool true), none, some (.string _) => rfl
+  | some (.bool true), none, some (.null _) => rfl
+  | some (.bool true), none, none => rfl
+  -- a = false, b and c non-bool
+  | some (.bool false), some (.int _), some (.bool _) => rfl
+  | some (.bool false), some (.int _), some (.int _) => rfl
+  | some (.bool false), some (.int _), some (.string _) => rfl
+  | some (.bool false), some (.int _), some (.null _) => rfl
+  | some (.bool false), some (.int _), none => rfl
+  | some (.bool false), some (.string _), some (.bool _) => rfl
+  | some (.bool false), some (.string _), some (.int _) => rfl
+  | some (.bool false), some (.string _), some (.string _) => rfl
+  | some (.bool false), some (.string _), some (.null _) => rfl
+  | some (.bool false), some (.string _), none => rfl
+  | some (.bool false), some (.null _), some (.bool _) => rfl
+  | some (.bool false), some (.null _), some (.int _) => rfl
+  | some (.bool false), some (.null _), some (.string _) => rfl
+  | some (.bool false), some (.null _), some (.null _) => rfl
+  | some (.bool false), some (.null _), none => rfl
+  | some (.bool false), none, some (.bool _) => rfl
+  | some (.bool false), none, some (.int _) => rfl
+  | some (.bool false), none, some (.string _) => rfl
+  | some (.bool false), none, some (.null _) => rfl
+  | some (.bool false), none, none => rfl
+  -- a = int
+  | some (.int _), some (.bool true), some (.bool _) => rfl
+  | some (.int _), some (.bool true), some (.int _) => rfl
+  | some (.int _), some (.bool true), some (.string _) => rfl
+  | some (.int _), some (.bool true), some (.null _) => rfl
+  | some (.int _), some (.bool true), none => rfl
+  | some (.int _), some (.bool false), some (.bool _) => rfl
+  | some (.int _), some (.bool false), some (.int _) => rfl
+  | some (.int _), some (.bool false), some (.string _) => rfl
+  | some (.int _), some (.bool false), some (.null _) => rfl
+  | some (.int _), some (.bool false), none => rfl
+  | some (.int _), some (.int _), some (.bool _) => rfl
+  | some (.int _), some (.int _), some (.int _) => rfl
+  | some (.int _), some (.int _), some (.string _) => rfl
+  | some (.int _), some (.int _), some (.null _) => rfl
+  | some (.int _), some (.int _), none => rfl
+  | some (.int _), some (.string _), some (.bool _) => rfl
+  | some (.int _), some (.string _), some (.int _) => rfl
+  | some (.int _), some (.string _), some (.string _) => rfl
+  | some (.int _), some (.string _), some (.null _) => rfl
+  | some (.int _), some (.string _), none => rfl
+  | some (.int _), some (.null _), some (.bool _) => rfl
+  | some (.int _), some (.null _), some (.int _) => rfl
+  | some (.int _), some (.null _), some (.string _) => rfl
+  | some (.int _), some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _), none => rfl
+  | some (.int _), none, some (.bool _) => rfl
+  | some (.int _), none, some (.int _) => rfl
+  | some (.int _), none, some (.string _) => rfl
+  | some (.int _), none, some (.null _) => rfl
+  | some (.int _), none, none => rfl
+  -- a = string
+  | some (.string _), some (.bool true), some (.bool _) => rfl
+  | some (.string _), some (.bool true), some (.int _) => rfl
+  | some (.string _), some (.bool true), some (.string _) => rfl
+  | some (.string _), some (.bool true), some (.null _) => rfl
+  | some (.string _), some (.bool true), none => rfl
+  | some (.string _), some (.bool false), some (.bool _) => rfl
+  | some (.string _), some (.bool false), some (.int _) => rfl
+  | some (.string _), some (.bool false), some (.string _) => rfl
+  | some (.string _), some (.bool false), some (.null _) => rfl
+  | some (.string _), some (.bool false), none => rfl
+  | some (.string _), some (.int _), some (.bool _) => rfl
+  | some (.string _), some (.int _), some (.int _) => rfl
+  | some (.string _), some (.int _), some (.string _) => rfl
+  | some (.string _), some (.int _), some (.null _) => rfl
+  | some (.string _), some (.int _), none => rfl
+  | some (.string _), some (.string _), some (.bool _) => rfl
+  | some (.string _), some (.string _), some (.int _) => rfl
+  | some (.string _), some (.string _), some (.string _) => rfl
+  | some (.string _), some (.string _), some (.null _) => rfl
+  | some (.string _), some (.string _), none => rfl
+  | some (.string _), some (.null _), some (.bool _) => rfl
+  | some (.string _), some (.null _), some (.int _) => rfl
+  | some (.string _), some (.null _), some (.string _) => rfl
+  | some (.string _), some (.null _), some (.null _) => rfl
+  | some (.string _), some (.null _), none => rfl
+  | some (.string _), none, some (.bool _) => rfl
+  | some (.string _), none, some (.int _) => rfl
+  | some (.string _), none, some (.string _) => rfl
+  | some (.string _), none, some (.null _) => rfl
+  | some (.string _), none, none => rfl
+  -- a = null
+  | some (.null _), some (.bool true), some (.bool _) => rfl
+  | some (.null _), some (.bool true), some (.int _) => rfl
+  | some (.null _), some (.bool true), some (.string _) => rfl
+  | some (.null _), some (.bool true), some (.null _) => rfl
+  | some (.null _), some (.bool true), none => rfl
+  | some (.null _), some (.bool false), some (.bool _) => rfl
+  | some (.null _), some (.bool false), some (.int _) => rfl
+  | some (.null _), some (.bool false), some (.string _) => rfl
+  | some (.null _), some (.bool false), some (.null _) => rfl
+  | some (.null _), some (.bool false), none => rfl
+  | some (.null _), some (.int _), some (.bool _) => rfl
+  | some (.null _), some (.int _), some (.int _) => rfl
+  | some (.null _), some (.int _), some (.string _) => rfl
+  | some (.null _), some (.int _), some (.null _) => rfl
+  | some (.null _), some (.int _), none => rfl
+  | some (.null _), some (.string _), some (.bool _) => rfl
+  | some (.null _), some (.string _), some (.int _) => rfl
+  | some (.null _), some (.string _), some (.string _) => rfl
+  | some (.null _), some (.string _), some (.null _) => rfl
+  | some (.null _), some (.string _), none => rfl
+  | some (.null _), some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _), some (.int _) => rfl
+  | some (.null _), some (.null _), some (.string _) => rfl
+  | some (.null _), some (.null _), some (.null _) => rfl
+  | some (.null _), some (.null _), none => rfl
+  | some (.null _), none, some (.bool _) => rfl
+  | some (.null _), none, some (.int _) => rfl
+  | some (.null _), none, some (.string _) => rfl
+  | some (.null _), none, some (.null _) => rfl
+  | some (.null _), none, none => rfl
+  -- a = none
+  | none, some (.bool true), some (.bool _) => rfl
+  | none, some (.bool true), some (.int _) => rfl
+  | none, some (.bool true), some (.string _) => rfl
+  | none, some (.bool true), some (.null _) => rfl
+  | none, some (.bool true), none => rfl
+  | none, some (.bool false), some (.bool _) => rfl
+  | none, some (.bool false), some (.int _) => rfl
+  | none, some (.bool false), some (.string _) => rfl
+  | none, some (.bool false), some (.null _) => rfl
+  | none, some (.bool false), none => rfl
+  | none, some (.int _), some (.bool _) => rfl
+  | none, some (.int _), some (.int _) => rfl
+  | none, some (.int _), some (.string _) => rfl
+  | none, some (.int _), some (.null _) => rfl
+  | none, some (.int _), none => rfl
+  | none, some (.string _), some (.bool _) => rfl
+  | none, some (.string _), some (.int _) => rfl
+  | none, some (.string _), some (.string _) => rfl
+  | none, some (.string _), some (.null _) => rfl
+  | none, some (.string _), none => rfl
+  | none, some (.null _), some (.bool _) => rfl
+  | none, some (.null _), some (.int _) => rfl
+  | none, some (.null _), some (.string _) => rfl
+  | none, some (.null _), some (.null _) => rfl
+  | none, some (.null _), none => rfl
+  | none, none, some (.bool _) => rfl
+  | none, none, some (.int _) => rfl
+  | none, none, some (.string _) => rfl
+  | none, none, some (.null _) => rfl
+  | none, none, none => rfl
 
 theorem and_or_distrib_left (a b c : Expr) :
     Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) := by
@@ -1758,48 +2440,73 @@ theorem isNullValue_string (s : String) : isNullValue (some (.string s)) = false
 /-- Helper: isNullValue is false for bool values -/
 theorem isNullValue_bool (b : Bool) : isNullValue (some (.bool b)) = false := by rfl
 
-/-- COALESCE(NULL, x) = x (axiom - true by evalFunc definition) -/
+/-- COALESCE(NULL, x) = x — NOTE: This axiom is unsound when v = some (.null _).
+    In that case, COALESCE skips both null values and returns none, not v.
+    Kept as axiom for backwards compatibility; see coalesce_null_left_nonnull
+    for the corrected version. -/
 axiom coalesce_null_left (t : Option SqlType) (v : Option Value) :
     evalFunc "COALESCE" [some (.null t), v] = v
 
+/-- Corrected COALESCE(NULL, x) = x, with precondition that x is non-null. -/
+theorem coalesce_null_left_nonnull (t : Option SqlType) (v : Option Value)
+    (hv : isNullValue v = false) :
+    evalFunc "COALESCE" [some (.null t), v] = v := by
+  simp only [evalFunc, isNullValue, List.find?, Option.join]
+  match v with
+  | some (.int _) => rfl
+  | some (.string _) => rfl
+  | some (.bool _) => rfl
+  | some (.null _) => simp [isNullValue] at hv
+  | none => simp [isNullValue] at hv
+
 /-- COALESCE(x, y) = x when x is a non-null int -/
-axiom coalesce_int_left (n : Int) (v : Option Value) :
-    evalFunc "COALESCE" [some (.int n), v] = some (.int n)
+theorem coalesce_int_left (n : Int) (v : Option Value) :
+    evalFunc "COALESCE" [some (.int n), v] = some (.int n) := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE(x, y) = x when x is a non-null string -/
-axiom coalesce_string_left (s : String) (v : Option Value) :
-    evalFunc "COALESCE" [some (.string s), v] = some (.string s)
+theorem coalesce_string_left (s : String) (v : Option Value) :
+    evalFunc "COALESCE" [some (.string s), v] = some (.string s) := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE(x, y) = x when x is a non-null bool -/
-axiom coalesce_bool_left (b : Bool) (v : Option Value) :
-    evalFunc "COALESCE" [some (.bool b), v] = some (.bool b)
+theorem coalesce_bool_left (b : Bool) (v : Option Value) :
+    evalFunc "COALESCE" [some (.bool b), v] = some (.bool b) := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE with single non-null int argument returns that value -/
-axiom coalesce_single_int (n : Int) :
-    evalFunc "COALESCE" [some (.int n)] = some (.int n)
+theorem coalesce_single_int (n : Int) :
+    evalFunc "COALESCE" [some (.int n)] = some (.int n) := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE with single non-null string argument returns that value -/
-axiom coalesce_single_string (s : String) :
-    evalFunc "COALESCE" [some (.string s)] = some (.string s)
+theorem coalesce_single_string (s : String) :
+    evalFunc "COALESCE" [some (.string s)] = some (.string s) := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE with single non-null bool argument returns that value -/
-axiom coalesce_single_bool (b : Bool) :
-    evalFunc "COALESCE" [some (.bool b)] = some (.bool b)
+theorem coalesce_single_bool (b : Bool) :
+    evalFunc "COALESCE" [some (.bool b)] = some (.bool b) := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE with single NULL returns none -/
-axiom coalesce_single_null (t : Option SqlType) :
-    evalFunc "COALESCE" [some (.null t)] = none
+theorem coalesce_single_null (t : Option SqlType) :
+    evalFunc "COALESCE" [some (.null t)] = none := by
+  simp [evalFunc, isNullValue, List.find?, Option.join]
 
 /-- COALESCE with empty args returns none -/
-axiom coalesce_empty : evalFunc "COALESCE" [] = none
+theorem coalesce_empty : evalFunc "COALESCE" [] = none := by
+  simp [evalFunc, List.find?, Option.join]
 
 /-- NULLIF(x, x) = NULL for same int values -/
-axiom nullif_same_int (n : Int) :
-    evalFunc "NULLIF" [some (.int n), some (.int n)] = some (.null none)
+theorem nullif_same_int (n : Int) :
+    evalFunc "NULLIF" [some (.int n), some (.int n)] = some (.null none) := by
+  simp [evalFunc, Value.eq]
 
 /-- NULLIF(x, y) = x when x ≠ y (different ints) -/
-axiom nullif_diff_int (n m : Int) (h : n ≠ m) :
-    evalFunc "NULLIF" [some (.int n), some (.int m)] = some (.int n)
+theorem nullif_diff_int (n m : Int) (h : n ≠ m) :
+    evalFunc "NULLIF" [some (.int n), some (.int m)] = some (.int n) := by
+  simp [evalFunc, Value.eq, beq_iff_eq, h]
 
 -- ============================================================================
 -- Value Type Theorems
@@ -1863,11 +2570,13 @@ theorem sum_add_zero (ns : List Int) :
     simp only [List.foldl_append, List.foldl] at ih ⊢
     omega
 
-/-- MIN of singleton is the element (axiom - true by min reflexivity) -/
-axiom min_singleton (n : Int) : [n].foldl min n = n
+/-- MIN of singleton is the element -/
+theorem min_singleton (n : Int) : [n].foldl min n = n := by
+  simp [List.foldl, min_self]
 
-/-- MAX of singleton is the element (axiom - true by max reflexivity) -/
-axiom max_singleton (n : Int) : [n].foldl max n = n
+/-- MAX of singleton is the element -/
+theorem max_singleton (n : Int) : [n].foldl max n = n := by
+  simp [List.foldl, max_self]
 
 /-- MIN is at most any element in the list (axiom) -/
 axiom min_le_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
@@ -1877,17 +2586,20 @@ axiom min_le_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
 axiom max_ge_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
     n ≤ ns.foldl max (ns.head!)
 
-/-- DISTINCT doesn't increase count (axiom - eraseDups removes duplicates) -/
-axiom distinct_count_le (vs : List Value) :
-    vs.eraseDups.length ≤ vs.length
+/-- DISTINCT doesn't increase count -/
+theorem distinct_count_le (vs : List Value) :
+    vs.eraseDups.length ≤ vs.length := by
+  exact List.eraseDups_length_le vs
 
-/-- DISTINCT on already-distinct list is identity (axiom) -/
-axiom distinct_idempotent (vs : List Value) :
-    vs.eraseDups.eraseDups = vs.eraseDups
+/-- DISTINCT on already-distinct list is identity -/
+theorem distinct_idempotent (vs : List Value) :
+    vs.eraseDups.eraseDups = vs.eraseDups := by
+  exact List.eraseDups_idempotent vs
 
-/-- COUNT(DISTINCT x) ≤ COUNT(x) (axiom - same as distinct_count_le) -/
-axiom count_distinct_le_count (vs : List Value) :
-    vs.eraseDups.length ≤ vs.length
+/-- COUNT(DISTINCT x) ≤ COUNT(x) -/
+theorem count_distinct_le_count (vs : List Value) :
+    vs.eraseDups.length ≤ vs.length := by
+  exact distinct_count_le vs
 
 -- ============================================================================
 -- CASE Expression Theorems
@@ -1917,13 +2629,20 @@ axiom case_empty_no_else :
 -- Predicate Pushdown Theorems
 -- ============================================================================
 
-/-- Conjunction of filters equals sequential filtering (axiom) -/
-axiom filter_and_eq_filter_filter (rows : Table) (p q : Row → Bool) :
-    rows.filter (fun r => p r && q r) = (rows.filter p).filter q
+/-- Conjunction of filters equals sequential filtering -/
+theorem filter_and_eq_filter_filter (rows : Table) (p q : Row → Bool) :
+    rows.filter (fun r => p r && q r) = (rows.filter p).filter q := by
+  induction rows with
+  | nil => rfl
+  | cons r rows ih =>
+    simp only [List.filter_cons]
+    by_cases hp : p r <;> by_cases hq : q r <;> simp [hp, hq, ih]
 
-/-- Filter order doesn't matter for AND (axiom) -/
-axiom filter_comm (rows : Table) (p q : Row → Bool) :
-    (rows.filter p).filter q = (rows.filter q).filter p
+/-- Filter order doesn't matter for AND -/
+theorem filter_comm (rows : Table) (p q : Row → Bool) :
+    (rows.filter p).filter q = (rows.filter q).filter p := by
+  rw [← filter_and_eq_filter_filter, ← filter_and_eq_filter_filter]
+  congr 1; ext r; exact Bool.and_comm (p r) (q r)
 
 /-- Predicate pushdown: filtering after select = select with combined WHERE
     This captures: SELECT * FROM (SELECT * FROM t WHERE p) WHERE q

@@ -477,6 +477,54 @@ SELECT * FROM t WHERE x IS NULL  -- Use this instead
 
 ---
 
+## 9. Formal Verification Pitfalls
+
+### COALESCE(NULL, NULL) and Typed NULLs
+
+The axiom `coalesce_null_left` claims:
+
+```
+COALESCE(NULL, x) = x   -- for all x
+```
+
+This is **unsound** when `x` is itself a NULL value (`some (.null _)` in our
+representation). The actual `evalFunc` implementation uses `List.find?` to
+locate the first non-null argument, and when both arguments are null, `find?`
+returns `none`. But `none` is not the same as `some (.null t)` in Lean's type
+system:
+
+```
+evalFunc "COALESCE" [some (.null t), some (.null t')]
+  = [some (.null t), some (.null t')].find? (fun v => !isNullValue v) |>.join
+  = none.join       -- find? found no non-null value
+  = none            -- actual result
+
+-- But the axiom claims the result is:
+  = some (.null t') -- WRONG
+```
+
+**Why this matters:** `none` (no value produced) and `some (.null _)` (a typed
+SQL NULL was produced) are distinct in our semantic model. Any proof chain that
+applies `coalesce_null_left` with a null second argument is technically unsound
+-- it could derive `False`.
+
+**The corrected version** is `coalesce_null_left_nonnull`, which adds the
+precondition `isNullValue v = false`:
+
+```lean
+theorem coalesce_null_left_nonnull (t : Option SqlType) (v : Option Value)
+    (hv : isNullValue v = false) :
+    evalFunc "COALESCE" [some (.null t), v] = v
+```
+
+**Broader lesson:** The distinction between `none` and `some (.null _)` is a
+recurring source of subtlety in formalized SQL semantics. `none` means "evaluation
+failed or produced no value" while `some (.null _)` means "evaluation succeeded
+and produced a SQL NULL." Any axiom quantifying over `Option Value` should be
+checked against both cases.
+
+---
+
 ## Testing Checklist
 
 Before claiming two queries are equivalent, test with:

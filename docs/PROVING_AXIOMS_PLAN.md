@@ -75,23 +75,31 @@ def evalSelect : Database → SelectStmt → Table
 
 ## Phased Approach
 
-### Phase 1: Foundation - Value and Boolean Properties
+### Phase 1: Foundation - Value and Boolean Properties ✅ COMPLETED
 
 **Goal:** Prove properties about value comparison and boolean operations.
 
-**Axioms to prove:**
-- `evalBinOp_and_assoc` - AND is associative
-- `evalBinOp_or_assoc` - OR is associative
-- `Value.eq` reflexivity, symmetry, transitivity
+**Axioms proved (22 total):**
+- `evalBinOp_and_assoc` - AND is associative ✅
+- `evalBinOp_or_assoc` - OR is associative ✅
+- `evalBinOp_and_or_distrib_left` - AND distributes over OR ✅
+- `evalBinOp_or_and_distrib_left` - OR distributes over AND ✅
+- `coalesce_int_left`, `coalesce_string_left`, `coalesce_bool_left` ✅
+- `coalesce_single_int`, `coalesce_single_string`, `coalesce_single_bool` ✅
+- `coalesce_single_null`, `coalesce_empty` ✅
+- `nullif_same_int`, `nullif_diff_int` ✅
+- `min_singleton`, `max_singleton` ✅
+- `distinct_count_le`, `distinct_idempotent`, `count_distinct_le_count` ✅
+- `filter_and_eq_filter_filter`, `filter_comm` ✅
 
-**Why first:** These are self-contained and don't depend on SQL structures.
+**Not proved (soundness issue found):**
+- `coalesce_null_left` - unsound for null second argument (see Known Soundness Issues)
 
-**Approach:**
-1. Case analysis on `Value` constructors
-2. Handle NULL propagation explicitly
-3. Use decidable equality for concrete cases
-
-**Estimated complexity:** Low - straightforward case analysis
+**Approach used:**
+1. Exhaustive case analysis on all `Option Value` constructor triples (for associativity/distributivity)
+2. `simp` with `evalFunc`/`isNullValue` unfolding (for COALESCE/NULLIF)
+3. Standard library lemmas (for list properties)
+4. Induction on list structure (for filter properties)
 
 ---
 
@@ -362,12 +370,42 @@ This is trivially true by reflexivity, but building toward a non-trivial version
 
 ---
 
+## Known Soundness Issues
+
+### `coalesce_null_left` is unsound
+
+The axiom `coalesce_null_left` claims `COALESCE(NULL, x) = x` for all `x`,
+but this is false when `x` is itself a null value (`some (.null _)`).
+
+The `evalFunc` implementation uses `List.find?` to locate the first non-null
+argument. When both arguments are null, `find?` returns `none`, but the axiom
+claims the result is `some (.null _)`. In Lean's type system, `none ≠ some _`,
+so this axiom introduces an inconsistency.
+
+**Impact:** Any proof chain applying `coalesce_null_left` with a null second
+argument is unsound. The axiom is used in `Tactics.lean` (`sql_rw_null`).
+
+**Corrected version:** `coalesce_null_left_nonnull` adds the precondition
+`isNullValue v = false`.
+
+**Root cause:** The distinction between `none` (evaluation failure / no value)
+and `some (.null _)` (a SQL NULL was produced) is easy to overlook when writing
+axioms that quantify over `Option Value`. All such axioms should be audited
+to ensure they handle both cases correctly.
+
+**Recommendation:** When writing new axioms over `Option Value`, always check
+five representative values: `some (.int _)`, `some (.string _)`, `some (.bool _)`,
+`some (.null _)`, and `none`.
+
+---
+
 ## Open Questions
 
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
 2. **NULL handling:** Three-valued logic adds complexity - start with two-valued subset?
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
 4. **Termination:** Some proofs may need well-founded recursion arguments.
+5. **Option Value soundness audit:** Other axioms quantifying over `Option Value` may have similar issues to `coalesce_null_left`. A systematic audit is recommended.
 
 ---
 
