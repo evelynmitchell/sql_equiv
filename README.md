@@ -706,23 +706,39 @@ lake build && lake exe sql_equiv_test
 ```
 sql_equiv/
 +-- SqlEquiv/
-|   +-- Ast.lean          # AST definitions
-|   +-- Parser.lean       # SQL parser
-|   +-- Pretty.lean       # Pretty printer
-|   +-- Semantics.lean    # Evaluation model
-|   +-- Equiv.lean        # Equivalence proofs
-|   +-- Tactics.lean      # Custom tactics
-|   +-- Basic.lean        # Re-exports
+|   +-- Ast.lean               # AST definitions
+|   +-- Parser.lean            # SQL parser
+|   +-- Pretty.lean            # Pretty printer
+|   +-- Semantics.lean         # Evaluation model
+|   +-- Equiv.lean             # Equivalence proofs
+|   +-- Tactics.lean           # Custom tactics
+|   +-- Optimizer.lean         # Top-level query optimizer
+|   +-- OptimizerUtils.lean    # Shared optimizer utilities
+|   +-- ExprNormalization.lean # Canonical expression ordering
+|   +-- PredicatePushdown.lean # WHERE clause optimization
+|   +-- JoinReordering.lean    # Cost-based join reordering
+|   +-- Basic.lean             # Re-exports
 +-- Test/
-|   +-- Common.lean       # Test infrastructure
-|   +-- ParserTest.lean   # Parser tests
-|   +-- SemanticsTest.lean# Semantics tests
-|   +-- EquivTest.lean    # Equivalence tests
-|   +-- PropertyTest.lean # Property-based tests
-|   +-- Main.lean         # Test runner
-+-- Main.lean             # Demo application
-+-- lakefile.toml         # Lake build config
-+-- README.md             # This file
+|   +-- Common.lean              # Test infrastructure
+|   +-- ParserTest.lean          # Parser tests
+|   +-- SemanticsTest.lean       # Semantics tests
+|   +-- EquivTest.lean           # Equivalence tests
+|   +-- PropertyTest.lean        # Property-based tests
+|   +-- OptimizerTest.lean       # Optimizer tests
+|   +-- ExprNormalizationTest.lean # Expression normalization tests
+|   +-- PredicatePushdownTest.lean # Predicate pushdown tests
+|   +-- JoinReorderingTest.lean  # Join reordering tests
+|   +-- AxiomCoverageTest.lean   # Runtime tests for 141 axioms
+|   +-- Main.lean                # Test runner
++-- docs/                    # Documentation and specs
+|   +-- axiom_dependencies.dot # Graphviz axiom dependency graph
+|   +-- specs/               # Feature specifications
+|   +-- tutorials/           # Tutorial series (10 chapters)
++-- benchmarks/              # SQL benchmark suites
++-- tools/                   # Utility tools
++-- Main.lean                # Demo application
++-- lakefile.toml            # Lake build config
++-- README.md                # This file
 ```
 
 ## Dependencies
