@@ -271,12 +271,15 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
 /-- Helper for CASE expression evaluation -/
 partial def evalCase (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) : Option Value :=
   match branches with
-  | [] => else_.bind (evalExprWithDb db row)
+  | [] =>
+    match else_ with
+    | some e => evalExprWithDb db row e
+    | none => some (.null none)  -- SQL: CASE with no match and no ELSE returns NULL
   | (cond, result) :: rest =>
     match evalExprWithDb db row cond with
     | some (.bool true) => evalExprWithDb db row result
     | some (.bool false) => evalCase db row rest else_
-    | _ => none  -- NULL condition treated as false
+    | _ => evalCase db row rest else_  -- NULL/unknown condition treated as no match (SQL spec)
 
 /-- Evaluate FROM clause to get source rows -/
 partial def evalFrom (db : Database) : FromClause → Table
