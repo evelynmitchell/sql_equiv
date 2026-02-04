@@ -1,0 +1,555 @@
+// Axiom Dependency Graph for sql_equiv
+// Generated 2026-02-04
+//
+// Render with:  dot -Tpng axiom_dependencies.dot -o axiom_dependencies.png
+//           or: dot -Tsvg axiom_dependencies.dot -o axiom_dependencies.svg
+//           or: dot -Tpdf axiom_dependencies.dot -o axiom_dependencies.pdf
+//
+// 169 axioms across 7 files, organized by category.
+// Edges represent "A depends on B" (arrow from dependent to dependency).
+
+digraph axiom_dependencies {
+    rankdir=BT;          // bottom-to-top: foundations at bottom, dependents above
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=9, style=filled, shape=box, margin="0.08,0.04"];
+    edge [color="#555555", arrowsize=0.6];
+    compound=true;
+    newrank=true;
+    splines=ortho;
+    nodesep=0.15;
+    ranksep=0.6;
+
+    // ========================================================================
+    // LEVEL 0: Foundational — No dependencies
+    // ========================================================================
+
+    subgraph cluster_semantics {
+        label="Semantics.lean\n(Expression Evaluation)";
+        style=filled; fillcolor="#e8f4e8"; color="#4a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        evalExprWithDb_lit      [label="evalExprWithDb_lit\nlit v → some v"];
+        evalExprWithDb_binOp    [label="evalExprWithDb_binOp\nbinOp unfold"];
+        evalExprWithDb_unaryOp  [label="evalExprWithDb_unaryOp\nunaryOp unfold"];
+    }
+
+    subgraph cluster_optimizer_utils {
+        label="OptimizerUtils.lean\n(List Properties)";
+        style=filled; fillcolor="#e8f4e8"; color="#4a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        flattenAnd_nonempty [label="flattenAnd_nonempty\nlen ≥ 1"];
+        flattenOr_nonempty  [label="flattenOr_nonempty\nlen ≥ 1"];
+    }
+
+    subgraph cluster_boolean {
+        label="Equiv.lean — Boolean Algebra";
+        style=filled; fillcolor="#e8eef4"; color="#4a6a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        evalBinOp_and_assoc [label="evalBinOp_and_assoc\nAND associativity"];
+        evalBinOp_or_assoc  [label="evalBinOp_or_assoc\nOR associativity"];
+
+        not_not              [label="not_not\n¬¬a ≡ a"];
+        and_true             [label="and_true\na ∧ TRUE ≡ a"];
+        or_false             [label="or_false\na ∨ FALSE ≡ a"];
+        and_self             [label="and_self\na ∧ a ≡ a"];
+        or_self              [label="or_self\na ∨ a ≡ a"];
+        and_not_self         [label="and_not_self\na ∧ ¬a ≡ FALSE"];
+        or_not_self          [label="or_not_self\na ∨ ¬a ≡ TRUE"];
+        and_absorb_or        [label="and_absorb_or\na ∧ (a∨b) ≡ a"];
+        or_absorb_and        [label="or_absorb_and\na ∨ (a∧b) ≡ a"];
+        evalBinOp_and_or_distrib_left [label="and_or_distrib\na∧(b∨c) ≡ (a∧b)∨(a∧c)"];
+        evalBinOp_or_and_distrib_left [label="or_and_distrib\na∨(b∧c) ≡ (a∨b)∧(a∨c)"];
+    }
+
+    subgraph cluster_arithmetic {
+        label="Equiv.lean — Arithmetic";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        expr_add_zero [label="expr_add_zero\ne + 0 ≡ e"];
+        expr_zero_add [label="expr_zero_add\n0 + e ≡ e"];
+        expr_mul_one  [label="expr_mul_one\ne × 1 ≡ e"];
+        expr_one_mul  [label="expr_one_mul\n1 × e ≡ e"];
+        expr_mul_zero [label="expr_mul_zero\ne × 0 ≡ 0"];
+        expr_zero_mul [label="expr_zero_mul\n0 × e ≡ 0"];
+        expr_sub_zero [label="expr_sub_zero\ne − 0 ≡ e"];
+    }
+
+    subgraph cluster_comparison {
+        label="Equiv.lean — Comparison Operators";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        eq_reflexive    [label="eq_reflexive\ne = e → TRUE"];
+        ne_irreflexive  [label="ne_irreflexive\ne ≠ e → FALSE"];
+        not_eq_is_ne    [label="not_eq_is_ne\n¬(a=b) ≡ a≠b"];
+        not_ne_is_eq    [label="not_ne_is_eq\n¬(a≠b) ≡ a=b"];
+        not_lt_is_ge    [label="not_lt_is_ge\n¬(a<b) ≡ a≥b"];
+        not_le_is_gt    [label="not_le_is_gt\n¬(a≤b) ≡ a>b"];
+        not_gt_is_le    [label="not_gt_is_le\n¬(a>b) ≡ a≤b"];
+        not_ge_is_lt    [label="not_ge_is_lt\n¬(a≥b) ≡ a<b"];
+        lt_flip         [label="lt_flip\na<b ≡ b>a"];
+        le_flip         [label="le_flip\na≤b ≡ b≥a"];
+        gt_flip         [label="gt_flip\na>b ≡ b<a"];
+        ge_flip         [label="ge_flip\na≥b ≡ b≤a"];
+    }
+
+    subgraph cluster_string {
+        label="Equiv.lean — String Operations";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        like_match_all     [label="like_match_all\nLIKE '%' → TRUE"];
+        like_empty_pattern [label="like_empty_pattern\nLIKE ''"];
+        like_self          [label="like_self\ns LIKE s → TRUE"];
+        concat_empty_left  [label="concat_empty_left\n'' ‖ s ≡ s"];
+        concat_empty_right [label="concat_empty_right\ns ‖ '' ≡ s"];
+        upper_idempotent   [label="upper_idempotent\nUPPER²"];
+        lower_idempotent   [label="lower_idempotent\nLOWER²"];
+        upper_lower_upper  [label="upper_lower_upper\nU(L(U)) ≡ U"];
+        lower_upper_lower  [label="lower_upper_lower\nL(U(L)) ≡ L"];
+        length_empty       [label="length_empty\nLEN('') = 0"];
+    }
+
+    subgraph cluster_aggregates {
+        label="Equiv.lean — Aggregates & DISTINCT";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        min_le_elem        [label="min_le_elem\nMIN ≤ each"];
+        max_ge_elem        [label="max_ge_elem\nMAX ≥ each"];
+        distinct_count_le  [label="distinct_count_le\n|DISTINCT| ≤ |vals|"];
+        distinct_idempotent [label="distinct_idempotent\nDISTINCT²"];
+    }
+
+    subgraph cluster_in_between {
+        label="Equiv.lean — IN / BETWEEN";
+        style=filled; fillcolor="#f0e8f4"; color="#6a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        in_empty_false          [label="in_empty_false\nIN () → FALSE"];
+        not_in_empty_true       [label="not_in_empty_true\nNOT IN () → TRUE"];
+        in_singleton            [label="in_singleton\nIN (v) ≡ =v"];
+        not_in_singleton        [label="not_in_singleton\nNOT IN (v) ≡ ≠v"];
+        in_pair                 [label="in_pair\nIN (a,b) ≡ =a ∨ =b"];
+        not_in_pair             [label="not_in_pair\nNOT IN (a,b)"];
+        in_list_or_expansion    [label="in_list_or_expansion\nIN → OR chain"];
+        not_in_list_and_expansion [label="not_in_list_and_expansion\nNOT IN → AND chain"];
+        between_expansion       [label="between_expansion\nBETWEEN → a≤x≤b"];
+        between_reflexive       [label="between_reflexive\nBETWEEN a AND a"];
+        not_between_expansion   [label="not_between_expansion\nNOT BETWEEN → OR"];
+    }
+
+    // ========================================================================
+    // LEVEL 1: Expression Normalization
+    // ========================================================================
+
+    subgraph cluster_expr_norm {
+        label="ExprNormalization.lean";
+        style=filled; fillcolor="#f4e8e8"; color="#8c4a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        normalizeExprCanonical_equiv      [label="normalizeExprCanonical_equiv\nnormalize preserves semantics"];
+        normalizeExprCanonical_idempotent [label="normalizeExprCanonical_idempotent\nnormalize is idempotent"];
+    }
+
+    subgraph cluster_equiv_norm {
+        label="Equiv.lean — Normalization";
+        style=filled; fillcolor="#f4e8e8"; color="#8c4a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        normalizeExpr_equiv          [label="normalizeExpr_equiv\nold normalize equiv"];
+        syntacticEquiv_implies_equiv [label="syntacticEquiv_implies_equiv\nsyntactic ⇒ semantic"];
+    }
+
+    subgraph cluster_ground {
+        label="Equiv.lean — Ground Expressions";
+        style=filled; fillcolor="#f4e8e8"; color="#8c4a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        ground_expr_eval_independent   [label="ground_expr_eval_independent\nground expr row-independent"];
+        decideGroundExprEquiv_sound    [label="decideGroundExprEquiv_sound\nground equiv checker sound"];
+    }
+
+    // ========================================================================
+    // LEVEL 2: WHERE Clause & Join Algebra
+    // ========================================================================
+
+    subgraph cluster_where {
+        label="Equiv.lean — WHERE Optimization";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        where_true_elim    [label="where_true_elim\nWHERE TRUE → no filter"];
+        where_false_empty  [label="where_false_empty\nWHERE FALSE → empty"];
+        filter_and         [label="filter_and\nAND filters combine"];
+        filter_commute     [label="filter_commute\nfilters commute"];
+        filter_idempotent  [label="filter_idempotent\nfilter idempotent"];
+        filter_false_empty_prime [label="filter_false_empty'\nWHERE FALSE variant"];
+    }
+
+    subgraph cluster_case {
+        label="Equiv.lean — CASE Expressions";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        case_when_true          [label="case_when_true\nCASE WHEN TRUE"];
+        case_when_false         [label="case_when_false\nCASE WHEN FALSE"];
+        case_when_false_no_else [label="case_when_false_no_else"];
+        case_empty_else         [label="case_empty_else\nCASE → ELSE only"];
+        case_empty_no_else      [label="case_empty_no_else\nCASE → NULL"];
+    }
+
+    subgraph cluster_join_basic {
+        label="Equiv.lean — Join Algebra";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        join_comm         [label="join_comm\nINNER JOIN comm"];
+        join_assoc        [label="join_assoc\nINNER JOIN assoc"];
+        join_comm_full    [label="join_comm_full\nFULL OUTER comm"];
+        cross_join_assoc  [label="cross_join_assoc\nCROSS JOIN assoc"];
+        cross_join_comm   [label="cross_join_comm\nCROSS JOIN comm"];
+    }
+
+    subgraph cluster_join_type {
+        label="Equiv.lean — Join Type Conversions";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        inner_join_true_is_cross  [label="inner_join_true_is_cross\nJOIN ON TRUE ≡ CROSS"];
+        inner_join_false_empty    [label="inner_join_false_empty\nJOIN ON FALSE → ∅"];
+        left_join_false_all_left  [label="left_join_false_all_left\nLEFT ON FALSE → left"];
+        inner_join_to_where       [label="inner_join_to_where\nJOIN → CROSS+WHERE"];
+    }
+
+    subgraph cluster_join_card {
+        label="Equiv.lean — Join Cardinality";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        cross_join_cardinality_comm [label="cross_card_comm\n|A×B| = |B×A|"];
+        cross_join_cardinality      [label="cross_card\n|A×B| = |A|·|B|"];
+        inner_join_cardinality_le   [label="inner_card_le\n|A⋈B| ≤ |A×B|"];
+        left_join_cardinality_ge    [label="left_card_ge\n|A⟕B| ≥ |A⋈B|"];
+        right_join_cardinality_ge   [label="right_card_ge\n|A⟖B| ≥ |A⋈B|"];
+    }
+
+    subgraph cluster_join_empty {
+        label="Equiv.lean — Join Emptiness";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        inner_join_empty_left   [label="inner_empty_left\n∅ ⋈ B → ∅"];
+        inner_join_empty_right  [label="inner_empty_right\nA ⋈ ∅ → ∅"];
+        cross_join_empty_left   [label="cross_empty_left\n∅ × B → ∅"];
+        cross_join_empty_right  [label="cross_empty_right\nA × ∅ → ∅"];
+        cross_join_assoc_cardinality [label="cross_assoc_card\n|A×(B×C)| = |(A×B)×C|"];
+    }
+
+    subgraph cluster_join_outer {
+        label="Equiv.lean — Outer Join Semantics";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        left_join_preserves_left        [label="left_preserves_left\nLEFT preserves all left"];
+        right_join_preserves_right      [label="right_preserves_right\nRIGHT preserves all right"];
+        left_join_filter_null_is_inner  [label="left_filter_null→inner\nLEFT+NOT NULL ≡ INNER"];
+        inner_subset_cross              [label="inner_subset_cross\nINNER ⊆ CROSS"];
+    }
+
+    // ========================================================================
+    // LEVEL 3: Filter pushdown into joins
+    // ========================================================================
+
+    subgraph cluster_filter_join {
+        label="Equiv.lean — Predicate Pushdown (Join)";
+        style=filled; fillcolor="#f4e0e0"; color="#8c4a5a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        filter_join_left    [label="filter_join_left\npush filter to left"];
+        filter_join_right   [label="filter_join_right\npush filter to right"];
+        filter_pushdown_table [label="filter_pushdown_table\npush filter into scan"];
+        predicate_pushdown  [label="predicate_pushdown\ngeneral pushdown"];
+    }
+
+    // ========================================================================
+    // LEVEL 3: Set Operations
+    // ========================================================================
+
+    subgraph cluster_set_ops {
+        label="Equiv.lean — Set Operations";
+        style=filled; fillcolor="#f0f4e8"; color="#6a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        union_comm              [label="union_comm\nUNION comm"];
+        union_all_comm          [label="union_all_comm\nUNION ALL comm"];
+        intersect_comm          [label="intersect_comm\nINTERSECT comm"];
+        union_assoc             [label="union_assoc\nUNION assoc"];
+        intersect_assoc         [label="intersect_assoc\nINTERSECT assoc"];
+        union_idempotent        [label="union_idempotent\nA ∪ A ≡ A"];
+        intersect_idempotent    [label="intersect_idempotent\nA ∩ A ≡ A"];
+        except_self_empty       [label="except_self_empty\nA \\ A ≡ ∅"];
+        union_empty_right       [label="union_empty_right\nA ∪ ∅ ≡ A"];
+        intersect_empty_right   [label="intersect_empty_right\nA ∩ ∅ ≡ ∅"];
+        union_all_length        [label="union_all_length\n|A ∪ₐ B| = |A|+|B|"];
+        union_intersect_distrib [label="union_intersect_distrib\n∪ over ∩"];
+        intersect_union_distrib [label="intersect_union_distrib\n∩ over ∪"];
+    }
+
+    // ========================================================================
+    // LEVEL 3: Pagination
+    // ========================================================================
+
+    subgraph cluster_pagination {
+        label="Equiv.lean — ORDER BY / LIMIT / OFFSET";
+        style=filled; fillcolor="#f0f4e8"; color="#6a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        order_by_preserves_count [label="order_preserves_count"];
+        order_by_empty_identity  [label="order_empty_identity"];
+        order_by_idempotent      [label="order_idempotent"];
+        order_by_last_wins       [label="order_last_wins"];
+        order_by_reverse         [label="order_reverse²"];
+        limit_zero_empty         [label="limit_zero → ∅"];
+        limit_upper_bound        [label="limit_upper_bound"];
+        limit_none_all_rows      [label="limit_none → all"];
+        limit_monotonic          [label="limit_monotonic"];
+        limit_one_singleton      [label="limit_one → ≤1"];
+        offset_zero_identity     [label="offset_zero → id"];
+        offset_too_large_empty   [label="offset_large → ∅"];
+        offset_reduces_count     [label="offset_reduces_count"];
+        offset_monotonic         [label="offset_monotonic"];
+        limit_offset_compose     [label="limit_offset_compose"];
+        offset_limit_zero_empty  [label="offset+limit_0 → ∅"];
+        pagination_upper_bound   [label="pagination_bound"];
+        pagination_identity      [label="pagination_identity"];
+        consecutive_pages        [label="consecutive_pages"];
+        order_limit_deterministic [label="order+limit deterministic"];
+    }
+
+    // ========================================================================
+    // LEVEL 3: Subquery Operations
+    // ========================================================================
+
+    subgraph cluster_subquery {
+        label="Equiv.lean — Subquery Operations";
+        style=filled; fillcolor="#f4e8f0"; color="#8c4a6a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        exists_empty_false        [label="EXISTS ∅ → FALSE"];
+        not_exists_empty_true     [label="NOT EXISTS ∅ → TRUE"];
+        exists_nonempty_true      [label="EXISTS non∅ → TRUE"];
+        not_exists_nonempty_false [label="NOT EXISTS non∅ → FALSE"];
+        not_not_exists            [label="NOT NOT EXISTS ≡ EXISTS"];
+        in_empty_subquery_false   [label="IN (∅ subq) → FALSE"];
+        not_in_empty_subquery_true [label="NOT IN (∅ subq) → TRUE"];
+        scalar_subquery_empty_null [label="scalar subq ∅ → NULL"];
+        exists_as_count_gt_zero   [label="EXISTS ≡ COUNT>0"];
+        not_exists_as_count_eq_zero [label="NOT EXISTS ≡ COUNT=0"];
+        in_subquery_as_exists     [label="IN subq → EXISTS"];
+        not_in_subquery_as_not_exists [label="NOT IN subq → NOT EXISTS"];
+        uncorrelated_subquery_independent [label="uncorr subq independent"];
+        subquery_limit_one        [label="scalar subq LIMIT 1"];
+        scalar_subquery_is_first  [label="scalar subq = first row"];
+        exists_monotonic          [label="EXISTS monotonic"];
+        subquery_where_true       [label="subq WHERE TRUE"];
+        subquery_where_false      [label="subq WHERE FALSE"];
+        in_singleton_subquery     [label="IN singleton subq"];
+        correlated_subquery_uses_context [label="corr subq uses outer"];
+        in_subquery_unnest_to_join  [label="IN subq → JOIN"];
+        not_in_subquery_unnest_to_antijoin [label="NOT IN → ANTI JOIN"];
+        in_subquery_implies_join_match [label="IN subq ⇒ JOIN match"];
+        join_match_implies_in_subquery [label="JOIN match ⇒ IN subq"];
+    }
+
+    // ========================================================================
+    // LEVEL 4: Optimizer (Top-level)
+    // ========================================================================
+
+    subgraph cluster_optimizer {
+        label="Optimizer.lean\n(Top-level Optimization)";
+        style=filled; fillcolor="#ffe0e0"; color="#cc3333";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        optimizeExpr_equiv       [label="optimizeExpr_equiv\noptimize expr ≃ₑ e"];
+        optimizeSelectStmt_equiv [label="optimizeSelectStmt_equiv\noptimize select ≃ₛ s"];
+        optimize_equiv           [label="optimize_equiv\noptimize stmt ≃ s"];
+    }
+
+    subgraph cluster_join_reorder {
+        label="JoinReordering.lean";
+        style=filled; fillcolor="#ffe0e0"; color="#cc3333";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        join_reorder_preserves_forward  [label="join_reorder_forward\nreorder preserves →"];
+        join_reorder_preserves_backward [label="join_reorder_backward\nreorder preserves ←"];
+    }
+
+    subgraph cluster_pred_pushdown {
+        label="PredicatePushdown.lean";
+        style=filled; fillcolor="#ffe0e0"; color="#cc3333";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        pushdown_preserves_semantics [label="pushdown_preserves_semantics\npred pushdown equiv"];
+    }
+
+    // ========================================================================
+    // DEPENDENCY EDGES
+    // ========================================================================
+
+    // --- ExprNormalization depends on Semantics ---
+    normalizeExprCanonical_equiv -> evalExprWithDb_lit;
+    normalizeExprCanonical_equiv -> evalExprWithDb_binOp;
+    normalizeExprCanonical_equiv -> evalExprWithDb_unaryOp;
+
+    // --- ExprNormalization idempotent depends on OptimizerUtils ---
+    normalizeExprCanonical_idempotent -> flattenAnd_nonempty;
+    normalizeExprCanonical_idempotent -> flattenOr_nonempty;
+
+    // --- Old normalizeExpr depends on semantics too ---
+    normalizeExpr_equiv -> evalExprWithDb_lit;
+    normalizeExpr_equiv -> evalExprWithDb_binOp;
+    normalizeExpr_equiv -> evalExprWithDb_unaryOp;
+
+    // --- Boolean simplification chains ---
+    // Distribution laws depend on associativity
+    evalBinOp_and_or_distrib_left -> evalBinOp_and_assoc;
+    evalBinOp_and_or_distrib_left -> evalBinOp_or_assoc;
+    evalBinOp_or_and_distrib_left -> evalBinOp_and_assoc;
+    evalBinOp_or_and_distrib_left -> evalBinOp_or_assoc;
+
+    // Absorption laws depend on distribution
+    and_absorb_or -> evalBinOp_and_or_distrib_left;
+    or_absorb_and -> evalBinOp_or_and_distrib_left;
+
+    // --- WHERE optimization depends on boolean ---
+    where_true_elim  -> and_true;
+    where_false_empty -> evalBinOp_and_assoc;
+    filter_and       -> evalBinOp_and_assoc;
+
+    // --- CASE depends on boolean evaluation ---
+    case_when_true  -> evalExprWithDb_binOp;
+    case_when_false -> evalExprWithDb_binOp;
+
+    // --- Filter pushdown into joins depends on join algebra ---
+    filter_join_left  -> join_comm;
+    filter_join_left  -> join_assoc;
+    filter_join_right -> join_comm;
+    filter_join_right -> join_assoc;
+    filter_pushdown_table -> filter_and;
+
+    // --- General predicate pushdown depends on filter-join axioms ---
+    predicate_pushdown -> filter_join_left;
+    predicate_pushdown -> filter_join_right;
+    predicate_pushdown -> filter_pushdown_table;
+
+    // --- Join type conversions depend on basic join ---
+    inner_join_true_is_cross -> cross_join_comm;
+    inner_join_to_where      -> join_comm;
+    inner_join_to_where      -> filter_and;
+
+    // --- Join cardinality depends on basic join ---
+    cross_join_cardinality_comm -> cross_join_comm;
+    cross_join_assoc_cardinality -> cross_join_assoc;
+    inner_join_cardinality_le   -> cross_join_cardinality;
+
+    // --- Outer join semantics ---
+    left_join_filter_null_is_inner -> left_join_preserves_left;
+    left_join_cardinality_ge  -> inner_join_cardinality_le;
+    right_join_cardinality_ge -> inner_join_cardinality_le;
+    inner_subset_cross        -> inner_join_cardinality_le;
+
+    // --- Subquery transformations ---
+    not_not_exists              -> not_not;
+    not_exists_as_count_eq_zero -> exists_as_count_gt_zero;
+    not_in_subquery_as_not_exists -> in_subquery_as_exists;
+    in_subquery_unnest_to_join     -> join_comm;
+    in_subquery_unnest_to_join     -> in_subquery_as_exists;
+    not_in_subquery_unnest_to_antijoin -> not_in_subquery_as_not_exists;
+    in_subquery_implies_join_match -> in_subquery_unnest_to_join;
+    join_match_implies_in_subquery -> in_subquery_unnest_to_join;
+    subquery_where_true  -> where_true_elim;
+    subquery_where_false -> where_false_empty;
+
+    // --- IN/BETWEEN depends on boolean ---
+    in_list_or_expansion      -> evalBinOp_or_assoc;
+    not_in_list_and_expansion -> evalBinOp_and_assoc;
+    in_pair                   -> evalBinOp_or_assoc;
+
+    // --- Set operation distribution laws ---
+    union_intersect_distrib -> union_comm;
+    union_intersect_distrib -> intersect_comm;
+    intersect_union_distrib -> union_comm;
+    intersect_union_distrib -> intersect_comm;
+
+    // --- Pagination composition ---
+    limit_offset_compose    -> limit_upper_bound;
+    limit_offset_compose    -> offset_reduces_count;
+    offset_limit_zero_empty -> limit_zero_empty;
+    pagination_upper_bound  -> limit_upper_bound;
+    pagination_upper_bound  -> offset_reduces_count;
+    pagination_identity     -> offset_zero_identity;
+    pagination_identity     -> limit_none_all_rows;
+    consecutive_pages       -> limit_offset_compose;
+    order_limit_deterministic -> order_by_idempotent;
+    order_limit_deterministic -> limit_upper_bound;
+
+    // --- Ground expression depends on semantics ---
+    ground_expr_eval_independent -> evalExprWithDb_lit;
+    decideGroundExprEquiv_sound  -> ground_expr_eval_independent;
+
+    // --- Optimizer (top level) depends on many things ---
+    optimizeExpr_equiv -> normalizeExprCanonical_equiv;
+    optimizeExpr_equiv -> evalBinOp_and_assoc;
+    optimizeExpr_equiv -> evalBinOp_or_assoc;
+    optimizeExpr_equiv -> not_not;
+    optimizeExpr_equiv -> and_true;
+    optimizeExpr_equiv -> or_false;
+
+    optimizeSelectStmt_equiv -> optimizeExpr_equiv;
+    optimizeSelectStmt_equiv -> predicate_pushdown;
+    optimizeSelectStmt_equiv -> filter_and;
+
+    optimize_equiv -> optimizeSelectStmt_equiv;
+
+    // --- Join reordering depends on join algebra ---
+    join_reorder_preserves_forward  -> join_comm;
+    join_reorder_preserves_forward  -> join_assoc;
+    join_reorder_preserves_forward  -> cross_join_comm;
+    join_reorder_preserves_forward  -> cross_join_assoc;
+    join_reorder_preserves_backward -> join_comm;
+    join_reorder_preserves_backward -> join_assoc;
+    join_reorder_preserves_backward -> cross_join_comm;
+    join_reorder_preserves_backward -> cross_join_assoc;
+
+    // --- Predicate pushdown (file) depends on filter axioms ---
+    pushdown_preserves_semantics -> filter_join_left;
+    pushdown_preserves_semantics -> filter_join_right;
+    pushdown_preserves_semantics -> filter_pushdown_table;
+    pushdown_preserves_semantics -> filter_and;
+
+    // ========================================================================
+    // LEGEND
+    // ========================================================================
+
+    subgraph cluster_legend {
+        label="Legend";
+        style=filled; fillcolor="#f8f8f8"; color="#888888";
+        fontsize=11; fontname="Helvetica-Bold";
+        rank=min;
+
+        legend_l0 [label="Level 0: Foundational\n(no dependencies)", fillcolor="#e8f4e8", shape=box];
+        legend_l1 [label="Level 1: Expression\nNormalization", fillcolor="#f4e8e8", shape=box];
+        legend_l2 [label="Level 2: WHERE / Join\nAlgebra", fillcolor="#e8e0f4", shape=box];
+        legend_l3a [label="Level 3: Filter Pushdown\n/ Subqueries", fillcolor="#f4e0e0", shape=box];
+        legend_l3b [label="Level 3: Set Ops /\nPagination", fillcolor="#f0f4e8", shape=box];
+        legend_l4 [label="Level 4: Optimizer\n(top-level)", fillcolor="#ffe0e0", shape=box];
+        legend_indep [label="Independent\n(leaf axioms)", fillcolor="#f4f0e8", shape=box];
+
+        legend_l0 -> legend_l1 -> legend_l2 -> legend_l3a [style=invis];
+        legend_l3a -> legend_l3b -> legend_l4 -> legend_indep [style=invis];
+    }
+}
