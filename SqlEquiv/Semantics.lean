@@ -287,7 +287,14 @@ partial def evalFrom (db : Database) : FromClause → Table
     baseTable.map fun row =>
       row.map fun (col, val) => (s!"{qualifier}.{col}", val)
   | .subquery sel alias =>
-    -- Evaluate subquery and qualify columns with alias
+    -- Evaluate subquery and qualify columns with alias.
+    -- NOTE: This causes double-qualification when the subquery itself contains
+    -- aliased tables. E.g., if the subquery selects from table "users" with alias
+    -- "u", columns come out as "u.id". Wrapping with alias "filtered_a" then
+    -- produces "filtered_a.u.id" instead of "filtered_a.id". This breaks axioms
+    -- like filter_join_left/right that wrap one side of a join in a subquery,
+    -- because the join condition still references the original qualifier ("u.id").
+    -- See docs/PROVING_AXIOMS_PLAN.md "Known Evaluator Limitations" for details.
     let subResult := evalSelect db sel
     subResult.map fun row =>
       row.map fun (col, val) => (s!"{alias}.{col}", val)
