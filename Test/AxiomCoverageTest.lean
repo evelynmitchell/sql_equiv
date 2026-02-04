@@ -856,10 +856,15 @@ def joinTests : List TestResult :=
     testLengthEq "left_join_filter_null_is_inner"
       filtered.length innerJoinOnId.length,
 
-    -- cross_join_comm: every row in A×B has a corresponding row in B×A
+    -- cross_join_comm: every row in A×B has a corresponding row in B×A (full row-set equality)
     let ab := evalFrom testDb (.join tUsers .cross tOrders none)
     let ba := evalFrom testDb (.join tOrders .cross tUsers none)
-    testLengthEq "cross_join_comm" ab.length ba.length,
+    let normalizeRow' (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
+    let rowKey' (r : Row) : String := (normalizeRow' r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+    let normAB := (ab.map normalizeRow').mergeSort (fun a b => rowKey' a < rowKey' b)
+    let normBA := (ba.map normalizeRow').mergeSort (fun a b => rowKey' a < rowKey' b)
+    if normAB == normBA then .pass "cross_join_comm"
+    else .fail "cross_join_comm" s!"Row sets differ after normalizing: {ab.length} vs {ba.length} rows",
 
     -- join_comm_full: INNER JOIN is commutative (full row-set equality)
     -- Swapping join sides changes column order within rows, so normalize each row
@@ -1089,7 +1094,9 @@ def subqueryTests : List TestResult :=
       (some (.table ⟨"orders", none⟩))
       (some (.binOp .gt (col "amount") (.lit (.int 100))))
       [] none [] none none
-    let supersetSel := nonemptySubSel  -- all orders (3 rows)
+    let supersetSel := SelectStmt.mk false [.star none]
+      (some (.table ⟨"orders", none⟩))
+      none [] none [] none none
     let existsSubset := evalExprWithDb testDb testRow (.exists false subsetSel)
     let existsSuperset := evalExprWithDb testDb testRow (.exists false supersetSel)
     -- Monotonicity: EXISTS subset = TRUE implies EXISTS superset = TRUE
