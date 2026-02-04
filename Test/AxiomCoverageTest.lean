@@ -8,8 +8,10 @@
   disagrees with the current evaluator (e.g., CASE none vs null, CONCAT),
   both sides are compared and the mismatch is documented.
 
-  This ensures axioms can't be silently replaced with `sorry` without a
-  test failure.
+  These tests guard against semantic drift between the axioms in `Equiv.lean`
+  and the evaluator implementation. They are complemented by the `#check`
+  coverage in `EquivTest.lean`, which ensures the referenced axioms still
+  exist with the expected names and types.
 -/
 import SqlEquiv
 import Test.Common
@@ -699,8 +701,8 @@ def orderByTests : List TestResult :=
       (evalSelect testDb selAsc).length
       (evalSelect testDb selNoOrder).length,
 
-    -- order_by_empty_identity: ORDER BY [] produces same result as ORDER BY [col]
-    -- (both should have the same row count; empty ORDER BY doesn't change the set)
+    -- order_by_empty_identity: ORDER BY [] has same row count as ORDER BY [col]
+    -- (this test only checks row counts, not row contents or ordering)
     testLengthEq "order_by_empty_identity"
       (evalSelect testDb (mkSelectFull false "users" none [] none none)).length
       (evalSelect testDb selAsc).length,
@@ -742,7 +744,7 @@ def joinTests : List TestResult :=
   let condTrue := Expr.lit (.bool true)
   let condFalse := Expr.lit (.bool false)
   [
-    -- cross_join_comm: |A × B| = |B × A|
+    -- cross_join_cardinality_comm: |A × B| = |B × A|
     testLengthEq "cross_join_cardinality_comm"
       (evalFrom testDb (.join tUsers .cross tOrders none)).length
       (evalFrom testDb (.join tOrders .cross tUsers none)).length,
@@ -752,7 +754,7 @@ def joinTests : List TestResult :=
       (evalFrom testDb (.join tUsers .cross tOrders none)).length
       ((evalFrom testDb tUsers).length * (evalFrom testDb tOrders).length),
 
-    -- cross_join_assoc: (A × B) × C has same count as A × (B × C)
+    -- cross_join_assoc_cardinality: (A × B) × C has same count as A × (B × C)
     testLengthEq "cross_join_assoc_cardinality"
       (evalFrom testDb (.join (.join tUsers .cross tOrders none) .cross tEmpty none)).length
       (evalFrom testDb (.join tUsers .cross (.join tOrders .cross tEmpty none) none)).length,
@@ -1189,7 +1191,48 @@ def predicatePushdownTests : List TestResult :=
     if furtherFiltered.length == combinedResult.length
     then .pass "predicate_pushdown"
     else .fail "predicate_pushdown"
-      s!"Filtered({furtherFiltered.length}) ≠ Combined({combinedResult.length})"
+      s!"Filtered({furtherFiltered.length}) ≠ Combined({combinedResult.length})",
+
+    -- filter_join_left: filtering a join result by a left-only predicate should yield the
+    -- same rows as joining the pre-filtered left table with the right table.
+    -- This exercises the semantic property behind the filter_join_left axiom.
+    let tU := FromClause.table ⟨"users", some "u"⟩
+    let tO := FromClause.table ⟨"orders", some "o"⟩
+    let joinCond := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+    let leftFilter := Expr.binOp .gt (qcol "u" "age") (.lit (.int 25))
+    -- Approach: join then filter vs filter-left then join (both via evalFrom)
+    let allJoined := evalFrom testDb (.join tU .inner tO (some joinCond))
+    let filteredAfter := allJoined.filter fun row =>
+      evalExprWithDb testDb row leftFilter == some (.bool true)
+    let leftFiltered := (evalFrom testDb tU).filter fun row =>
+      evalExprWithDb testDb row leftFilter == some (.bool true)
+    let joinedAfterFilter := leftFiltered.flatMap fun lr =>
+      (evalFrom testDb tO).filterMap fun rr =>
+        let combined := lr ++ rr
+        if evalExprWithDb testDb combined joinCond == some (.bool true) then some combined
+        else none
+    testLengthEq "filter_join_left"
+      filteredAfter.length joinedAfterFilter.length,
+
+    -- filter_join_right: filtering a join result by a right-only predicate should yield the
+    -- same rows as joining the left table with the pre-filtered right table.
+    -- This exercises the semantic property behind the filter_join_right axiom.
+    let tU2 := FromClause.table ⟨"users", some "u"⟩
+    let tO2 := FromClause.table ⟨"orders", some "o"⟩
+    let joinCond2 := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+    let rightFilter := Expr.binOp .gt (qcol "o" "amount") (.lit (.int 100))
+    let allJoined2 := evalFrom testDb (.join tU2 .inner tO2 (some joinCond2))
+    let filteredAfter2 := allJoined2.filter fun row =>
+      evalExprWithDb testDb row rightFilter == some (.bool true)
+    let rightFiltered := (evalFrom testDb tO2).filter fun row =>
+      evalExprWithDb testDb row rightFilter == some (.bool true)
+    let joinedAfterFilter2 := (evalFrom testDb tU2).flatMap fun lr =>
+      rightFiltered.filterMap fun rr =>
+        let combined := lr ++ rr
+        if evalExprWithDb testDb combined joinCond2 == some (.bool true) then some combined
+        else none
+    testLengthEq "filter_join_right"
+      filteredAfter2.length joinedAfterFilter2.length
   ]
 
 -- ============================================================================
