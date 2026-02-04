@@ -452,6 +452,49 @@ five representative values: `some (.int _)`, `some (.string _)`, `some (.bool _)
 
 ---
 
+## Known Evaluator Limitations
+
+### Double-qualification of column names in subquery wrapping
+
+The `evalFrom` function qualifies column names at each level of nesting:
+- `.table ⟨"users", some "u"⟩` produces columns like `u.id`, `u.age`
+- `.subquery sel "filtered_a"` takes the output of `evalSelect` and prefixes
+  every column with `filtered_a.`, producing `filtered_a.u.id`, `filtered_a.u.age`
+
+This double-qualification breaks the `filter_join_left` and `filter_join_right`
+axioms at the evaluator level. These axioms rewrite:
+```
+SELECT * FROM (A JOIN B ON cond) WHERE filter
+```
+into:
+```
+SELECT * FROM (SELECT * FROM A WHERE filter) AS filtered_a JOIN B ON cond
+```
+
+After the rewrite, the join condition still references `u.id` (the original
+alias), but the subquery-wrapped columns are now named `filtered_a.u.id`.
+The `getQualified` lookup for `u.id` fails because no column has that exact
+name — the evaluator does not strip or flatten nested qualifiers.
+
+**Impact on testing:** The axiom coverage tests for `filter_join_left` and
+`filter_join_right` work around this by testing the semantic property directly
+via `evalFrom` (filter-then-join vs join-then-filter) rather than comparing
+`evalSelect` on both sides of the axiom's rewrite.
+
+**Impact on proving:** When proving these axioms (Phase 6), the proof will need
+to account for column renaming through subquery boundaries. Options:
+1. Fix `evalFrom`'s `.subquery` case to strip existing qualifiers before
+   re-qualifying (so `u.id` becomes `filtered_a.id`, not `filtered_a.u.id`)
+2. Make `getQualified` aware of nested qualifiers (match on suffix)
+3. Redefine the axioms to use `evalFrom`-level filter pushdown (avoiding
+   `evalSelect` subquery wrapping entirely)
+
+Option 1 is likely the cleanest fix — `evalSelect` already projects columns
+via `SelectItem`, so the subquery output should have unqualified column names
+that then get a single qualifier from the outer `evalFrom`.
+
+---
+
 ## Open Questions
 
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
