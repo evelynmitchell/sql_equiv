@@ -39,10 +39,16 @@ def ordersTable : Table := [
 
 def emptyTable : Table := []
 
+def productsTable : Table := [
+  [("id", .int 10), ("name", .string "Widget"), ("price", .int 50)],
+  [("id", .int 20), ("name", .string "Gadget"), ("price", .int 75)]
+]
+
 def testDb : Database := fun name =>
   match name with
   | "users" => usersTable
   | "orders" => ordersTable
+  | "products" => productsTable
   | "empty" => emptyTable
   | _ => []
 
@@ -252,14 +258,13 @@ def caseTests : List TestResult :=
     -- case_when_false_no_else: CASE WHEN FALSE THEN x END ≃ₑ NULL
     -- Axiom claims equivalence with Expr.lit (.null none).
     -- Compare both sides: evalExpr on the CASE form vs evalExpr on the axiom's RHS.
-    -- Known mismatch (issue #23): evalExpr returns none while lit (.null none) => some (.null none)
+    -- Known mismatch (issue #23): evalExpr returns none while lit (.null none) => some (.null none).
+    -- This test fails (rather than silently passing) so that resolving issue #23 is surfaced in CI.
     let caseFalseNoElse := evalExpr [] (.case [(eFalse, eInt5)] none)
     let axiomRhs := evalExpr [] (.lit (.null none))
     if caseFalseNoElse == axiomRhs then .pass "case_when_false_no_else"
-    else
-      -- Expected failure: document the mismatch but pass to avoid blocking CI.
-      -- This will start passing once issue #23 is resolved (evalExpr or axiom fixed).
-      .pass s!"case_when_false_no_else (EXPECTED MISMATCH - issue #23: {showOptVal caseFalseNoElse} vs {showOptVal axiomRhs})",
+    else .fail "case_when_false_no_else (issue #23)"
+      s!"Evaluator/axiom mismatch: CASE={showOptVal caseFalseNoElse} vs NULL lit={showOptVal axiomRhs}",
 
     -- case_empty_else: CASE ELSE y END = y
     testExprEquiv "case_empty_else"
@@ -269,10 +274,10 @@ def caseTests : List TestResult :=
     -- case_empty_no_else: CASE END ≃ₑ NULL
     -- Same mismatch as case_when_false_no_else (issue #23)
     let caseEmptyNoElse := evalExpr [] (.case [] none)
-    let axiomRhs := evalExpr [] (.lit (.null none))
-    if caseEmptyNoElse == axiomRhs then .pass "case_empty_no_else"
-    else
-      .pass s!"case_empty_no_else (EXPECTED MISMATCH - issue #23: {showOptVal caseEmptyNoElse} vs {showOptVal axiomRhs})"
+    let axiomRhs2 := evalExpr [] (.lit (.null none))
+    if caseEmptyNoElse == axiomRhs2 then .pass "case_empty_no_else"
+    else .fail "case_empty_no_else (issue #23)"
+      s!"Evaluator/axiom mismatch: CASE={showOptVal caseEmptyNoElse} vs NULL lit={showOptVal axiomRhs2}"
   ]
 
 -- ============================================================================
@@ -503,10 +508,14 @@ def setOpTests : List TestResult :=
     else .fail "union_comm" s!"Results differ after sorting: {uAB.length} vs {uBA.length}",
 
     -- union_all_comm: A UNION ALL B ≃ᵩ B UNION ALL A
-    -- Note: UNION ALL may not reorder in our semantics, test length
-    testLengthEq "union_all_comm (length)"
-      (evalQuery testDb (.compound (.simple selUsers) .unionAll (.simple selOrders))).length
-      (evalQuery testDb (.compound (.simple selOrders) .unionAll (.simple selUsers))).length,
+    -- Compare as sorted row sets (UNION ALL preserves duplicates but order may differ)
+    let uaAB := evalQuery testDb (.compound (.simple selUsers) .unionAll (.simple selOrders))
+    let uaBA := evalQuery testDb (.compound (.simple selOrders) .unionAll (.simple selUsers))
+    let sortRow' (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+    let sortedUaAB := uaAB.mergeSort (fun a b => sortRow' a < sortRow' b)
+    let sortedUaBA := uaBA.mergeSort (fun a b => sortRow' a < sortRow' b)
+    if sortedUaAB == sortedUaBA then .pass "union_all_comm"
+    else .fail "union_all_comm" s!"Results differ after sorting: {uaAB.length} vs {uaBA.length}",
 
     -- intersect_comm: A INTERSECT B ≃ᵩ B INTERSECT A
     testQueryEquiv "intersect_comm"
@@ -884,15 +893,29 @@ def joinTests : List TestResult :=
     if norm1 == norm2 then .pass "join_comm_full"
     else .fail "join_comm_full" s!"Row sets differ after normalizing: {r1.length} vs {r2.length} rows",
 
-    -- cross_join_assoc: (A × B) × C = A × (B × C) (full)
-    let abc1 := evalFrom testDb (.join (.join tUsers .cross tOrders none) .cross tEmpty none)
-    let abc2 := evalFrom testDb (.join tUsers .cross (.join tOrders .cross tEmpty none) none)
-    testLengthEq "cross_join_assoc" abc1.length abc2.length,
+    -- cross_join_assoc: (A × B) × C = A × (B × C) (full row-set equality)
+    -- Use three non-empty tables so the test is non-vacuous
+    let tProducts := FromClause.table ⟨"products", none⟩
+    let abc1 := evalFrom testDb (.join (.join tUsers .cross tOrders none) .cross tProducts none)
+    let abc2 := evalFrom testDb (.join tUsers .cross (.join tOrders .cross tProducts none) none)
+    let normalizeRowJ (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
+    let rowKeyJ (r : Row) : String := (normalizeRowJ r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+    let normAbc1 := (abc1.map normalizeRowJ).mergeSort (fun a b => rowKeyJ a < rowKeyJ b)
+    let normAbc2 := (abc2.map normalizeRowJ).mergeSort (fun a b => rowKeyJ a < rowKeyJ b)
+    if normAbc1 == normAbc2 then .pass "cross_join_assoc"
+    else .fail "cross_join_assoc" s!"Row sets differ: {abc1.length} vs {abc2.length} rows",
 
-    -- join_assoc: associativity for inner joins
-    let r1' := evalFrom testDb (.join (.join tUsers .inner tOrders (some condTrue)) .inner tEmpty (some condTrue))
-    let r2' := evalFrom testDb (.join tUsers .inner (.join tOrders .inner tEmpty (some condTrue)) (some condTrue))
-    testLengthEq "join_assoc" r1'.length r2'.length
+    -- join_assoc: associativity for inner joins (full row-set equality)
+    -- Use three non-empty tables with ON TRUE so the test is non-vacuous
+    let tProducts2 := FromClause.table ⟨"products", none⟩
+    let r1' := evalFrom testDb (.join (.join tUsers .inner tOrders (some condTrue)) .inner tProducts2 (some condTrue))
+    let r2' := evalFrom testDb (.join tUsers .inner (.join tOrders .inner tProducts2 (some condTrue)) (some condTrue))
+    let normalizeRowJ2 (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
+    let rowKeyJ2 (r : Row) : String := (normalizeRowJ2 r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+    let normR1 := (r1'.map normalizeRowJ2).mergeSort (fun a b => rowKeyJ2 a < rowKeyJ2 b)
+    let normR2 := (r2'.map normalizeRowJ2).mergeSort (fun a b => rowKeyJ2 a < rowKeyJ2 b)
+    if normR1 == normR2 then .pass "join_assoc"
+    else .fail "join_assoc" s!"Row sets differ: {r1'.length} vs {r2'.length} rows"
   ]
 
 -- ============================================================================
@@ -1322,17 +1345,17 @@ def additionalLogicTests : List TestResult :=
     then .pass "evalBinOp_or_and_distrib_left"
     else .fail "evalBinOp_or_and_distrib_left" "OR-AND distributivity failed",
 
-    -- min_le_elem: MIN ≤ any element
+    -- min_le_elem: MIN ≤ every element in the list
     let ns : List Int := [5, 3, 8, 1]
     let minVal := List.foldl min ns.head! ns
-    if minVal ≤ 3 then .pass "min_le_elem"
-    else .fail "min_le_elem" s!"MIN {minVal} > 3",
+    if ns.all (fun n => minVal ≤ n) then .pass "min_le_elem"
+    else .fail "min_le_elem" s!"MIN {minVal} is not ≤ all elements in {ns}",
 
-    -- max_ge_elem: MAX ≥ any element
+    -- max_ge_elem: MAX ≥ every element in the list
     let ns2 : List Int := [5, 3, 8, 1]
     let maxVal := List.foldl max ns2.head! ns2
-    if 5 ≤ maxVal then .pass "max_ge_elem"
-    else .fail "max_ge_elem" s!"5 > MAX {maxVal}",
+    if ns2.all (fun n => n ≤ maxVal) then .pass "max_ge_elem"
+    else .fail "max_ge_elem" s!"MAX {maxVal} is not ≥ all elements in {ns2}",
 
     -- distinct_count_le: |eraseDups| ≤ |original|
     let vs : List Value := [.int 1, .int 2, .int 1, .int 3]
