@@ -190,8 +190,15 @@ def runtime_analysis(
     files_scanned = 0
     for tf in test_files:
         if tf.exists():
-            all_test_names.extend(parse_test_names(tf))
-            files_scanned += 1
+            try:
+                all_test_names.extend(parse_test_names(tf))
+                files_scanned += 1
+            except Exception as e:
+                print(f"Warning: Could not parse {tf}: {e}", file=sys.stderr)
+
+    if files_scanned == 0:
+        print("WARNING: No test files found. Check that TEST_FILES paths are correct.",
+              file=sys.stderr)
 
     # Match: axiom is covered if any test name starts with the axiom name
     covered: list[AxiomLocation] = []
@@ -245,8 +252,7 @@ def print_runtime_report(analysis: dict) -> None:
     if uncovered_axioms:
         print(f"\n--- Axioms Without Runtime Tests ({uncovered_count}) ---")
         for ax in uncovered_axioms:
-            print(f"  {ax.short_file}:{ax.start_line + 1:<10}"
-                  f" {ax.name}")
+            print(f"  {ax.short_file}:{ax.start_line + 1}  {ax.name}")
 
     # Per-file breakdown
     by_file: dict[str, dict[str, int]] = {}
