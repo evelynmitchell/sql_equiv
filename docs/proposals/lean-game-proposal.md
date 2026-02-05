@@ -143,15 +143,11 @@ Introduction "
 In SQL, the order of conditions in a WHERE clause often doesn't matter.
 For example:
 
-```sql
-SELECT * FROM users WHERE age > 18 AND active = true
-```
+    SELECT * FROM users WHERE age > 18 AND active = true
 
 gives the same result as:
 
-```sql
-SELECT * FROM users WHERE active = true AND age > 18
-```
+    SELECT * FROM users WHERE active = true AND age > 18
 
 Let's prove this formally: `a AND b ≃ b AND a`
 "
