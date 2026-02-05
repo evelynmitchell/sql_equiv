@@ -49,14 +49,14 @@ jobs:
           INPUT_FILE: ${{ inputs.file }}
           INPUT_AXIOM: ${{ inputs.axiom }}
         run: |
-          ARGS=""
+          args=(--ci)
           if [ -n "$INPUT_FILE" ]; then
-            ARGS="$ARGS --file $INPUT_FILE"
+            args+=(--file "$INPUT_FILE")
           fi
           if [ -n "$INPUT_AXIOM" ]; then
-            ARGS="$ARGS --axiom $INPUT_AXIOM"
+            args+=(--axiom "$INPUT_AXIOM")
           fi
-          python3 tools/axiom_coverage_validator.py --ci $ARGS
+          python3 tools/axiom_coverage_validator.py "${args[@]}"
 
       - name: Upload coverage report
         if: always()

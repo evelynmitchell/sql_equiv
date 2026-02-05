@@ -273,8 +273,24 @@ def save_checkpoint(results: list[AxiomTestResult], path: Path) -> None:
 def load_checkpoint(path: Path) -> list[AxiomTestResult]:
     if not path.exists():
         return []
-    data = json.loads(path.read_text())
-    return [AxiomTestResult(**r) for r in data["results"]]
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Warning: failed to load checkpoint {path}: {exc}. Starting fresh.",
+              file=sys.stderr)
+        return []
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        print(f"Warning: malformed checkpoint {path}. Starting fresh.",
+              file=sys.stderr)
+        return []
+    results: list[AxiomTestResult] = []
+    for i, r in enumerate(data["results"]):
+        try:
+            results.append(AxiomTestResult(**r))
+        except Exception as exc:
+            print(f"Warning: skipping checkpoint entry #{i}: {exc}",
+                  file=sys.stderr)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -433,16 +449,15 @@ def print_summary(report: dict) -> None:
     print("=" * 42)
     print(" Axiom Coverage Validation Report")
     print("=" * 42)
+    def pct(n: int) -> str:
+        return f"{n/total*100:4.1f}%" if total else "N/A"
+
     print(f"Total axioms:           {total}")
     print(f"Tested:                 {s['tested']}")
-    print(f"Compile-time covered:   {s['compile_time_covered']:>3} "
-          f"({s['compile_time_covered']/total*100:4.1f}%)" if total else "")
-    print(f"Runtime test covered:   {s['runtime_test_covered']:>3} "
-          f"({s['runtime_test_covered']/total*100:4.1f}%)" if total else "")
-    print(f"No coverage:            {s['no_coverage']:>3} "
-          f"({s['no_coverage']/total*100:4.1f}%)" if total else "")
-    print(f"Errors/timeouts:        {s['errors']:>3} "
-          f"({s['errors']/total*100:4.1f}%)" if total else "")
+    print(f"Compile-time covered:   {s['compile_time_covered']:>3} ({pct(s['compile_time_covered'])})")
+    print(f"Runtime test covered:   {s['runtime_test_covered']:>3} ({pct(s['runtime_test_covered'])})")
+    print(f"No coverage:            {s['no_coverage']:>3} ({pct(s['no_coverage'])})")
+    print(f"Errors/timeouts:        {s['errors']:>3} ({pct(s['errors'])})")
     print(f"\nCoverage rate: {s['coverage_pct']}%")
 
     uncovered = report["uncovered_axioms"]
@@ -499,14 +514,18 @@ def main() -> None:
 
     # Discover axioms
     all_axioms: list[AxiomLocation] = []
+    files_processed = 0
     for fpath in AXIOM_FILES:
         if fpath.exists():
             all_axioms.extend(parse_axioms(fpath))
-    print(f"Found {len(all_axioms)} axioms across {len(AXIOM_FILES)} files")
+            files_processed += 1
+    print(f"Found {len(all_axioms)} axioms across {files_processed} files")
 
     # Filters
     if args.file:
         all_axioms = [a for a in all_axioms if args.file in a.file_path]
+        if not all_axioms:
+            sys.exit(f"Error: no axioms found matching file filter '{args.file}'")
         print(f"Filtered to {len(all_axioms)} axioms matching '{args.file}'")
 
     if args.axiom:
