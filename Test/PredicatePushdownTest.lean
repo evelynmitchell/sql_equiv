@@ -390,6 +390,54 @@ def testEmptyPredicate : TestResult :=
   | none => .fail "Literal predicate" "Expected remaining"
 
 -- ============================================================================
+-- Pushdown Preserves Semantics Tests (axiom: pushdown_preserves_semantics)
+-- ============================================================================
+
+private def pushdownTestDb : Database := fun name =>
+  match name with
+  | "users" => [
+      [("id", .int 1), ("name", .string "Alice"), ("age", .int 30)],
+      [("id", .int 2), ("name", .string "Bob"), ("age", .int 25)],
+      [("id", .int 3), ("name", .string "Carol"), ("age", .int 35)]
+    ]
+  | "orders" => [
+      [("id", .int 1), ("user_id", .int 1), ("amount", .int 100)],
+      [("id", .int 2), ("user_id", .int 1), ("amount", .int 200)],
+      [("id", .int 3), ("user_id", .int 2), ("amount", .int 150)]
+    ]
+  | _ => []
+
+def testPushdownPreservesSemanticsInnerJoin : TestResult :=
+  let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") none
+  let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let result := pushPredicateDown pred from_
+  let lhs := filterRows pushdownTestDb (evalFrom pushdownTestDb result.pushedFrom) result.remaining
+  let rhs := filterRows pushdownTestDb (evalFrom pushdownTestDb from_) (some pred)
+  if lhs == rhs then .pass "pushdown_preserves_semantics (inner join)"
+  else .fail "pushdown_preserves_semantics (inner join)"
+    s!"LHS={lhs.length} rows, RHS={rhs.length} rows"
+
+def testPushdownPreservesSemanticsBaseTable : TestResult :=
+  let from_ := table "users"
+  let pred := Expr.binOp .gt (col "age") (intLit 25)
+  let result := pushPredicateDown pred from_
+  let lhs := filterRows pushdownTestDb (evalFrom pushdownTestDb result.pushedFrom) result.remaining
+  let rhs := filterRows pushdownTestDb (evalFrom pushdownTestDb from_) (some pred)
+  if lhs == rhs then .pass "pushdown_preserves_semantics (base table)"
+  else .fail "pushdown_preserves_semantics (base table)"
+    s!"LHS={lhs.length} rows, RHS={rhs.length} rows"
+
+def testPushdownPreservesSemanticsLeftJoin : TestResult :=
+  let from_ := leftJoin (tableAs "users" "u") (tableAs "orders" "o") none
+  let pred := Expr.binOp .gt (qcol "o" "amount") (intLit 100)
+  let result := pushPredicateDown pred from_
+  let lhs := filterRows pushdownTestDb (evalFrom pushdownTestDb result.pushedFrom) result.remaining
+  let rhs := filterRows pushdownTestDb (evalFrom pushdownTestDb from_) (some pred)
+  if lhs == rhs then .pass "pushdown_preserves_semantics (left join)"
+  else .fail "pushdown_preserves_semantics (left join)"
+    s!"LHS={lhs.length} rows, RHS={rhs.length} rows"
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -424,7 +472,11 @@ def allTests : List TestResult := [
   testCanPushPastGroupBy,
   -- Edge cases
   testUnqualifiedColumn,
-  testEmptyPredicate
+  testEmptyPredicate,
+  -- Pushdown preserves semantics (axiom: pushdown_preserves_semantics)
+  testPushdownPreservesSemanticsInnerJoin,
+  testPushdownPreservesSemanticsBaseTable,
+  testPushdownPreservesSemanticsLeftJoin
 ]
 
 def runPredicatePushdownTests : IO (Nat × Nat) := do

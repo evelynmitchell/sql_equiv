@@ -1407,6 +1407,191 @@ def subqueryUnnestingTests : List TestResult :=
   ]
 
 -- ============================================================================
+-- Semantics Unfold Tests (axioms: evalExprWithDb_lit, evalExprWithDb_binOp, evalExprWithDb_unaryOp)
+-- ============================================================================
+
+def semanticsUnfoldTests : List TestResult :=
+  let db := testDb
+  let row := [("x", .int 5), ("y", .int 3)]
+  [
+    -- evalExprWithDb_lit: evalExprWithDb db row (lit v) = some v
+    let r := evalExprWithDb db row (.lit (.int 42))
+    if r == some (.int 42) then .pass "evalExprWithDb_lit (int)"
+    else .fail "evalExprWithDb_lit (int)" s!"Expected some 42, got {showOptVal r}",
+
+    let r := evalExprWithDb db row (.lit (.string "hello"))
+    if r == some (.string "hello") then .pass "evalExprWithDb_lit (string)"
+    else .fail "evalExprWithDb_lit (string)" s!"Expected some hello, got {showOptVal r}",
+
+    let r := evalExprWithDb db row (.lit (.bool true))
+    if r == some (.bool true) then .pass "evalExprWithDb_lit (bool)"
+    else .fail "evalExprWithDb_lit (bool)" s!"Expected some true, got {showOptVal r}",
+
+    let r := evalExprWithDb db row (.lit (.null none))
+    if r == some (.null none) then .pass "evalExprWithDb_lit (null)"
+    else .fail "evalExprWithDb_lit (null)" s!"Expected some null, got {showOptVal r}",
+
+    -- evalExprWithDb_binOp: evalExprWithDb db row (binOp op l r) = evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r)
+    let l := Expr.lit (.int 3)
+    let r_ := Expr.lit (.int 5)
+    let direct := evalExprWithDb db row (.binOp .add l r_)
+    let stepwise := evalBinOp .add (evalExprWithDb db row l) (evalExprWithDb db row r_)
+    if direct == stepwise then .pass "evalExprWithDb_binOp (add)"
+    else .fail "evalExprWithDb_binOp (add)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let l := Expr.lit (.bool true)
+    let r_ := Expr.lit (.bool false)
+    let direct := evalExprWithDb db row (.binOp .and l r_)
+    let stepwise := evalBinOp .and (evalExprWithDb db row l) (evalExprWithDb db row r_)
+    if direct == stepwise then .pass "evalExprWithDb_binOp (and)"
+    else .fail "evalExprWithDb_binOp (and)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let l := Expr.lit (.int 10)
+    let r_ := Expr.lit (.int 3)
+    let direct := evalExprWithDb db row (.binOp .gt l r_)
+    let stepwise := evalBinOp .gt (evalExprWithDb db row l) (evalExprWithDb db row r_)
+    if direct == stepwise then .pass "evalExprWithDb_binOp (gt)"
+    else .fail "evalExprWithDb_binOp (gt)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    -- evalExprWithDb_unaryOp: evalExprWithDb db row (unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e)
+    let e := Expr.lit (.bool true)
+    let direct := evalExprWithDb db row (.unaryOp .not e)
+    let stepwise := evalUnaryOp .not (evalExprWithDb db row e)
+    if direct == stepwise then .pass "evalExprWithDb_unaryOp (NOT)"
+    else .fail "evalExprWithDb_unaryOp (NOT)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let e := Expr.lit (.int 5)
+    let direct := evalExprWithDb db row (.unaryOp .neg e)
+    let stepwise := evalUnaryOp .neg (evalExprWithDb db row e)
+    if direct == stepwise then .pass "evalExprWithDb_unaryOp (NEG)"
+    else .fail "evalExprWithDb_unaryOp (NEG)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let e := Expr.lit (.null none)
+    let direct := evalExprWithDb db row (.unaryOp .isNull e)
+    let stepwise := evalUnaryOp .isNull (evalExprWithDb db row e)
+    if direct == stepwise then .pass "evalExprWithDb_unaryOp (IS NULL)"
+    else .fail "evalExprWithDb_unaryOp (IS NULL)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}"
+  ]
+
+-- ============================================================================
+-- Equiv Additional Tests (axioms: join_comm, in_subquery_unnest_to_join,
+-- not_in_subquery_unnest_to_antijoin, in_subquery_implies_join_match,
+-- join_match_implies_in_subquery)
+-- ============================================================================
+
+def equivAdditionalTests : List TestResult :=
+  [
+    -- join_comm: swapping INNER JOIN sides preserves row set (with column normalization)
+    let tU := FromClause.table ⟨"users", some "u"⟩
+    let tO := FromClause.table ⟨"orders", some "o"⟩
+    let jCond := Expr.binOp .eq (.col ⟨some "u", "id"⟩) (.col ⟨some "o", "user_id"⟩)
+    let r1 := evalFrom testDb (.join tU .inner tO (some jCond))
+    let r2 := evalFrom testDb (.join tO .inner tU (some jCond))
+    let norm1 := (r1.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let norm2 := (r2.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    -- Forward: every row in r1 has match in r2
+    let fwd := norm1.all (fun r => norm2.any (fun o => o == r))
+    if fwd then .pass "join_comm (forward)"
+    else .fail "join_comm (forward)" s!"Row sets differ: {r1.length} vs {r2.length}",
+
+    -- join_comm backward
+    let tU := FromClause.table ⟨"users", some "u"⟩
+    let tO := FromClause.table ⟨"orders", some "o"⟩
+    let jCond := Expr.binOp .eq (.col ⟨some "u", "id"⟩) (.col ⟨some "o", "user_id"⟩)
+    let r1 := evalFrom testDb (.join tU .inner tO (some jCond))
+    let r2 := evalFrom testDb (.join tO .inner tU (some jCond))
+    let norm1 := (r1.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let norm2 := (r2.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let bwd := norm2.all (fun r => norm1.any (fun o => o == r))
+    if bwd then .pass "join_comm (backward)"
+    else .fail "join_comm (backward)" s!"Row sets differ: {r2.length} vs {r1.length}",
+
+    -- in_subquery_unnest_to_join: SELECT t.* WHERE t.x IN (SELECT s.y) ≡ SELECT DISTINCT t.* JOIN s ON t.x = s.y
+    let inSubqueryForm := SelectStmt.mk false [.star (some "users")]
+      (some (.table ⟨"users", some "users"⟩))
+      (some (.inSubquery (.col ⟨some "users", "id"⟩) false
+        (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+          (some (.table ⟨"orders", some "orders"⟩))
+          none [] none [] none none)))
+      [] none [] none none
+    let joinForm := SelectStmt.mk true [.star (some "users")]
+      (some (.join
+        (.table ⟨"users", some "users"⟩) .inner
+        (.table ⟨"orders", some "orders"⟩)
+        (some (.binOp .eq (.col ⟨some "users", "id"⟩) (.col ⟨some "orders", "user_id"⟩)))))
+      none [] none [] none none
+    let r1 := evalSelect testDb inSubqueryForm
+    let r2 := evalSelect testDb joinForm
+    if r1 == r2 then .pass "in_subquery_unnest_to_join (users/orders)"
+    else .fail "in_subquery_unnest_to_join (users/orders)"
+      s!"IN subquery={r1.length} rows, JOIN={r2.length} rows",
+
+    -- not_in_subquery_unnest_to_antijoin: NOT IN ≡ LEFT JOIN + IS NULL
+    let notInForm := SelectStmt.mk false [.star (some "users")]
+      (some (.table ⟨"users", some "users"⟩))
+      (some (.inSubquery (.col ⟨some "users", "id"⟩) true
+        (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+          (some (.table ⟨"orders", some "orders"⟩))
+          none [] none [] none none)))
+      [] none [] none none
+    let antijoinForm := SelectStmt.mk false [.star (some "users")]
+      (some (.join
+        (.table ⟨"users", some "users"⟩) .left
+        (.table ⟨"orders", some "orders"⟩)
+        (some (.binOp .eq (.col ⟨some "users", "id"⟩) (.col ⟨some "orders", "user_id"⟩)))))
+      (some (.unaryOp .isNull (.col ⟨some "orders", "user_id"⟩)))
+      [] none [] none none
+    let r1 := evalSelect testDb notInForm
+    let r2 := evalSelect testDb antijoinForm
+    if r1 == r2 then .pass "not_in_subquery_unnest_to_antijoin (users/orders)"
+    else .fail "not_in_subquery_unnest_to_antijoin (users/orders)"
+      s!"NOT IN={r1.length} rows, Antijoin={r2.length} rows",
+
+    -- in_subquery_implies_join_match: if IN returns true, a matching row exists
+    -- Qualify rows from db to match how evalFrom qualifies them (e.g., "orders.user_id")
+    let qualifyRow (qualifier : String) (row : Row) : Row :=
+      row.map fun (k, v) => (s!"{qualifier}.{k}", v)
+    let testRow : Row := [("x", .int 1)]
+    let inExpr := Expr.inSubquery (.lit (.int 1)) false
+      (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+        (some (.table ⟨"orders", some "orders"⟩))
+        none [] none [] none none)
+    let inResult := evalExprWithDb testDb testRow inExpr
+    -- Check that a matching row exists in the orders table (qualified)
+    let matchExists := (testDb "orders").any fun sRow =>
+      let qualifiedSRow := qualifyRow "orders" sRow
+      evalExprWithDb testDb (testRow ++ qualifiedSRow)
+        (.binOp .eq (.lit (.int 1)) (.col ⟨some "orders", "user_id"⟩)) == some (.bool true)
+    if inResult == some (.bool true) && matchExists then
+      .pass "in_subquery_implies_join_match (value 1 in orders.user_id)"
+    else .fail "in_subquery_implies_join_match (value 1 in orders.user_id)"
+      s!"IN={showOptVal inResult}, matchExists={matchExists}",
+
+    -- join_match_implies_in_subquery: if a matching row exists, IN returns true
+    let qualifyRow (qualifier : String) (row : Row) : Row :=
+      row.map fun (k, v) => (s!"{qualifier}.{k}", v)
+    let testRow : Row := [("x", .int 2)]
+    -- orders table has user_id=2, so there exists a match (qualified)
+    let matchRow := (testDb "orders").find? fun sRow =>
+      let qualifiedSRow := qualifyRow "orders" sRow
+      evalExprWithDb testDb (testRow ++ qualifiedSRow)
+        (.binOp .eq (.lit (.int 2)) (.col ⟨some "orders", "user_id"⟩)) == some (.bool true)
+    let inExpr := Expr.inSubquery (.lit (.int 2)) false
+      (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+        (some (.table ⟨"orders", some "orders"⟩))
+        none [] none [] none none)
+    let inResult := evalExprWithDb testDb testRow inExpr
+    match matchRow with
+    | some _ =>
+      if inResult == some (.bool true) then
+        .pass "join_match_implies_in_subquery (value 2 in orders.user_id)"
+      else .fail "join_match_implies_in_subquery (value 2 in orders.user_id)"
+        s!"Match exists but IN={showOptVal inResult}"
+    | none => .fail "join_match_implies_in_subquery (value 2 in orders.user_id)"
+        "No matching row found in orders"
+  ]
+
+-- ============================================================================
 -- All Tests
 -- ============================================================================
 
@@ -1429,7 +1614,9 @@ def allAxiomCoverageTests : List TestResult :=
   normalizationDecisionTests ++
   predicatePushdownTests ++
   additionalLogicTests ++
-  subqueryUnnestingTests
+  subqueryUnnestingTests ++
+  semanticsUnfoldTests ++
+  equivAdditionalTests
 
 def runAxiomCoverageTests : IO (Nat × Nat) :=
   runTests "Axiom Coverage Tests" allAxiomCoverageTests
