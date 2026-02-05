@@ -205,8 +205,17 @@ def runtime_analysis(
     uncovered: list[AxiomLocation] = []
     coverage_map: dict[str, list[str]] = {}  # axiom_name -> matching tests
 
+    def _test_matches_axiom(test_name: str, axiom_name: str) -> bool:
+        """True if test_name is axiom_name exactly or followed by a non-identifier char."""
+        if not test_name.startswith(axiom_name):
+            return False
+        if len(test_name) == len(axiom_name):
+            return True
+        # Next char must not be a word character (avoids "join_comm" matching "join_comm_full")
+        return test_name[len(axiom_name)] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+
     for ax in axioms:
-        matches = [t for t in all_test_names if t.startswith(ax.name)]
+        matches = [t for t in all_test_names if _test_matches_axiom(t, ax.name)]
         if matches:
             covered.append(ax)
             coverage_map[ax.name] = matches
