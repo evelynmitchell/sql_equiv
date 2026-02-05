@@ -41,6 +41,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-lake-
 
+      - name: Run runtime coverage analysis (static)
+        run: python3 tools/axiom_coverage_validator.py --runtime --report tools/axiom_runtime_coverage_report.json
+
       - name: Build baseline
         run: lake build sql_equiv_test
 
@@ -66,3 +69,4 @@ jobs:
           path: |
             tools/axiom_coverage_report.json
             tools/axiom_coverage_checkpoint.json
+            tools/axiom_runtime_coverage_report.json
