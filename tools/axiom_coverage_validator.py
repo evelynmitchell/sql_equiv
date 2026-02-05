@@ -318,10 +318,13 @@ def preflight_checks(build_timeout: int, test_timeout: int, ci: bool = False) ->
 
     # Baseline build
     print("Pre-flight: building baseline...", flush=True)
-    build = subprocess.run(
-        BUILD_CMD, cwd=str(PROJECT_ROOT),
-        capture_output=True, text=True, timeout=build_timeout,
-    )
+    try:
+        build = subprocess.run(
+            BUILD_CMD, cwd=str(PROJECT_ROOT),
+            capture_output=True, text=True, timeout=build_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        sys.exit(f"Error: baseline build timed out after {build_timeout}s.")
     if build.returncode != 0:
         sys.exit(
             f"Error: baseline build failed. Fix before running validator.\n"
@@ -331,10 +334,13 @@ def preflight_checks(build_timeout: int, test_timeout: int, ci: bool = False) ->
 
     # Baseline tests
     print("Pre-flight: running baseline tests...", flush=True)
-    test = subprocess.run(
-        TEST_CMD, cwd=str(PROJECT_ROOT),
-        capture_output=True, text=True, timeout=test_timeout,
-    )
+    try:
+        test = subprocess.run(
+            TEST_CMD, cwd=str(PROJECT_ROOT),
+            capture_output=True, text=True, timeout=test_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        sys.exit(f"Error: baseline tests timed out after {test_timeout}s.")
     baseline_failures = test.stdout.count("TESTS FAILED")
     print(
         f"Pre-flight: baseline tests done "
@@ -361,7 +367,7 @@ def run_axiom_tests(
     def on_sigint(signum, frame):
         nonlocal shutdown
         if shutdown:
-            signal.signal(signal.SIGINT, orig_handler)
+            signal.signal(signal.SIGINT, signal.SIG_DFL)
             raise KeyboardInterrupt
         shutdown = True
         print("\nShutdown requested — finishing current axiom...")
