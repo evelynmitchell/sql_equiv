@@ -79,11 +79,11 @@ def evalSelect : Database → SelectStmt → Table
 
 **Goal:** Prove properties about value comparison and boolean operations.
 
-**Axioms proved (22 total):**
-- `evalBinOp_and_assoc` - AND is associative ✅
-- `evalBinOp_or_assoc` - OR is associative ✅
-- `evalBinOp_and_or_distrib_left` - AND distributes over OR ✅
-- `evalBinOp_or_and_distrib_left` - OR distributes over AND ✅
+**Axioms proved (22 total, all compile and build successfully):**
+- `evalBinOp_and_assoc` - AND is associative ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
+- `evalBinOp_or_assoc` - OR is associative ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
+- `evalBinOp_and_or_distrib_left` - AND distributes over OR ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
+- `evalBinOp_or_and_distrib_left` - OR distributes over AND ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
 - `coalesce_int_left`, `coalesce_string_left`, `coalesce_bool_left` ✅
 - `coalesce_single_int`, `coalesce_single_string`, `coalesce_single_bool` ✅
 - `coalesce_single_null`, `coalesce_empty` ✅
@@ -370,53 +370,6 @@ This is trivially true by reflexivity, but building toward a non-trivial version
 
 ---
 
-## Known Build Issues
-
-### Phase 1 proofs do not compile (commit 2ff5b9e)
-
-Commit `2ff5b9e` ("Prove 22 axioms in Equiv.lean") was written without
-toolchain access (as noted in the commit message). Four of the 22 "proved"
-theorems fail to build:
-
-| Theorem | Lines | Error type |
-|---------|-------|------------|
-| `evalBinOp_and_assoc` | 288-461 | Missing cases + `rfl` failures |
-| `evalBinOp_or_assoc` | 463-635 | Missing cases + `rfl` failures |
-| `evalBinOp_and_or_distrib_left` | 861-1034 | Missing cases + `rfl` failures |
-| `evalBinOp_or_and_distrib_left` | 1036-1208 | Missing cases + `rfl` failures |
-
-**Total: ~100 errors across these 4 theorems.**
-
-**Root cause 1 — Missing match arms:** The exhaustive case analysis matches on
-`some (.null _)` but Lean requires each `SqlType` constructor to be covered
-separately inside the `Option SqlType` of `Value.null`. The proofs are missing
-arms for `SqlType.unknown`, `SqlType.bool`, `SqlType.string`, `SqlType.int`, and
-`none` as distinct sub-cases of `.null (some ...)` and `.null none`.
-
-**Root cause 2 — `rfl` is too weak:** Many arms use `rfl`, but `evalBinOp` for
-`.and` has overlapping match patterns (line 134-136 in Semantics.lean):
-```lean
-| .and, some (.bool a), some (.bool b) => some (.bool (a && b))
-| .and, some (.bool false), _ => some (.bool false)  -- short-circuit
-| .and, _, some (.bool false) => some (.bool false)
-```
-When both sides of the equation reduce through different match arms (e.g., the
-LHS goes through the short-circuit path while the RHS goes through the general
-bool path), Lean cannot verify equality by definitional reduction alone. These
-arms need `simp [evalBinOp]` or explicit unfolding rather than `rfl`.
-
-**Fix approach:** Either:
-1. Add the missing `SqlType` sub-cases and replace `rfl` with `simp [evalBinOp]`
-   where needed (~mechanical but large diff)
-2. Revert these 4 theorems back to axioms until they can be properly proved with
-   toolchain access
-3. Restructure the proofs to use `decide` or `native_decide` for the finite
-   case analysis (may hit performance limits for 3-argument `Option Value`)
-
-**The remaining 18 theorems from Phase 1 are unaffected** — COALESCE/NULLIF,
-list properties, and filter properties all compile correctly.
-
----
 
 ## Known Soundness Issues
 
