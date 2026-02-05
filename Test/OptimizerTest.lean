@@ -391,6 +391,121 @@ def testOptimizeExprWithProof : TestResult :=
     .fail "optimizeExprWithProof" s!"Expected lit 3, got {repr result.val}"
 
 -- ============================================================================
+-- Flatten Nonempty Tests (axioms: flattenAnd_nonempty, flattenOr_nonempty)
+-- ============================================================================
+
+private def testLengthGe (name : String) (actual bound : Nat) : TestResult :=
+  if actual ≥ bound then .pass name
+  else .fail name s!"Expected {actual} ≥ {bound}"
+
+def testFlattenAndNonemptySimple : TestResult :=
+  let e := Expr.binOp .and (col "a") (col "b")
+  testLengthGe "flattenAnd_nonempty (simple AND)" (flattenAnd e).length 1
+
+def testFlattenAndNonemptyAtom : TestResult :=
+  let e := col "x"
+  testLengthGe "flattenAnd_nonempty (atom)" (flattenAnd e).length 1
+
+def testFlattenAndNonemptyNested : TestResult :=
+  let e := Expr.binOp .and (Expr.binOp .and (col "a") (col "b")) (col "c")
+  testLengthGe "flattenAnd_nonempty (nested)" (flattenAnd e).length 1
+
+def testFlattenAndNonemptyLiteral : TestResult :=
+  let e := boolLit true
+  testLengthGe "flattenAnd_nonempty (literal)" (flattenAnd e).length 1
+
+def testFlattenOrNonemptySimple : TestResult :=
+  let e := Expr.binOp .or (col "a") (col "b")
+  testLengthGe "flattenOr_nonempty (simple OR)" (flattenOr e).length 1
+
+def testFlattenOrNonemptyAtom : TestResult :=
+  let e := col "x"
+  testLengthGe "flattenOr_nonempty (atom)" (flattenOr e).length 1
+
+def testFlattenOrNonemptyNested : TestResult :=
+  let e := Expr.binOp .or (Expr.binOp .or (col "a") (col "b")) (col "c")
+  testLengthGe "flattenOr_nonempty (nested)" (flattenOr e).length 1
+
+def testFlattenOrNonemptyLiteral : TestResult :=
+  let e := boolLit false
+  testLengthGe "flattenOr_nonempty (literal)" (flattenOr e).length 1
+
+-- ============================================================================
+-- Optimizer Equivalence Tests (axioms: optimizeExpr_equiv, optimizeSelectStmt_equiv, optimize_equiv)
+-- ============================================================================
+
+private def optTestDb : Database := fun name =>
+  match name with
+  | "t" => [[("id", .int 1), ("x", .int 10)], [("id", .int 2), ("x", .int 20)]]
+  | _ => []
+
+def testOptimizeExprEquivAdd : TestResult :=
+  let e := Expr.binOp .add (intLit 3) (intLit 5)
+  let opt := optimizeExpr e
+  let row : Row := []
+  let r1 := evalExprWithDb optTestDb row e
+  let r2 := evalExprWithDb optTestDb row opt
+  if r1 == r2 then .pass "optimizeExpr_equiv (constant add)"
+  else .fail "optimizeExpr_equiv (constant add)" s!"Original={repr r1}, Optimized={repr r2}"
+
+def testOptimizeExprEquivBoolSimplify : TestResult :=
+  let e := Expr.binOp .and (col "x") (boolLit true)
+  let opt := optimizeExpr e
+  let row : Row := [("x", .bool true)]
+  let r1 := evalExprWithDb optTestDb row e
+  let r2 := evalExprWithDb optTestDb row opt
+  if r1 == r2 then .pass "optimizeExpr_equiv (bool simplify)"
+  else .fail "optimizeExpr_equiv (bool simplify)" s!"Original={repr r1}, Optimized={repr r2}"
+
+def testOptimizeExprEquivNested : TestResult :=
+  let e := Expr.binOp .or (Expr.binOp .and (boolLit false) (col "x")) (col "y")
+  let opt := optimizeExpr e
+  let row : Row := [("x", .bool true), ("y", .bool false)]
+  let r1 := evalExprWithDb optTestDb row e
+  let r2 := evalExprWithDb optTestDb row opt
+  if r1 == r2 then .pass "optimizeExpr_equiv (nested)"
+  else .fail "optimizeExpr_equiv (nested)" s!"Original={repr r1}, Optimized={repr r2}"
+
+def testOptimizeSelectStmtEquivWhereTrue : TestResult :=
+  let sel := SelectStmt.mk false [.star none]
+    (some (.table ⟨"t", none⟩)) (some (boolLit true)) [] none [] none none
+  let opt := optimizeSelectStmt sel
+  let r1 := evalSelect optTestDb sel
+  let r2 := evalSelect optTestDb opt
+  if r1 == r2 then .pass "optimizeSelectStmt_equiv (WHERE TRUE)"
+  else .fail "optimizeSelectStmt_equiv (WHERE TRUE)" s!"Original={r1.length} rows, Optimized={r2.length} rows"
+
+def testOptimizeSelectStmtEquivConstFold : TestResult :=
+  let sel := SelectStmt.mk false
+    [.exprItem (Expr.binOp .add (intLit 1) (intLit 2)) (some "val")]
+    (some (.table ⟨"t", none⟩)) none [] none [] none none
+  let opt := optimizeSelectStmt sel
+  let r1 := evalSelect optTestDb sel
+  let r2 := evalSelect optTestDb opt
+  if r1.length == r2.length then .pass "optimizeSelectStmt_equiv (const fold)"
+  else .fail "optimizeSelectStmt_equiv (const fold)" s!"Original={r1.length} rows, Optimized={r2.length} rows"
+
+def testOptimizeEquivFullStmt : TestResult :=
+  let stmt := Stmt.query (Query.simple (SelectStmt.mk false
+    [.star none] (some (.table ⟨"t", none⟩))
+    (some (Expr.binOp .and (boolLit true) (col "x"))) [] none [] none none))
+  let opt := optimize stmt
+  let (_, r1) := evalStmt optTestDb stmt
+  let (_, r2) := evalStmt optTestDb opt
+  if r1 == r2 then .pass "optimize_equiv (full statement)"
+  else .fail "optimize_equiv (full statement)" s!"Results differ"
+
+def testOptimizeEquivDoubleNeg : TestResult :=
+  -- Test at expression level: NOT NOT x evaluates the same as x
+  let e := Expr.unaryOp .not (Expr.unaryOp .not (col "x"))
+  let opt := optimizeExpr e
+  let row : Row := [("x", .bool true)]
+  let r1 := evalExprWithDb optTestDb row e
+  let r2 := evalExprWithDb optTestDb row opt
+  if r1 == r2 then .pass "optimize_equiv (double negation)"
+  else .fail "optimize_equiv (double negation)" s!"Original={repr r1}, Optimized={repr r2}"
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -436,7 +551,24 @@ def allTests : List TestResult := [
   testEmptyNotInList,
   -- Proof-based
   testOptimizeWithProof,
-  testOptimizeExprWithProof
+  testOptimizeExprWithProof,
+  -- Flatten nonempty (axioms: flattenAnd_nonempty, flattenOr_nonempty)
+  testFlattenAndNonemptySimple,
+  testFlattenAndNonemptyAtom,
+  testFlattenAndNonemptyNested,
+  testFlattenAndNonemptyLiteral,
+  testFlattenOrNonemptySimple,
+  testFlattenOrNonemptyAtom,
+  testFlattenOrNonemptyNested,
+  testFlattenOrNonemptyLiteral,
+  -- Optimizer equivalence (axioms: optimizeExpr_equiv, optimizeSelectStmt_equiv, optimize_equiv)
+  testOptimizeExprEquivAdd,
+  testOptimizeExprEquivBoolSimplify,
+  testOptimizeExprEquivNested,
+  testOptimizeSelectStmtEquivWhereTrue,
+  testOptimizeSelectStmtEquivConstFold,
+  testOptimizeEquivFullStmt,
+  testOptimizeEquivDoubleNeg
 ]
 
 def runOptimizerTests : IO (Nat × Nat) := do

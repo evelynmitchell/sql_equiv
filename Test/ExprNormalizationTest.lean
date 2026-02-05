@@ -328,6 +328,68 @@ def testNonCommutativeLt : TestResult :=
     .fail "LT commutativity" s!"Expected {repr expr}, got {repr norm}"
 
 -- ============================================================================
+-- Canonical Equivalence Tests (axiom: normalizeExprCanonical_equiv)
+-- ============================================================================
+
+private def equivTestDb : Database := fun name =>
+  match name with
+  | "t" => [[("x", .int 5), ("y", .int 3)]]
+  | _ => []
+
+private def equivTestRow : Row := [("x", .int 5), ("y", .int 3), ("a", .bool true), ("b", .bool false)]
+
+def testNormalizeCanonicalEquivAnd : TestResult :=
+  let e := Expr.binOp .and (col "a") (col "b")
+  let ne := normalizeExprCanonical e
+  let r1 := evalExprWithDb equivTestDb equivTestRow e
+  let r2 := evalExprWithDb equivTestDb equivTestRow ne
+  if r1 == r2 then .pass "normalizeExprCanonical_equiv (AND)"
+  else .fail "normalizeExprCanonical_equiv (AND)" s!"Original={repr r1}, Normalized={repr r2}"
+
+def testNormalizeCanonicalEquivOr : TestResult :=
+  let e := Expr.binOp .or (col "b") (col "a")
+  let ne := normalizeExprCanonical e
+  let r1 := evalExprWithDb equivTestDb equivTestRow e
+  let r2 := evalExprWithDb equivTestDb equivTestRow ne
+  if r1 == r2 then .pass "normalizeExprCanonical_equiv (OR)"
+  else .fail "normalizeExprCanonical_equiv (OR)" s!"Original={repr r1}, Normalized={repr r2}"
+
+def testNormalizeCanonicalEquivLiteral : TestResult :=
+  let e := Expr.lit (.int 42)
+  let ne := normalizeExprCanonical e
+  let r1 := evalExprWithDb equivTestDb [] e
+  let r2 := evalExprWithDb equivTestDb [] ne
+  if r1 == r2 then .pass "normalizeExprCanonical_equiv (literal)"
+  else .fail "normalizeExprCanonical_equiv (literal)" s!"Original={repr r1}, Normalized={repr r2}"
+
+-- ============================================================================
+-- Canonical Idempotency Tests (axiom: normalizeExprCanonical_idempotent)
+-- ============================================================================
+
+def testNormalizeCanonicalIdempotentAndSwap : TestResult :=
+  let e := Expr.binOp .and (col "b") (col "a")
+  let once := normalizeExprCanonical e
+  let twice := normalizeExprCanonical once
+  if once == twice then .pass "normalizeExprCanonical_idempotent (AND swap)"
+  else .fail "normalizeExprCanonical_idempotent (AND swap)" s!"once={repr once}, twice={repr twice}"
+
+def testNormalizeCanonicalIdempotentComplex : TestResult :=
+  let e := Expr.binOp .or
+    (Expr.binOp .and (col "b") (col "a"))
+    (Expr.binOp .eq (intLit 3) (col "x"))
+  let once := normalizeExprCanonical e
+  let twice := normalizeExprCanonical once
+  if once == twice then .pass "normalizeExprCanonical_idempotent (complex)"
+  else .fail "normalizeExprCanonical_idempotent (complex)" s!"once={repr once}, twice={repr twice}"
+
+def testNormalizeCanonicalIdempotentUnary : TestResult :=
+  let e := Expr.unaryOp .not (Expr.binOp .and (col "b") (col "a"))
+  let once := normalizeExprCanonical e
+  let twice := normalizeExprCanonical once
+  if once == twice then .pass "normalizeExprCanonical_idempotent (unary)"
+  else .fail "normalizeExprCanonical_idempotent (unary)" s!"once={repr once}, twice={repr twice}"
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -366,7 +428,15 @@ def allTests : List TestResult := [
   -- Non-commutative operators
   testNonCommutativeSub,
   testNonCommutativeDiv,
-  testNonCommutativeLt
+  testNonCommutativeLt,
+  -- Canonical equivalence (axiom: normalizeExprCanonical_equiv)
+  testNormalizeCanonicalEquivAnd,
+  testNormalizeCanonicalEquivOr,
+  testNormalizeCanonicalEquivLiteral,
+  -- Canonical idempotency (axiom: normalizeExprCanonical_idempotent)
+  testNormalizeCanonicalIdempotentAndSwap,
+  testNormalizeCanonicalIdempotentComplex,
+  testNormalizeCanonicalIdempotentUnary
 ]
 
 def runExprNormalizationTests : IO (Nat × Nat) := do

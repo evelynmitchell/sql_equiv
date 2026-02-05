@@ -383,6 +383,100 @@ def testEstimateJoinCostWithEdge : TestResult :=
     .fail "estimateJoinCost" s!"Expected 2000, got {cost}"
 
 -- ============================================================================
+-- Join Reorder Preserves Semantics Tests
+-- (axioms: join_reorder_preserves_forward, join_reorder_preserves_backward)
+-- ============================================================================
+
+private def reorderTestDb : Database := fun name =>
+  match name with
+  | "users" => [
+      [("id", .int 1), ("name", .string "Alice")],
+      [("id", .int 2), ("name", .string "Bob")]
+    ]
+  | "orders" => [
+      [("id", .int 1), ("user_id", .int 1), ("amount", .int 100)],
+      [("id", .int 2), ("user_id", .int 2), ("amount", .int 200)]
+    ]
+  | "items" => [
+      [("id", .int 1), ("order_id", .int 1), ("name", .string "Widget")],
+      [("id", .int 2), ("order_id", .int 2), ("name", .string "Gadget")]
+    ]
+  | _ => []
+
+private def normalizeRow (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
+private def rowKey (r : Row) : String := (normalizeRow r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+
+def testJoinReorderPreservesForward2Table : TestResult :=
+  let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") (some pred)
+  if !canReorderJoins from_ then
+    .fail "join_reorder_preserves_forward (2-table)" "canReorderJoins returned false"
+  else
+    let original := evalFrom reorderTestDb from_
+    let reordered := evalFrom reorderTestDb (reorderJoins from_)
+    let normOrig := (original.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let normReord := (reordered.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    -- Forward: every reordered row exists in original
+    let allForward := normReord.all (fun r => normOrig.any (fun o => o == r))
+    if allForward then .pass "join_reorder_preserves_forward (2-table)"
+    else .fail "join_reorder_preserves_forward (2-table)"
+      s!"Reordered has rows not in original: {reordered.length} vs {original.length}"
+
+def testJoinReorderPreservesBackward2Table : TestResult :=
+  let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") (some pred)
+  if !canReorderJoins from_ then
+    .fail "join_reorder_preserves_backward (2-table)" "canReorderJoins returned false"
+  else
+    let original := evalFrom reorderTestDb from_
+    let reordered := evalFrom reorderTestDb (reorderJoins from_)
+    let normOrig := (original.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let normReord := (reordered.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    -- Backward: every original row exists in reordered
+    let allBackward := normOrig.all (fun r => normReord.any (fun o => o == r))
+    if allBackward then .pass "join_reorder_preserves_backward (2-table)"
+    else .fail "join_reorder_preserves_backward (2-table)"
+      s!"Original has rows not in reordered: {original.length} vs {reordered.length}"
+
+def testJoinReorderPreservesForward3Table : TestResult :=
+  let pred1 := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let pred2 := Expr.binOp .eq (qcol "o" "id") (qcol "i" "order_id")
+  let from_ := innerJoin
+    (innerJoin (tableAs "users" "u") (tableAs "orders" "o") (some pred1))
+    (tableAs "items" "i")
+    (some pred2)
+  if !canReorderJoins from_ then
+    .fail "join_reorder_preserves_forward (3-table)" "canReorderJoins returned false"
+  else
+    let original := evalFrom reorderTestDb from_
+    let reordered := evalFrom reorderTestDb (reorderJoins from_)
+    let normOrig := (original.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let normReord := (reordered.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let allForward := normReord.all (fun r => normOrig.any (fun o => o == r))
+    if allForward then .pass "join_reorder_preserves_forward (3-table)"
+    else .fail "join_reorder_preserves_forward (3-table)"
+      s!"Reordered has rows not in original: {reordered.length} vs {original.length}"
+
+def testJoinReorderPreservesBackward3Table : TestResult :=
+  let pred1 := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
+  let pred2 := Expr.binOp .eq (qcol "o" "id") (qcol "i" "order_id")
+  let from_ := innerJoin
+    (innerJoin (tableAs "users" "u") (tableAs "orders" "o") (some pred1))
+    (tableAs "items" "i")
+    (some pred2)
+  if !canReorderJoins from_ then
+    .fail "join_reorder_preserves_backward (3-table)" "canReorderJoins returned false"
+  else
+    let original := evalFrom reorderTestDb from_
+    let reordered := evalFrom reorderTestDb (reorderJoins from_)
+    let normOrig := (original.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let normReord := (reordered.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let allBackward := normOrig.all (fun r => normReord.any (fun o => o == r))
+    if allBackward then .pass "join_reorder_preserves_backward (3-table)"
+    else .fail "join_reorder_preserves_backward (3-table)"
+      s!"Original has rows not in reordered: {original.length} vs {reordered.length}"
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -422,7 +516,12 @@ def allTests : List TestResult := [
   testCrossToInnerWithNonJoinPred,
   -- Cost estimation
   testEstimateJoinCostNoEdges,
-  testEstimateJoinCostWithEdge
+  testEstimateJoinCostWithEdge,
+  -- Join reorder preserves semantics (axioms: join_reorder_preserves_forward, join_reorder_preserves_backward)
+  testJoinReorderPreservesForward2Table,
+  testJoinReorderPreservesBackward2Table,
+  testJoinReorderPreservesForward3Table,
+  testJoinReorderPreservesBackward3Table
 ]
 
 def runJoinReorderingTests : IO (Nat × Nat) := do
