@@ -15,6 +15,7 @@ Usage:
     python tools/axiom_coverage_validator.py --file Equiv.lean  # Single file
     python tools/axiom_coverage_validator.py --resume           # Resume from checkpoint
     python tools/axiom_coverage_validator.py --dry-run          # Parse only, no modification
+    python tools/axiom_coverage_validator.py --runtime          # Static runtime coverage (no build)
 """
 
 from __future__ import annotations
@@ -59,6 +60,16 @@ AXIOM_FILES = [
     SQLEQUIV_DIR / "Optimizer.lean",
     SQLEQUIV_DIR / "JoinReordering.lean",
     SQLEQUIV_DIR / "PredicatePushdown.lean",
+]
+
+TEST_DIR = PROJECT_ROOT / "Test"
+TEST_FILES = [
+    TEST_DIR / "AxiomCoverageTest.lean",
+    TEST_DIR / "EquivTest.lean",
+    TEST_DIR / "OptimizerTest.lean",
+    TEST_DIR / "PredicatePushdownTest.lean",
+    TEST_DIR / "JoinReorderingTest.lean",
+    TEST_DIR / "ExprNormalizationTest.lean",
 ]
 
 
@@ -138,6 +149,150 @@ def parse_axioms(file_path: Path) -> list[AxiomLocation]:
         else:
             i += 1
     return axioms
+
+
+def parse_test_names(file_path: Path) -> list[str]:
+    """Extract test name strings from a Lean test file.
+
+    Looks for quoted string literals passed to test helpers (``testExprEquiv``,
+    ``testQueryEquiv``, etc.) and inline ``.pass`` / ``.fail`` result
+    constructors.
+    """
+    text = file_path.read_text()
+    names: list[str] = []
+    # Pattern 1: testHelper "name" ...
+    for m in re.finditer(r'test\w+\s+"([^"]+)"', text):
+        names.append(m.group(1))
+    # Pattern 2: .pass "name" / .fail "name"
+    for m in re.finditer(r'\.(?:pass|fail)\s+"([^"]+)"', text):
+        names.append(m.group(1))
+    return names
+
+
+# ---------------------------------------------------------------------------
+# Runtime coverage analysis (static, no build needed)
+# ---------------------------------------------------------------------------
+
+def runtime_analysis(
+    axioms: list[AxiomLocation],
+    test_files: list[Path] | None = None,
+) -> dict:
+    """Match axiom names against test name strings (static analysis).
+
+    A test name *covers* an axiom if the test name starts with the axiom name.
+    For example, test ``"expr_add_zero (int)"`` covers axiom ``expr_add_zero``.
+    """
+    if test_files is None:
+        test_files = TEST_FILES
+
+    # Collect all test names across files
+    all_test_names: list[str] = []
+    files_scanned = 0
+    for tf in test_files:
+        if tf.exists():
+            all_test_names.extend(parse_test_names(tf))
+            files_scanned += 1
+
+    # Match: axiom is covered if any test name starts with the axiom name
+    covered: list[AxiomLocation] = []
+    uncovered: list[AxiomLocation] = []
+    coverage_map: dict[str, list[str]] = {}  # axiom_name -> matching tests
+
+    for ax in axioms:
+        matches = [t for t in all_test_names if t.startswith(ax.name)]
+        if matches:
+            covered.append(ax)
+            coverage_map[ax.name] = matches
+        else:
+            uncovered.append(ax)
+
+    return {
+        "total_axioms": len(axioms),
+        "total_test_names": len(all_test_names),
+        "files_scanned": files_scanned,
+        "covered_count": len(covered),
+        "uncovered_count": len(uncovered),
+        "covered": covered,
+        "uncovered": uncovered,
+        "coverage_map": coverage_map,
+    }
+
+
+def print_runtime_report(analysis: dict) -> None:
+    total = analysis["total_axioms"]
+    covered = analysis["covered_count"]
+    uncovered_count = analysis["uncovered_count"]
+
+    if total == 0:
+        print("No axioms found.")
+        return
+
+    cov_pct = covered / total * 100
+    uncov_pct = uncovered_count / total * 100
+
+    print()
+    print("=" * 50)
+    print(" Runtime Coverage Analysis (static)")
+    print("=" * 50)
+    print(f"Test files scanned: {analysis['files_scanned']}")
+    print(f"Test names found:   {analysis['total_test_names']}")
+    print(f"Total axioms:       {total}")
+    print(f"Runtime covered:    {covered:>3} ({cov_pct:4.1f}%)"
+          f"  — test name matches axiom name")
+    print(f"Not covered:        {uncovered_count:>3} ({uncov_pct:4.1f}%)")
+
+    uncovered_axioms: list[AxiomLocation] = analysis["uncovered"]
+    if uncovered_axioms:
+        print(f"\n--- Axioms Without Runtime Tests ({uncovered_count}) ---")
+        for ax in uncovered_axioms:
+            print(f"  {ax.short_file}:{ax.start_line + 1:<10}"
+                  f" {ax.name}")
+
+    # Per-file breakdown
+    by_file: dict[str, dict[str, int]] = {}
+    for ax in analysis["covered"]:
+        fname = ax.short_file
+        bucket = by_file.setdefault(fname, {"total": 0, "covered": 0, "uncovered": 0})
+        bucket["total"] += 1
+        bucket["covered"] += 1
+    for ax in uncovered_axioms:
+        fname = ax.short_file
+        bucket = by_file.setdefault(fname, {"total": 0, "covered": 0, "uncovered": 0})
+        bucket["total"] += 1
+        bucket["uncovered"] += 1
+
+    print("\n--- Per-File Breakdown ---")
+    for fname, b in sorted(by_file.items()):
+        file_pct = b["covered"] / b["total"] * 100 if b["total"] else 0
+        print(f"  {fname:30s}  {b['total']:>3} axioms | "
+              f"{b['covered']:>3} covered | "
+              f"{b['uncovered']:>3} uncovered | {file_pct:5.1f}%")
+
+    print()
+
+
+def save_runtime_report(analysis: dict, path: Path) -> None:
+    """Save runtime coverage results as JSON."""
+    data = {
+        "mode": "runtime",
+        "timestamp": datetime.now().isoformat(),
+        "summary": {
+            "total_axioms": analysis["total_axioms"],
+            "total_test_names": analysis["total_test_names"],
+            "files_scanned": analysis["files_scanned"],
+            "runtime_covered": analysis["covered_count"],
+            "not_covered": analysis["uncovered_count"],
+            "coverage_pct": round(
+                analysis["covered_count"] / analysis["total_axioms"] * 100, 1
+            ) if analysis["total_axioms"] else 0,
+        },
+        "uncovered_axioms": [
+            {"name": ax.name, "file": ax.short_file, "line": ax.start_line + 1}
+            for ax in analysis["uncovered"]
+        ],
+        "coverage_map": analysis["coverage_map"],
+    }
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +663,8 @@ def parse_args() -> argparse.Namespace:
                    help="Only parse and list all axioms")
     p.add_argument("--ci", action="store_true",
                    help="CI mode: skip interactive prompts")
+    p.add_argument("--runtime", action="store_true",
+                   help="Static runtime coverage: match test names to axiom names (no build)")
     return p.parse_args()
 
 
@@ -545,6 +702,15 @@ def main() -> None:
         for ax in all_axioms:
             print(f"  {ax.short_file}:{ax.start_line + 1}-{ax.end_line + 1}  "
                   f"{ax.name}  ({ax.line_count} lines)")
+        return
+
+    # Static runtime coverage analysis (no build needed)
+    if args.runtime:
+        analysis = runtime_analysis(all_axioms)
+        print_runtime_report(analysis)
+        report_path = Path(args.report)
+        save_runtime_report(analysis, report_path)
+        print(f"Full report: {report_path}")
         return
 
     # Pre-flight
