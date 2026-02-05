@@ -106,4 +106,15 @@ def runTests (suiteName : String) (tests : List TestResult) : IO (Nat × Nat) :=
 
   return (passed, failed)
 
+-- ============================================================================
+-- Row Normalization Helpers (for join tests with column reordering)
+-- ============================================================================
+
+/-- Sort row columns by key name for order-independent comparison -/
+def normalizeRow (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
+
+/-- Produce a string key from a normalized row for sorting rows -/
+def rowKey (r : Row) : String :=
+  (normalizeRow r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+
 end Test

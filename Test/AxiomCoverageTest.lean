@@ -1479,10 +1479,6 @@ def semanticsUnfoldTests : List TestResult :=
 -- join_match_implies_in_subquery)
 -- ============================================================================
 
-private def normalizeRowForJoin (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
-private def rowKeyForJoin (r : Row) : String :=
-  (normalizeRowForJoin r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
-
 def equivAdditionalTests : List TestResult :=
   [
     -- join_comm: swapping INNER JOIN sides preserves row set (with column normalization)
@@ -1491,8 +1487,8 @@ def equivAdditionalTests : List TestResult :=
     let jCond := Expr.binOp .eq (.col ⟨some "u", "id"⟩) (.col ⟨some "o", "user_id"⟩)
     let r1 := evalFrom testDb (.join tU .inner tO (some jCond))
     let r2 := evalFrom testDb (.join tO .inner tU (some jCond))
-    let norm1 := (r1.map normalizeRowForJoin).mergeSort (fun a b => rowKeyForJoin a < rowKeyForJoin b)
-    let norm2 := (r2.map normalizeRowForJoin).mergeSort (fun a b => rowKeyForJoin a < rowKeyForJoin b)
+    let norm1 := (r1.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let norm2 := (r2.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
     -- Forward: every row in r1 has match in r2
     let fwd := norm1.all (fun r => norm2.any (fun o => o == r))
     if fwd then .pass "join_comm (forward)"
@@ -1504,8 +1500,8 @@ def equivAdditionalTests : List TestResult :=
     let jCond := Expr.binOp .eq (.col ⟨some "u", "id"⟩) (.col ⟨some "o", "user_id"⟩)
     let r1 := evalFrom testDb (.join tU .inner tO (some jCond))
     let r2 := evalFrom testDb (.join tO .inner tU (some jCond))
-    let norm1 := (r1.map normalizeRowForJoin).mergeSort (fun a b => rowKeyForJoin a < rowKeyForJoin b)
-    let norm2 := (r2.map normalizeRowForJoin).mergeSort (fun a b => rowKeyForJoin a < rowKeyForJoin b)
+    let norm1 := (r1.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
+    let norm2 := (r2.map normalizeRow).mergeSort (fun a b => rowKey a < rowKey b)
     let bwd := norm2.all (fun r => norm1.any (fun o => o == r))
     if bwd then .pass "join_comm (backward)"
     else .fail "join_comm (backward)" s!"Row sets differ: {r2.length} vs {r1.length}",

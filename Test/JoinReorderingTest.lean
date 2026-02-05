@@ -403,9 +403,6 @@ private def reorderTestDb : Database := fun name =>
     ]
   | _ => []
 
-private def normalizeRow (r : Row) : Row := r.mergeSort (fun a b => a.1 < b.1)
-private def rowKey (r : Row) : String := (normalizeRow r).foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
-
 def testJoinReorderPreservesForward2Table : TestResult :=
   let pred := Expr.binOp .eq (qcol "u" "id") (qcol "o" "user_id")
   let from_ := innerJoin (tableAs "users" "u") (tableAs "orders" "o") (some pred)
