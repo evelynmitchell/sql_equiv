@@ -40,8 +40,8 @@ constructors + `none`, that's 5x5 = 25 cases per theorem. Many resolve by `rfl`.
 | `interval`  | `interval : Int -> IntervalKind -> Value` | `Int` + kind tag | Medium   |
 | `binary`    | `binary : ByteArray -> Value`        | `ByteArray`           | Low      |
 
-**New proof case counts:** With 8 value constructors (7 non-null types + null) +
-`none`, each binary-op theorem grows to 9x9 = 81 cases. The cross-type cases are
+**New proof case counts:** With 11 Value constructors (10 non-null types + null) +
+`none`, each binary-op theorem grows to 12x12 = 144 cases. The cross-type cases are
 overwhelmingly trivial (`rfl`), but they need to be written.
 
 ---
@@ -59,7 +59,7 @@ semantics (AVG returns float per SQL standard), and type coercion rules.
 #### Step 1.1: AST changes (`Ast.lean`)
 
 - [ ] Add `float` and `decimal` to `SqlType` inductive
-- [ ] Add `Float : Float -> Value` and `decimal : Int -> Nat -> Value` to `Value`
+- [ ] Add `float : Float -> Value` and `decimal : Int -> Nat -> Value` to `Value`
 - [ ] Update `Value.sqlType` with new match arms
 - [ ] Add `nullFloat`, `nullDecimal` helpers
 - [ ] Update `Value.toTrilean` (float/decimal -> `.unknown`)
@@ -109,7 +109,7 @@ needs new case arms for float and decimal.
 1. **Factor out a "mismatched types" lemma:**
    ```lean
    lemma cross_type_binop_null (op : BinOp) (v1 v2 : Value)
-     (h : v1.sqlType != v2.sqlType) :
+     (h : v1.sqlType ≠ v2.sqlType) :
      evalBinOp op (some v1) (some v2) = some (Value.null none) := by ...
    ```
    This one lemma collapses all cross-type cases (the majority) to a single invocation.
@@ -186,7 +186,7 @@ comparisons come "for free" via `String.compare`.
 
 #### Step 2.6: Proofs (`Equiv.lean`)
 
-Case count grows from 49 (post-batch-1) to 81. Again, all new cross-type cases
+Case count grows from 49 (post-batch-1) to 100. Again, all new cross-type cases
 resolve by `rfl`. The same "mismatched types" lemma applies.
 
 New proofs:
@@ -285,18 +285,18 @@ Most binary operations return NULL when operand types don't match. Factor this o
 ```lean
 /-- For arithmetic/comparison ops, mismatched types always yield NULL -/
 lemma mismatched_types_null (op : BinOp) (v1 v2 : Value)
-  (h : v1.sqlType != v2.sqlType)
+  (h : v1.sqlType ≠ v2.sqlType)
   (hop : op ∈ [.add, .sub, .mul, .div, .mod, .eq, .ne, .lt, .le, .gt, .ge]) :
   evalBinOp op (some v1) (some v2) = some (Value.null none) := by
   cases v1 <;> cases v2 <;> simp_all [evalBinOp, Value.sqlType]
 ```
 
 With this, a commutativity proof becomes:
-1. Same-type cases (7 types = 7 cases) -- each needs type-specific reasoning
+1. Same-type cases (one per non-null value type) -- each needs type-specific reasoning
 2. Cross-type cases -- single invocation of `mismatched_types_null` + `rfl`
 3. NULL cases -- a few arms as today
 
-This reduces per-theorem effort from 81+ explicit cases to ~15-20.
+This reduces per-theorem effort from 144 explicit cases to ~20-25.
 
 ### Approach 2: Custom tactic
 
