@@ -333,8 +333,8 @@ When we add float, decimal, date, time, timestamp, interval, binary:
 
 ### The Cross-Type Elimination Strategy
 
-Instead of writing 64 cross-type `rfl` cases per theorem, we'll prove
-one helper lemma:
+Instead of writing 132 cross-type `rfl` cases per theorem (12x12 total
+minus 12 same-type), we'll prove one helper lemma:
 
 ```lean
 lemma mismatched_types_null (op : BinOp) (v1 v2 : Value)
@@ -344,7 +344,7 @@ lemma mismatched_types_null (op : BinOp) (v1 v2 : Value)
 ```
 
 Then each commutativity proof becomes:
-1. ~8 same-type cases (one per type) -- needs actual reasoning
+1. ~11 same-type cases (one per non-null type) -- needs actual reasoning
 2. Cross-type: invoke `mismatched_types_null` once
 3. NULL/none cases: a few `rfl`s
 

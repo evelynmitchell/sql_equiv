@@ -72,7 +72,7 @@ incomplete. Plan to fix all modules in one pass.
 
 - [ ] `Value.eq`: float=float (IEEE `==`), decimal=decimal (normalize scales, compare)
 - [ ] `Value.compare`: float (`Float.lt`), decimal (normalize then compare scaled ints)
-- [ ] `Value.toBool`: float (`f != 0.0 -> some true`), decimal (`n != 0 -> some true`)
+- [ ] `Value.toBool`: float (`f ≠ 0.0 -> some true`), decimal (`n ≠ 0 -> some true`)
 - [ ] `evalBinOp`: arithmetic for float and decimal
   - [ ] float +/-/*/div float
   - [ ] decimal +/-/* decimal (scale alignment: `max(s1,s2)` for +/-, `s1+s2` for *)
@@ -374,7 +374,7 @@ After all 4 batches:
 
 - [ ] `SqlType` covers all 11 types (int, string, bool, unknown, float, decimal, date, time, timestamp, interval, binary)
 - [ ] `lake build` succeeds with no errors
-- [ ] All 153+ existing theorems re-proven with expanded case analysis
+- [ ] All existing theorems in `Equiv.lean` re-proven with expanded case analysis
 - [ ] New type-specific theorems proven (commutativity, null propagation, comparison flips)
 - [ ] `mismatched_types_null` lemma proven for all type pairs
 - [ ] Parser handles float literals, decimal literals, typed datetime literals, interval literals, hex binary literals
