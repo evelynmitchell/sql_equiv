@@ -2955,10 +2955,32 @@ axiom between_expansion (e lo hi : Expr) :
     Expr.between e lo hi ≃ₑ
     Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)
 
-/-- BETWEEN is reflexive: x BETWEEN x AND x = TRUE when x is non-null -/
-axiom between_reflexive (e : Expr) :
+/-- Value-level: BETWEEN v v v equals (v >= v) AND (v <= v) for all Option Value -/
+private theorem evalBetween_reflexive (v : Option Value) :
+    (match v, v, v with
+    | some val, some vlo, some vhi =>
+      match val.compare vlo, val.compare vhi with
+      | some .lt, _ => some (Value.bool false)
+      | _, some .gt => some (Value.bool false)
+      | some _, some _ => some (Value.bool true)
+      | _, _ => none
+    | _, _, _ => none) =
+    evalBinOp .and (evalBinOp .ge v v) (evalBinOp .le v v) := by
+  match v with
+  | none => rfl
+  | some (.null _) => rfl
+  | some (.bool _) => rfl
+  | some (.int n) => simp [Value.compare, evalBinOp]
+  | some (.string s) => simp [Value.compare, evalBinOp]
+
+/-- Expression-level: x BETWEEN x AND x is equivalent to (x >= x AND x <= x). -/
+theorem between_reflexive (e : Expr) :
     Expr.between e e e ≃ₑ
-    Expr.binOp .and (Expr.binOp .ge e e) (Expr.binOp .le e e)
+    Expr.binOp .and (Expr.binOp .ge e e) (Expr.binOp .le e e) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_between, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalBetween_reflexive _
 
 /-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b) -/
 axiom not_between_expansion (e lo hi : Expr) :
@@ -2976,10 +2998,34 @@ axiom like_match_all (e : Expr) :
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool true)))
 
+/-- simpleLike with empty pattern reduces to string equality -/
+private theorem simpleLike_empty (s : String) : simpleLike s "" = (s == "") := by
+  unfold simpleLike
+  have h1 : ("" == "%") = false := by native_decide
+  have h2 : "".startsWith "%" = false := by native_decide
+  have h3 : "".endsWith "%" = false := by native_decide
+  simp [h1, h2, h3]
+
+/-- Value-level: LIKE '' behaves the same as = '' for all Option Value -/
+private theorem evalBinOp_like_empty_eq_eq (v : Option Value) :
+    evalBinOp .like v (some (.string "")) = evalBinOp .eq v (some (.string "")) := by
+  match v with
+  | none => rfl
+  | some (.null _) => rfl
+  | some (.int _) => rfl
+  | some (.bool _) => rfl
+  | some (.string s) =>
+    simp only [evalBinOp, Value.eq, Option.map, simpleLike_empty]
+
 /-- x LIKE '' = (x = '') (empty pattern matches empty string) -/
-axiom like_empty_pattern (e : Expr) :
+theorem like_empty_pattern (e : Expr) :
     Expr.binOp .like e (Expr.lit (.string "")) ≃ₑ
-    Expr.binOp .eq e (Expr.lit (.string ""))
+    Expr.binOp .eq e (Expr.lit (.string "")) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  simp only [evalExprWithDb_lit]
+  exact evalBinOp_like_empty_eq_eq _
 
 /-- x LIKE x = TRUE for non-null x with no wildcards -/
 axiom like_self (e : Expr) :
@@ -3019,8 +3065,16 @@ axiom lower_upper_lower (e : Expr) :
     Expr.func "LOWER" [e]
 
 /-- LENGTH('') = 0 -/
-axiom length_empty :
-    Expr.func "LENGTH" [Expr.lit (.string "")] ≃ₑ Expr.lit (.int 0)
+theorem length_empty :
+    Expr.func "LENGTH" [Expr.lit (.string "")] ≃ₑ Expr.lit (.int 0) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_func, evalExprWithDb_lit]
+  simp only [List.map, evalExprWithDb_lit]
+  -- evalFunc "LENGTH" [some (.string "")] = some (.int 0)
+  -- "LENGTH".toUpper = "LENGTH", then pattern matches LENGTH case
+  have h : "LENGTH".toUpper = "LENGTH" := by native_decide
+  simp [evalFunc, h]
 
 -- ============================================================================
 -- Comparison Theorems
