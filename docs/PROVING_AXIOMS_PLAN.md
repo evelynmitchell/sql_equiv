@@ -75,22 +75,22 @@ def evalSelect : Database → SelectStmt → Table
 
 ## Phased Approach
 
-### Phase 1: Foundation - Value and Boolean Properties ✅ COMPLETED
+### Phase 1: Foundation - Value and Boolean Properties -- COMPLETED
 
 **Goal:** Prove properties about value comparison and boolean operations.
 
 **Axioms proved (22 total, all compile and build successfully):**
-- `evalBinOp_and_assoc` - AND is associative ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
-- `evalBinOp_or_assoc` - OR is associative ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
-- `evalBinOp_and_or_distrib_left` - AND distributes over OR ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
-- `evalBinOp_or_and_distrib_left` - OR distributes over AND ✅ (proven via exhaustive 6×6×6 case analysis with `simp [evalBinOp]`)
-- `coalesce_int_left`, `coalesce_string_left`, `coalesce_bool_left` ✅
-- `coalesce_single_int`, `coalesce_single_string`, `coalesce_single_bool` ✅
-- `coalesce_single_null`, `coalesce_empty` ✅
-- `nullif_same_int`, `nullif_diff_int` ✅
-- `min_singleton`, `max_singleton` ✅
-- `distinct_count_le`, `distinct_idempotent`, `count_distinct_le_count` ✅
-- `filter_and_eq_filter_filter`, `filter_comm` ✅
+- `evalBinOp_and_assoc` - AND is associative (proven via exhaustive 6x6x6 case analysis with `simp [evalBinOp]`)
+- `evalBinOp_or_assoc` - OR is associative (proven via exhaustive 6x6x6 case analysis with `simp [evalBinOp]`)
+- `evalBinOp_and_or_distrib_left` - AND distributes over OR (proven via exhaustive 6x6x6 case analysis with `simp [evalBinOp]`)
+- `evalBinOp_or_and_distrib_left` - OR distributes over AND (proven via exhaustive 6x6x6 case analysis with `simp [evalBinOp]`)
+- `coalesce_int_left`, `coalesce_string_left`, `coalesce_bool_left`
+- `coalesce_single_int`, `coalesce_single_string`, `coalesce_single_bool`
+- `coalesce_single_null`, `coalesce_empty`
+- `nullif_same_int`, `nullif_diff_int`
+- `min_singleton`, `max_singleton`
+- `distinct_count_le`, `distinct_idempotent`, `count_distinct_le_count`
+- `filter_and_eq_filter_filter`, `filter_comm`
 
 **Removed (was unsound):**
 - `coalesce_null_left` - deleted; was unsound for null second argument (see Known Soundness Issues). Replaced by `coalesce_null_left_nonnull`.
@@ -103,270 +103,334 @@ def evalSelect : Database → SelectStmt → Table
 
 ---
 
-### Phase 2: Expression Evaluation Properties
+### Phase 1b: Expression-Level Axioms (~35 axioms) -- NEXT
 
-**Goal:** Prove that expression evaluation is deterministic and respects structure.
+**Goal:** Prove the remaining expression-level axioms that use `≃ₑ` (ExprEquiv).
+These all follow the same pattern: unfold `evalExprWithDb`, case-split on the
+evaluated values, then close with `simp`/`rfl`. They are independent of each
+other and of later phases.
 
-**Key lemmas needed:**
-```lean
--- Expression evaluation is deterministic
-lemma evalExpr_deterministic (db : Database) (row : Row) (e : Expr) :
-  ∀ v1 v2, evalExprWithDb db row e = some v1 →
-           evalExprWithDb db row e = some v2 → v1 = v2
+**Approach:** For each axiom of the form `theorem foo : lhs ≃ₑ rhs`, introduce
+`row`, unfold `evalExpr`, and use `simp [evalExprWithDb, evalBinOp, evalUnaryOp]`
+with case analysis on the evaluated sub-expressions.
 
--- Column reference evaluation depends only on relevant row entries
-lemma evalCol_depends_only_on_col (db : Database) (row1 row2 : Row) (c : ColumnRef) :
-  row1.lookup (colRefToKey c) = row2.lookup (colRefToKey c) →
-  evalExprWithDb db row1 (.col c) = evalExprWithDb db row2 (.col c)
-```
+**Arithmetic identities (7 axioms):**
+- `expr_add_zero`, `expr_zero_add`, `expr_mul_one`, `expr_one_mul`,
+  `expr_mul_zero`, `expr_zero_mul`, `expr_sub_zero`
 
-**Approach:**
-1. Structural induction on `Expr`
-2. Case analysis on each constructor
-3. Build library of evaluation lemmas
+**Boolean identities (7 axioms):**
+- `not_not`, `and_true`, `or_false`, `and_self`, `or_self`,
+  `and_not_self`, `or_not_self`
 
-**Estimated complexity:** Medium - many cases but straightforward
+**Boolean absorption (2 axioms):**
+- `and_absorb_or`, `or_absorb_and`
 
----
+**Comparison operators (14 axioms):**
+- `eq_reflexive`, `ne_irreflexive`, `eq_comm` (already a theorem, just used by later axioms)
+- `not_eq_is_ne`, `not_ne_is_eq`, `not_lt_is_ge`, `not_le_is_gt`,
+  `not_gt_is_le`, `not_ge_is_lt`
+- `lt_flip`, `le_flip`, `gt_flip`, `ge_flip`
 
-### Phase 3: Single-Table Filter Properties
+**CASE expressions (5 axioms):**
+- `case_when_true`, `case_when_false`, `case_when_false_no_else`,
+  `case_empty_else`, `case_empty_no_else`
 
-**Goal:** Prove filter operations preserve semantics for single tables.
-
-**Target axiom:**
-```lean
-axiom filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr) ... :
-  evalSelect db (... WHERE filter ...) =
-  evalSelect db (... FROM (SELECT * FROM t WHERE filter) ...)
-```
-
-**Key lemmas:**
-```lean
--- Filtering is the same whether done in WHERE or subquery
-lemma filter_subquery_equiv (db : Database) (t : TableRef) (pred : Expr) :
-  (evalFrom db (.table t)).filter (rowSatisfies db pred) =
-  evalFrom db (.subquery (selectWithWhere t pred) _)
-
--- Filter commutes with itself
-lemma filter_filter (rows : Table) (p q : Row → Bool) :
-  (rows.filter p).filter q = rows.filter (fun r => p r && q r)
-```
-
-**Approach:**
-1. Unfold `evalFrom` and `evalSelect` definitions
-2. Use list filter properties from Mathlib/Std
-3. Show subquery wrapping is identity for simple cases
-
-**Estimated complexity:** Medium
+**Estimated complexity:** Easy -- mostly mechanical `simp`/`rfl` proofs.
 
 ---
 
-### Phase 4: Two-Table Join Properties
+### Phase 1c: IN / BETWEEN / LIKE Axioms (~11 axioms)
 
-**Goal:** Prove commutativity and basic filter pushdown for two-table joins.
+**Goal:** Prove expression-level axioms involving IN lists, BETWEEN, and LIKE.
+
+**IN/NOT IN (8 axioms):**
+- `in_empty_false`, `not_in_empty_true` -- trivial (empty list)
+- `in_singleton`, `not_in_singleton` -- single-element expansion
+- `in_pair`, `not_in_pair` -- two-element expansion
+- `in_list_or_expansion`, `not_in_list_and_expansion` -- general list induction
+
+**BETWEEN (3 axioms):**
+- `between_expansion`, `between_reflexive`, `not_between_expansion`
+
+**LIKE (3 axioms):**
+- `like_match_all`, `like_empty_pattern`, `like_self`
+  (harder -- depends on `simpleLike` pattern matching semantics)
+
+**Estimated complexity:** Easy-Medium.
+
+---
+
+### Phase 1d: String/Function Axioms (~7 axioms)
+
+**Goal:** Prove string concatenation and function idempotence axioms.
+
+- `concat_empty_left`, `concat_empty_right` -- concat identity
+- `upper_idempotent`, `lower_idempotent` -- function idempotence
+- `upper_lower_upper`, `lower_upper_lower` -- function composition
+- `length_empty` -- length of empty string
+
+**Estimated complexity:** Easy -- unfold `evalFunc` and `simp`.
+
+---
+
+### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms)
+
+**Goal:** Prove axioms about WHERE clause behavior at the `evalSelect`/`evalStmt` level.
 
 **Target axioms:**
-```lean
-axiom join_comm_full (db : Database) (a b : FromClause) (cond : Expr) :
-  evalFrom db (.join a .inner b (some cond)) =
-  evalFrom db (.join b .inner a (some cond))
+- `where_true_elim` -- WHERE TRUE is identity
+- `where_false_empty` -- WHERE FALSE produces empty result
+- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q
+- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p
+- `filter_idempotent` -- WHERE p then WHERE p = WHERE p
+- `filter_false_empty'` -- variant of WHERE FALSE
+- `predicate_pushdown` -- WHERE pushdown for single table
 
-axiom cross_join_comm (db : Database) (a b : FromClause) : ...
-```
+**Approach:** Unfold `evalSelect`/`evalStmt`, reason about `List.filter`.
 
-**Key challenge:** Row representation after join includes columns from both sides.
-
-**Key lemmas needed:**
-```lean
--- Join produces rows with columns from both sides
-lemma join_row_structure (db : Database) (a b : FromClause) (row : Row) :
-  row ∈ evalFrom db (.join a .inner b cond) →
-  ∃ rowA rowB, rowA ∈ evalFrom db a ∧ rowB ∈ evalFrom db b ∧
-               row = mergeRows rowA rowB ∧ ...
-
--- Merged rows are equivalent up to column ordering
-lemma mergeRows_comm (rowA rowB : Row) :
-  (mergeRows rowA rowB).toFinset = (mergeRows rowB rowA).toFinset
-```
-
-**Approach:**
-1. Define precise semantics for row merging in joins
-2. Prove merge is commutative (as sets of key-value pairs)
-3. Show condition evaluation is symmetric
-
-**Estimated complexity:** Medium-High
+**Estimated complexity:** Medium -- requires understanding `evalSelect` structure.
 
 ---
 
-### Phase 5: Join Associativity
+### Phase 3: Aggregate/Distinct/List Axioms (~4 axioms)
 
-**Goal:** Prove `(A ⋈ B) ⋈ C ≡ A ⋈ (B ⋈ C)` for INNER/CROSS joins.
+**Target axioms:**
+- `min_le_elem`, `max_ge_elem` -- list fold properties (induction on list)
+- `distinct_count_le`, `distinct_idempotent` -- `List.eraseDups` properties
 
-**Target axiom:**
-```lean
-axiom join_assoc (db : Database) (a b c : FromClause) (cond1 cond2 : Expr) :
-  ∀ row ∈ evalFrom db (.join (.join a .inner b (some cond1)) .inner c (some cond2)),
-  ∃ row' ∈ evalFrom db (.join a .inner (.join b .inner c (some cond2)) (some cond1)), ...
-```
-
-**Key challenge:** Predicates may reference columns from multiple tables.
-
-**Approach:**
-1. Build on Phase 4 row structure lemmas
-2. Show three-way merge is associative
-3. Prove condition evaluation respects associative regrouping
-
-**Estimated complexity:** High
+**Estimated complexity:** Medium -- standard list induction.
 
 ---
 
-### Phase 6: Filter Pushdown Through Joins
+### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) (~13 axioms)
+
+**Goal:** Prove commutativity, associativity, idempotence, and distributivity
+of set operations.
+
+**Commutativity (3):** `union_comm`, `union_all_comm`, `intersect_comm`
+**Associativity (2):** `union_assoc`, `intersect_assoc`
+**Idempotence (2):** `union_idempotent`, `intersect_idempotent`
+**Identity/absorption (3):** `except_self_empty`, `union_empty_right`, `intersect_empty_right`
+**Cardinality (1):** `union_all_length`
+**Distributivity (2):** `union_intersect_distrib`, `intersect_union_distrib`
+
+**Approach:** Unfold `evalQuery`, reason about list dedup/append/filter.
+
+**Estimated complexity:** Medium -- list reasoning, but no join semantics needed.
+
+---
+
+### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~14 axioms)
+
+**Goal:** Prove properties of ORDER BY, LIMIT, and OFFSET.
+
+**ORDER BY (6):** `order_by_preserves_count`, `order_by_empty_identity`,
+  `order_by_idempotent`, `order_by_last_wins`, `order_by_reverse`,
+  `order_limit_deterministic`
+
+**LIMIT/OFFSET (8):** `limit_zero_empty`, `limit_upper_bound`,
+  `limit_none_all_rows`, `limit_monotonic`, `limit_one_singleton`,
+  `offset_zero_identity`, `offset_too_large_empty`, `offset_reduces_count`,
+  `offset_monotonic`, `limit_offset_compose`, `offset_limit_zero_empty`,
+  `pagination_upper_bound`, `pagination_identity`, `consecutive_pages`
+
+**Approach:** These reduce to `List.take`/`List.drop`/`List.length` lemmas.
+
+**Estimated complexity:** Easy-Medium.
+
+---
+
+### Phase 6: Join Axioms (~21 axioms)
+
+**Goal:** Prove join commutativity, associativity, cardinality bounds,
+and empty-table behavior.
+
+**Empty table (4 -- easy):** `inner_join_empty_left`, `inner_join_empty_right`,
+  `cross_join_empty_left`, `cross_join_empty_right`
+
+**Trivial conditions (2 -- easy):** `inner_join_true_is_cross`, `inner_join_false_empty`
+
+**Cardinality (5 -- medium):** `cross_join_cardinality`, `cross_join_cardinality_comm`,
+  `cross_join_assoc_cardinality`, `inner_join_cardinality_le`,
+  `left_join_cardinality_ge`, `right_join_cardinality_ge`
+
+**Semantics (5 -- hard):** `join_comm`, `join_comm_full`, `cross_join_comm`,
+  `join_assoc`, `cross_join_assoc`
+
+**Advanced (5 -- hard):** `inner_join_to_where`, `left_join_preserves_left`,
+  `right_join_preserves_right`, `inner_subset_cross`,
+  `left_join_filter_null_is_inner`, `left_join_false_all_left`
+
+**Approach:** Unfold `evalFrom` join cases, reason about row merging and
+list comprehension. The commutativity/associativity proofs require showing
+row merging is commutative/associative (modulo column ordering).
+
+**Estimated complexity:** Medium-Hard.
+
+---
+
+### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms)
+
+**Goal:** Prove subquery evaluation properties.
+
+**Simple/empty (6 -- easy):** `exists_empty_false`, `not_exists_empty_true`,
+  `exists_nonempty_true`, `not_exists_nonempty_false`, `not_not_exists`,
+  `scalar_subquery_empty_null`
+
+**Subquery WHERE (2 -- easy):** `subquery_where_true`, `subquery_where_false`
+
+**Equivalences (4 -- medium):** `exists_as_count_gt_zero`,
+  `not_exists_as_count_eq_zero`, `subquery_limit_one`, `scalar_subquery_is_first`
+
+**Advanced (5 -- hard):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
+  `uncorrelated_subquery_independent`, `in_singleton_subquery`,
+  `correlated_subquery_uses_context`, `exists_monotonic`
+
+**Unnesting (4 -- hard):** `in_subquery_unnest_to_join`,
+  `not_in_subquery_unnest_to_antijoin`, `in_subquery_implies_join_match`,
+  `join_match_implies_in_subquery`
+
+**Estimated complexity:** Medium-Hard.
+
+---
+
+### Phase 8: Expression Evaluation Helper Lemmas
+
+**Goal:** Prove helper properties needed by harder axioms in Phases 6-7.
+
+**Target lemmas:**
+- `normalizeExpr_equiv` -- normalization preserves semantics
+- `syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic
+- `ground_expr_eval_independent` -- ground expressions don't depend on row
+- `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound
+
+**Approach:** Structural induction on `Expr`.
+
+**Estimated complexity:** Medium-High.
+
+---
+
+### Phase 9: Filter Pushdown Through Joins
 
 **Goal:** Prove predicates can be pushed into join operands.
 
 **Target axioms:**
-```lean
-axiom filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
-    (h_ref : exprReferencesOnlyFrom a filter = true) : ...
+- `filter_join_left`, `filter_join_right`, `filter_pushdown_table`
 
-axiom filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
-    (h_ref : exprReferencesOnlyFrom b filter = true) : ...
-```
+**Approach:** Use column reference tracking from `exprReferencesOnlyFrom`,
+show filter evaluation only depends on referenced columns.
 
-**Key insight:** If filter only references left table columns, filtering before or after join is equivalent.
-
-**Key lemmas:**
-```lean
--- Filter on left-only columns can be pushed
-lemma filter_join_push_left (db : Database) (a b : FromClause) (cond filter : Expr)
-    (h : exprReferencesOnlyFrom a filter) :
-  (evalFrom db (.join a .inner b cond)).filter (rowSatisfies db filter) =
-  evalFrom db (.join (filtered a filter) .inner b cond)
-```
-
-**Approach:**
-1. Use column reference tracking from `exprReferencesOnlyFrom`
-2. Show filter evaluation only depends on left columns
-3. Prove filtering before join produces same result
-
-**Estimated complexity:** High
+**Estimated complexity:** High.
 
 ---
 
-### Phase 7: Predicate Pushdown Optimization
+### Phase 10: Optimizer Correctness (Final Target)
 
-**Goal:** Prove `pushdown_preserves_semantics`.
+**Goal:** Prove the top-level optimizer axioms from Issue #11.
 
-**Strategy:** Structural induction on `FromClause`, using Phase 3-6 lemmas.
+**Target axioms (not in Equiv.lean -- in Optimizer modules):**
+- `pushdown_preserves_semantics`
+- `join_reorder_preserves_forward`
+- `join_reorder_preserves_backward`
 
-**Cases:**
-1. **Base table:** Use `filter_pushdown_table` (Phase 3)
-2. **Subquery:** Induction + projection handling
-3. **Join:** Use `filter_join_left/right` (Phase 6) based on `predReferencesOnlyTables`
+**Strategy:** Compose lemmas from all prior phases.
 
-**Key lemma:**
-```lean
-lemma pushSinglePredicate_correct (db : Database) (pred : Expr) (from_ : FromClause) :
-  let result := pushSinglePredicate pred from_
-  filterRows db (evalFrom db result.pushedFrom) result.remaining =
-  filterRows db (evalFrom db from_) (some pred)
-```
-
-**Approach:**
-1. Induction on `FromClause` structure
-2. Case analysis matching `pushSinglePredicate` implementation
-3. Apply appropriate Phase 3-6 lemmas for each case
-
-**Estimated complexity:** High - ties everything together
+**Estimated complexity:** High -- ties everything together.
 
 ---
 
-### Phase 8: Join Reordering Optimization
+## Remaining Axiom Count by Phase
 
-**Goal:** Prove `join_reorder_preserves_*`.
+| Phase | Description | Axioms | Difficulty |
+|-------|-------------|--------|------------|
+| 1 | Value/Boolean properties | 0 (done) | -- |
+| 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | Easy |
+| 1c | IN / BETWEEN / LIKE | ~11 | Easy-Medium |
+| 1d | String/Function | ~7 | Easy |
+| 2 | Statement-level filter/WHERE | ~7 | Medium |
+| 3 | Aggregate/Distinct | ~4 | Medium |
+| 4 | Set operations | ~13 | Medium |
+| 5 | ORDER BY / LIMIT / OFFSET | ~14 | Easy-Medium |
+| 6 | Join axioms | ~21 | Medium-Hard |
+| 7 | Subquery / EXISTS / IN | ~17 | Medium-Hard |
+| 8 | Expression evaluation helpers | ~4 | Medium-High |
+| 9 | Filter pushdown through joins | ~3 | High |
+| 10 | Optimizer correctness | ~3 | High |
+| | **Total remaining** | **~152** | |
 
-**Strategy:** Use Phase 4-5 commutativity/associativity lemmas.
+## Implementation Order (with GitHub Issues)
 
-**Key insight:** `reorderJoins` only reorders, doesn't change the set of tables or predicates.
+Work the waves in order. Issues within a wave are independent and can be
+done in parallel.
 
-**Key lemmas:**
-```lean
--- Greedy reordering produces equivalent join tree
-lemma greedyReorder_equiv (nodes : List JoinNode) (edges : List JoinEdge) :
-  ∀ steps ∈ greedyReorder nodes edges,
-  buildFromSteps nodes steps produces equivalent result to any other ordering
+### Wave 1 -- Expression-level boolean/arithmetic/comparison (easiest, highest ROI)
 
--- Building from steps preserves table set
-lemma buildFromSteps_tables (nodes : List JoinNode) (steps : List JoinStep) :
-  getFromClauseTableNames (buildFromSteps nodes steps) =
-  nodes.map (·.table.name)
-```
+All mechanical `simp`/`rfl` proofs. No dependencies between them.
 
-**Approach:**
-1. Show any reordering of INNER/CROSS joins is equivalent (using Phase 4-5)
-2. Show predicates are preserved during reordering
-3. Combine to prove full semantic preservation
+| Order | Issue | Description | Axioms | Difficulty |
+|:-----:|-------|-------------|:------:|------------|
+| 1 | [#46](https://github.com/evelynmitchell/sql_equiv/issues/46) | `not_not` (double negation) | 1 | Easy |
+| 2 | [#48](https://github.com/evelynmitchell/sql_equiv/issues/48) | `and_true`, `or_false` (identity) | 2 | Easy |
+| 3 | [#47](https://github.com/evelynmitchell/sql_equiv/issues/47) | `and_absorb_or`, `or_absorb_and` (absorption) | 2 | Easy |
+| 4 | [#49](https://github.com/evelynmitchell/sql_equiv/issues/49) | `and_self`, `or_self` (idempotent) | 2 | Easy (check soundness) |
+| 5 | [#50](https://github.com/evelynmitchell/sql_equiv/issues/50) | `and_not_self`, `or_not_self` (complement) | 2 | Easy (check soundness) |
+| 6 | [#57](https://github.com/evelynmitchell/sql_equiv/issues/57) | Arithmetic identities (x+0, x*1, etc.) | 7 | Easy (check soundness) |
+| 7 | [#54](https://github.com/evelynmitchell/sql_equiv/issues/54) | Comparison negation rules | 6 | Easy |
+| 8 | [#55](https://github.com/evelynmitchell/sql_equiv/issues/55) | Comparison flip rules | 4 | Easy |
+| 9 | [#56](https://github.com/evelynmitchell/sql_equiv/issues/56) | `eq_reflexive`, `ne_irreflexive` | 2 | Easy-Medium |
+| 10 | [#61](https://github.com/evelynmitchell/sql_equiv/issues/61) | CASE/WHEN simplification | 5 | Easy |
 
-**Estimated complexity:** High
+### Wave 2 -- IN/BETWEEN/LIKE/String (still expression-level)
 
----
+| Order | Issue | Description | Axioms | Difficulty |
+|:-----:|-------|-------------|:------:|------------|
+| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 6 | Easy-Medium |
+| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | Easy |
+| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | Medium |
+| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | Easy |
 
-## Summary: Proof Dependencies
+### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
 
-```
-pushdown_preserves_semantics
-├── filter_join_left (Phase 6)
-├── filter_join_right (Phase 6)
-├── filter_pushdown_table (Phase 3)
-└── filter composition lemmas (Phase 3)
+| Order | Issue | Description | Axioms | Difficulty |
+|:-----:|-------|-------------|:------:|------------|
+| 15 | [#51](https://github.com/evelynmitchell/sql_equiv/issues/51) | `where_true_elim`, `where_false_empty` | 2 | Medium |
+| 16 | [#72](https://github.com/evelynmitchell/sql_equiv/issues/72) | Filter composition rules | 4 | Medium |
+| 17 | [#82](https://github.com/evelynmitchell/sql_equiv/issues/82) | Aggregate properties | 4 | Medium |
+| 18 | [#79](https://github.com/evelynmitchell/sql_equiv/issues/79) | ORDER BY properties | 5 | Easy-Medium |
+| 19 | [#80](https://github.com/evelynmitchell/sql_equiv/issues/80) | LIMIT properties | 5 | Easy-Medium |
+| 20 | [#81](https://github.com/evelynmitchell/sql_equiv/issues/81) | OFFSET/pagination | 5 | Easy-Medium |
+| 21 | [#63](https://github.com/evelynmitchell/sql_equiv/issues/63) | Set operation commutativity | 3 | Medium |
+| 22 | [#64](https://github.com/evelynmitchell/sql_equiv/issues/64) | Set operation assoc/distrib | 4 | Medium |
+| 23 | [#65](https://github.com/evelynmitchell/sql_equiv/issues/65) | Set operation edge cases | 5 | Medium |
 
-join_reorder_preserves_*
-├── join_comm_full (Phase 4)
-├── join_assoc (Phase 5)
-├── cross_join_comm (Phase 4)
-└── cross_join_assoc (Phase 5)
+### Wave 4 -- Helper lemmas
 
-All above depend on:
-├── Expression evaluation lemmas (Phase 2)
-└── Value/Boolean properties (Phase 1)
-```
+| Order | Issue | Description | Axioms | Difficulty |
+|:-----:|-------|-------------|:------:|------------|
+| 24 | [#52](https://github.com/evelynmitchell/sql_equiv/issues/52) | Normalization equivalence | 2 | Medium-High |
+| 25 | [#53](https://github.com/evelynmitchell/sql_equiv/issues/53) | Ground expr independence | 2 | Medium-High |
 
----
+### Wave 5 -- Joins (sequential dependency chain)
 
-## Tooling Considerations
+| Order | Issue | Description | Axioms | Difficulty |
+|:-----:|-------|-------------|:------:|------------|
+| 26 | [#70](https://github.com/evelynmitchell/sql_equiv/issues/70) | Join edge cases (empty, TRUE/FALSE) | 7 | Medium |
+| 27 | [#69](https://github.com/evelynmitchell/sql_equiv/issues/69) | Join cardinality bounds | 7 | Medium |
+| 28 | [#67](https://github.com/evelynmitchell/sql_equiv/issues/67) | `cross_join_comm`, `cross_join_assoc` | 2 | Medium-Hard |
+| 29 | [#66](https://github.com/evelynmitchell/sql_equiv/issues/66) | `join_comm`, `join_comm_full` | 2 | Hard |
+| 30 | [#68](https://github.com/evelynmitchell/sql_equiv/issues/68) | `join_assoc` (**hardest axiom**) | 1 | Hard |
+| 31 | [#71](https://github.com/evelynmitchell/sql_equiv/issues/71) | Outer join preservation | 4 | Hard |
+| 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | Medium |
+| 33 | [#76](https://github.com/evelynmitchell/sql_equiv/issues/76) | IN subquery rules | 5 | Medium |
+| 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 8 | Medium-Hard |
+| 35 | [#77](https://github.com/evelynmitchell/sql_equiv/issues/77) | Subquery unnesting (IN->JOIN) | 4 | Hard |
 
-### Cleanroom Approach
-- Define specifications precisely before proving
-- Review proof strategies before committing to Lean
-- Use stepwise refinement for complex proofs
+### Wave 6 -- Filter pushdown + optimizer (final target)
 
-### Lean 4 Tactics
-- `simp` with custom simp lemmas for evaluation
-- `induction` on Expr/FromClause structures
-- `rcases` for existential elimination
-- `ext` for list/set equality
-
-### Mathlib/Std Dependencies
-- List filter lemmas
-- Decidable equality instances
-- Option monad properties
-
----
-
-## Recommended Starting Point
-
-**Start with Phase 1 and Phase 3** in parallel:
-- Phase 1 is self-contained and builds confidence
-- Phase 3 (single-table filter) provides immediate value and tests the approach
-
-**First concrete goal:**
-```lean
-theorem filter_pushdown_table_simple (db : Database) (tname : String) (pred : Expr) :
-  (db tname).filter (fun row => evalExprWithDb db row pred == some (.bool true)) =
-  (db tname).filter (fun row => evalExprWithDb db row pred == some (.bool true))
-```
-
-This is trivially true by reflexivity, but building toward a non-trivial version forces us to understand the semantic model properly.
+| Order | Issue | Description | Axioms | Difficulty |
+|:-----:|-------|-------------|:------:|------------|
+| 36 | [#73](https://github.com/evelynmitchell/sql_equiv/issues/73) | Filter pushdown through joins | 3 | High |
+| 37 | [#74](https://github.com/evelynmitchell/sql_equiv/issues/74) | `predicate_pushdown` (optimizer) | 1 | High |
 
 ---
 
@@ -458,19 +522,10 @@ that then get a single qualifier from the outer `evalFrom`.
 
 ---
 
-## Timeline Estimate
+## Parallelization
 
-| Phase | Description | Effort |
-|-------|-------------|--------|
-| 1 | Value/Boolean properties | 1-2 days |
-| 2 | Expression evaluation | 2-3 days |
-| 3 | Single-table filter | 2-3 days |
-| 4 | Two-table join comm | 3-5 days |
-| 5 | Join associativity | 3-5 days |
-| 6 | Filter pushdown joins | 5-7 days |
-| 7 | Predicate pushdown opt | 5-7 days |
-| 8 | Join reordering opt | 5-7 days |
-
-**Total:** ~4-6 weeks of focused effort
-
-This can be parallelized - Phases 1-3 are independent of Phases 4-5.
+These phase groups are independent and can be worked on in parallel:
+- **Group A:** Phases 1b, 1c, 1d (expression-level, no dependencies)
+- **Group B:** Phases 4, 5 (set operations, LIMIT/OFFSET -- independent of joins)
+- **Group C:** Phases 2, 3 (aggregate/distinct, filter/WHERE)
+- **Group D:** Phases 6, 7, 8, 9, 10 (joins, subqueries, optimizer -- sequential dependency chain)
