@@ -24,7 +24,7 @@ After the SQL axioms reach a solid state, a natural companion project is
 - **Cleaner semantics** — fixpoint evaluation gives a natural induction principle
   that SQL's bag semantics lack.
 - **Publishable** — verified Datalog is an active research area (Datalog engines
-  like Souffl and Rel use these transformations; no one has machine-checked them).
+  like Soufflé and Rel use these transformations; no one has machine-checked them).
 - **Directly transfers** — Datalog is a SQL fragment (SELECT-FROM-WHERE with
   recursion, no ORDER BY/aggregates/subqueries). Skills, tactics, and even
   some infrastructure from sql_equiv carry over.
@@ -85,12 +85,12 @@ structure Program where
 
 - Share a Lake workspace with sql_equiv, or separate repo?
 - Reuse `Value` type from sql_equiv, or start fresh?
-- Target Souffl-style Datalog (with aggregates, ADTs) or pure Datalog?
+- Target Soufflé-style Datalog (with aggregates, ADTs) or pure Datalog?
 - Include negation (stratified Datalog) from the start?
 
 ### Resources
 
 - *Foundations of Databases* (Abiteboul, Hull, Vianu) — chapters 12-15
 - *Alice Book* — Datalog semantics and optimization
-- Souffl documentation — practical Datalog transformations
+- Soufflé documentation — practical Datalog transformations
 - Lean 4 Mathlib `Order.FixedPoints` — for Knaster-Tarski fixpoint theorems
