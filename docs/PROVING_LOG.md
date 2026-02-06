@@ -387,6 +387,79 @@ framework for type-conditional axioms. Together they make ~all axioms provable.
 
 ---
 
+## Prototype Comparison: Building All Three Options
+
+**Branches**: `claude/option1-type-preconditions` (PR #87), `claude/option2-type-system` (PR #88), `claude/option3-fix-null-semantics` (PR #89)
+
+We built three working prototypes to compare approaches. Each branch modifies
+the same axioms (`not_not`/`expr_add_zero` for Options 1-2, `eq_reflexive` for
+Option 3) so the comparison is apples-to-apples.
+
+### Option 1: Ad-hoc type preconditions
+
+Added `IsBoolValued`/`IsIntValued` predicates per axiom.
+
+**Results:**
+- Proves `not_not` and `expr_add_zero` — proofs are clean and direct
+- **Fatal composability gap**: Can't chain `not_not` (needs bool) with arithmetic
+  axioms (needs int). Each predicate is an isolated silo
+- 5 caller sorry sites in Tactics.lean/Optimizer.lean
+- Proliferation risk: each new axiom may need a new predicate
+
+### Option 2: Minimal type system
+
+Added unified `Expr.wellTyped` with `Value.hasType` and `SqlType`.
+
+**Results:**
+- Same proofs as Option 1, but unified under one predicate
+- **Type preservation works**: proved `lit_bool_typed`, `unaryOp_not_typed`, etc.
+  allowing proofs to chain — if `e` is bool-typed, `NOT e` is also bool-typed
+- Strict typing required — including null in `hasType` made `expr_add_zero`
+  unprovable (`null + 0 = none ≠ some (.null _)`)
+- **Nullable type gap**: comparisons return "bool or null" which needs
+  `SqlType.nullable` to express
+- Same 5 caller sorry sites as Option 1
+
+### Option 3: Fix null semantics
+
+Changed `evalBinOp`/`evalUnaryOp` to return `some (.null none)` for null
+propagation, distinguishing it from `none` (genuine errors).
+
+**Results:**
+- **Key win**: `eq_reflexive` becomes provable with only `Expr.evaluable`
+  (expression produces *some* value) — a very mild precondition
+- `not_not` remains unprovable — `NOT 5 = none` is a type error, not null issue
+- 93 initial build errors; 90 mechanically repairable, 2 sorry'd (still true),
+  1 new prototype sketch sorry
+- 20+ null theorem statements updated: `= none` → `= some (.null none)` — these
+  are actually *more correct* as SQL semantics
+- All 195 runtime tests pass unchanged
+- Zero caller breakage for existing axiom signatures
+
+### Verdict: These fix *different problems*
+
+| Problem | Option 1 | Option 2 | Option 3 |
+|---------|----------|----------|----------|
+| Null/error conflation (`eq_reflexive`) | No | No | **Yes** |
+| Boolean-only axioms (`not_not`) | **Yes** | **Yes** | No |
+| Integer-only axioms (`expr_add_zero`) | **Yes** | **Yes** | No |
+| Composability across types | No | **Yes** | N/A |
+| Caller breakage | 5 sorry sites | 5 sorry sites | 0 |
+| Semantics correctness | Unchanged | Unchanged | **Improved** |
+
+**Recommended path**: Option 3 first (fixes root cause — the null/error
+conflation is a genuine semantic bug, not just a proof obstacle), then Option 2
+on top (adds type system for type-mismatch axioms like `not_not`). Option 1 is
+strictly dominated by Option 2 and should not be pursued.
+
+**Key insight**: Option 3's proof repair burden was manageable. The comparison
+negation helpers (NOT(x=y) = (x<>y) etc.) were fully repairable — just needed
+explicit null case splits. The distributivity proofs need the same treatment
+(more cases for nulls in the exhaustive enumeration). The semantic change makes
+the codebase *more correct* regardless of the proving effort.
+
+---
+
 ## Batch 2: Provable axioms from Wave 1-2
 
 **Branch**: `claude/prove-wave1-batch2` | **PR**: #86
