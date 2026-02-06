@@ -97,27 +97,52 @@ prove theorems about. Track them in PROVING_AXIOMS_PLAN.md.
 
 ---
 
-## Batch 2: Wave 1 remaining
+## Unsound Axioms: Comprehensive Analysis
 
-**Branch**: `claude/prove-wave1-batch2` | **PR**: TBD
+Many axioms in the codebase are **unsound as stated** — they claim equivalences
+for ALL expressions, but only hold for specific types (booleans, integers, strings).
+This section documents every unsound axiom found during proving work.
 
-### Assessment of remaining Wave 1 axioms
+### Category 1: Boolean-only axioms (Wave 1)
 
-| Issue | Axioms | Provable? | Why |
-|-------|--------|-----------|-----|
-| #46 | `not_not` | **No** (unsound) | Only holds for boolean-valued exprs. `NOT(NOT 5)` = `none` ≠ `5` |
-| #47 | `and_absorb_or`, `or_absorb_and` | **No** (unsound) | Boolean-only. `5 AND (5 OR b)` = `none` ≠ `5` |
-| #48 | `and_true`, `or_false` | **No** (unsound) | Boolean-only. `5 AND TRUE` = `none` ≠ `5` |
-| #49 | `and_self`, `or_self` | **No** (unsound) | Boolean-only. `5 AND 5` = `none` ≠ `5` |
-| #50 | `and_not_self`, `or_not_self` | **No** (unsound) | Boolean-only. |
-| #57 | Arithmetic identities (7) | **No** (unsound) | Integer-only. `"hello" + 0` = `none` ≠ `"hello"` |
-| #56 | `eq_reflexive`, `ne_irreflexive` | **Yes** | Handle null explicitly via CASE expression |
+These axioms only hold when all expression arguments evaluate to `some (.bool _)`.
+For non-boolean values (int, string, null), operations like AND/OR/NOT return
+`none`, but the axioms claim the result equals the original expression.
 
-### #56 eq_reflexive, ne_irreflexive — ALSO UNSOUND
+| Issue | Axiom | Counterexample |
+|-------|-------|----------------|
+| #46 | `not_not` | `NOT(NOT 5)` = `none` ≠ `some (.int 5)` |
+| #47 | `and_absorb_or` | `5 AND (5 OR b)` = `none` ≠ `some (.int 5)` |
+| #47 | `or_absorb_and` | `5 OR (5 AND b)` = `none` ≠ `some (.int 5)` |
+| #48 | `and_true` | `5 AND TRUE` = `none` ≠ `some (.int 5)` |
+| #48 | `or_false` | `5 OR FALSE` = `none` ≠ `some (.int 5)` |
+| #49 | `and_self` | `5 AND 5` = `none` ≠ `some (.int 5)` |
+| #49 | `or_self` | `5 OR 5` = `none` ≠ `some (.int 5)` |
+| #50 | `and_not_self` | `5 AND (NOT 5)` = `none` ≠ `some (.bool false)` |
+| #50 | `or_not_self` | `5 OR (NOT 5)` = `none` ≠ `some (.bool true)` |
 
-Traced through the semantics manually:
+**Fix**: Add precondition `∀ row, ∃ b, evalExpr row e = some (.bool b)`.
 
-**`eq_reflexive`** says `(e = e) ≃ₑ CASE WHEN IS_NULL(e) THEN NULL ELSE TRUE END`.
+### Category 2: Integer-only axioms (Wave 1)
+
+| Issue | Axiom | Counterexample |
+|-------|-------|----------------|
+| #57 | `add_zero` (x + 0 = x) | `"hello" + 0` = `none` ≠ `some (.string "hello")` |
+| #57 | `mul_one` (x * 1 = x) | Same pattern |
+| #57 | All 7 arithmetic identities | Same pattern |
+
+**Fix**: Add precondition `∀ row, ∃ n, evalExpr row e = some (.int n)`.
+
+### Category 3: Representation mismatch — `none` vs `some (.null none)` (Wave 1)
+
+| Issue | Axiom | Problem |
+|-------|-------|---------|
+| #56 | `eq_reflexive` | `NULL = NULL` gives `none` (via `Value.eq`), but CASE returns `some (.null none)` |
+| #56 | `ne_irreflexive` | Same mismatch |
+
+**Detailed trace for `eq_reflexive`**:
+
+The axiom says `(e = e) ≃ₑ CASE WHEN IS_NULL(e) THEN NULL ELSE TRUE END`.
 
 When `evalExprWithDb db row e = some (.null t)`:
 - **LHS**: `evalBinOp .eq (some (.null t)) (some (.null t))`
@@ -126,72 +151,63 @@ When `evalExprWithDb db row e = some (.null t)`:
 - **RHS**: `isNullValue (some (.null t))` = `true` → CASE returns
   `evalExprWithDb db row (lit (null none))` = **`some (.null none)`**
 
-`none ≠ some (.null none)` — the axiom is **unsound**.
+`none ≠ some (.null none)`.
 
-**Root cause**: In our representation, `Value.eq` on two NULLs returns `none`
-(Option Bool), which lifts to `none` (Option Value). But the RHS CASE
-expression produces `some (.null none)`. In real SQL, `NULL = NULL` yields
-`NULL`, and both sides should agree — but our encoding uses `none : Option Value`
-for "evaluation produced no result" AND for "SQL NULL propagation through
-operators". The CASE branch produces an explicit `some (.null none)` that
-doesn't match the implicit `none` from `Value.eq`.
+**Root cause**: `Value.eq` returns `Option Bool` where `none` means "null
+propagation". This lifts to `none : Option Value` via `.map`. But the CASE
+expression's null branch produces an explicit `some (.null none)`. Our encoding
+conflates "evaluation error" and "SQL NULL propagation" under the same `none`.
 
-Same issue affects `ne_irreflexive` and also the `none` case (when
-`evalExprWithDb` returns `none` for an invalid expression).
+**Fix options**:
+- Change `Value.eq` on null inputs to return `some false` (but that changes SQL semantics)
+- Add precondition `∀ row, evalExpr row e ≠ none`
+- Define weaker equivalence that treats `none` ≈ `some (.null _)`
 
-**Conclusion**: All remaining Wave 1 axioms are unsound as stated. Moving to
-Wave 2 to find provable axioms.
+### Category 4: Type-specific axioms (Wave 2)
 
-### Wave 1 unsound axioms — future fix options
+| Issue | Axiom | Sound? | Problem |
+|-------|-------|--------|---------|
+| #58 | `in_empty_false` | **No** | `none ≠ some (.bool false)` when `e` evals to `none` |
+| #58 | `not_in_empty_true` | **No** | `none ≠ some (.bool true)` when `e` evals to `none` |
+| #58 | `in_singleton`, `not_in_singleton` | **No** | Requires `e` to produce `some` |
+| #58 | `in_pair`, `not_in_pair` | **No** | OR/AND short-circuit creates mismatch |
+| #59 | `between_expansion` | **No** | AND short-circuit: `5 BETWEEN "x" AND 3` → `none` but RHS → `some (.bool false)` |
+| #59 | `not_between_expansion` | **No** | OR short-circuit, same class |
+| #60 | `like_match_all` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
+| #60 | `like_self` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
+| #62 | `concat_empty_left/right` | **No** | **BUG**: `evalFunc` has no "CONCAT" case — always returns `none` |
 
-The unsound axioms (#46-#50, #56, #57) fall into two categories:
+### Category 5: Implementation bugs
 
-1. **Boolean-only** (#46-#50): Need precondition like
-   `∀ row, ∃ b, evalExpr row e = some (.bool b)`.
+| Axiom | Bug |
+|-------|-----|
+| `concat_empty_left` | Uses `Expr.func "CONCAT"` but `evalFunc` has no CONCAT handler. Should use `Expr.binOp .concat` |
+| `concat_empty_right` | Same bug |
 
-2. **Representation mismatch** (#56): The `none` vs `some (.null none)`
-   distinction. Could fix by either:
-   - Changing `Value.eq` to return `some false` or `some (.null none)` for null
-     inputs instead of `none`
-   - Adding a precondition that `e` always evaluates to `some`
-   - Defining a weaker equivalence that treats `none` and `some (.null _)` as
-     equal
+### Summary
 
-These are design decisions to discuss with the project owner.
+Of ~152 original axioms, **18 proven** so far. Of the remaining ~134:
+- ~20 are unsound as stated (categories 1-4 above)
+- ~2 have implementation bugs (category 5)
+- The rest haven't been triaged yet
+
+**Design decision needed**: How to handle unsound axioms? Options:
+1. Add type preconditions (makes axioms conditional)
+2. Change semantics to distinguish null-propagation from errors
+3. Delete unsound axioms and replace with conditional versions
+4. Leave as axioms (accepted unsoundness, documented)
 
 ---
 
-## Batch 2: Wave 2 provable axioms
+## Batch 2: Provable axioms from Wave 1-2
 
-**Branch**: `claude/prove-wave1-batch2` | **PR**: TBD
+**Branch**: `claude/prove-wave1-batch2` | **PR**: #86
 
-### Soundness triage of Wave 2
+### Soundness triage
 
-Traced through semantics for every Wave 2 axiom. Core issue: many axioms fail
-when subexpressions evaluate to `none` (malformed/ill-typed expressions).
-
-| Issue | Axiom | Sound? | Why |
-|-------|-------|--------|-----|
-| #58 | `in_empty_false` | **No** | `none ≠ some (.bool false)` when `e` evals to `none` |
-| #58 | `not_in_empty_true` | **No** | Same: `none ≠ some (.bool true)` |
-| #58 | `in_singleton` | **No** | `none` from inList vs `none` from eq only match when both `e` and `a` give some |
-| #58 | `not_in_singleton` | **No** | Same |
-| #58 | `in_pair`, `not_in_pair` | **No** | OR/AND short-circuit creates mismatch |
-| #59 | `between_expansion` | **No** | AND short-circuit: `5 BETWEEN "x" AND 3` → `none` but RHS → `some (.bool false)` |
-| #59 | `between_reflexive` | **Yes** | All 3 subexprs are same `e`, so eval is consistent |
-| #59 | `not_between_expansion` | **No** | OR short-circuit, same class as between_expansion |
-| #60 | `like_match_all` | **No** | Non-string: LHS `none`, RHS `some (.bool true)` |
-| #60 | `like_empty_pattern` | **Yes** | All value types give consistent results |
-| #60 | `like_self` | **No** | Non-string: LHS `none`, RHS `some (.bool true)` |
-| #62 | `length_empty` | **Yes** | Pure computation, no expression variables |
-| #62 | `concat_empty_left/right` | **No** | BUG: `evalFunc` has no CONCAT case, always `none` |
-| #62 | `upper/lower_idempotent` | **Likely** | Need `String.toUpper` idempotent lemma (hard) |
-| #62 | `upper_lower_upper` | **Likely** | Same difficulty |
-| #62 | `lower_upper_lower` | **Likely** | Same difficulty |
-
-**Plan**: Prove the 3 sound ones (`like_empty_pattern`, `length_empty`,
-`between_reflexive`). The string function idempotent axioms are mathematically
-true but need Char-level lemmas that may not exist in Batteries.
+After triaging all Wave 1-2 axioms (see "Unsound Axioms" section above), found
+3 fully provable axioms. The `upper/lower_idempotent` axioms are mathematically
+sound but need Char-level lemmas that may not exist in Batteries.
 
 ### like_empty_pattern
 
