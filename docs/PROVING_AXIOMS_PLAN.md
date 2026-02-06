@@ -453,6 +453,8 @@ bridges that let proofs access the evaluation semantics.
 | `evalCase_nil_none` | #61 CASE/WHEN | Empty branches, no ELSE → NULL |
 | `evalCase_cons_true` | #61 CASE/WHEN | True condition → return result |
 | `evalCase_cons_false` | #61 CASE/WHEN | False condition → skip to rest |
+| `evalExprWithDb_func` | #62 String functions | Unfold function call to `evalFunc` |
+| `evalExprWithDb_between` | #59 BETWEEN | Unfold BETWEEN expression |
 
 New infrastructure axioms should be added to this table as they are created.
 All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
@@ -527,6 +529,7 @@ to account for column renaming through subquery boundaries. Options:
 1. Fix `evalFrom`'s `.subquery` case to strip existing qualifiers before
    re-qualifying (so `u.id` becomes `filtered_a.id`, not `filtered_a.u.id`)
 2. Make `getQualified` aware of nested qualifiers (match on suffix)
+
 3. Redefine the axioms to use `evalFrom`-level filter pushdown (avoiding
    `evalSelect` subquery wrapping entirely)
 

@@ -1517,7 +1517,46 @@ def semanticsUnfoldTests : List TestResult :=
     let direct := evalCase db row ((cond, result) :: rest) else_
     let expected := evalCase db row rest else_
     if direct == expected then .pass "evalCase_cons_false (skips to rest)"
-    else .fail "evalCase_cons_false (skips to rest)" s!"Direct={showOptVal direct}, Expected={showOptVal expected}"
+    else .fail "evalCase_cons_false (skips to rest)" s!"Direct={showOptVal direct}, Expected={showOptVal expected}",
+
+    -- evalExprWithDb_func: evalExprWithDb db row (func name args) = evalFunc name (args.map (evalExprWithDb db row))
+    let args := [Expr.lit (.string "hello")]
+    let direct := evalExprWithDb db row (.func "LENGTH" args)
+    let stepwise := evalFunc "LENGTH" (args.map (evalExprWithDb db row))
+    if direct == stepwise then .pass "evalExprWithDb_func (LENGTH)"
+    else .fail "evalExprWithDb_func (LENGTH)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let args := [Expr.lit (.string "hello")]
+    let direct := evalExprWithDb db row (.func "UPPER" args)
+    let stepwise := evalFunc "UPPER" (args.map (evalExprWithDb db row))
+    if direct == stepwise then .pass "evalExprWithDb_func (UPPER)"
+    else .fail "evalExprWithDb_func (UPPER)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    -- evalExprWithDb_between: evalExprWithDb db row (between e lo hi) matches BETWEEN semantics
+    let e := Expr.lit (.int 5)
+    let lo := Expr.lit (.int 1)
+    let hi := Expr.lit (.int 10)
+    let direct := evalExprWithDb db row (.between e lo hi)
+    let ev := evalExprWithDb db row e
+    let elo := evalExprWithDb db row lo
+    let ehi := evalExprWithDb db row hi
+    let stepwise := match ev, elo, ehi with
+      | some v, some vlo, some vhi =>
+        match v.compare vlo, v.compare vhi with
+        | some .lt, _ => some (Value.bool false)
+        | _, some .gt => some (Value.bool false)
+        | some _, some _ => some (Value.bool true)
+        | _, _ => none
+      | _, _, _ => none
+    if direct == stepwise then .pass "evalExprWithDb_between (5 BETWEEN 1 AND 10)"
+    else .fail "evalExprWithDb_between (5 BETWEEN 1 AND 10)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let e := Expr.lit (.int 15)
+    let lo := Expr.lit (.int 1)
+    let hi := Expr.lit (.int 10)
+    let direct := evalExprWithDb db row (.between e lo hi)
+    if direct == some (.bool false) then .pass "evalExprWithDb_between (15 NOT BETWEEN 1 AND 10)"
+    else .fail "evalExprWithDb_between (15 NOT BETWEEN 1 AND 10)" s!"Expected some false, got {showOptVal direct}"
   ]
 
 -- ============================================================================
