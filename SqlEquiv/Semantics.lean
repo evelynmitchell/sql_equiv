@@ -748,6 +748,28 @@ axiom evalExprWithDb_binOp (db : Database) (row : Row) (op : BinOp) (l r : Expr)
 axiom evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : Expr) :
   evalExprWithDb db row (Expr.unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e)
 
+/-- Axiom: evalExprWithDb unfolds for case expressions -/
+axiom evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
+  evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_
+
+/-- Axiom: evalCase unfolds for empty branches with else -/
+axiom evalCase_nil_some (db : Database) (row : Row) (e : Expr) :
+  evalCase db row [] (some e) = evalExprWithDb db row e
+
+/-- Axiom: evalCase unfolds for empty branches with no else -/
+axiom evalCase_nil_none (db : Database) (row : Row) :
+  evalCase db row [] none = some (.null none)
+
+/-- Axiom: evalCase unfolds for cons branches when condition is true -/
+axiom evalCase_cons_true (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
+  evalExprWithDb db row cond = some (.bool true) →
+  evalCase db row ((cond, result) :: rest) else_ = evalExprWithDb db row result
+
+/-- Axiom: evalCase unfolds for cons branches when condition is false -/
+axiom evalCase_cons_false (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
+  evalExprWithDb db row cond = some (.bool false) →
+  evalCase db row ((cond, result) :: rest) else_ = evalCase db row rest else_
+
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================
