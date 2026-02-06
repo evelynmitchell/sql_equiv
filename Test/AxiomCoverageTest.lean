@@ -1470,7 +1470,54 @@ def semanticsUnfoldTests : List TestResult :=
     let direct := evalExprWithDb db row (.unaryOp .isNull e)
     let stepwise := evalUnaryOp .isNull (evalExprWithDb db row e)
     if direct == stepwise then .pass "evalExprWithDb_unaryOp (IS NULL)"
-    else .fail "evalExprWithDb_unaryOp (IS NULL)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}"
+    else .fail "evalExprWithDb_unaryOp (IS NULL)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    -- evalExprWithDb_case: evalExprWithDb db row (case branches else_) = evalCase db row branches else_
+    let branches := [(Expr.lit (.bool true), Expr.lit (.int 1))]
+    let else_ := some (Expr.lit (.int 0))
+    let direct := evalExprWithDb db row (.case branches else_)
+    let stepwise := evalCase db row branches else_
+    if direct == stepwise then .pass "evalExprWithDb_case (true branch)"
+    else .fail "evalExprWithDb_case (true branch)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    let branches := [(Expr.lit (.bool false), Expr.lit (.int 1))]
+    let else_ := some (Expr.lit (.int 0))
+    let direct := evalExprWithDb db row (.case branches else_)
+    let stepwise := evalCase db row branches else_
+    if direct == stepwise then .pass "evalExprWithDb_case (false branch)"
+    else .fail "evalExprWithDb_case (false branch)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    -- evalCase_nil_some: evalCase db row [] (some e) = evalExprWithDb db row e
+    let e := Expr.lit (.int 42)
+    let direct := evalCase db row [] (some e)
+    let stepwise := evalExprWithDb db row e
+    if direct == stepwise then .pass "evalCase_nil_some (lit int)"
+    else .fail "evalCase_nil_some (lit int)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
+
+    -- evalCase_nil_none: evalCase db row [] none = some (.null none)
+    let direct := evalCase db row [] none
+    if direct == some (.null none) then .pass "evalCase_nil_none (returns null)"
+    else .fail "evalCase_nil_none (returns null)" s!"Expected some null, got {showOptVal direct}",
+
+    -- evalCase_cons_true: when cond evals to true, returns result
+    let cond := Expr.lit (.bool true)
+    let result := Expr.lit (.int 99)
+    let rest := [(Expr.lit (.bool false), Expr.lit (.int 0))]
+    let else_ := some (Expr.lit (.int (-1)))
+    let direct := evalCase db row ((cond, result) :: rest) else_
+    let expected := evalExprWithDb db row result
+    if direct == expected then .pass "evalCase_cons_true (returns result)"
+    else .fail "evalCase_cons_true (returns result)" s!"Direct={showOptVal direct}, Expected={showOptVal expected}",
+
+    -- evalCase_cons_false: when cond evals to false, recurses to rest
+    let cond := Expr.lit (.bool false)
+    let result := Expr.lit (.int 99)
+    let rest := [(Expr.lit (.bool true), Expr.lit (.int 42))]
+    let else_ := some (Expr.lit (.int (-1)))
+    let direct := evalCase db row ((cond, result) :: rest) else_
+    let expected := evalCase db row rest else_
+    if direct == expected then .pass "evalCase_cons_false (skips to rest)"
+    else .fail "evalCase_cons_false (skips to rest)" s!"Direct={showOptVal direct}, Expected={showOptVal expected}"
   ]
 
 -- ============================================================================

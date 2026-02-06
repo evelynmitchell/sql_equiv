@@ -435,6 +435,30 @@ All mechanical `simp`/`rfl` proofs. No dependencies between them.
 ---
 
 
+## Infrastructure Axioms (Semantics.lean)
+
+When proving equivalence axioms in `Equiv.lean`, we often need to "unfold"
+`evalExprWithDb` (a `partial def` that Lean cannot reduce). We add
+**infrastructure axioms** to `Semantics.lean` that assert the definitional
+unfolding equations. These are not SQL equivalences themselves — they are
+bridges that let proofs access the evaluation semantics.
+
+| Axiom | Added for | Purpose |
+|-------|-----------|---------|
+| `evalExprWithDb_lit` | (pre-existing) | Unfold literal evaluation |
+| `evalExprWithDb_binOp` | (pre-existing) | Unfold binary op evaluation |
+| `evalExprWithDb_unaryOp` | (pre-existing) | Unfold unary op evaluation |
+| `evalExprWithDb_case` | #61 CASE/WHEN | Unfold CASE expression to `evalCase` |
+| `evalCase_nil_some` | #61 CASE/WHEN | Empty branches with ELSE |
+| `evalCase_nil_none` | #61 CASE/WHEN | Empty branches, no ELSE → NULL |
+| `evalCase_cons_true` | #61 CASE/WHEN | True condition → return result |
+| `evalCase_cons_false` | #61 CASE/WHEN | False condition → skip to rest |
+
+New infrastructure axioms should be added to this table as they are created.
+All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
+
+---
+
 ## Known Soundness Issues
 
 ### `coalesce_null_left` was unsound (removed)
