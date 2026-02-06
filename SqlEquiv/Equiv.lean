@@ -3018,45 +3018,261 @@ axiom ne_irreflexive (e : Expr) :
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool false)))
 
+-- Value-level helpers for comparison negation
+-- NOT of a comparison result: NOT (bool b) = bool (!b), NOT none = none
+private theorem not_map_bool_eq (o : Option Bool) :
+    evalUnaryOp .not (o.map Value.bool) = o.map (fun b => Value.bool (!b)) := by
+  match o with
+  | some true => rfl
+  | some false => rfl
+  | none => rfl
+
+private theorem not_map_bool_cancel (o : Option Bool) :
+    evalUnaryOp .not (o.map (fun b => Value.bool (!b))) = o.map Value.bool := by
+  match o with
+  | some true => rfl
+  | some false => rfl
+  | none => rfl
+
+private theorem not_map_ordering_eq_lt (o : Option Ordering) :
+    evalUnaryOp .not (o.map (fun o => Value.bool (o == .lt))) =
+    o.map (fun o => Value.bool (o != .lt)) := by
+  match o with
+  | some .lt => rfl
+  | some .eq => rfl
+  | some .gt => rfl
+  | none => rfl
+
+private theorem not_map_ordering_ne_gt (o : Option Ordering) :
+    evalUnaryOp .not (o.map (fun o => Value.bool (o != .gt))) =
+    o.map (fun o => Value.bool (o == .gt)) := by
+  match o with
+  | some .lt => rfl
+  | some .eq => rfl
+  | some .gt => rfl
+  | none => rfl
+
+private theorem not_map_ordering_eq_gt (o : Option Ordering) :
+    evalUnaryOp .not (o.map (fun o => Value.bool (o == .gt))) =
+    o.map (fun o => Value.bool (o != .gt)) := by
+  match o with
+  | some .lt => rfl
+  | some .eq => rfl
+  | some .gt => rfl
+  | none => rfl
+
+private theorem not_map_ordering_ne_lt (o : Option Ordering) :
+    evalUnaryOp .not (o.map (fun o => Value.bool (o != .lt))) =
+    o.map (fun o => Value.bool (o == .lt)) := by
+  match o with
+  | some .lt => rfl
+  | some .eq => rfl
+  | some .gt => rfl
+  | none => rfl
+
+-- Value-level helpers for comparison negation (full Option Value)
+private theorem evalUnaryOp_not_eq (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
+  match l, r with
+  | none, _ => rfl
+  | some _, none => rfl
+  | some a, some b => simp only [evalBinOp]; exact not_map_bool_eq (a.eq b)
+
+private theorem evalUnaryOp_not_ne (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .ne l r) = evalBinOp .eq l r := by
+  match l, r with
+  | none, _ => rfl
+  | some _, none => rfl
+  | some a, some b => simp only [evalBinOp]; exact not_map_bool_cancel (a.eq b)
+
+private theorem evalUnaryOp_not_lt (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .lt l r) = evalBinOp .ge l r := by
+  match l, r with
+  | none, _ => rfl
+  | some _, none => rfl
+  | some a, some b => simp only [evalBinOp]; exact not_map_ordering_eq_lt (a.compare b)
+
+private theorem evalUnaryOp_not_le (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .le l r) = evalBinOp .gt l r := by
+  match l, r with
+  | none, _ => rfl
+  | some _, none => rfl
+  | some a, some b => simp only [evalBinOp]; exact not_map_ordering_ne_gt (a.compare b)
+
+private theorem evalUnaryOp_not_gt (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .gt l r) = evalBinOp .le l r := by
+  match l, r with
+  | none, _ => rfl
+  | some _, none => rfl
+  | some a, some b => simp only [evalBinOp]; exact not_map_ordering_eq_gt (a.compare b)
+
+private theorem evalUnaryOp_not_ge (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .ge l r) = evalBinOp .lt l r := by
+  match l, r with
+  | none, _ => rfl
+  | some _, none => rfl
+  | some a, some b => simp only [evalBinOp]; exact not_map_ordering_ne_lt (a.compare b)
+
 /-- NOT (x = y) = (x <> y) -/
-axiom not_eq_is_ne (a b : Expr) :
-    Expr.unaryOp .not (Expr.binOp .eq a b) ≃ₑ Expr.binOp .ne a b
+theorem not_eq_is_ne (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .eq a b) ≃ₑ Expr.binOp .ne a b := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalUnaryOp_not_eq _ _
 
 /-- NOT (x <> y) = (x = y) -/
-axiom not_ne_is_eq (a b : Expr) :
-    Expr.unaryOp .not (Expr.binOp .ne a b) ≃ₑ Expr.binOp .eq a b
+theorem not_ne_is_eq (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .ne a b) ≃ₑ Expr.binOp .eq a b := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalUnaryOp_not_ne _ _
 
 /-- NOT (x < y) = (x >= y) -/
-axiom not_lt_is_ge (a b : Expr) :
-    Expr.unaryOp .not (Expr.binOp .lt a b) ≃ₑ Expr.binOp .ge a b
+theorem not_lt_is_ge (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .lt a b) ≃ₑ Expr.binOp .ge a b := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalUnaryOp_not_lt _ _
 
 /-- NOT (x <= y) = (x > y) -/
-axiom not_le_is_gt (a b : Expr) :
-    Expr.unaryOp .not (Expr.binOp .le a b) ≃ₑ Expr.binOp .gt a b
+theorem not_le_is_gt (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .le a b) ≃ₑ Expr.binOp .gt a b := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalUnaryOp_not_le _ _
 
 /-- NOT (x > y) = (x <= y) -/
-axiom not_gt_is_le (a b : Expr) :
-    Expr.unaryOp .not (Expr.binOp .gt a b) ≃ₑ Expr.binOp .le a b
+theorem not_gt_is_le (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .gt a b) ≃ₑ Expr.binOp .le a b := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalUnaryOp_not_gt _ _
 
 /-- NOT (x >= y) = (x < y) -/
-axiom not_ge_is_lt (a b : Expr) :
-    Expr.unaryOp .not (Expr.binOp .ge a b) ≃ₑ Expr.binOp .lt a b
+theorem not_ge_is_lt (a b : Expr) :
+    Expr.unaryOp .not (Expr.binOp .ge a b) ≃ₑ Expr.binOp .lt a b := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalUnaryOp_not_ge _ _
+
+-- Ordering swap helper: (compare a b == .lt) = (compare b a == .gt), etc.
+-- Use Std.OrientedCmp to get compare swap for free
+private theorem compare_swap_gen {α : Type} [Ord α] [Std.OrientedCmp (α := α) compare]
+    (a b : α) : (compare a b).swap = compare b a := by
+  have h := Std.OrientedCmp.eq_swap (cmp := (compare : α → α → Ordering)) (a := a) (b := b)
+  rw [h, Ordering.swap_swap]
+
+private theorem ordering_lt_eq_swap_gt (o : Ordering) :
+    (o == .lt) = (o.swap == .gt) := by cases o <;> rfl
+
+private theorem ordering_ne_gt_eq_swap_ne_lt (o : Ordering) :
+    (o != .gt) = (o.swap != .lt) := by cases o <;> rfl
+
+-- Value-level helpers for comparison flips
+private theorem evalBinOp_lt_eq_gt_flip (l r : Option Value) :
+    evalBinOp .lt l r = evalBinOp .gt r l := by
+  match l, r with
+  | none, none => rfl
+  | none, some (.int _) => rfl
+  | none, some (.string _) => rfl
+  | none, some (.bool _) => rfl
+  | none, some (.null _) => rfl
+  | some (.int _), none => rfl
+  | some (.string _), none => rfl
+  | some (.bool _), none => rfl
+  | some (.null _), none => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _) => rfl
+  | some (.string _), some (.null _) => rfl
+  | some (.bool _), some (.null _) => rfl
+  | some (.int a), some (.int b) =>
+    simp only [evalBinOp, Value.compare, Option.map]
+    rw [ordering_lt_eq_swap_gt, compare_swap_gen]
+  | some (.string a), some (.string b) =>
+    simp only [evalBinOp, Value.compare, Option.map]
+    rw [ordering_lt_eq_swap_gt, compare_swap_gen]
+  | some (.int _), some (.string _) => rfl
+  | some (.int _), some (.bool _) => rfl
+  | some (.string _), some (.int _) => rfl
+  | some (.string _), some (.bool _) => rfl
+  | some (.bool _), some (.int _) => rfl
+  | some (.bool _), some (.string _) => rfl
+  | some (.bool _), some (.bool _) => rfl
+
+-- le/ge and gt/lt flip helpers reuse the same pattern as lt/gt
+private theorem evalBinOp_le_eq_ge_flip (l r : Option Value) :
+    evalBinOp .le l r = evalBinOp .ge r l := by
+  match l, r with
+  | none, none => rfl
+  | none, some (.int _) => rfl
+  | none, some (.string _) => rfl
+  | none, some (.bool _) => rfl
+  | none, some (.null _) => rfl
+  | some (.int _), none => rfl
+  | some (.string _), none => rfl
+  | some (.bool _), none => rfl
+  | some (.null _), none => rfl
+  | some (.null _), some (.int _) => rfl
+  | some (.null _), some (.string _) => rfl
+  | some (.null _), some (.bool _) => rfl
+  | some (.null _), some (.null _) => rfl
+  | some (.int _), some (.null _) => rfl
+  | some (.string _), some (.null _) => rfl
+  | some (.bool _), some (.null _) => rfl
+  | some (.int a), some (.int b) =>
+    simp only [evalBinOp, Value.compare, Option.map]
+    rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen]
+  | some (.string a), some (.string b) =>
+    simp only [evalBinOp, Value.compare, Option.map]
+    rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen]
+  | some (.int _), some (.string _) => rfl
+  | some (.int _), some (.bool _) => rfl
+  | some (.string _), some (.int _) => rfl
+  | some (.string _), some (.bool _) => rfl
+  | some (.bool _), some (.int _) => rfl
+  | some (.bool _), some (.string _) => rfl
+  | some (.bool _), some (.bool _) => rfl
 
 /-- x < y = y > x (flip) -/
-axiom lt_flip (a b : Expr) :
-    Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a
+theorem lt_flip (a b : Expr) :
+    Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalBinOp_lt_eq_gt_flip _ _
 
 /-- x <= y = y >= x (flip) -/
-axiom le_flip (a b : Expr) :
-    Expr.binOp .le a b ≃ₑ Expr.binOp .ge b a
+theorem le_flip (a b : Expr) :
+    Expr.binOp .le a b ≃ₑ Expr.binOp .ge b a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact evalBinOp_le_eq_ge_flip _ _
 
 /-- x > y = y < x (flip) -/
-axiom gt_flip (a b : Expr) :
-    Expr.binOp .gt a b ≃ₑ Expr.binOp .lt b a
+theorem gt_flip (a b : Expr) :
+    Expr.binOp .gt a b ≃ₑ Expr.binOp .lt b a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact (evalBinOp_lt_eq_gt_flip _ _).symm
 
 /-- x >= y = y <= x (flip) -/
-axiom ge_flip (a b : Expr) :
-    Expr.binOp .ge a b ≃ₑ Expr.binOp .le b a
+theorem ge_flip (a b : Expr) :
+    Expr.binOp .ge a b ≃ₑ Expr.binOp .le b a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  exact (evalBinOp_le_eq_ge_flip _ _).symm
 
 -- ============================================================================
 -- Set Operation Theorems (UNION, INTERSECT, EXCEPT)
