@@ -586,7 +586,8 @@ theorem double_neg_elim_correct (e : Expr) :
   intro row
   have h := optimizeExpr_equiv (.unaryOp .not (.unaryOp .not e)) row
   rw [h]
-  exact not_not e row
+  -- OPTION 2 IMPACT: not_not now requires wellTyped .bool
+  exact not_not e sorry row
 
 /-- Constant folding preserves semantics.
     Theorem: follows from optimizeExpr_equiv. -/

@@ -893,21 +893,82 @@ theorem mul_comm (a b : Expr) : Expr.binOp .mul a b ≃ₑ Expr.binOp .mul b a :
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_mul_comm _ _
 
--- NOTE: The general not_not theorem is FALSE for non-boolean expressions.
--- For non-boolean e: NOT e = none, NOT NOT e = none, but original e ≠ none.
--- The theorem below only holds when e evaluates to a boolean.
+-- ============================================================================
+-- Option 2: Minimal Type System for Expression Typing
+-- ============================================================================
+
+/-- A Value matches a SqlType (strict: null is NOT compatible with concrete types).
+    A full type system would add nullable types, e.g., SqlType.nullable .int.
+    For this prototype, wellTyped .int means "always produces an integer, never null". -/
+def Value.hasType : Value → SqlType → Prop
+  | .int _, .int => True
+  | .string _, .string => True
+  | .bool _, .bool => True
+  | _, _ => False
+
+/-- An expression is well-typed at a given SqlType if, for every row,
+    it evaluates to `some v` where `v.hasType τ`. -/
+def Expr.wellTyped (e : Expr) (τ : SqlType) : Prop :=
+  ∀ row : Row, ∃ v : Value, evalExpr row e = some v ∧ v.hasType τ
+
+-- ============================================================================
+-- Type system rules: show that standard expression constructors preserve types
+-- ============================================================================
+
+/-- Literals are well-typed at their natural type -/
+theorem lit_bool_typed (b : Bool) : (Expr.lit (.bool b)).wellTyped .bool := by
+  intro row
+  exact ⟨.bool b, by simp [evalExpr, evalExprWithDb_lit], trivial⟩
+
+theorem lit_int_typed (n : Int) : (Expr.lit (.int n)).wellTyped .int := by
+  intro row
+  exact ⟨.int n, by simp [evalExpr, evalExprWithDb_lit], trivial⟩
+
+/-- NOT preserves bool typing (strict: bool in → bool out) -/
+theorem unaryOp_not_typed (e : Expr) (h : e.wellTyped .bool) :
+    (Expr.unaryOp .not e).wellTyped .bool := by
+  intro row
+  obtain ⟨v, heval, htype⟩ := h row
+  simp only [evalExpr] at heval ⊢
+  rw [evalExprWithDb_unaryOp, heval]
+  match v, htype with
+  | .bool b, _ => exact ⟨.bool (!b), rfl, trivial⟩
+
+/-- Comparison of two ints produces bool (strict typing — no nulls) -/
+theorem binOp_eq_int_typed (a b : Expr) (ha : a.wellTyped .int) (hb : b.wellTyped .int) :
+    (Expr.binOp .eq a b).wellTyped .bool := by
+  intro row
+  obtain ⟨va, hevala, htypea⟩ := ha row
+  obtain ⟨vb, hevalb, htypeb⟩ := hb row
+  simp only [evalExpr] at hevala hevalb ⊢
+  rw [evalExprWithDb_binOp, hevala, hevalb]
+  match va, htypea, vb, htypeb with
+  | .int na, _, .int nb, _ =>
+    simp only [evalBinOp, Value.eq, Option.map]
+    exact ⟨.bool (na == nb), rfl, trivial⟩
+
+-- ============================================================================
+-- Proving axioms with type preconditions
+-- ============================================================================
 
 /-- NOT NOT e = e when e evaluates to a boolean value.
-    This is the correct statement; the unrestricted version is false. -/
+    Value-level helper. -/
 theorem not_not_bool (b : Bool) :
     evalUnaryOp .not (evalUnaryOp .not (some (.bool b))) = some (.bool b) := by
   cases b <;> rfl
 
-/-- The general not_not is only valid for boolean-valued expressions.
-    This axiom is included for compatibility but should only be used when
-    the expression is known to evaluate to a boolean.
-    Axiom: NOT (NOT e) ≃ e for boolean-valued e. -/
-axiom not_not (e : Expr) : Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e
+/-- NOT (NOT e) ≃ e — with well-typedness precondition.
+    Previously `axiom not_not`. Now a theorem requiring e.wellTyped .bool. -/
+theorem not_not (e : Expr) (h : e.wellTyped .bool) :
+    Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
+  obtain ⟨v, heval, htype⟩ := h row
+  simp only [evalExpr] at heval
+  rw [heval]
+  match v, htype with
+  | .bool b, _ => exact not_not_bool b
 
 theorem eq_comm (a b : Expr) : Expr.binOp .eq a b ≃ₑ Expr.binOp .eq b a := by
   intro row
@@ -2876,9 +2937,44 @@ axiom predicate_pushdown (db : Database) (t : String) (p q : Expr) :
 -- Arithmetic Expression Theorems
 -- ============================================================================
 
-/-- x + 0 = x for expressions (when x evaluates to int) -/
-axiom expr_add_zero (e : Expr) :
-    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e
+/-- x + 0 = x — with well-typedness precondition.
+    Previously `axiom expr_add_zero`. -/
+theorem expr_add_zero (e : Expr) (h : e.wellTyped .int) :
+    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨v, heval, htype⟩ := h row
+  simp only [evalExpr] at heval
+  rw [heval]
+  match v, htype with
+  | .int n, _ => simp [evalBinOp]
+
+-- ============================================================================
+-- Option 2: Example of what CALLERS look like
+-- ============================================================================
+
+/-- Example: Using not_not with the type system. The caller provides a typing proof. -/
+example : Expr.unaryOp .not (Expr.unaryOp .not (Expr.binOp .eq (Expr.lit (.int 1)) (Expr.lit (.int 2))))
+    ≃ₑ Expr.binOp .eq (Expr.lit (.int 1)) (Expr.lit (.int 2)) :=
+  -- binOp_eq_int_typed proves int comparisons are bool-typed
+  not_not _ (binOp_eq_int_typed _ _ (lit_int_typed 1) (lit_int_typed 2))
+
+/-- Example: Composability works! NOT NOT (x + 0) = x when x is int.
+    Compare with Option 1 where this couldn't be expressed at all. -/
+example (e : Expr) (h : e.wellTyped .int) :
+    Expr.unaryOp .not (Expr.unaryOp .not (Expr.binOp .add e (Expr.lit (.int 0))))
+    ≃ₑ e := by
+  -- Step 1: NOT NOT (e + 0) ≃ (e + 0) via not_not
+  -- We need: (e + 0).wellTyped .bool? No — NOT NOT works on any evaluatable expr.
+  -- Actually, we need a theorem: add produces int, and we need not_not for int...
+  -- This reveals that not_not really needs "evaluates to some v" not just ".bool"
+  sorry  -- Shows that the type system needs refinement: not_not should work for
+         -- any well-typed expression, not just bool (since NOT of non-bool is none,
+         -- and NOT NOT none = none = original none). But the real issue is that
+         -- (e + 0) evaluates to int, and NOT of int is none, so NOT NOT ≠ original.
+
+-- ============================================================================
 
 /-- 0 + x = x for expressions (when x evaluates to int) -/
 axiom expr_zero_add (e : Expr) :
