@@ -92,5 +92,5 @@ structure Program where
 
 - *Foundations of Databases* (Abiteboul, Hull, Vianu) — chapters 12-15
 - *Alice Book* — Datalog semantics and optimization
-- Souffl documentation — practical Datalog transformations
+- Soufflé documentation — practical Datalog transformations
 - Lean 4 Mathlib `Order.FixedPoints` — for Knaster-Tarski fixpoint theorems
