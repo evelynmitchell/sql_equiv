@@ -191,11 +191,199 @@ Of ~152 original axioms, **18 proven** so far. Of the remaining ~134:
 - ~2 have implementation bugs (category 5)
 - The rest haven't been triaged yet
 
-**Design decision needed**: How to handle unsound axioms? Options:
-1. Add type preconditions (makes axioms conditional)
-2. Change semantics to distinguish null-propagation from errors
-3. Delete unsound axioms and replace with conditional versions
-4. Leave as axioms (accepted unsoundness, documented)
+---
+
+## Design Decision: How to Handle Unsound Axioms
+
+### The fundamental problem
+
+Our `ExprEquiv` (≃ₑ) is defined as:
+```lean
+def ExprEquiv (e1 e2 : Expr) : Prop :=
+  ∀ row : Row, evalExpr row e1 = evalExpr row e2
+```
+
+where `evalExpr` returns `Option Value`. The `Option` layer conflates two
+semantically different situations under the same `none`:
+
+1. **SQL NULL propagation**: `NULL + 1` → NULL, `NULL = NULL` → NULL.
+   This is correct SQL behavior — NULL propagates through expressions.
+
+2. **Evaluation errors**: `"hello" + 1` → error, missing column → error.
+   These represent ill-typed or malformed expressions.
+
+Because both map to `none : Option Value`, axioms that are correct for
+well-typed SQL become false for ill-typed expressions that our untyped
+AST allows constructing.
+
+### Option 1: Add type preconditions to individual axioms
+
+Change:
+```lean
+axiom not_not (e : Expr) : ¬¬e ≃ₑ e
+```
+to:
+```lean
+theorem not_not (e : Expr)
+    (h : ∀ row, ∃ b, evalExpr row e = some (.bool b)) :
+    ¬¬e ≃ₑ e
+```
+
+**Fixes**: Categories 1, 2 (boolean-only, integer-only axioms).
+
+**Pros**:
+- Each axiom becomes a provable theorem
+- Preconditions are natural — `NOT NOT e` should only apply to booleans
+- Incremental: fix one axiom at a time
+
+**Cons**:
+- Callers must prove preconditions at every use site
+- Preconditions are existentially quantified over ALL rows — hard to establish
+  without a type system
+- Different axioms need different preconditions (bool, int, string)
+- Chaining axioms gets verbose: to apply `not_not` then `and_true`, you need
+  separate proofs that the intermediate expressions are boolean-valued
+- Doesn't fix Category 3 (null representation mismatch)
+
+### Option 2: Introduce a type system / well-typedness predicate
+
+Define a syntactic typing judgment:
+```lean
+inductive ExprType | bool | int | string | nullable (t : ExprType) | any
+
+def Expr.hasType : Expr → ExprType → Prop := ...
+```
+
+Then use it:
+```lean
+theorem not_not (e : Expr) (h : e.hasType .bool) : ¬¬e ≃ₑ e
+```
+
+**Fixes**: Categories 1, 2, and potentially 3 (with `hasType` implying `evalExpr`
+returns `some`).
+
+**Pros**:
+- Clean, composable preconditions
+- `hasType` is syntactic — checkable without evaluating
+- Matches how real SQL works (type checking at plan time, before execution)
+- Can prove type preservation through rewrites: if `e.hasType .bool` and
+  `e ≃ₑ e'`, then `e'.hasType .bool`
+- This is essentially what `SQL_TYPES_CONCRETE_PLAN.md` already proposes
+
+**Cons**:
+- Significant new infrastructure (type definitions, typing rules, soundness)
+- Must prove the "fundamental theorem": `e.hasType τ → evalExpr row e = some v`
+  for some `v` of type `τ`
+- Substantial upfront investment before any new axioms become provable
+- Risk of getting stuck on the type system design
+
+### Option 3: Fix semantics to separate null from error
+
+Change `evalBinOp` to explicitly propagate `some (.null none)` for null inputs,
+instead of letting them fall through to `none`:
+
+```lean
+def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
+  match l, r with
+  | none, _ => none                           -- genuine error
+  | _, none => none                           -- genuine error
+  | some (.null _), _ => some (.null none)    -- NULL propagation
+  | _, some (.null _) => some (.null none)    -- NULL propagation
+  | some a, some b => evalBinOpValues op a b  -- actual computation
+```
+
+**Fixes**: Category 3 (representation mismatch). `eq_reflexive` becomes provable
+because `NULL = NULL` yields `some (.null none)` matching the CASE expression.
+Also fixes `in_empty_false` and similar axioms where `e` evaluates to a null value.
+
+**Does NOT fix**: Categories 1-2. `NOT(NOT 5)` is a genuine type error, not null
+propagation. It correctly returns `none` for non-booleans.
+
+**Pros**:
+- Fixes the null/error conflation at the root
+- Better models SQL semantics (NULL is a value that propagates, not an error)
+- Relatively contained change: modify `evalBinOp`, `evalUnaryOp`, `evalFunc`
+- Makes many more axioms provable without preconditions
+- Doesn't require a type system
+
+**Cons**:
+- Changes core semantics — touches many functions
+- Breaks existing proven theorems (18 so far) — they'd need re-proving
+- Need to decide on NULL propagation rules for every operator
+  (e.g., `NULL AND FALSE` = `FALSE` in SQL, not `NULL` — short-circuit)
+- Some edge cases are subtle (LIKE, BETWEEN, IN with nulls)
+
+### Option 4: Define a weaker equivalence relation
+
+Instead of exact equality, define equivalence modulo null representation:
+```lean
+def nullEquiv : Option Value → Option Value → Prop
+  | none, none => True
+  | none, some (.null _) => True
+  | some (.null _), none => True
+  | some v1, some v2 => v1 = v2
+  | _, _ => False
+
+def ExprEquivWeak (e1 e2 : Expr) : Prop :=
+  ∀ row, nullEquiv (evalExpr row e1) (evalExpr row e2)
+```
+
+**Fixes**: Category 3 only.
+
+**Pros**:
+- No changes to semantics
+- `eq_reflexive` provable under weak equiv
+- Existing proofs (using `=`) trivially imply weak equiv
+
+**Cons**:
+- Doesn't fix categories 1-2
+- Two equivalence relations is confusing — which one do axioms use?
+- Transitivity is delicate: `none ≈ some (.null _)` and `some (.null _) ≈ some (.null _)`
+  but the chain `none ≈ some (.null _) = some (.int 5)` would be unsound
+- May need to reprove that weak equiv is a congruence (preserved by all Expr constructors)
+- Feels like a workaround rather than a fix
+
+### Option 5: Leave as axioms with documented unsoundness
+
+Keep unsound axioms as `axiom` (not `theorem`), with clear documentation.
+
+**Pros**:
+- Zero implementation effort
+- Axioms document intended SQL equivalences
+- Already have code comments noting boolean-only validity
+- Pragmatic — the project is exploring SQL formalization, not building a
+  verified query optimizer
+
+**Cons**:
+- Axioms can derive `False` if instantiated with concrete counterexamples
+- Undermines the proof system: any theorem that depends on unsound axioms is suspect
+- Mixing proven theorems with unsound axioms without clear separation is misleading
+- We can't tell which "proven" results are actually trustworthy
+
+### Recommendation
+
+**Short term** (now): **Option 5 + continue proving sound axioms**. We're
+already doing this. Document unsoundness clearly. Focus proving effort on
+axioms that ARE sound.
+
+**Medium term**: **Option 3 (fix null semantics)**. This is the highest-value
+change because:
+- It's relatively contained (~200 lines of Semantics.lean changes)
+- It unblocks `eq_reflexive`, `ne_irreflexive`, and the IN/BETWEEN axioms
+- It makes the semantics more correct regardless of proving
+- Existing proofs mostly still work (comparison negation/flip don't depend
+  on null behavior at the `none` vs `some (.null _)` level)
+
+**Long term**: **Option 2 (type system)** from SQL_TYPES_CONCRETE_PLAN.md.
+This is the proper fix for categories 1-2. With a type system:
+- Boolean axioms get `e.hasType .bool` preconditions
+- Arithmetic axioms get `e.hasType .int` preconditions
+- The typing judgment provides the proof obligation that callers must meet
+- Optimizer passes can be proven to preserve types
+
+The type system (Option 2) and null fix (Option 3) are complementary, not
+competing. Option 3 fixes the value representation. Option 2 provides the
+framework for type-conditional axioms. Together they make ~all axioms provable.
 
 ---
 
