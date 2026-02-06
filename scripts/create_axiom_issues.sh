@@ -12,7 +12,7 @@
 #
 set -euo pipefail
 
-REPO="evelynmitchell/sql_equiv"
+REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "evelynmitchell/sql_equiv")}"
 LABELS="axiom,proof-needed"
 
 create_issue() {
@@ -1334,5 +1334,5 @@ EOF
 echo ""
 echo "============================================"
 echo "Done! Created issues for all 152 axioms."
-echo "Issues are grouped into 22 categories."
+echo "Issues are grouped into 14 categories."
 echo "============================================"

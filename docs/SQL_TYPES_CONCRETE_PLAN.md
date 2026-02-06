@@ -11,10 +11,10 @@ ordered checklist of implementation and proof tasks.
 
 | SqlType   | Value constructor       | Lean backing | Proofs affected |
 |-----------|-------------------------|--------------|-----------------|
-| `int`     | `int : Int -> Value`    | `Int`        | All 153 theorems |
-| `string`  | `string : String -> Value` | `String`  | All 153 theorems |
-| `bool`    | `bool : Bool -> Value`  | `Bool`       | All 153 theorems |
-| `unknown` | `null : Option SqlType -> Value` | -   | All 153 theorems |
+| `int`     | `int : Int -> Value`    | `Int`        | All theorems in Equiv.lean |
+| `string`  | `string : String -> Value` | `String`  | All theorems in Equiv.lean |
+| `bool`    | `bool : Bool -> Value`  | `Bool`       | All theorems in Equiv.lean |
+| `unknown` | `null : Option SqlType -> Value` | -   | All theorems in Equiv.lean |
 
 **Proof case counts:** Each binary-op commutativity theorem currently does
 exhaustive case analysis over `Option Value x Option Value`. With 4 value

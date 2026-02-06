@@ -202,6 +202,7 @@ Open `SqlEquiv/Equiv.lean` in your editor and try this:
 
 ```lean
 -- Scroll to the end and add:
+variable (a : Expr) in
 theorem my_first_theorem :
     Expr.binOp .and (Expr.lit (.bool true)) a ≃ₑ a := by
   sql_equiv
@@ -209,6 +210,9 @@ theorem my_first_theorem :
 
 If `sql_equiv` doesn't close it, try:
 ```lean
+variable (a : Expr) in
+theorem my_first_theorem :
+    Expr.binOp .and (Expr.lit (.bool true)) a ≃ₑ a := by
   exact true_and a
 ```
 
@@ -248,11 +252,11 @@ bulk the trivial ones.
 ### Pattern 2: Axioms vs Theorems
 
 ```lean
--- AXIOM: assumed true without proof (152 of these right now)
+-- AXIOM: assumed true without proof (many remain in Equiv.lean)
 axiom join_comm_full (t1 t2 : Table) (cond : Expr) :
   innerJoin t1 t2 cond ~ innerJoin t2 t1 cond
 
--- THEOREM: actually proven (153 of these right now)
+-- THEOREM: actually proven (run `grep -c '^theorem' Equiv.lean` for current count)
 theorem evalBinOp_and_comm (l r : Option Value) :
     evalBinOp .and l r = evalBinOp .and r l := by
   ...actual proof...
@@ -294,10 +298,10 @@ reformulate it as a total function or use `axiom`.
 ### Pattern 5: The Equivalence Notation
 
 ```lean
--- These are defined in Equiv.lean:
-notation:50 e1 " ≃ₑ " e2 => ExprEquiv e1 e2
-notation:50 s1 " ≃ₛ " s2 => SelectEquiv s1 s2
-notation:50 q1 " ≃_q " q2 => QueryEquiv q1 q2
+-- These are defined in SqlEquiv/Equiv.lean:
+scoped infix:50 " ≃ₑ " => ExprEquiv
+scoped infix:50 " ≃ₛ " => SelectEquiv
+scoped infix:50 " ≃ᵩ " => QueryEquiv
 ```
 
 `ExprEquiv e1 e2` means "for every database and row, evaluating `e1`
@@ -334,7 +338,7 @@ one helper lemma:
 
 ```lean
 lemma mismatched_types_null (op : BinOp) (v1 v2 : Value)
-  (h : v1.sqlType != v2.sqlType) :
+  (h : v1.sqlType ≠ v2.sqlType) :
   evalBinOp op (some v1) (some v2) = some (Value.null none) := by
   cases v1 <;> cases v2 <;> simp_all [evalBinOp, Value.sqlType]
 ```
