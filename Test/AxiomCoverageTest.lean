@@ -1555,8 +1555,8 @@ def semanticsUnfoldTests : List TestResult :=
     let lo := Expr.lit (.int 1)
     let hi := Expr.lit (.int 10)
     let direct := evalExprWithDb db row (.between e lo hi)
-    if direct == some (.bool false) then .pass "evalExprWithDb_between (15 NOT BETWEEN 1 AND 10)"
-    else .fail "evalExprWithDb_between (15 NOT BETWEEN 1 AND 10)" s!"Expected some false, got {showOptVal direct}"
+    if direct == some (.bool false) then .pass "evalExprWithDb_between (15 BETWEEN 1 AND 10 = false)"
+    else .fail "evalExprWithDb_between (15 BETWEEN 1 AND 10 = false)" s!"Expected some false, got {showOptVal direct}"
   ]
 
 -- ============================================================================

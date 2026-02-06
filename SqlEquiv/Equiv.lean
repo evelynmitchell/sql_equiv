@@ -2973,7 +2973,7 @@ private theorem evalBetween_reflexive (v : Option Value) :
   | some (.int n) => simp [Value.compare, evalBinOp]
   | some (.string s) => simp [Value.compare, evalBinOp]
 
-/-- BETWEEN is reflexive: x BETWEEN x AND x = TRUE when x is non-null -/
+/-- Expression-level: x BETWEEN x AND x is equivalent to (x >= x AND x <= x). -/
 theorem between_reflexive (e : Expr) :
     Expr.between e e e ≃ₑ
     Expr.binOp .and (Expr.binOp .ge e e) (Expr.binOp .le e e) := by
