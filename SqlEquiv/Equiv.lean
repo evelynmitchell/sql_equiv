@@ -903,11 +903,31 @@ theorem not_not_bool (b : Bool) :
     evalUnaryOp .not (evalUnaryOp .not (some (.bool b))) = some (.bool b) := by
   cases b <;> rfl
 
-/-- The general not_not is only valid for boolean-valued expressions.
-    This axiom is included for compatibility but should only be used when
-    the expression is known to evaluate to a boolean.
-    Axiom: NOT (NOT e) ≃ e for boolean-valued e. -/
-axiom not_not (e : Expr) : Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e
+/-- Option 1 approach: ad-hoc precondition per axiom.
+    The caller must prove that `e` always evaluates to a boolean. -/
+def IsBoolValued (e : Expr) : Prop :=
+  ∀ row : Row, ∃ b : Bool, evalExpr row e = some (.bool b)
+
+/-- Similarly for integer-valued expressions. -/
+def IsIntValued (e : Expr) : Prop :=
+  ∀ row : Row, ∃ n : Int, evalExpr row e = some (.int n)
+
+/-- Value-level: NOT (NOT b) = b for booleans -/
+private theorem evalUnaryOp_not_not_bool (b : Bool) :
+    evalUnaryOp .not (evalUnaryOp .not (some (.bool b))) = some (.bool b) := by
+  cases b <;> rfl
+
+/-- NOT (NOT e) ≃ e — with precondition that e is boolean-valued.
+    Previously `axiom not_not`. Now a theorem with an explicit precondition. -/
+theorem not_not (e : Expr) (hbool : IsBoolValued e) :
+    Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
+  obtain ⟨b, hb⟩ := hbool row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalUnaryOp_not_not_bool b
 
 theorem eq_comm (a b : Expr) : Expr.binOp .eq a b ≃ₑ Expr.binOp .eq b a := by
   intro row
@@ -2876,9 +2896,46 @@ axiom predicate_pushdown (db : Database) (t : String) (p q : Expr) :
 -- Arithmetic Expression Theorems
 -- ============================================================================
 
-/-- x + 0 = x for expressions (when x evaluates to int) -/
-axiom expr_add_zero (e : Expr) :
-    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e
+/-- x + 0 = x — with precondition that x is integer-valued.
+    Previously `axiom expr_add_zero`. -/
+theorem expr_add_zero (e : Expr) (hint : IsIntValued e) :
+    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := hint row
+  simp only [evalExpr] at hn
+  rw [hn]
+  simp [evalBinOp]
+
+-- ============================================================================
+-- Option 1: Example of what CALLERS look like
+-- ============================================================================
+
+/-- Example: Proving a concrete expression equivalence using the preconditioned theorems.
+    To use `not_not`, the caller must first prove the expression is boolean-valued. -/
+example : Expr.unaryOp .not (Expr.unaryOp .not (Expr.binOp .eq (Expr.lit (.int 1)) (Expr.lit (.int 2))))
+    ≃ₑ Expr.binOp .eq (Expr.lit (.int 1)) (Expr.lit (.int 2)) := by
+  apply not_not
+  -- Must prove: IsBoolValued (Expr.binOp .eq (lit 1) (lit 2))
+  -- i.e., ∀ row, ∃ b, evalExpr row (1 = 2) = some (.bool b)
+  intro row
+  simp only [evalExpr, evalExprWithDb_binOp, evalExprWithDb_lit, evalBinOp, Value.eq]
+  exact ⟨false, rfl⟩
+
+/-- Example: Chaining preconditioned theorems is verbose.
+    To prove NOT(NOT(x + 0)) = x where x is int, we need TWO preconditions. -/
+example (e : Expr) (hint : IsIntValued e) :
+    Expr.unaryOp .not (Expr.unaryOp .not (Expr.binOp .add e (Expr.lit (.int 0))))
+    ≃ₑ e := by
+  -- Step 1: NOT NOT (e + 0) ≃ (e + 0)  — needs IsBoolValued (e + 0)
+  -- Step 2: (e + 0) ≃ e               — needs IsIntValued e
+  -- But IsBoolValued (e + 0) is WRONG — (e + 0) is int, not bool!
+  -- So we can't even use not_not here. We'd need the chain to go through
+  -- an intermediate equivalence or define not_not for any-valued expressions.
+  sorry  -- Demonstrates the composability problem
+
+-- ============================================================================
 
 /-- 0 + x = x for expressions (when x evaluates to int) -/
 axiom expr_zero_add (e : Expr) :

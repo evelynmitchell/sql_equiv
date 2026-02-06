@@ -1,0 +1,19 @@
+{
+  "last_updated": "2026-02-05T14:54:29.989718",
+  "completed": 1,
+  "results": [
+    {
+      "axiom_name": "and_self",
+      "file_path": "/workspaces/sql_equiv/SqlEquiv/Equiv.lean",
+      "start_line": 697,
+      "end_line": 697,
+      "status": "compile_fail",
+      "build_exit_code": 1,
+      "build_stderr": "error: build failed\n",
+      "test_exit_code": null,
+      "test_stdout": "",
+      "elapsed_seconds": 29.8,
+      "timestamp": "2026-02-05T14:54:29.988378"
+    }
+  ]
+}

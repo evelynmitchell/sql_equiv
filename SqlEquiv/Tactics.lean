@@ -67,7 +67,8 @@ elab "sql_equiv" : tactic => do
       | exact or_comm _ _
       | exact add_comm _ _
       | exact mul_comm _ _
-      | exact not_not _
+      -- OPTION 1 IMPACT: not_not now requires IsBoolValued proof; can't use in automated tactic
+      | exact not_not _ sorry
       | exact eq_comm _ _))
   if ← tryTactic tryComm then return
 
@@ -132,7 +133,8 @@ elab "sql_equiv" : tactic => do
   -- Step 9: Try arithmetic identity laws
   let tryArith : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact expr_add_zero _
+      -- OPTION 1 IMPACT: expr_add_zero now requires IsIntValued proof
+      | exact expr_add_zero _ sorry
       | exact expr_zero_add _
       | exact expr_mul_one _
       | exact expr_one_mul _
@@ -227,7 +229,7 @@ macro_rules
             | exact or_comm _ _
             | exact add_comm _ _
             | exact mul_comm _ _
-            | exact not_not _
+            | exact not_not _ sorry
             | exact eq_comm _ _
             | exact and_assoc _ _ _
             | exact or_assoc _ _ _
@@ -317,7 +319,8 @@ elab "sql_rw_identity" : tactic => do
 /-- sql_rw_arith tactic: Apply arithmetic identity rules -/
 elab "sql_rw_arith" : tactic => do
   evalTactic (← `(tactic| first
-    | exact expr_add_zero _
+    -- OPTION 1 IMPACT: expr_add_zero now requires IsIntValued proof
+    | exact expr_add_zero _ sorry
     | exact expr_zero_add _
     | exact expr_mul_one _
     | exact expr_one_mul _

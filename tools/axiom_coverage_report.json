@@ -1,0 +1,620 @@
+{
+  "mode": "runtime",
+  "timestamp": "2026-02-06T18:39:13.509135",
+  "summary": {
+    "total_axioms": 154,
+    "total_test_names": 600,
+    "files_scanned": 6,
+    "runtime_covered": 154,
+    "not_covered": 0,
+    "coverage_pct": 100.0
+  },
+  "uncovered_axioms": [],
+  "coverage_map": {
+    "not_not": [
+      "not_not (true)",
+      "not_not (false)"
+    ],
+    "and_absorb_or": [
+      "and_absorb_or (true, true)",
+      "and_absorb_or (false, true)"
+    ],
+    "or_absorb_and": [
+      "or_absorb_and (true, false)",
+      "or_absorb_and (false, true)"
+    ],
+    "and_true": [
+      "and_true (true)",
+      "and_true (false)"
+    ],
+    "or_false": [
+      "or_false (true)",
+      "or_false (false)"
+    ],
+    "where_true_elim": [
+      "where_true_elim"
+    ],
+    "where_false_empty": [
+      "where_false_empty"
+    ],
+    "join_comm": [
+      "join_comm (forward)",
+      "join_comm (forward)",
+      "join_comm (backward)",
+      "join_comm (backward)"
+    ],
+    "and_self": [
+      "and_self (true)",
+      "and_self (false)"
+    ],
+    "or_self": [
+      "or_self (true)",
+      "or_self (false)"
+    ],
+    "and_not_self": [
+      "and_not_self (true)",
+      "and_not_self (false)"
+    ],
+    "or_not_self": [
+      "or_not_self (true)",
+      "or_not_self (false)"
+    ],
+    "normalizeExpr_equiv": [
+      "normalizeExpr_equiv (AND)",
+      "normalizeExpr_equiv (OR)"
+    ],
+    "syntacticEquiv_implies_equiv": [
+      "syntacticEquiv_implies_equiv",
+      "syntacticEquiv_implies_equiv"
+    ],
+    "ground_expr_eval_independent": [
+      "ground_expr_eval_independent",
+      "ground_expr_eval_independent"
+    ],
+    "decideGroundExprEquiv_sound": [
+      "decideGroundExprEquiv_sound",
+      "decideGroundExprEquiv_sound",
+      "decideGroundExprEquiv_sound"
+    ],
+    "filter_join_left": [
+      "filter_join_left"
+    ],
+    "filter_join_right": [
+      "filter_join_right"
+    ],
+    "filter_pushdown_table": [
+      "filter_pushdown_table"
+    ],
+    "join_assoc": [
+      "join_assoc",
+      "join_assoc"
+    ],
+    "join_comm_full": [
+      "join_comm_full",
+      "join_comm_full"
+    ],
+    "cross_join_assoc": [
+      "cross_join_assoc",
+      "cross_join_assoc"
+    ],
+    "cross_join_comm": [
+      "cross_join_comm",
+      "cross_join_comm"
+    ],
+    "filter_and": [
+      "filter_and"
+    ],
+    "filter_commute": [
+      "filter_commute"
+    ],
+    "filter_idempotent": [
+      "filter_idempotent"
+    ],
+    "filter_false_empty": [
+      "filter_false_empty'"
+    ],
+    "min_le_elem": [
+      "min_le_elem",
+      "min_le_elem"
+    ],
+    "max_ge_elem": [
+      "max_ge_elem",
+      "max_ge_elem"
+    ],
+    "distinct_count_le": [
+      "distinct_count_le",
+      "distinct_count_le"
+    ],
+    "distinct_idempotent": [
+      "distinct_idempotent",
+      "distinct_idempotent"
+    ],
+    "predicate_pushdown": [
+      "predicate_pushdown",
+      "predicate_pushdown"
+    ],
+    "expr_add_zero": [
+      "expr_add_zero (int)",
+      "expr_add_zero (col)"
+    ],
+    "expr_zero_add": [
+      "expr_zero_add (int)",
+      "expr_zero_add (col)"
+    ],
+    "expr_mul_one": [
+      "expr_mul_one (int)",
+      "expr_mul_one (col)"
+    ],
+    "expr_one_mul": [
+      "expr_one_mul (int)"
+    ],
+    "expr_mul_zero": [
+      "expr_mul_zero (int)",
+      "expr_mul_zero (col)"
+    ],
+    "expr_zero_mul": [
+      "expr_zero_mul (int)"
+    ],
+    "expr_sub_zero": [
+      "expr_sub_zero (int)",
+      "expr_sub_zero (col)"
+    ],
+    "in_empty_false": [
+      "in_empty_false"
+    ],
+    "not_in_empty_true": [
+      "not_in_empty_true"
+    ],
+    "in_singleton": [
+      "in_singleton (match)",
+      "in_singleton (no match)"
+    ],
+    "not_in_singleton": [
+      "not_in_singleton"
+    ],
+    "in_pair": [
+      "in_pair"
+    ],
+    "not_in_pair": [
+      "not_in_pair"
+    ],
+    "in_list_or_expansion": [
+      "in_list_or_expansion"
+    ],
+    "not_in_list_and_expansion": [
+      "not_in_list_and_expansion"
+    ],
+    "between_expansion": [
+      "between_expansion (in range)",
+      "between_expansion (out of range)"
+    ],
+    "not_between_expansion": [
+      "not_between_expansion"
+    ],
+    "like_match_all": [
+      "like_match_all"
+    ],
+    "like_self": [
+      "like_self"
+    ],
+    "concat_empty_left": [
+      "concat_empty_left (binop)",
+      "concat_empty_left (axiom form skipped - CONCAT not in evalFunc yet)",
+      "concat_empty_left (axiom form)",
+      "concat_empty_left (axiom form)"
+    ],
+    "concat_empty_right": [
+      "concat_empty_right (binop)",
+      "concat_empty_right (axiom form skipped - CONCAT not in evalFunc yet)",
+      "concat_empty_right (axiom form)",
+      "concat_empty_right (axiom form)"
+    ],
+    "upper_idempotent": [
+      "upper_idempotent"
+    ],
+    "lower_idempotent": [
+      "lower_idempotent"
+    ],
+    "upper_lower_upper": [
+      "upper_lower_upper"
+    ],
+    "lower_upper_lower": [
+      "lower_upper_lower"
+    ],
+    "eq_reflexive": [
+      "eq_reflexive (int)",
+      "eq_reflexive (col)"
+    ],
+    "ne_irreflexive": [
+      "ne_irreflexive (int)"
+    ],
+    "union_comm": [
+      "union_comm",
+      "union_comm"
+    ],
+    "union_all_comm": [
+      "union_all_comm",
+      "union_all_comm"
+    ],
+    "intersect_comm": [
+      "intersect_comm"
+    ],
+    "union_assoc": [
+      "union_assoc"
+    ],
+    "intersect_assoc": [
+      "intersect_assoc"
+    ],
+    "union_idempotent": [
+      "union_idempotent"
+    ],
+    "intersect_idempotent": [
+      "intersect_idempotent"
+    ],
+    "except_self_empty": [
+      "except_self_empty"
+    ],
+    "union_empty_right": [
+      "union_empty_right"
+    ],
+    "intersect_empty_right": [
+      "intersect_empty_right"
+    ],
+    "union_all_length": [
+      "union_all_length"
+    ],
+    "union_intersect_distrib": [
+      "union_intersect_distrib"
+    ],
+    "intersect_union_distrib": [
+      "intersect_union_distrib"
+    ],
+    "cross_join_cardinality_comm": [
+      "cross_join_cardinality_comm"
+    ],
+    "inner_join_true_is_cross": [
+      "inner_join_true_is_cross"
+    ],
+    "inner_join_false_empty": [
+      "inner_join_false_empty"
+    ],
+    "left_join_false_all_left": [
+      "left_join_false_all_left"
+    ],
+    "cross_join_cardinality": [
+      "cross_join_cardinality"
+    ],
+    "inner_join_cardinality_le": [
+      "inner_join_cardinality_le"
+    ],
+    "left_join_cardinality_ge": [
+      "left_join_cardinality_ge"
+    ],
+    "right_join_cardinality_ge": [
+      "right_join_cardinality_ge"
+    ],
+    "inner_join_empty_left": [
+      "inner_join_empty_left"
+    ],
+    "inner_join_empty_right": [
+      "inner_join_empty_right"
+    ],
+    "cross_join_empty_left": [
+      "cross_join_empty_left"
+    ],
+    "cross_join_empty_right": [
+      "cross_join_empty_right"
+    ],
+    "cross_join_assoc_cardinality": [
+      "cross_join_assoc_cardinality"
+    ],
+    "inner_join_to_where": [
+      "inner_join_to_where",
+      "inner_join_to_where"
+    ],
+    "left_join_preserves_left": [
+      "left_join_preserves_left"
+    ],
+    "right_join_preserves_right": [
+      "right_join_preserves_right"
+    ],
+    "inner_subset_cross": [
+      "inner_subset_cross"
+    ],
+    "left_join_filter_null_is_inner": [
+      "left_join_filter_null_is_inner"
+    ],
+    "exists_empty_false": [
+      "exists_empty_false",
+      "exists_empty_false"
+    ],
+    "not_exists_empty_true": [
+      "not_exists_empty_true",
+      "not_exists_empty_true"
+    ],
+    "exists_nonempty_true": [
+      "exists_nonempty_true",
+      "exists_nonempty_true"
+    ],
+    "not_exists_nonempty_false": [
+      "not_exists_nonempty_false",
+      "not_exists_nonempty_false"
+    ],
+    "not_not_exists": [
+      "not_not_exists"
+    ],
+    "in_empty_subquery_false": [
+      "in_empty_subquery_false",
+      "in_empty_subquery_false"
+    ],
+    "not_in_empty_subquery_true": [
+      "not_in_empty_subquery_true",
+      "not_in_empty_subquery_true"
+    ],
+    "scalar_subquery_empty_null": [
+      "scalar_subquery_empty_null",
+      "scalar_subquery_empty_null"
+    ],
+    "exists_as_count_gt_zero": [
+      "exists_as_count_gt_zero",
+      "exists_as_count_gt_zero"
+    ],
+    "not_exists_as_count_eq_zero": [
+      "not_exists_as_count_eq_zero",
+      "not_exists_as_count_eq_zero"
+    ],
+    "in_subquery_as_exists": [
+      "in_subquery_as_exists",
+      "in_subquery_as_exists"
+    ],
+    "not_in_subquery_as_not_exists": [
+      "not_in_subquery_as_not_exists",
+      "not_in_subquery_as_not_exists"
+    ],
+    "uncorrelated_subquery_independent": [
+      "uncorrelated_subquery_independent",
+      "uncorrelated_subquery_independent"
+    ],
+    "subquery_limit_one": [
+      "subquery_limit_one"
+    ],
+    "scalar_subquery_is_first": [
+      "scalar_subquery_is_first",
+      "scalar_subquery_is_first"
+    ],
+    "exists_monotonic": [
+      "exists_monotonic",
+      "exists_monotonic"
+    ],
+    "subquery_where_true": [
+      "subquery_where_true",
+      "subquery_where_true"
+    ],
+    "subquery_where_false": [
+      "subquery_where_false"
+    ],
+    "in_singleton_subquery": [
+      "in_singleton_subquery",
+      "in_singleton_subquery"
+    ],
+    "correlated_subquery_uses_context": [
+      "correlated_subquery_uses_context",
+      "correlated_subquery_uses_context"
+    ],
+    "in_subquery_unnest_to_join": [
+      "in_subquery_unnest_to_join (users/orders)",
+      "in_subquery_unnest_to_join (users/orders)"
+    ],
+    "not_in_subquery_unnest_to_antijoin": [
+      "not_in_subquery_unnest_to_antijoin (users/orders)",
+      "not_in_subquery_unnest_to_antijoin (users/orders)"
+    ],
+    "in_subquery_implies_join_match": [
+      "in_subquery_implies_join_match (value 1 in orders.user_id)",
+      "in_subquery_implies_join_match (value 1 in orders.user_id)"
+    ],
+    "join_match_implies_in_subquery": [
+      "join_match_implies_in_subquery (value 2 in orders.user_id)",
+      "join_match_implies_in_subquery (value 2 in orders.user_id)",
+      "join_match_implies_in_subquery (value 2 in orders.user_id)"
+    ],
+    "order_by_preserves_count": [
+      "order_by_preserves_count"
+    ],
+    "order_by_empty_identity": [
+      "order_by_empty_identity"
+    ],
+    "order_by_idempotent": [
+      "order_by_idempotent",
+      "order_by_idempotent"
+    ],
+    "order_by_last_wins": [
+      "order_by_last_wins"
+    ],
+    "order_by_reverse": [
+      "order_by_reverse",
+      "order_by_reverse"
+    ],
+    "limit_zero_empty": [
+      "limit_zero_empty"
+    ],
+    "limit_upper_bound": [
+      "limit_upper_bound (2)",
+      "limit_upper_bound (1)"
+    ],
+    "limit_none_all_rows": [
+      "limit_none_all_rows"
+    ],
+    "limit_monotonic": [
+      "limit_monotonic (1 \u2264 2)"
+    ],
+    "limit_one_singleton": [
+      "limit_one_singleton"
+    ],
+    "offset_zero_identity": [
+      "offset_zero_identity"
+    ],
+    "offset_too_large_empty": [
+      "offset_too_large_empty"
+    ],
+    "offset_reduces_count": [
+      "offset_reduces_count"
+    ],
+    "offset_monotonic": [
+      "offset_monotonic"
+    ],
+    "limit_offset_compose": [
+      "limit_offset_compose",
+      "limit_offset_compose"
+    ],
+    "offset_limit_zero_empty": [
+      "offset_limit_zero_empty"
+    ],
+    "pagination_upper_bound": [
+      "pagination_upper_bound"
+    ],
+    "pagination_identity": [
+      "pagination_identity"
+    ],
+    "consecutive_pages": [
+      "consecutive_pages",
+      "consecutive_pages"
+    ],
+    "order_limit_deterministic": [
+      "order_limit_deterministic",
+      "order_limit_deterministic"
+    ],
+    "evalExprWithDb_lit": [
+      "evalExprWithDb_lit (int)",
+      "evalExprWithDb_lit (int)",
+      "evalExprWithDb_lit (string)",
+      "evalExprWithDb_lit (string)",
+      "evalExprWithDb_lit (bool)",
+      "evalExprWithDb_lit (bool)",
+      "evalExprWithDb_lit (null)",
+      "evalExprWithDb_lit (null)"
+    ],
+    "evalExprWithDb_binOp": [
+      "evalExprWithDb_binOp (add)",
+      "evalExprWithDb_binOp (add)",
+      "evalExprWithDb_binOp (and)",
+      "evalExprWithDb_binOp (and)",
+      "evalExprWithDb_binOp (gt)",
+      "evalExprWithDb_binOp (gt)"
+    ],
+    "evalExprWithDb_unaryOp": [
+      "evalExprWithDb_unaryOp (NOT)",
+      "evalExprWithDb_unaryOp (NOT)",
+      "evalExprWithDb_unaryOp (NEG)",
+      "evalExprWithDb_unaryOp (NEG)",
+      "evalExprWithDb_unaryOp (IS NULL)",
+      "evalExprWithDb_unaryOp (IS NULL)"
+    ],
+    "evalExprWithDb_case": [
+      "evalExprWithDb_case (true branch)",
+      "evalExprWithDb_case (true branch)",
+      "evalExprWithDb_case (false branch)",
+      "evalExprWithDb_case (false branch)"
+    ],
+    "evalCase_nil_some": [
+      "evalCase_nil_some (lit int)",
+      "evalCase_nil_some (lit int)"
+    ],
+    "evalCase_nil_none": [
+      "evalCase_nil_none (returns null)",
+      "evalCase_nil_none (returns null)"
+    ],
+    "evalCase_cons_true": [
+      "evalCase_cons_true (returns result)",
+      "evalCase_cons_true (returns result)"
+    ],
+    "evalCase_cons_false": [
+      "evalCase_cons_false (skips to rest)",
+      "evalCase_cons_false (skips to rest)"
+    ],
+    "evalExprWithDb_func": [
+      "evalExprWithDb_func (LENGTH)",
+      "evalExprWithDb_func (LENGTH)",
+      "evalExprWithDb_func (UPPER)",
+      "evalExprWithDb_func (UPPER)"
+    ],
+    "evalExprWithDb_between": [
+      "evalExprWithDb_between (5 BETWEEN 1 AND 10)",
+      "evalExprWithDb_between (5 BETWEEN 1 AND 10)",
+      "evalExprWithDb_between (15 NOT BETWEEN 1 AND 10)",
+      "evalExprWithDb_between (15 NOT BETWEEN 1 AND 10)"
+    ],
+    "flattenAnd_nonempty": [
+      "flattenAnd_nonempty (simple AND)",
+      "flattenAnd_nonempty (atom)",
+      "flattenAnd_nonempty (nested)",
+      "flattenAnd_nonempty (literal)"
+    ],
+    "flattenOr_nonempty": [
+      "flattenOr_nonempty (simple OR)",
+      "flattenOr_nonempty (atom)",
+      "flattenOr_nonempty (nested)",
+      "flattenOr_nonempty (literal)"
+    ],
+    "normalizeExprCanonical_equiv": [
+      "normalizeExprCanonical_equiv (AND)",
+      "normalizeExprCanonical_equiv (AND)",
+      "normalizeExprCanonical_equiv (OR)",
+      "normalizeExprCanonical_equiv (OR)",
+      "normalizeExprCanonical_equiv (literal)",
+      "normalizeExprCanonical_equiv (literal)"
+    ],
+    "normalizeExprCanonical_idempotent": [
+      "normalizeExprCanonical_idempotent (AND swap)",
+      "normalizeExprCanonical_idempotent (AND swap)",
+      "normalizeExprCanonical_idempotent (complex)",
+      "normalizeExprCanonical_idempotent (complex)",
+      "normalizeExprCanonical_idempotent (unary)",
+      "normalizeExprCanonical_idempotent (unary)"
+    ],
+    "optimizeExpr_equiv": [
+      "optimizeExpr_equiv (constant add)",
+      "optimizeExpr_equiv (constant add)",
+      "optimizeExpr_equiv (bool simplify)",
+      "optimizeExpr_equiv (bool simplify)",
+      "optimizeExpr_equiv (nested)",
+      "optimizeExpr_equiv (nested)"
+    ],
+    "optimizeSelectStmt_equiv": [
+      "optimizeSelectStmt_equiv (WHERE TRUE)",
+      "optimizeSelectStmt_equiv (WHERE TRUE)",
+      "optimizeSelectStmt_equiv (const fold)",
+      "optimizeSelectStmt_equiv (const fold)"
+    ],
+    "optimize_equiv": [
+      "optimize_equiv (full statement)",
+      "optimize_equiv (full statement)",
+      "optimize_equiv (double negation)",
+      "optimize_equiv (double negation)"
+    ],
+    "join_reorder_preserves_forward": [
+      "join_reorder_preserves_forward (2-table)",
+      "join_reorder_preserves_forward (2-table)",
+      "join_reorder_preserves_forward (2-table)",
+      "join_reorder_preserves_forward (3-table)",
+      "join_reorder_preserves_forward (3-table)",
+      "join_reorder_preserves_forward (3-table)"
+    ],
+    "join_reorder_preserves_backward": [
+      "join_reorder_preserves_backward (2-table)",
+      "join_reorder_preserves_backward (2-table)",
+      "join_reorder_preserves_backward (2-table)",
+      "join_reorder_preserves_backward (3-table)",
+      "join_reorder_preserves_backward (3-table)",
+      "join_reorder_preserves_backward (3-table)"
+    ],
+    "pushdown_preserves_semantics": [
+      "pushdown_preserves_semantics (inner join)",
+      "pushdown_preserves_semantics (inner join)",
+      "pushdown_preserves_semantics (base table)",
+      "pushdown_preserves_semantics (base table)",
+      "pushdown_preserves_semantics (left join)",
+      "pushdown_preserves_semantics (left join)"
+    ]
+  }
+}
