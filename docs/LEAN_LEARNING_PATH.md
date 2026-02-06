@@ -189,8 +189,8 @@ theorem my_value_theorem (v1 v2 : Value) : P v1 v2 := by
     ...
 ```
 
-Currently 4x4 = 16 cases. After type expansion, 8x8 = 64 cases
-(or 9x9 = 81 with `none`). The cross-type cases are almost all `rfl`.
+Currently 4x4 = 16 cases. After full type expansion (11 constructors +
+`none`), 12x12 = 144 cases. The cross-type cases are almost all `rfl`.
 
 **Gotcha #6:** When you add a new type, you must add cases for it in
 EVERY existing proof that does `cases v`. Lean will tell you which cases
