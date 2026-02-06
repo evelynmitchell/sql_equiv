@@ -2805,24 +2805,45 @@ theorem count_distinct_le_count (vs : List Value) :
 -- ============================================================================
 
 /-- CASE WHEN TRUE THEN x ELSE y END = x -/
-axiom case_when_true (x y : Expr) :
-    Expr.case [(Expr.lit (.bool true), x)] (some y) ≃ₑ x
+theorem case_when_true (x y : Expr) :
+    Expr.case [(Expr.lit (.bool true), x)] (some y) ≃ₑ x := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_case]
+  have h := evalExprWithDb_lit (fun _ => []) row (.bool true)
+  rw [evalCase_cons_true _ _ _ _ _ _ h]
 
 /-- CASE WHEN FALSE THEN x ELSE y END = y -/
-axiom case_when_false (x y : Expr) :
-    Expr.case [(Expr.lit (.bool false), x)] (some y) ≃ₑ y
+theorem case_when_false (x y : Expr) :
+    Expr.case [(Expr.lit (.bool false), x)] (some y) ≃ₑ y := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_case]
+  have h := evalExprWithDb_lit (fun _ => []) row (.bool false)
+  rw [evalCase_cons_false _ _ _ _ _ _ h, evalCase_nil_some]
 
 /-- CASE WHEN FALSE THEN x END = NULL (no else clause) -/
-axiom case_when_false_no_else (x : Expr) :
-    Expr.case [(Expr.lit (.bool false), x)] none ≃ₑ Expr.lit (.null none)
+theorem case_when_false_no_else (x : Expr) :
+    Expr.case [(Expr.lit (.bool false), x)] none ≃ₑ Expr.lit (.null none) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_case]
+  have h := evalExprWithDb_lit (fun _ => []) row (.bool false)
+  rw [evalCase_cons_false _ _ _ _ _ _ h, evalCase_nil_none, evalExprWithDb_lit]
 
 /-- CASE with no branches and ELSE = ELSE value -/
-axiom case_empty_else (y : Expr) :
-    Expr.case [] (some y) ≃ₑ y
+theorem case_empty_else (y : Expr) :
+    Expr.case [] (some y) ≃ₑ y := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_case, evalCase_nil_some]
 
 /-- CASE with no branches and no ELSE = NULL -/
-axiom case_empty_no_else :
-    Expr.case [] none ≃ₑ Expr.lit (.null none)
+theorem case_empty_no_else :
+    Expr.case [] none ≃ₑ Expr.lit (.null none) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_case, evalCase_nil_none, evalExprWithDb_lit]
 
 -- ============================================================================
 -- Predicate Pushdown Theorems
