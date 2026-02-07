@@ -115,31 +115,70 @@ def simpleLike (s pat : String) : Bool :=
   else
     s == pat
 
-/-- Evaluate binary operator -/
+/-- Evaluate binary operator.
+    NULL SEMANTICS (Option 3): When either operand is a SQL NULL (`some (.null _)`),
+    arithmetic/comparison/string ops return `some (.null none)` instead of `none`.
+    This separates "SQL NULL propagation" from "evaluation error" (which remains `none`).
+    AND/OR keep SQL three-valued logic short-circuit rules.
+    Note: We use `some _` (not bare `_`) so that `none` (errors) still propagate as `none`. -/
 def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   match op, l, r with
+  -- Arithmetic: null propagation
+  | .add, some (.null _), some _ => some (.null none)
+  | .add, some _, some (.null _) => some (.null none)
   | .add, some (.int a), some (.int b) => some (.int (a + b))
+  | .sub, some (.null _), some _ => some (.null none)
+  | .sub, some _, some (.null _) => some (.null none)
   | .sub, some (.int a), some (.int b) => some (.int (a - b))
+  | .mul, some (.null _), some _ => some (.null none)
+  | .mul, some _, some (.null _) => some (.null none)
   | .mul, some (.int a), some (.int b) => some (.int (a * b))
+  | .div, some (.null _), some _ => some (.null none)
+  | .div, some _, some (.null _) => some (.null none)
   | .div, some (.int a), some (.int b) =>
     if b == 0 then none else some (.int (a / b))
+  | .mod, some (.null _), some _ => some (.null none)
+  | .mod, some _, some (.null _) => some (.null none)
   | .mod, some (.int a), some (.int b) =>
     if b == 0 then none else some (.int (a % b))
+  -- Comparison: null propagation (NULL = anything → NULL)
+  | .eq, some (.null _), some _ => some (.null none)
+  | .eq, some _, some (.null _) => some (.null none)
   | .eq, some a, some b => (a.eq b).map Value.bool
+  | .ne, some (.null _), some _ => some (.null none)
+  | .ne, some _, some (.null _) => some (.null none)
   | .ne, some a, some b => (a.eq b).map (fun b => Value.bool (!b))
+  | .lt, some (.null _), some _ => some (.null none)
+  | .lt, some _, some (.null _) => some (.null none)
   | .lt, some a, some b => (a.compare b).map (fun o => Value.bool (o == .lt))
+  | .le, some (.null _), some _ => some (.null none)
+  | .le, some _, some (.null _) => some (.null none)
   | .le, some a, some b => (a.compare b).map (fun o => Value.bool (o != .gt))
+  | .gt, some (.null _), some _ => some (.null none)
+  | .gt, some _, some (.null _) => some (.null none)
   | .gt, some a, some b => (a.compare b).map (fun o => Value.bool (o == .gt))
+  | .ge, some (.null _), some _ => some (.null none)
+  | .ge, some _, some (.null _) => some (.null none)
   | .ge, some a, some b => (a.compare b).map (fun o => Value.bool (o != .lt))
+  -- Boolean: SQL three-valued logic (short-circuit preserved)
+  -- AND/OR keep ORIGINAL semantics (no null propagation change) to preserve
+  -- distributivity laws. Option 3 null propagation applies only to
+  -- arithmetic, comparison, unary, and string operations.
   | .and, some (.bool a), some (.bool b) => some (.bool (a && b))
-  | .and, some (.bool false), _ => some (.bool false)  -- short-circuit
+  | .and, some (.bool false), _ => some (.bool false)  -- FALSE AND anything = FALSE
   | .and, _, some (.bool false) => some (.bool false)
   | .or, some (.bool a), some (.bool b) => some (.bool (a || b))
-  | .or, some (.bool true), _ => some (.bool true)  -- short-circuit
+  | .or, some (.bool true), _ => some (.bool true)      -- TRUE OR anything = TRUE
   | .or, _, some (.bool true) => some (.bool true)
+  -- String: null propagation
+  | .concat, some (.null _), some _ => some (.null none)
+  | .concat, some _, some (.null _) => some (.null none)
   | .concat, some (.string a), some (.string b) => some (.string (a ++ b))
+  | .like, some (.null _), some _ => some (.null none)
+  | .like, some _, some (.null _) => some (.null none)
   | .like, some (.string s), some (.string pat) =>
     some (.bool (simpleLike s pat))
+  -- Everything else is a genuine error (type mismatch, missing value)
   | _, _, _ => none
 
 /-- Check if Option Value is NULL (none or some null) -/
@@ -148,11 +187,14 @@ def isNullValue : Option Value → Bool
   | some (.null _) => true
   | _ => false
 
-/-- Evaluate unary operator -/
+/-- Evaluate unary operator.
+    NULL SEMANTICS (Option 3): NOT/NEG on null returns `some (.null none)` instead of `none`. -/
 def evalUnaryOp (op : UnaryOp) (e : Option Value) : Option Value :=
   match op, e with
   | .not, some (.bool b) => some (.bool (!b))
+  | .not, some (.null _) => some (.null none)  -- NOT NULL = NULL
   | .neg, some (.int n) => some (.int (-n))
+  | .neg, some (.null _) => some (.null none)  -- -NULL = NULL
   | .isNull, v => some (.bool (isNullValue v))
   | .isNotNull, v => some (.bool (!isNullValue v))
   | _, _ => none

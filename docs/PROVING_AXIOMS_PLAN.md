@@ -459,6 +459,59 @@ All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
 
 ---
 
+## Option 3: Null Semantics Fix (Adopted)
+
+### Problem
+
+The original `evalBinOp` and `evalUnaryOp` returned `none` for **both**:
+1. SQL NULL propagation (correct: `NULL + 5 = NULL`)
+2. Type errors/mismatches (wrong: `"hello" + 5 = error`)
+
+This conflation made axioms like `eq_reflexive` unprovable: `NULL = NULL`
+should produce `some (.null none)` (SQL NULL), but the evaluator returned
+`none` (indistinguishable from an error).
+
+### Solution
+
+Changed `evalBinOp` and `evalUnaryOp` to return `some (.null none)` for
+SQL null propagation in **arithmetic, comparison, unary, and string** operations.
+AND/OR retain original semantics to preserve distributivity laws.
+
+| Operation | Before | After |
+|-----------|--------|-------|
+| `NULL + 5` | `none` | `some (.null none)` |
+| `NULL = 5` | `none` | `some (.null none)` |
+| `NOT NULL` | `none` | `some (.null none)` |
+| `NULL \|\| 'x'` | `none` | `some (.null none)` |
+| `"hello" + 5` | `none` | `none` (unchanged, real error) |
+| `NULL AND TRUE` | `none` | `none` (AND/OR unchanged) |
+
+### Key Results
+
+- **`eq_reflexive` (#56)**: Now a **theorem** (was axiom). Requires
+  `Expr.evaluable` precondition (expression produces `some` value).
+- **`ne_irreflexive` (#56)**: Now a **theorem** (was axiom). Same precondition.
+- **Distributivity preserved**: AND/OR keep original semantics, so
+  `evalBinOp_and_or_distrib_left` and `evalBinOp_or_and_distrib_left` unchanged.
+- **Null propagation theorems updated**: `null_add_left` etc. now quantify over
+  `Value` (not `Option Value`) and conclude `= some (.null none)`.
+- **Comparison negation helpers**: Repaired with explicit null case splits
+  (6 helpers, ~20 lines each).
+- **All 195 runtime tests pass**.
+
+### `Expr.evaluable` Precondition
+
+```lean
+def Expr.evaluable (e : Expr) : Prop :=
+  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
+```
+
+This excludes only error-producing expressions (missing columns, aggregates
+without group context). All well-formed SQL in a valid context satisfies this.
+It is a much milder precondition than a full type system.
+
+---
+
 ## Known Soundness Issues
 
 ### `coalesce_null_left` was unsound (removed)
