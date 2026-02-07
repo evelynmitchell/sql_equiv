@@ -812,6 +812,22 @@ axiom evalCase_cons_false (db : Database) (row : Row) (cond result : Expr) (rest
   evalExprWithDb db row cond = some (.bool false) →
   evalCase db row ((cond, result) :: rest) else_ = evalCase db row rest else_
 
+/-- Axiom: evalExprWithDb unfolds for function calls -/
+axiom evalExprWithDb_func (db : Database) (row : Row) (name : String) (args : List Expr) :
+  evalExprWithDb db row (Expr.func name args) = evalFunc name (args.map (evalExprWithDb db row))
+
+/-- Axiom: evalExprWithDb unfolds for BETWEEN -/
+axiom evalExprWithDb_between (db : Database) (row : Row) (e lo hi : Expr) :
+  evalExprWithDb db row (Expr.between e lo hi) =
+  match evalExprWithDb db row e, evalExprWithDb db row lo, evalExprWithDb db row hi with
+  | some v, some vlo, some vhi =>
+    match v.compare vlo, v.compare vhi with
+    | some .lt, _ => some (Value.bool false)
+    | _, some .gt => some (Value.bool false)
+    | some _, some _ => some (Value.bool true)
+    | _, _ => none
+  | _, _, _ => none
+
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================

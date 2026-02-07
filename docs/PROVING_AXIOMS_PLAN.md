@@ -365,28 +365,29 @@ done in parallel.
 
 ### Wave 1 -- Expression-level boolean/arithmetic/comparison (easiest, highest ROI)
 
-All mechanical `simp`/`rfl` proofs. No dependencies between them.
+Sound axioms are mechanical `simp`/`rfl` proofs. Unsound axioms need a design
+decision first (see "Unsound Axiom Strategy" below).
 
-| Order | Issue | Description | Axioms | Difficulty |
-|:-----:|-------|-------------|:------:|------------|
-| 1 | [#46](https://github.com/evelynmitchell/sql_equiv/issues/46) | `not_not` (double negation) | 1 | Easy |
-| 2 | [#48](https://github.com/evelynmitchell/sql_equiv/issues/48) | `and_true`, `or_false` (identity) | 2 | Easy |
-| 3 | [#47](https://github.com/evelynmitchell/sql_equiv/issues/47) | `and_absorb_or`, `or_absorb_and` (absorption) | 2 | Easy |
-| 4 | [#49](https://github.com/evelynmitchell/sql_equiv/issues/49) | `and_self`, `or_self` (idempotent) | 2 | Easy (check soundness) |
-| 5 | [#50](https://github.com/evelynmitchell/sql_equiv/issues/50) | `and_not_self`, `or_not_self` (complement) | 2 | Easy (check soundness) |
-| 6 | [#57](https://github.com/evelynmitchell/sql_equiv/issues/57) | Arithmetic identities (x+0, x*1, etc.) | 7 | Easy (check soundness) |
-| 7 | [#54](https://github.com/evelynmitchell/sql_equiv/issues/54) | Comparison negation rules | 6 | Easy |
-| 8 | [#55](https://github.com/evelynmitchell/sql_equiv/issues/55) | Comparison flip rules | 4 | Easy |
-| 9 | [#56](https://github.com/evelynmitchell/sql_equiv/issues/56) | `eq_reflexive`, `ne_irreflexive` | 2 | Easy-Medium |
-| 10 | [#61](https://github.com/evelynmitchell/sql_equiv/issues/61) | CASE/WHEN simplification | 5 | Easy |
+| Order | Issue | Description | Axioms | Status |
+|:-----:|-------|-------------|:------:|--------|
+| 1 | [#46](https://github.com/evelynmitchell/sql_equiv/issues/46) | `not_not` (double negation) | 1 | **Unsound** — needs bool precondition |
+| 2 | [#48](https://github.com/evelynmitchell/sql_equiv/issues/48) | `and_true`, `or_false` (identity) | 2 | **Unsound** — needs bool precondition |
+| 3 | [#47](https://github.com/evelynmitchell/sql_equiv/issues/47) | `and_absorb_or`, `or_absorb_and` (absorption) | 2 | **Unsound** — needs bool precondition |
+| 4 | [#49](https://github.com/evelynmitchell/sql_equiv/issues/49) | `and_self`, `or_self` (idempotent) | 2 | **Unsound** — needs bool precondition |
+| 5 | [#50](https://github.com/evelynmitchell/sql_equiv/issues/50) | `and_not_self`, `or_not_self` (complement) | 2 | **Unsound** — needs bool precondition |
+| 6 | [#57](https://github.com/evelynmitchell/sql_equiv/issues/57) | Arithmetic identities (x+0, x*1, etc.) | 7 | **Unsound** — needs int precondition |
+| 7 | [#54](https://github.com/evelynmitchell/sql_equiv/issues/54) | Comparison negation rules | 6 | **Proved** (PR #85) |
+| 8 | [#55](https://github.com/evelynmitchell/sql_equiv/issues/55) | Comparison flip rules | 4 | **Proved** (PR #85) |
+| 9 | [#56](https://github.com/evelynmitchell/sql_equiv/issues/56) | `eq_reflexive`, `ne_irreflexive` | 2 | **Unsound** — needs null semantics fix |
+| 10 | [#61](https://github.com/evelynmitchell/sql_equiv/issues/61) | CASE/WHEN simplification | 5 | **Proved** (PR #85) |
 
 ### Wave 2 -- IN/BETWEEN/LIKE/String (still expression-level)
 
-| Order | Issue | Description | Axioms | Difficulty |
-|:-----:|-------|-------------|:------:|------------|
-| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 6 | Easy-Medium |
-| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | Easy |
-| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | Medium |
+| Order | Issue | Description | Axioms | Status |
+|:-----:|-------|-------------|:------:|--------|
+| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 6 | **Unsound** — needs evaluable precondition |
+| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 1 **proved** (PR #86), 2 unsound |
+| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 1 **proved** (PR #86), 2 unsound |
 | 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | Easy |
 
 ### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
@@ -453,6 +454,8 @@ bridges that let proofs access the evaluation semantics.
 | `evalCase_nil_none` | #61 CASE/WHEN | Empty branches, no ELSE → NULL |
 | `evalCase_cons_true` | #61 CASE/WHEN | True condition → return result |
 | `evalCase_cons_false` | #61 CASE/WHEN | False condition → skip to rest |
+| `evalExprWithDb_func` | #62 String functions | Unfold function call to `evalFunc` |
+| `evalExprWithDb_between` | #59 BETWEEN | Unfold BETWEEN expression |
 
 New infrastructure axioms should be added to this table as they are created.
 All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
@@ -546,6 +549,53 @@ five representative values: `some (.int _)`, `some (.string _)`, `some (.bool _)
 
 ---
 
+## Unsound Axiom Strategy (Design Decision)
+
+~20 axioms in Waves 1-2 are **unsound as stated** — they claim equivalences
+for all expressions but only hold for specific types. Three prototypes were
+built to compare approaches (PRs #87, #88, #89). See `PROVING_LOG.md` for
+full details.
+
+### The two problems
+
+1. **Null/error conflation**: `evalBinOp` returns `none` for both SQL NULL
+   propagation (correct behavior) and type errors (ill-formed expressions).
+   This makes `eq_reflexive` unprovable: `NULL = NULL` gives `none` but the
+   CASE expression gives `some (.null none)`.
+
+2. **Type mismatches**: `NOT 5`, `"hello" + 0`, etc. return `none` but axioms
+   claim they equal the original expression. These need type preconditions.
+
+### Recommended path (from prototype comparison)
+
+**Step 1 — Fix null semantics (Option 3, PR #89):**
+Change `evalBinOp`/`evalUnaryOp` to return `some (.null none)` for null
+propagation, distinguishing it from `none` (errors). This:
+- Fixes problem 1 at the root
+- Makes `eq_reflexive` provable with only `Expr.evaluable`
+- Improves semantic correctness regardless of proving
+- Proof repair burden is manageable (~90 mechanical fixes)
+
+**Step 2 — Add type system (Option 2, PR #88):**
+Add `Expr.wellTyped` predicate with type preservation. This:
+- Fixes problem 2 (boolean/integer axioms get type preconditions)
+- Provides composability (type preservation lets proofs chain)
+- Needs `SqlType.nullable` extension for comparisons that return bool-or-null
+
+**Do NOT use Option 1** (PR #87) — ad-hoc type preconditions have no
+composability and create technical debt.
+
+### What this means for the wave plan
+
+- **Waves 1-2 sound axioms** (#54, #55, #61, `like_empty_pattern`,
+  `between_reflexive`, `length_empty`): provable now, no changes needed
+- **Wave 1 #56** (`eq_reflexive`, `ne_irreflexive`): provable after Step 1
+- **Waves 1-2 type-mismatch axioms** (#46-50, #57, #58, #60): provable
+  after Step 2
+- **Waves 3+**: unaffected by this design decision
+
+---
+
 ## Known Evaluator Limitations
 
 ### Double-qualification of column names in subquery wrapping
@@ -580,6 +630,7 @@ to account for column renaming through subquery boundaries. Options:
 1. Fix `evalFrom`'s `.subquery` case to strip existing qualifiers before
    re-qualifying (so `u.id` becomes `filtered_a.id`, not `filtered_a.u.id`)
 2. Make `getQualified` aware of nested qualifiers (match on suffix)
+
 3. Redefine the axioms to use `evalFrom`-level filter pushdown (avoiding
    `evalSelect` subquery wrapping entirely)
 
