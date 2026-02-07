@@ -505,3 +505,78 @@ Need `evalExprWithDb_between` infrastructure axiom. Case analysis on `eval e`:
 - `some (.int n)` → `compare n n = .eq` → BETWEEN: `| some .eq, some .eq` → true.
   RHS: `ge` = `(.eq != .lt)` = true, `le` = `(.eq != .gt)` = true, AND = true ✓
 - `some (.string s)` → same as int ✓
+
+---
+
+## Option 3: Null Semantics Fix — ADOPTED
+
+**Date:** 2026-02-06
+**Branch:** `claude/prove-wave2-3-sound-axioms`
+
+### What changed
+
+Applied the Option 3 null semantics fix to the main proving branch. This
+changes `evalBinOp` and `evalUnaryOp` to return `some (.null none)` for SQL
+null propagation, distinguishing it from `none` (genuine evaluation errors).
+
+### Scope
+
+**Modified operations:**
+- Arithmetic: `+`, `-`, `*`, `/`, `%` — null inputs produce `some (.null none)`
+- Comparison: `=`, `<>`, `<`, `<=`, `>`, `>=` — null inputs produce `some (.null none)`
+- Unary: `NOT`, `NEG` — null input produces `some (.null none)`
+- String: `CONCAT`, `LIKE` — null inputs produce `some (.null none)`
+
+**Unchanged operations:**
+- `AND`/`OR` — kept original semantics (no null propagation change) to preserve
+  distributivity laws (`evalBinOp_and_or_distrib_left`, `evalBinOp_or_and_distrib_left`)
+
+### Key design decisions
+
+1. **`some _` not bare `_`** for null propagation wildcards in arithmetic/comparison.
+   Per Copilot review on PR #89 — bare `_` matches `none` (errors), which would
+   incorrectly convert errors to nulls. With `some _`, only actual values
+   (including null values) trigger propagation; `none` errors pass through.
+
+2. **AND/OR keep original semantics.** Attempting to add null propagation to
+   AND/OR broke both distributivity proofs (`evalBinOp_and_or_distrib_left` and
+   `evalBinOp_or_and_distrib_left`). Tried three approaches:
+   - `some _` wildcards for null AND/OR → created asymmetry breaking distributivity
+   - Bare `_` wildcards → still broke `OR_AND_distrib` cases
+   - Restricted to boolean-compatible types only → still 2 failures
+
+   Root cause: distributivity requires `AND(OR(a,b),c) = OR(AND(a,c),AND(b,c))`
+   for ALL value combinations including nulls mixed with non-booleans. Any null
+   propagation in AND/OR creates cases where one side produces `some (.null none)`
+   but the other produces `none`.
+
+3. **`Expr.evaluable` as precondition** (not a full type system). Defined as:
+   ```lean
+   def Expr.evaluable (e : Expr) : Prop :=
+     ∀ row : Row, ∃ v : Value, evalExpr row e = some v
+   ```
+   This is the mildest possible precondition — it only excludes expressions that
+   produce evaluation errors. Any well-typed SQL expression satisfies it.
+
+### Impact on existing proofs
+
+| Category | Change |
+|----------|--------|
+| Null propagation theorems (12) | Signature: `Option Value` → `Value` param, conclusion: `= none` → `= some (.null none)` |
+| `evalBinOp_eq_comm` | Explicit null case splits (was `\| none, some _ =>`, now `\| none, some (.int _) =>` etc.) |
+| Comparison negation helpers (6) | Explicit null case splits (~20 lines each, up from ~3) |
+| Distributivity proofs (2) | `simp [evalBinOp]` → `rfl` (more robust with new pattern complexity) |
+| Three-valued logic theorems (6) | Unchanged (`= none`, since AND/OR retain original semantics) |
+
+### New theorems proved
+
+- **`eq_reflexive`** — was axiom, now theorem with `Expr.evaluable` precondition.
+  Proof case-splits on evaluated value: null → both sides = `some (.null none)`;
+  int/string/bool → CASE condition false, else = `some (.bool true)`.
+- **`ne_irreflexive`** — same structure, result is `some (.bool false)`.
+
+### Verification
+
+- Build: clean, no warnings
+- Tests: all 195 pass
+- Sorry count: no new `sorry` introduced (only pre-existing one at `checkEquivFull`)
