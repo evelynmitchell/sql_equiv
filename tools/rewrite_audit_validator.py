@@ -75,6 +75,7 @@ REWRITE_FUNCTIONS: dict[str, dict] = {
 }
 
 VALID_CATEGORIES = {"identity", "annihilation", "structural", "constant-fold", "idempotent"}
+VALID_TYPES = {"int", "bool", "any", "null"}
 
 ANNOTATION_MARKER_RE = re.compile(r"--\s*@rewrite\s+(.+)")
 
@@ -116,6 +117,11 @@ def parse_annotation(line: str, line_number: int) -> Annotation | None:
                 )
             guard = value
         else:
+            if value not in VALID_TYPES:
+                raise ValueError(
+                    f"Line {line_number}: invalid type '{value}' for variable '{key}' "
+                    f"(valid: {', '.join(sorted(VALID_TYPES))})"
+                )
             variables.append((key, value))
 
     if not variables:
@@ -129,9 +135,6 @@ def parse_annotation(line: str, line_number: int) -> Annotation | None:
         variables=variables,
         guard=guard,
     )
-
-# Arms that are catch-all / fallthrough (not rewrite arms)
-CATCHALL_RE = re.compile(r"^\s*\| (\w+ =>|e =>|_ =>|\(_, _\)|_, _ =>)")
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -286,19 +289,30 @@ def validate_audit(audit: FunctionAudit) -> None:
                 f"(valid: {', '.join(sorted(VALID_CATEGORIES))})"
             )
 
-    # Check 3: Guard declared but not in code (ERROR)
-    # We check if the guard name appears somewhere in the source file
+    # Check 3: Guard declared but not used in arm body (ERROR)
+    # Whitelisted guards are enforced by pattern matching, not by name in code
+    PATTERN_GUARDS = {"short_circuit", "literal_match", "structural_eq"}
     file_path = PROJECT_ROOT / audit.file
     if file_path.exists():
-        source = file_path.read_text()
-        for ann in audit.annotations:
-            if ann.guard and ann.guard not in ("short_circuit", "literal_match", "structural_eq"):
-                # For named guards, check they exist as a function
-                if not re.search(rf'\b{re.escape(ann.guard)}\b', source):
-                    audit.errors.append(
-                        f"Guard '{ann.guard}' declared at {audit.file}:{ann.line} "
-                        f"but not found in source"
-                    )
+        source_lines = file_path.read_text().splitlines()
+        for arm in audit.arms:
+            if arm.annotation is None or not arm.annotation.guard:
+                continue
+            if arm.annotation.guard in PATTERN_GUARDS:
+                continue
+            # Find the arm body: from the arm line to the next '|' arm or end
+            start_idx = arm.line - 1  # 0-based
+            end_idx = len(source_lines)
+            for i in range(start_idx + 1, len(source_lines)):
+                if re.match(r"^\s*\| ", source_lines[i]):
+                    end_idx = i
+                    break
+            arm_text = "\n".join(source_lines[start_idx:end_idx])
+            if not re.search(rf'\b{re.escape(arm.annotation.guard)}\b', arm_text):
+                audit.errors.append(
+                    f"Guard '{arm.annotation.guard}' declared at {audit.file}:{arm.annotation.line} "
+                    f"but not used in arm body at line {arm.line}"
+                )
 
     # Check 4: var:int or var:bool with no guard (WARNING for identity/annihilation)
     for arm in audit.arms:

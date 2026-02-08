@@ -236,15 +236,15 @@ def constantFoldBinOp (op : BinOp) (l r : Expr) : Expr :=
 /-- Constant fold a unary operation if operand is a literal -/
 def constantFoldUnaryOp (op : UnaryOp) (e : Expr) : Expr :=
   match op, getLitValue e with
-  -- @rewrite constant-fold a:any guard:literal_match
+  -- @rewrite constant-fold a:bool guard:literal_match
   | .not, some (.bool b) => .lit (.bool (!b))
-  -- @rewrite constant-fold a:any guard:literal_match
+  -- @rewrite constant-fold a:int guard:literal_match
   | .neg, some (.int n) => .lit (.int (-n))
-  -- @rewrite constant-fold a:any guard:literal_match
+  -- @rewrite constant-fold a:null guard:literal_match
   | .isNull, some (.null _) => .lit (.bool true)
   -- @rewrite constant-fold a:any guard:literal_match
   | .isNull, some _ => .lit (.bool false)
-  -- @rewrite constant-fold a:any guard:literal_match
+  -- @rewrite constant-fold a:null guard:literal_match
   | .isNotNull, some (.null _) => .lit (.bool false)
   -- @rewrite constant-fold a:any guard:literal_match
   | .isNotNull, some _ => .lit (.bool true)
