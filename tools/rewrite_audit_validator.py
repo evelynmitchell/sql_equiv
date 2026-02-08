@@ -76,12 +76,59 @@ REWRITE_FUNCTIONS: dict[str, dict] = {
 
 VALID_CATEGORIES = {"identity", "annihilation", "structural", "constant-fold", "idempotent"}
 
-ANNOTATION_RE = re.compile(
-    r"--\s*@rewrite\s+"
-    r"(?P<category>\S+)"
-    r"(?P<vars>(?:\s+(?!guard:)\w+:\w+)+)"
-    r"(?:\s+guard:(?P<guard>\S+))?"
-)
+ANNOTATION_MARKER_RE = re.compile(r"--\s*@rewrite\s+(.+)")
+
+
+def parse_annotation(line: str, line_number: int) -> Annotation | None:
+    """Parse a @rewrite annotation line into a structured Annotation.
+
+    Tokenizes the annotation and classifies each token into exactly one slot:
+      - First token → category
+      - Tokens matching 'guard:<name>' → guard
+      - Tokens matching '<name>:<type>' → variable
+
+    Returns None if the line is not an annotation. Raises ValueError if
+    the annotation is malformed (so callers can report the error).
+    """
+    m = ANNOTATION_MARKER_RE.search(line)
+    if not m:
+        return None
+
+    tokens = m.group(1).split()
+    if not tokens:
+        return None
+
+    category = tokens[0]
+    variables: list[tuple[str, str]] = []
+    guard: str | None = None
+
+    for token in tokens[1:]:
+        if ":" not in token:
+            raise ValueError(
+                f"Line {line_number}: malformed token '{token}' "
+                f"(expected 'name:type' or 'guard:name')"
+            )
+        key, value = token.split(":", 1)
+        if key == "guard":
+            if guard is not None:
+                raise ValueError(
+                    f"Line {line_number}: duplicate guard declaration"
+                )
+            guard = value
+        else:
+            variables.append((key, value))
+
+    if not variables:
+        raise ValueError(
+            f"Line {line_number}: annotation has no variable declarations"
+        )
+
+    return Annotation(
+        line=line_number,
+        category=category,
+        variables=variables,
+        guard=guard,
+    )
 
 # Arms that are catch-all / fallthrough (not rewrite arms)
 CATCHALL_RE = re.compile(r"^\s*\| (\w+ =>|e =>|_ =>|\(_, _\)|_, _ =>)")
@@ -186,18 +233,12 @@ def parse_function(lines: list[str], func_name: str, config: dict) -> FunctionAu
         line = lines[i]
 
         # Check for annotation
-        m = ANNOTATION_RE.search(line)
-        if m:
-            var_str = m.group("vars").strip()
-            variables = []
-            for var_match in re.finditer(r"(\w+):(\w+)", var_str):
-                variables.append((var_match.group(1), var_match.group(2)))
-            ann = Annotation(
-                line=i + 1,  # 1-indexed
-                category=m.group("category"),
-                variables=variables,
-                guard=m.group("guard"),
-            )
+        try:
+            ann = parse_annotation(line, i + 1)
+        except ValueError as e:
+            audit.errors.append(f"Malformed annotation in {audit.file}: {e}")
+            continue
+        if ann is not None:
             pending_annotations.append(ann)
             audit.annotations.append(ann)
             continue
