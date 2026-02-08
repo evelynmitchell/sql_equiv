@@ -89,13 +89,6 @@ def applyDeMorgan : Expr -> Expr
     .binOp .and (.unaryOp .not a) (.unaryOp .not b)
   | e => e
 
-/-- Apply double negation elimination -/
-def eliminateDoubleNegation : Expr -> Expr
-  -- NOT NOT e => e
-  -- @rewrite identity e:bool
-  | .unaryOp .not (.unaryOp .not e) => e
-  | e => e
-
 /-- Conservative check: is expression definitely non-boolean?
     Returns true for literals and operators known to never produce a boolean.
     Note: Column refs, function calls, and subqueries that evaluate to
@@ -113,6 +106,17 @@ private def isDefinitelyNonBool : Expr → Bool
   | .binOp .concat _ _ => true
   | .unaryOp .neg _ => true
   | _ => false
+
+/-- Apply double negation elimination.
+    NOT NOT e => e is only sound when e is boolean-valued. If e evaluates
+    to a non-boolean (int, string, null), NOT e → none, NOT none → none,
+    but the rewritten e returns the raw value. -/
+def eliminateDoubleNegation : Expr -> Expr
+  -- NOT NOT e => e (only when e could be boolean)
+  -- @rewrite identity e:bool guard:isDefinitelyNonBool
+  | .unaryOp .not (.unaryOp .not e) =>
+    if isDefinitelyNonBool e then .unaryOp .not (.unaryOp .not e) else e
+  | e => e
 
 /-- Apply identity laws for AND/OR.
     Identity laws (a AND TRUE => a, a OR FALSE => a) are only sound when
@@ -147,32 +151,44 @@ def applyIdentityLaws : Expr -> Expr
     if isDefinitelyNonBool a then .binOp .or (.lit (.bool false)) a else a
   | e => e
 
-/-- Apply idempotent laws -/
+/-- Apply idempotent laws.
+    a AND a => a and a OR a => a are only sound when a is boolean-valued.
+    If a evaluates to non-boolean, AND/OR catch-all returns none, but the
+    rewritten a returns the raw value. -/
 def applyIdempotentLaws : Expr -> Expr
-  -- a AND a => a (structural equality)
-  -- @rewrite idempotent a:bool guard:structural_eq
-  | .binOp .and a b => if a == b then a else .binOp .and a b
+  -- a AND a => a (structural equality, only when a could be boolean)
+  -- @rewrite idempotent a:bool guard:isDefinitelyNonBool
+  | .binOp .and a b =>
+    if a == b && !isDefinitelyNonBool a then a else .binOp .and a b
   -- a OR a => a
-  -- @rewrite idempotent a:bool guard:structural_eq
-  | .binOp .or a b => if a == b then a else .binOp .or a b
+  -- @rewrite idempotent a:bool guard:isDefinitelyNonBool
+  | .binOp .or a b =>
+    if a == b && !isDefinitelyNonBool a then a else .binOp .or a b
   | e => e
 
-/-- Apply complement laws -/
+/-- Apply complement laws.
+    a AND NOT a => FALSE and a OR NOT a => TRUE are only sound when a is
+    boolean-valued. If a is non-boolean, NOT a → none, AND/OR with none
+    → none, but the rewrite produces a concrete boolean. -/
 def applyComplementLaws : Expr -> Expr
-  -- a AND NOT a => FALSE
-  -- @rewrite annihilation a:bool guard:structural_eq
+  -- a AND NOT a => FALSE (only when a could be boolean)
+  -- @rewrite annihilation a:bool guard:isDefinitelyNonBool
   | .binOp .and a (.unaryOp .not b) =>
-    if a == b then .lit (.bool false) else .binOp .and a (.unaryOp .not b)
-  -- @rewrite annihilation a:bool guard:structural_eq
+    if a == b && !isDefinitelyNonBool a then .lit (.bool false)
+    else .binOp .and a (.unaryOp .not b)
+  -- @rewrite annihilation a:bool guard:isDefinitelyNonBool
   | .binOp .and (.unaryOp .not a) b =>
-    if a == b then .lit (.bool false) else .binOp .and (.unaryOp .not a) b
-  -- a OR NOT a => TRUE
-  -- @rewrite annihilation a:bool guard:structural_eq
+    if a == b && !isDefinitelyNonBool a then .lit (.bool false)
+    else .binOp .and (.unaryOp .not a) b
+  -- a OR NOT a => TRUE (only when a could be boolean)
+  -- @rewrite annihilation a:bool guard:isDefinitelyNonBool
   | .binOp .or a (.unaryOp .not b) =>
-    if a == b then .lit (.bool true) else .binOp .or a (.unaryOp .not b)
-  -- @rewrite annihilation a:bool guard:structural_eq
+    if a == b && !isDefinitelyNonBool a then .lit (.bool true)
+    else .binOp .or a (.unaryOp .not b)
+  -- @rewrite annihilation a:bool guard:isDefinitelyNonBool
   | .binOp .or (.unaryOp .not a) b =>
-    if a == b then .lit (.bool true) else .binOp .or (.unaryOp .not a) b
+    if a == b && !isDefinitelyNonBool a then .lit (.bool true)
+    else .binOp .or (.unaryOp .not a) b
   | e => e
 
 /-- Conservative check: is expression definitely non-integer?

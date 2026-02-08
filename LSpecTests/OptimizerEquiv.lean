@@ -83,6 +83,47 @@ def identityLawRegressionTests : TestSeq :=
     evalExpr [] (applyIdentityLaws falseOrArith) == evalExpr [] falseOrArith)
 
 -- ============================================================================
+-- Regression: eliminateDoubleNegation, applyIdempotentLaws, applyComplementLaws
+-- must not fire on non-boolean operands
+-- ============================================================================
+
+-- Double negation on non-boolean
+private def notNotInt := Expr.unaryOp .not (.unaryOp .not (.lit (.int 42)))
+private def notNotString := Expr.unaryOp .not (.unaryOp .not (.lit (.string "hi")))
+private def notNotNull := Expr.unaryOp .not (.unaryOp .not (.lit (.null none)))
+-- Idempotent on non-boolean
+private def intAndInt := Expr.binOp .and (.lit (.int 5)) (.lit (.int 5))
+private def intOrInt := Expr.binOp .or (.lit (.int 5)) (.lit (.int 5))
+private def nullAndNull := Expr.binOp .and (.lit (.null none)) (.lit (.null none))
+-- Complement on non-boolean
+private def intAndNotInt := Expr.binOp .and (.lit (.int 3)) (.unaryOp .not (.lit (.int 3)))
+private def intOrNotInt := Expr.binOp .or (.lit (.int 3)) (.unaryOp .not (.lit (.int 3)))
+private def strAndNotStr := Expr.binOp .and (.lit (.string "x")) (.unaryOp .not (.lit (.string "x")))
+
+def boolGuardRegressionTests : TestSeq :=
+  -- eliminateDoubleNegation
+  test "NOT NOT int: must not fire" (
+    evalExpr [] (eliminateDoubleNegation notNotInt) == evalExpr [] notNotInt) $
+  test "NOT NOT string: must not fire" (
+    evalExpr [] (eliminateDoubleNegation notNotString) == evalExpr [] notNotString) $
+  test "NOT NOT null: must not fire" (
+    evalExpr [] (eliminateDoubleNegation notNotNull) == evalExpr [] notNotNull) $
+  -- applyIdempotentLaws
+  test "int AND int: idempotent must not fire" (
+    evalExpr [] (applyIdempotentLaws intAndInt) == evalExpr [] intAndInt) $
+  test "int OR int: idempotent must not fire" (
+    evalExpr [] (applyIdempotentLaws intOrInt) == evalExpr [] intOrInt) $
+  test "null AND null: idempotent must not fire" (
+    evalExpr [] (applyIdempotentLaws nullAndNull) == evalExpr [] nullAndNull) $
+  -- applyComplementLaws
+  test "int AND NOT int: complement must not fire" (
+    evalExpr [] (applyComplementLaws intAndNotInt) == evalExpr [] intAndNotInt) $
+  test "int OR NOT int: complement must not fire" (
+    evalExpr [] (applyComplementLaws intOrNotInt) == evalExpr [] intOrNotInt) $
+  test "string AND NOT string: complement must not fire" (
+    evalExpr [] (applyComplementLaws strAndNotStr) == evalExpr [] strAndNotStr)
+
+-- ============================================================================
 -- Regression: simplifyArithmetic null propagation / type mismatch / div-by-zero
 -- ============================================================================
 
@@ -146,6 +187,12 @@ def optimizerPassTests : TestSeq :=
     evalExpr [] (applyIdentityLaws e.expr) == evalExpr [] e.expr) $
   check "eliminateDoubleNegation preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (eliminateDoubleNegation e.expr) == evalExpr [] e.expr) $
+  check "applyIdempotentLaws preserves semantics" (∀ e : BoundedGroundExpr,
+    evalExpr [] (applyIdempotentLaws e.expr) == evalExpr [] e.expr) $
+  check "applyComplementLaws preserves semantics" (∀ e : BoundedGroundExpr,
+    evalExpr [] (applyComplementLaws e.expr) == evalExpr [] e.expr) $
+  check "simplifyArithmetic preserves semantics" (∀ e : BoundedGroundExpr,
+    evalExpr [] (simplifyArithmetic e.expr) == evalExpr [] e.expr) $
   check "applyDeMorgan preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyDeMorgan e.expr) == evalExpr [] e.expr)
 
@@ -157,6 +204,7 @@ def allTests : TestSeq :=
   group "optimizeExpr" optimizeExprTests $
   group "normalizeExprCanonical" normalizeTests $
   group "Identity Law Regression" identityLawRegressionTests $
+  group "Bool Guard Regression" boolGuardRegressionTests $
   group "Arithmetic Soundness" arithmeticSoundnessTests $
   group "Individual Passes" optimizerPassTests
 
