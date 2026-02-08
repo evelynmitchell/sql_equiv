@@ -21,12 +21,27 @@ checking if `a` is boolean-valued. For `int(4) AND TRUE`, the evaluator
 returns `none` but the optimizer would rewrite to `int(4)` which evaluates
 to `some (.int 4)` — changing semantics.
 
+**How the bug was found:** GitHub Copilot code review (not SlimCheck) found
+this during PR #96 review. Copilot reasoned about the types statically — it
+saw that `applyIdentityLaws` pattern-matches `| .binOp .and a (.lit (.bool true)) => a`
+for *any* `a`, then traced what happens when `a` is a non-boolean literal.
+SlimCheck's 100 random samples at depth 3 hadn't hit this case because the
+probability of generating exactly `BinOp .and (Lit (Int n)) (Lit (Bool true))`
+at a node where the identity law fires is roughly 1-2% per sample — about a
+37% chance of never hitting it in 100 tries. This illustrates the
+complementary strengths: property testing catches broad classes of issues
+through random exploration, while static review catches specific edge cases
+through type-aware reasoning.
+
 **Optimizer fix (2026-02-08):** Added `isDefinitelyNonBool` guard to
 `applyIdentityLaws` so identity laws (`a AND TRUE => a`, `a OR FALSE => a`)
 are skipped when `a` is a known non-boolean literal. Annihilation laws
 (`a AND FALSE => FALSE`, `a OR TRUE => TRUE`) remain unguarded because
 the evaluator short-circuits these correctly for all types. Added 4
-targeted regression tests in `OptimizerEquiv.lean`.
+targeted deterministic regression tests in `OptimizerEquiv.lean`:
+`int AND TRUE`, `TRUE AND int`, `int OR FALSE`, `FALSE OR int`. These
+use `test` (not `check`) so they always run the exact counterexample —
+no sampling luck required.
 
 ### Finding 2: AND/OR NULL propagation differs from standard SQL three-valued logic
 
