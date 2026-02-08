@@ -148,6 +148,10 @@ def main() -> None:
                         help="Show all steps, not just tracked ones")
     args = parser.parse_args()
 
+    if args.runs > 100:
+        print(f"Note: --runs capped at 100 (GitHub API page size limit).", file=sys.stderr)
+        args.runs = 100
+
     repo = get_repo_nwo()
     print(f"Fetching last {args.runs} '{args.workflow}' runs for {repo}...", flush=True)
     run_ids = fetch_runs(repo, args.workflow, args.runs)
@@ -187,10 +191,11 @@ def main() -> None:
         print("No tracked steps found in run data.")
         return
 
-    # Sum of tracked step durations per run (not wall-clock job time)
+    # Sum of displayed step durations per run (not wall-clock job time)
+    step_set = set(steps)
     totals = []
     for d in all_durations:
-        total = sum(v for k, v in d.items() if k in all_steps)
+        total = sum(v for k, v in d.items() if k in step_set)
         totals.append(total)
 
     # Print header
@@ -212,13 +217,14 @@ def main() -> None:
             continue
 
         avg = sum(present_values) / len(present_values)
-        last = present_values[-1]
+        last = values[-1]  # None if step was missing in the most recent run
         lo = min(present_values)
         hi = max(present_values)
 
-        # For sparkline rendering, use 0 for missing runs
-        spark_values = [v if v is not None else 0 for v in values]
-        spark = sparkline(spark_values)
+        # Render sparkline from present values only, showing spaces for gaps
+        compact_spark = sparkline(present_values)
+        it = iter(compact_spark)
+        spark = "".join(next(it) if v is not None else " " for v in values)
 
         # Run anomaly detection only on runs where this step exists
         anomalies_in_present = detect_anomalies(present_values)
@@ -232,8 +238,9 @@ def main() -> None:
             else:
                 notes = f"⚠ spike at run #{latest_anomaly + 1}"
 
+        last_str = fmt_duration(last) if last is not None else "—"
         print(f"{step:<{max_name_len}}  {spark:<{n_runs}}  "
-              f"{fmt_duration(last):>6}  {fmt_duration(avg):>6}  "
+              f"{last_str:>6}  {fmt_duration(avg):>6}  "
               f"{fmt_duration(lo):>6}  {fmt_duration(hi):>6}  {notes}")
 
     # Total row
