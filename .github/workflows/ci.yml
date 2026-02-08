@@ -45,4 +45,4 @@
           run: lake build sql_equiv_lspec
 
         - name: Run LSpec property tests
-          run: lake exe sql_equiv_lspec                                                                                                                       
+          run: lake exe sql_equiv_lspec

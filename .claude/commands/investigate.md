@@ -47,10 +47,11 @@ can be detected later. This is the "knowing normal" part.
 
 5. **CI duration sparklines:**
    ```bash
-   python tools/ci_sparkline.py --runs 10
+   python tools/ci_sparkline.py --runs 10 2>&1 | tee /tmp/sparklines.txt
    ```
    Look for anomalous step durations (marked with ⚠). Compare sparkline
    shapes — a sudden spike or drop in any step is worth investigating.
+   Output is saved to `/tmp/sparklines.txt` (the TUI hides sparkline characters).
 
 6. **Report the baseline:**
    Summarize all signals in a compact table. Flag anything that looks

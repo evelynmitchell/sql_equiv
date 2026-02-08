@@ -13,11 +13,20 @@ that initially failed, what it revealed, and how it was resolved.
 `none` (type error), not `some (int 4)`. The AND/OR identity laws
 (`and_true`, `or_false`, `true_and`, `false_or` in ExprAxioms.lean) only
 hold when the operand is boolean-typed.
-**Resolution:** Restricted these property tests to `BoolGroundExpr` inputs.
-**Impact:** Not a bug — the axioms in ExprAxioms.lean are correctly stated
-with `Expr` (they hold for all expressions when evaluated in the formal
-equivalence relation `≃ₑ` because both sides produce `none` for non-boolean
-inputs). But it clarifies that the evaluator's AND/OR is strict about types.
+**Resolution:** Restricted algebra property tests to `BoolGroundExpr` inputs.
+**Impact:** The axioms in ExprAxioms.lean are correctly stated (they hold for
+all expressions under `≃ₑ`). But this finding also exposed a real bug in the
+**optimizer**: `applyIdentityLaws` was applying `a AND TRUE => a` without
+checking if `a` is boolean-valued. For `int(4) AND TRUE`, the evaluator
+returns `none` but the optimizer would rewrite to `int(4)` which evaluates
+to `some (.int 4)` — changing semantics.
+
+**Optimizer fix (2026-02-08):** Added `isDefinitelyNonBool` guard to
+`applyIdentityLaws` so identity laws (`a AND TRUE => a`, `a OR FALSE => a`)
+are skipped when `a` is a known non-boolean literal. Annihilation laws
+(`a AND FALSE => FALSE`, `a OR TRUE => TRUE`) remain unguarded because
+the evaluator short-circuits these correctly for all types. Added 4
+targeted regression tests in `OptimizerEquiv.lean`.
 
 ### Finding 2: AND/OR NULL propagation differs from standard SQL three-valued logic
 

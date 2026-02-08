@@ -84,7 +84,7 @@ def fetch_step_durations(repo: str, run_id: int) -> dict[str, float]:
     """Fetch step-level durations for a single run."""
     result = subprocess.run(
         ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}/jobs",
-         "--jq", ".jobs[0].steps | map({name, started_at, completed_at})"],
+         "--jq", "[.jobs[].steps[] | {name, started_at, completed_at}]"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
