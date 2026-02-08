@@ -32,11 +32,20 @@
             restore-keys: |                                                                                                                                  
               ${{ runner.os }}-lake-                                                                                                                         
                                                                                                                                                              
-        - name: Build library                                                                                                                                
+        - name: Check axiom coverage ratchet
+          run: python3 tools/axiom_coverage_validator.py --runtime
+
+        - name: Build library
           run: lake build SqlEquiv                                                                                                                           
                                                                                                                                                              
         - name: Build tests                                                                                                                                  
           run: lake build sql_equiv_test                                                                                                                     
                                                                                                                                                              
-        - name: Run tests                                                                                                                                    
-          run: lake exe sql_equiv_test                                                                                                                       
+        - name: Run tests
+          run: lake exe sql_equiv_test
+
+        - name: Build LSpec property tests
+          run: lake build sql_equiv_lspec
+
+        - name: Run LSpec property tests
+          run: lake exe sql_equiv_lspec

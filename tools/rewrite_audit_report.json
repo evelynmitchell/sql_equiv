@@ -79,43 +79,51 @@
       "file": "SqlEquiv/Optimizer.lean",
       "arms": [
         {
-          "line": 103,
-          "text": "| .binOp .and a (.lit (.bool true)) => a",
+          "line": 126,
+          "text": "| .binOp .and a (.lit (.bool true)) =>",
           "annotated": true,
           "annotation": {
-            "line": 102,
+            "line": 125,
             "category": "identity",
             "variables": [
               {
                 "name": "a",
                 "type": "bool"
+              },
+              {
+                "name": "guard",
+                "type": "isDefinitelyNonBool"
               }
             ],
             "guard": null
           }
         },
         {
-          "line": 105,
-          "text": "| .binOp .and (.lit (.bool true)) a => a",
+          "line": 129,
+          "text": "| .binOp .and (.lit (.bool true)) a =>",
           "annotated": true,
           "annotation": {
-            "line": 104,
+            "line": 128,
             "category": "identity",
             "variables": [
               {
                 "name": "a",
                 "type": "bool"
+              },
+              {
+                "name": "guard",
+                "type": "isDefinitelyNonBool"
               }
             ],
             "guard": null
           }
         },
         {
-          "line": 108,
+          "line": 133,
           "text": "| .binOp .and _ (.lit (.bool false)) => .lit (.bool false)",
           "annotated": true,
           "annotation": {
-            "line": 107,
+            "line": 132,
             "category": "annihilation",
             "variables": [
               {
@@ -131,11 +139,11 @@
           }
         },
         {
-          "line": 110,
+          "line": 135,
           "text": "| .binOp .and (.lit (.bool false)) _ => .lit (.bool false)",
           "annotated": true,
           "annotation": {
-            "line": 109,
+            "line": 134,
             "category": "annihilation",
             "variables": [
               {
@@ -151,11 +159,11 @@
           }
         },
         {
-          "line": 113,
+          "line": 138,
           "text": "| .binOp .or _ (.lit (.bool true)) => .lit (.bool true)",
           "annotated": true,
           "annotation": {
-            "line": 112,
+            "line": 137,
             "category": "annihilation",
             "variables": [
               {
@@ -171,11 +179,11 @@
           }
         },
         {
-          "line": 115,
+          "line": 140,
           "text": "| .binOp .or (.lit (.bool true)) _ => .lit (.bool true)",
           "annotated": true,
           "annotation": {
-            "line": 114,
+            "line": 139,
             "category": "annihilation",
             "variables": [
               {
@@ -191,32 +199,40 @@
           }
         },
         {
-          "line": 118,
-          "text": "| .binOp .or a (.lit (.bool false)) => a",
+          "line": 143,
+          "text": "| .binOp .or a (.lit (.bool false)) =>",
           "annotated": true,
           "annotation": {
-            "line": 117,
+            "line": 142,
             "category": "identity",
             "variables": [
               {
                 "name": "a",
                 "type": "bool"
+              },
+              {
+                "name": "guard",
+                "type": "isDefinitelyNonBool"
               }
             ],
             "guard": null
           }
         },
         {
-          "line": 120,
-          "text": "| .binOp .or (.lit (.bool false)) a => a",
+          "line": 146,
+          "text": "| .binOp .or (.lit (.bool false)) a =>",
           "annotated": true,
           "annotation": {
-            "line": 119,
+            "line": 145,
             "category": "identity",
             "variables": [
               {
                 "name": "a",
                 "type": "bool"
+              },
+              {
+                "name": "guard",
+                "type": "isDefinitelyNonBool"
               }
             ],
             "guard": null
@@ -225,10 +241,10 @@
       ],
       "errors": [],
       "warnings": [
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:103: | .binOp .and a (.lit (.bool true)) => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:105: | .binOp .and (.lit (.bool true)) a => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:118: | .binOp .or a (.lit (.bool false)) => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:120: | .binOp .or (.lit (.bool false)) a => a \u2014 type assumption without runtime guard"
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:126: | .binOp .and a (.lit (.bool true)) => \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:129: | .binOp .and (.lit (.bool true)) a => \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:143: | .binOp .or a (.lit (.bool false)) => \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:146: | .binOp .or (.lit (.bool false)) a => \u2014 type assumption without runtime guard"
       ]
     },
     {
@@ -236,11 +252,11 @@
       "file": "SqlEquiv/Optimizer.lean",
       "arms": [
         {
-          "line": 127,
+          "line": 154,
           "text": "| .binOp .and a b => if a == b then a else .binOp .and a b",
           "annotated": true,
           "annotation": {
-            "line": 126,
+            "line": 153,
             "category": "idempotent",
             "variables": [
               {
@@ -256,11 +272,11 @@
           }
         },
         {
-          "line": 130,
+          "line": 157,
           "text": "| .binOp .or a b => if a == b then a else .binOp .or a b",
           "annotated": true,
           "annotation": {
-            "line": 129,
+            "line": 156,
             "category": "idempotent",
             "variables": [
               {
@@ -284,11 +300,11 @@
       "file": "SqlEquiv/Optimizer.lean",
       "arms": [
         {
-          "line": 137,
+          "line": 164,
           "text": "| .binOp .and a (.unaryOp .not b) =>",
           "annotated": true,
           "annotation": {
-            "line": 136,
+            "line": 163,
             "category": "annihilation",
             "variables": [
               {
@@ -304,11 +320,11 @@
           }
         },
         {
-          "line": 140,
+          "line": 167,
           "text": "| .binOp .and (.unaryOp .not a) b =>",
           "annotated": true,
           "annotation": {
-            "line": 139,
+            "line": 166,
             "category": "annihilation",
             "variables": [
               {
@@ -324,11 +340,11 @@
           }
         },
         {
-          "line": 144,
+          "line": 171,
           "text": "| .binOp .or a (.unaryOp .not b) =>",
           "annotated": true,
           "annotation": {
-            "line": 143,
+            "line": 170,
             "category": "annihilation",
             "variables": [
               {
@@ -344,11 +360,11 @@
           }
         },
         {
-          "line": 147,
+          "line": 174,
           "text": "| .binOp .or (.unaryOp .not a) b =>",
           "annotated": true,
           "annotation": {
-            "line": 146,
+            "line": 173,
             "category": "annihilation",
             "variables": [
               {
@@ -366,10 +382,10 @@
       ],
       "errors": [],
       "warnings": [
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:137: | .binOp .and a (.unaryOp .not b) => \u2014 type assumption without runtime guard",
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:140: | .binOp .and (.unaryOp .not a) b => \u2014 type assumption without runtime guard",
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:144: | .binOp .or a (.unaryOp .not b) => \u2014 type assumption without runtime guard",
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:147: | .binOp .or (.unaryOp .not a) b => \u2014 type assumption without runtime guard"
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:164: | .binOp .and a (.unaryOp .not b) => \u2014 type assumption without runtime guard",
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:167: | .binOp .and (.unaryOp .not a) b => \u2014 type assumption without runtime guard",
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:171: | .binOp .or a (.unaryOp .not b) => \u2014 type assumption without runtime guard",
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:174: | .binOp .or (.unaryOp .not a) b => \u2014 type assumption without runtime guard"
       ]
     },
     {
@@ -377,11 +393,11 @@
       "file": "SqlEquiv/Optimizer.lean",
       "arms": [
         {
-          "line": 155,
+          "line": 182,
           "text": "| .binOp .add a (.lit (.int 0)) => a",
           "annotated": true,
           "annotation": {
-            "line": 154,
+            "line": 181,
             "category": "identity",
             "variables": [
               {
@@ -393,11 +409,11 @@
           }
         },
         {
-          "line": 157,
+          "line": 184,
           "text": "| .binOp .add (.lit (.int 0)) a => a",
           "annotated": true,
           "annotation": {
-            "line": 156,
+            "line": 183,
             "category": "identity",
             "variables": [
               {
@@ -409,11 +425,11 @@
           }
         },
         {
-          "line": 160,
+          "line": 187,
           "text": "| .binOp .sub a (.lit (.int 0)) => a",
           "annotated": true,
           "annotation": {
-            "line": 159,
+            "line": 186,
             "category": "identity",
             "variables": [
               {
@@ -425,11 +441,11 @@
           }
         },
         {
-          "line": 163,
+          "line": 190,
           "text": "| .binOp .mul _ (.lit (.int 0)) => .lit (.int 0)",
           "annotated": true,
           "annotation": {
-            "line": 162,
+            "line": 189,
             "category": "annihilation",
             "variables": [
               {
@@ -441,11 +457,11 @@
           }
         },
         {
-          "line": 165,
+          "line": 192,
           "text": "| .binOp .mul (.lit (.int 0)) _ => .lit (.int 0)",
           "annotated": true,
           "annotation": {
-            "line": 164,
+            "line": 191,
             "category": "annihilation",
             "variables": [
               {
@@ -457,11 +473,11 @@
           }
         },
         {
-          "line": 168,
+          "line": 195,
           "text": "| .binOp .mul a (.lit (.int 1)) => a",
           "annotated": true,
           "annotation": {
-            "line": 167,
+            "line": 194,
             "category": "identity",
             "variables": [
               {
@@ -473,11 +489,11 @@
           }
         },
         {
-          "line": 170,
+          "line": 197,
           "text": "| .binOp .mul (.lit (.int 1)) a => a",
           "annotated": true,
           "annotation": {
-            "line": 169,
+            "line": 196,
             "category": "identity",
             "variables": [
               {
@@ -489,11 +505,11 @@
           }
         },
         {
-          "line": 173,
+          "line": 200,
           "text": "| .binOp .div a (.lit (.int 1)) => a",
           "annotated": true,
           "annotation": {
-            "line": 172,
+            "line": 199,
             "category": "identity",
             "variables": [
               {
@@ -505,11 +521,11 @@
           }
         },
         {
-          "line": 176,
+          "line": 203,
           "text": "| .binOp .div (.lit (.int 0)) _ => .lit (.int 0)",
           "annotated": true,
           "annotation": {
-            "line": 175,
+            "line": 202,
             "category": "annihilation",
             "variables": [
               {
@@ -523,15 +539,15 @@
       ],
       "errors": [],
       "warnings": [
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:155: | .binOp .add a (.lit (.int 0)) => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:157: | .binOp .add (.lit (.int 0)) a => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:160: | .binOp .sub a (.lit (.int 0)) => a \u2014 type assumption without runtime guard",
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:163: | .binOp .mul _ (.lit (.int 0)) => .lit (.int 0) \u2014 type assumption without runtime guard",
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:165: | .binOp .mul (.lit (.int 0)) _ => .lit (.int 0) \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:168: | .binOp .mul a (.lit (.int 1)) => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:170: | .binOp .mul (.lit (.int 1)) a => a \u2014 type assumption without runtime guard",
-        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:173: | .binOp .div a (.lit (.int 1)) => a \u2014 type assumption without runtime guard",
-        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:176: | .binOp .div (.lit (.int 0)) _ => .lit (.int 0) \u2014 type assumption without runtime guard"
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:182: | .binOp .add a (.lit (.int 0)) => a \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:184: | .binOp .add (.lit (.int 0)) a => a \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:187: | .binOp .sub a (.lit (.int 0)) => a \u2014 type assumption without runtime guard",
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:190: | .binOp .mul _ (.lit (.int 0)) => .lit (.int 0) \u2014 type assumption without runtime guard",
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:192: | .binOp .mul (.lit (.int 0)) _ => .lit (.int 0) \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:195: | .binOp .mul a (.lit (.int 1)) => a \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:197: | .binOp .mul (.lit (.int 1)) a => a \u2014 type assumption without runtime guard",
+        "Unguarded identity rewrite at SqlEquiv/Optimizer.lean:200: | .binOp .div a (.lit (.int 1)) => a \u2014 type assumption without runtime guard",
+        "Unguarded annihilation rewrite at SqlEquiv/Optimizer.lean:203: | .binOp .div (.lit (.int 0)) _ => .lit (.int 0) \u2014 type assumption without runtime guard"
       ]
     },
     {
@@ -539,11 +555,11 @@
       "file": "SqlEquiv/Optimizer.lean",
       "arms": [
         {
-          "line": 197,
+          "line": 224,
           "text": "| some vl, some vr =>",
           "annotated": true,
           "annotation": {
-            "line": 196,
+            "line": 223,
             "category": "constant-fold",
             "variables": [
               {
@@ -571,11 +587,11 @@
       "file": "SqlEquiv/Optimizer.lean",
       "arms": [
         {
-          "line": 213,
+          "line": 240,
           "text": "| .not, some (.bool b) => .lit (.bool (!b))",
           "annotated": true,
           "annotation": {
-            "line": 212,
+            "line": 239,
             "category": "constant-fold",
             "variables": [
               {
@@ -591,11 +607,11 @@
           }
         },
         {
-          "line": 215,
+          "line": 242,
           "text": "| .neg, some (.int n) => .lit (.int (-n))",
           "annotated": true,
           "annotation": {
-            "line": 214,
+            "line": 241,
             "category": "constant-fold",
             "variables": [
               {
@@ -611,11 +627,11 @@
           }
         },
         {
-          "line": 217,
+          "line": 244,
           "text": "| .isNull, some (.null _) => .lit (.bool true)",
           "annotated": true,
           "annotation": {
-            "line": 216,
+            "line": 243,
             "category": "constant-fold",
             "variables": [
               {
@@ -631,11 +647,11 @@
           }
         },
         {
-          "line": 219,
+          "line": 246,
           "text": "| .isNull, some _ => .lit (.bool false)",
           "annotated": true,
           "annotation": {
-            "line": 218,
+            "line": 245,
             "category": "constant-fold",
             "variables": [
               {
@@ -651,11 +667,11 @@
           }
         },
         {
-          "line": 221,
+          "line": 248,
           "text": "| .isNotNull, some (.null _) => .lit (.bool false)",
           "annotated": true,
           "annotation": {
-            "line": 220,
+            "line": 247,
             "category": "constant-fold",
             "variables": [
               {
@@ -671,11 +687,11 @@
           }
         },
         {
-          "line": 223,
+          "line": 250,
           "text": "| .isNotNull, some _ => .lit (.bool true)",
           "annotated": true,
           "annotation": {
-            "line": 222,
+            "line": 249,
             "category": "constant-fold",
             "variables": [
               {

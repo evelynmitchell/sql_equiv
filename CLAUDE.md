@@ -6,3 +6,15 @@
 - Use `lake build` for building, `lake exe sql_equiv_test` for running tests.
 - Linter warnings about unused variables can be fixed by prefixing with `_` (e.g., `h1` → `_h1`).
 - `uv run python tools/rewrite_audit_validator.py` — check `@rewrite` annotation coverage on optimizer rewrite arms
+
+## Soundness Audit Reminder
+
+After editing any of these files, suggest running `/audit` before committing:
+- `SqlEquiv/Optimizer.lean` — rewrite functions
+- `SqlEquiv/ExprNormalization.lean` — normalization rewrites
+- `SqlEquiv/PredicatePushdown.lean` — predicate pushdown rewrites
+- `SqlEquiv/OptimizerUtils.lean` — utility rewrites
+- `SqlEquiv/Semantics.lean` — `evalBinOp`, `evalUnaryOp`, `evalFunc` dispatch
+- `SqlEquiv/Ast.lean` — `Value`, `BinOp`, `UnaryOp` type definitions
+- `SqlEquiv/Equiv.lean` — equivalence module root
+- `SqlEquiv/Equiv/` — axioms, lemmas, and equivalence definitions

@@ -96,28 +96,55 @@ def eliminateDoubleNegation : Expr -> Expr
   | .unaryOp .not (.unaryOp .not e) => e
   | e => e
 
-/-- Apply identity laws for AND/OR -/
+/-- Conservative check: is expression definitely non-boolean?
+    Returns true for literals and operators known to never produce a boolean.
+    Note: Column refs, function calls, and subqueries that evaluate to
+    non-boolean values at runtime are NOT caught — LSpec property tests
+    cover those cases. -/
+private def isDefinitelyNonBool : Expr → Bool
+  | .lit (.int _) => true
+  | .lit (.string _) => true
+  | .lit (.null _) => true
+  | .binOp .add _ _ => true
+  | .binOp .sub _ _ => true
+  | .binOp .mul _ _ => true
+  | .binOp .div _ _ => true
+  | .binOp .mod _ _ => true
+  | .binOp .concat _ _ => true
+  | .unaryOp .neg _ => true
+  | _ => false
+
+/-- Apply identity laws for AND/OR.
+    Identity laws (a AND TRUE => a, a OR FALSE => a) are only sound when
+    `a` is boolean-valued. We guard against known non-boolean literals
+    (int, string, null). See `isDefinitelyNonBool`.
+    Annihilation laws (a AND FALSE => FALSE, a OR TRUE => TRUE) are always
+    sound because evalBinOp short-circuits these cases. -/
 def applyIdentityLaws : Expr -> Expr
-  -- a AND TRUE => a
-  -- @rewrite identity a:bool
-  | .binOp .and a (.lit (.bool true)) => a
-  -- @rewrite identity a:bool
-  | .binOp .and (.lit (.bool true)) a => a
-  -- a AND FALSE => FALSE
+  -- a AND TRUE => a (only when a could be boolean)
+  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+  | .binOp .and a (.lit (.bool true)) =>
+    if isDefinitelyNonBool a then .binOp .and a (.lit (.bool true)) else a
+  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+  | .binOp .and (.lit (.bool true)) a =>
+    if isDefinitelyNonBool a then .binOp .and (.lit (.bool true)) a else a
+  -- a AND FALSE => FALSE (always sound: evaluator short-circuits)
   -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .and _ (.lit (.bool false)) => .lit (.bool false)
   -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .and (.lit (.bool false)) _ => .lit (.bool false)
-  -- a OR TRUE => TRUE
+  -- a OR TRUE => TRUE (always sound: evaluator short-circuits)
   -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .or _ (.lit (.bool true)) => .lit (.bool true)
   -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .or (.lit (.bool true)) _ => .lit (.bool true)
-  -- a OR FALSE => a
-  -- @rewrite identity a:bool
-  | .binOp .or a (.lit (.bool false)) => a
-  -- @rewrite identity a:bool
-  | .binOp .or (.lit (.bool false)) a => a
+  -- a OR FALSE => a (only when a could be boolean)
+  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+  | .binOp .or a (.lit (.bool false)) =>
+    if isDefinitelyNonBool a then .binOp .or a (.lit (.bool false)) else a
+  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+  | .binOp .or (.lit (.bool false)) a =>
+    if isDefinitelyNonBool a then .binOp .or (.lit (.bool false)) a else a
   | e => e
 
 /-- Apply idempotent laws -/

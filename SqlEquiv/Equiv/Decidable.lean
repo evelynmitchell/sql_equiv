@@ -270,14 +270,24 @@ axiom ground_expr_eval_independent (e : Expr) (hg : e.isGround = true) :
 /-- For ground expressions, equivalence is decidable by evaluation -/
 def decideGroundExprEquiv (e1 e2 : Expr) (_h1 : e1.isGround = true) (_h2 : e2.isGround = true) : Bool :=
   -- Ground expressions evaluate the same on any row, so use empty row
-  evalExpr [] e1 == evalExpr [] e2
+  -- Use DecidableEq (not BEq) so proofs can extract propositional equality
+  if evalExpr [] e1 = evalExpr [] e2 then true else false
 
 /-- Soundness for ground expression equivalence.
-    Axiom: If ground expressions evaluate equally on the empty row,
-    they are equivalent (since ground expressions are row-independent). -/
-axiom decideGroundExprEquiv_sound {e1 e2 : Expr}
+    If ground expressions evaluate equally on the empty row,
+    they are equivalent (since ground expressions are row-independent).
+    Proved using `ground_expr_eval_independent`. -/
+theorem decideGroundExprEquiv_sound {e1 e2 : Expr}
     (hg1 : e1.isGround = true) (hg2 : e2.isGround = true) :
-    decideGroundExprEquiv e1 e2 hg1 hg2 = true → e1 ≃ₑ e2
+    decideGroundExprEquiv e1 e2 hg1 hg2 = true → e1 ≃ₑ e2 := by
+  intro h
+  unfold decideGroundExprEquiv at h
+  split at h
+  next h_eq =>
+    intro row
+    rw [← ground_expr_eval_independent e1 hg1 [] row,
+        ← ground_expr_eval_independent e2 hg2 [] row, h_eq]
+  next => contradiction
 
 /-- Decidable instance for equivalence of ground expressions -/
 instance decideGroundExprEquivInst (e1 e2 : GroundExpr) : Decidable (e1.val ≃ₑ e2.val) :=

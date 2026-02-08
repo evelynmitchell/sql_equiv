@@ -137,7 +137,7 @@ def find_function_range(lines: list[str], func_name: str) -> tuple[int, int] | N
         indent = len(lines[i]) - len(lines[i].lstrip())
         # A new top-level def or section marker at same/lower indent
         if indent <= base_indent and (
-            re.match(r'(partial\s+)?def\s+', stripped)
+            re.match(r'(partial\s+|private\s+)?def\s+', stripped)
             or stripped.startswith('mutual')
             or stripped.startswith('end')
             or stripped.startswith('-- ==')
