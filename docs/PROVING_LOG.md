@@ -679,3 +679,92 @@ example (h : a.isIntValued) : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := 
 - Tests: all 199 pass
 - Axiom count: reduced by 7 (37 remain in Comparison.lean)
 - Coverage validator: 100% runtime coverage on remaining 20 axioms
+
+---
+
+## Batch 4: Ground Expression Equivalence (#53) — 1 axiom proved, 1 kept
+
+**Branch**: `claude/prove-ground-expr-axioms` | **PR**: #94
+**Date**: 2026-02-08
+
+### Axioms in scope
+
+| Axiom | Status | Reason |
+|-------|--------|--------|
+| `ground_expr_eval_independent` | **Kept as axiom** | Both `isGround` and `evalExprWithDb` are `partial def` — Lean blocks structural induction and definitional unfolding |
+| `decideGroundExprEquiv_sound` | **Proved as theorem** | Follows directly from `ground_expr_eval_independent` |
+
+### Why `ground_expr_eval_independent` can't be proved
+
+The axiom states: if `e.isGround = true` (no column references), then
+`evalExpr r1 e = evalExpr r2 e` for any rows `r1, r2`.
+
+The proof would go by structural induction on `e`:
+- **Literals**: row-independent (no column lookup)
+- **Column refs**: excluded by `isGround = false`
+- **BinOp/UnaryOp**: by IH, subexpressions are row-independent
+- **Aggregates/Subqueries**: have their own evaluation scope
+
+But both `Expr.isGround` and `evalExprWithDb` are defined as `partial def` in
+`mutual` blocks (because `Expr` → `SelectStmt` → `FromClause` → `Expr` creates
+mutual recursion). Lean 4's `partial def` uses opaque implementation — the
+kernel can't unfold the definition, so `cases`/`match` on the structure doesn't
+generate proof obligations, and `simp` can't reduce applications.
+
+This is a **genuine Lean limitation**, not a mathematical gap. The statement is
+intuitively true for any well-formed expression tree.
+
+### Proof of `decideGroundExprEquiv_sound`
+
+**Strategy**: Use `ground_expr_eval_independent` as a lemma.
+
+The original definition used `BEq` (`==`) to compare evaluation results:
+```lean
+def decideGroundExprEquiv ... : Bool := evalExpr [] e1 == evalExpr [] e2
+```
+
+This required `LawfulBEq (Option Value)` to extract propositional equality from
+`==`, which needed manual instances for `SqlType`, `Value`, and `Option Value` —
+a rabbit hole of case analysis that kept failing.
+
+**Solution**: Changed to use `DecidableEq` instead:
+```lean
+def decideGroundExprEquiv ... : Bool :=
+  if evalExpr [] e1 = evalExpr [] e2 then true else false
+```
+
+Since `Value` derives `DecidableEq`, the `if` uses the `Decidable` instance
+directly. The proof then uses `split` to case-analyze the if-then-else:
+
+```lean
+theorem decideGroundExprEquiv_sound ... := by
+  intro h
+  unfold decideGroundExprEquiv at h
+  split at h
+  next h_eq =>
+    intro row
+    rw [← ground_expr_eval_independent e1 hg1 [] row,
+        ← ground_expr_eval_independent e2 hg2 [] row, h_eq]
+  next => contradiction
+```
+
+### Key lesson: `BEq` vs `DecidableEq` for proofs
+
+`BEq` (`==`) is a computational boolean check. Extracting propositional equality
+from it requires `LawfulBEq`, which asserts `(a == b) = true ↔ a = b`. For
+complex types like `Value` (with `Int`, `String`, `Option SqlType` fields),
+building `LawfulBEq` manually is error-prone.
+
+`DecidableEq` (`=` in `if`) directly produces propositional equality/inequality.
+When a type derives `DecidableEq`, `if a = b then ... else ...` just works, and
+proofs can use `split` to case-analyze both branches cleanly.
+
+**Rule of thumb**: When defining functions whose results will be used in proofs,
+prefer `if x = y then ...` over `x == y` — it avoids the `LawfulBEq` dependency
+entirely.
+
+### Verification
+
+- Build: clean, no warnings
+- Tests: all 199 pass
+- Axiom count: reduced by 1 (`decideGroundExprEquiv_sound` → theorem)
