@@ -201,10 +201,11 @@ def main() -> None:
     # Print header
     max_name_len = max(len(s) for s in steps + ["SUM"])
     n_runs = len(all_durations)
+    spark_col_width = max(n_runs, len("Sparkline"))
 
     print()
-    print(f"{'Step':<{max_name_len}}  {'Sparkline':<{n_runs}}  {'Last':>6}  {'Avg':>6}  {'Min':>6}  {'Max':>6}  Notes")
-    print("─" * (max_name_len + n_runs + 40))
+    print(f"{'Step':<{max_name_len}}  {'Sparkline':<{spark_col_width}}  {'Last':>6}  {'Avg':>6}  {'Min':>6}  {'Max':>6}  Notes")
+    print("─" * (max_name_len + spark_col_width + 40))
 
     for step in steps:
         values = [d.get(step) for d in all_durations]
@@ -239,7 +240,7 @@ def main() -> None:
                 notes = f"⚠ spike at run #{latest_anomaly + 1}"
 
         last_str = fmt_duration(last) if last is not None else "—"
-        print(f"{step:<{max_name_len}}  {spark:<{n_runs}}  "
+        print(f"{step:<{max_name_len}}  {spark:<{spark_col_width}}  "
               f"{last_str:>6}  {fmt_duration(avg):>6}  "
               f"{fmt_duration(lo):>6}  {fmt_duration(hi):>6}  {notes}")
 
@@ -252,8 +253,8 @@ def main() -> None:
         if anomalies and max(anomalies) == len(totals) - 1:
             notes = "⚠ latest run is anomalous"
 
-        print("─" * (max_name_len + n_runs + 40))
-        print(f"{'SUM':<{max_name_len}}  {spark:<{n_runs}}  "
+        print("─" * (max_name_len + spark_col_width + 40))
+        print(f"{'SUM':<{max_name_len}}  {spark:<{spark_col_width}}  "
               f"{fmt_duration(totals[-1]):>6}  {fmt_duration(avg):>6}  "
               f"{fmt_duration(min(totals)):>6}  {fmt_duration(max(totals)):>6}  {notes}")
 

@@ -37,9 +37,10 @@ through type-aware reasoning.
 `applyIdentityLaws` so identity laws (`a AND TRUE => a`, `a OR FALSE => a`)
 are skipped when `a` is a known non-boolean literal. Annihilation laws
 (`a AND FALSE => FALSE`, `a OR TRUE => TRUE`) remain unguarded because
-the evaluator short-circuits these correctly for all types. Added 4
-targeted deterministic regression tests in `OptimizerEquiv.lean`:
-`int AND TRUE`, `TRUE AND int`, `int OR FALSE`, `FALSE OR int`. These
+the evaluator short-circuits these correctly for all types. Added
+deterministic regression tests in `OptimizerEquiv.lean`, including
+`int AND TRUE`, `TRUE AND int`, `int OR FALSE`, `FALSE OR int`, and
+additional cases with NULL literals and arithmetic sub-expressions. These
 use `test` (not `check`) so they always run the exact counterexample —
 no sampling luck required.
 
