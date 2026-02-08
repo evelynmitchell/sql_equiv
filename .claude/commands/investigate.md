@@ -45,7 +45,14 @@ can be detected later. This is the "knowing normal" part.
    time lake build SqlEquiv 2>&1 | tail -5
    ```
 
-5. **Report the baseline:**
+5. **CI duration sparklines:**
+   ```bash
+   python tools/ci_sparkline.py --runs 10
+   ```
+   Look for anomalous step durations (marked with ⚠). Compare sparkline
+   shapes — a sudden spike or drop in any step is worth investigating.
+
+6. **Report the baseline:**
    Summarize all signals in a compact table. Flag anything that looks
    different from expected. Compare against the ratchet file:
    ```bash
