@@ -80,9 +80,11 @@ def getLitValue : Expr -> Option Value
 /-- Apply De Morgan's laws -/
 def applyDeMorgan : Expr -> Expr
   -- NOT (a AND b) => NOT a OR NOT b
+  -- @rewrite structural a:any b:any
   | .unaryOp .not (.binOp .and a b) =>
     .binOp .or (.unaryOp .not a) (.unaryOp .not b)
   -- NOT (a OR b) => NOT a AND NOT b
+  -- @rewrite structural a:any b:any
   | .unaryOp .not (.binOp .or a b) =>
     .binOp .and (.unaryOp .not a) (.unaryOp .not b)
   | e => e
@@ -90,43 +92,58 @@ def applyDeMorgan : Expr -> Expr
 /-- Apply double negation elimination -/
 def eliminateDoubleNegation : Expr -> Expr
   -- NOT NOT e => e
+  -- @rewrite identity e:bool
   | .unaryOp .not (.unaryOp .not e) => e
   | e => e
 
 /-- Apply identity laws for AND/OR -/
 def applyIdentityLaws : Expr -> Expr
   -- a AND TRUE => a
+  -- @rewrite identity a:bool
   | .binOp .and a (.lit (.bool true)) => a
+  -- @rewrite identity a:bool
   | .binOp .and (.lit (.bool true)) a => a
   -- a AND FALSE => FALSE
+  -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .and _ (.lit (.bool false)) => .lit (.bool false)
+  -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .and (.lit (.bool false)) _ => .lit (.bool false)
   -- a OR TRUE => TRUE
+  -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .or _ (.lit (.bool true)) => .lit (.bool true)
+  -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .or (.lit (.bool true)) _ => .lit (.bool true)
   -- a OR FALSE => a
+  -- @rewrite identity a:bool
   | .binOp .or a (.lit (.bool false)) => a
+  -- @rewrite identity a:bool
   | .binOp .or (.lit (.bool false)) a => a
   | e => e
 
 /-- Apply idempotent laws -/
 def applyIdempotentLaws : Expr -> Expr
   -- a AND a => a (structural equality)
+  -- @rewrite idempotent a:bool guard:structural_eq
   | .binOp .and a b => if a == b then a else .binOp .and a b
   -- a OR a => a
+  -- @rewrite idempotent a:bool guard:structural_eq
   | .binOp .or a b => if a == b then a else .binOp .or a b
   | e => e
 
 /-- Apply complement laws -/
 def applyComplementLaws : Expr -> Expr
   -- a AND NOT a => FALSE
+  -- @rewrite annihilation a:bool guard:structural_eq
   | .binOp .and a (.unaryOp .not b) =>
     if a == b then .lit (.bool false) else .binOp .and a (.unaryOp .not b)
+  -- @rewrite annihilation a:bool guard:structural_eq
   | .binOp .and (.unaryOp .not a) b =>
     if a == b then .lit (.bool false) else .binOp .and (.unaryOp .not a) b
   -- a OR NOT a => TRUE
+  -- @rewrite annihilation a:bool guard:structural_eq
   | .binOp .or a (.unaryOp .not b) =>
     if a == b then .lit (.bool true) else .binOp .or a (.unaryOp .not b)
+  -- @rewrite annihilation a:bool guard:structural_eq
   | .binOp .or (.unaryOp .not a) b =>
     if a == b then .lit (.bool true) else .binOp .or (.unaryOp .not a) b
   | e => e
@@ -134,19 +151,28 @@ def applyComplementLaws : Expr -> Expr
 /-- Simplify arithmetic identities -/
 def simplifyArithmetic : Expr -> Expr
   -- a + 0 => a
+  -- @rewrite identity a:int
   | .binOp .add a (.lit (.int 0)) => a
+  -- @rewrite identity a:int
   | .binOp .add (.lit (.int 0)) a => a
   -- a - 0 => a
+  -- @rewrite identity a:int
   | .binOp .sub a (.lit (.int 0)) => a
   -- a * 0 => 0
+  -- @rewrite annihilation a:int
   | .binOp .mul _ (.lit (.int 0)) => .lit (.int 0)
+  -- @rewrite annihilation a:int
   | .binOp .mul (.lit (.int 0)) _ => .lit (.int 0)
   -- a * 1 => a
+  -- @rewrite identity a:int
   | .binOp .mul a (.lit (.int 1)) => a
+  -- @rewrite identity a:int
   | .binOp .mul (.lit (.int 1)) a => a
   -- a / 1 => a
+  -- @rewrite identity a:int
   | .binOp .div a (.lit (.int 1)) => a
   -- 0 / a => 0 (assuming a != 0)
+  -- @rewrite annihilation a:int
   | .binOp .div (.lit (.int 0)) _ => .lit (.int 0)
   | e => e
 
@@ -167,6 +193,7 @@ def simplifyExprOnce : Expr -> Expr
 /-- Constant fold a binary operation if both operands are literals -/
 def constantFoldBinOp (op : BinOp) (l r : Expr) : Expr :=
   match getLitValue l, getLitValue r with
+  -- @rewrite constant-fold a:any b:any guard:literal_match
   | some vl, some vr =>
     match foldArithmetic op vl vr with
     | some v => .lit v
@@ -182,11 +209,17 @@ def constantFoldBinOp (op : BinOp) (l r : Expr) : Expr :=
 /-- Constant fold a unary operation if operand is a literal -/
 def constantFoldUnaryOp (op : UnaryOp) (e : Expr) : Expr :=
   match op, getLitValue e with
+  -- @rewrite constant-fold a:any guard:literal_match
   | .not, some (.bool b) => .lit (.bool (!b))
+  -- @rewrite constant-fold a:any guard:literal_match
   | .neg, some (.int n) => .lit (.int (-n))
+  -- @rewrite constant-fold a:any guard:literal_match
   | .isNull, some (.null _) => .lit (.bool true)
+  -- @rewrite constant-fold a:any guard:literal_match
   | .isNull, some _ => .lit (.bool false)
+  -- @rewrite constant-fold a:any guard:literal_match
   | .isNotNull, some (.null _) => .lit (.bool false)
+  -- @rewrite constant-fold a:any guard:literal_match
   | .isNotNull, some _ => .lit (.bool true)
   | _, _ => .unaryOp op e
 
