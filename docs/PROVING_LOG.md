@@ -580,3 +580,102 @@ null propagation, distinguishing it from `none` (genuine evaluation errors).
 - Build: clean, no warnings
 - Tests: all 195 pass
 - Sorry count: no new `sorry` introduced (only pre-existing one at `checkEquivFull`)
+
+---
+
+## Batch 3: Arithmetic Identities (#57) — 7 axioms
+
+**Branch**: `claude/prove-arithmetic-identities` | **PR**: #93
+**Date**: 2026-02-08
+
+### Axioms proved
+
+| Axiom | Statement | Int lemma used |
+|-------|-----------|---------------|
+| `expr_add_zero` | `e + 0 ≃ₑ e` | `Int.add_zero` |
+| `expr_zero_add` | `0 + e ≃ₑ e` | `Int.zero_add` |
+| `expr_mul_one` | `e * 1 ≃ₑ e` | `Int.mul_one` |
+| `expr_one_mul` | `1 * e ≃ₑ e` | `Int.one_mul` |
+| `expr_mul_zero` | `e * 0 ≃ₑ 0` | `Int.mul_zero` |
+| `expr_zero_mul` | `0 * e ≃ₑ 0` | `Int.zero_mul` |
+| `expr_sub_zero` | `e - 0 ≃ₑ e` | `Int.sub_zero` |
+
+### Soundness analysis
+
+These axioms were originally stated without preconditions (`∀ e : Expr`), but are
+**unsound for non-integer expressions**:
+
+- `"hello" + 0` → `none` (type error) ≠ `some (.string "hello")`. **FAIL.**
+- `true * 1` → `none` ≠ `some (.bool true)`. **FAIL.**
+- `NULL + 0` → `some (.null none)` ≠ `some (.null (some SqlType.int))`. **FAIL** (typed null mismatch).
+- `e * 0 ≃ₑ 0`: even `none * 0 = none ≠ some (.int 0)`. **FAIL** for error-producing expressions.
+
+### Solution: `Expr.isIntValued` precondition
+
+Defined a new predicate:
+```lean
+def Expr.isIntValued (e : Expr) : Prop :=
+  ∀ row : Row, ∃ n : Int, evalExpr row e = some (.int n)
+```
+
+This requires the expression to always evaluate to a concrete integer. Stronger than
+`Expr.evaluable` (which allows any value), but necessary because:
+1. Arithmetic operations only work on int×int (type mismatches → `none`)
+2. Null propagation produces `some (.null none)` which differs from the original null type
+3. `mul_zero`/`zero_mul` need the RHS to be `some (.int 0)`, which fails if `e` → `none`
+
+### Proof pattern
+
+All 7 proofs follow the same structure:
+```lean
+theorem expr_add_zero (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (n + 0)) = some (Value.int n)
+  rw [Int.add_zero]
+```
+
+Key steps:
+1. Unfold `ExprEquiv` and `evalExpr`
+2. Use infrastructure axioms (`evalExprWithDb_binOp`, `evalExprWithDb_lit`) to decompose
+3. Extract the integer witness `n` from the `isIntValued` hypothesis
+4. Rewrite to substitute the concrete integer value
+5. Use `show` to make the definitional reduction explicit (needed because `.int` is
+   ambiguous between `Value.int` and `SqlType.int` — must qualify as `Value.int`)
+6. Apply the appropriate `Int.*` lemma from Mathlib/core
+
+### Obstacles encountered
+
+1. **Definition ordering**: `Expr.isIntValued` was initially placed after the theorems
+   that use it (near `Expr.evaluable` at line 949). Lean requires definitions before use
+   in the same file. **Fix**: moved definition to just before the arithmetic section.
+
+2. **Ambiguous `.int` in `show`**: `show some (.int ...) = some (.int ...)` fails because
+   `.int` is ambiguous between `Value.int` and `SqlType.int`. **Fix**: fully qualify as
+   `Value.int`.
+
+3. **Double `evalExprWithDb_lit` rewrite**: For `mul_zero`/`zero_mul`, the RHS is
+   `Expr.lit (.int 0)`. After `rw [evalExprWithDb_binOp]`, `rw [evalExprWithDb_lit]`
+   rewrites ALL occurrences (both the binOp argument and the RHS). A second
+   `rw [evalExprWithDb_lit]` fails because no occurrences remain.
+   **Fix**: use only one `rw [evalExprWithDb_lit]`.
+
+### Tactic updates
+
+The `sql_rw_arith` tactic and `sql_equiv` step 9 were updated to pass the `isIntValued`
+hypothesis via `(by assumption)`. Examples in `Tactics.lean` now require the hypothesis:
+```lean
+example (h : a.isIntValued) : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := by sql_equiv
+```
+
+### Verification
+
+- Build: clean, no warnings
+- Tests: all 199 pass
+- Axiom count: reduced by 7 (37 remain in Comparison.lean)
+- Coverage validator: 100% runtime coverage on remaining 20 axioms
