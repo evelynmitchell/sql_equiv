@@ -2,15 +2,19 @@
 """
 Rewrite Audit Validator
 
-Static analysis tool that verifies every rewrite arm in the SQL optimizer
-has a corresponding @rewrite annotation documenting its type assumptions
-and guard mechanism.
+Static analysis tool that verifies rewrite arms in standalone Expr→Expr
+rewrite functions (listed in REWRITE_FUNCTIONS) have corresponding @rewrite
+annotations documenting their type assumptions and guard mechanisms.
+
+Note: inline rewrites in optimizeExpr (double negation, CASE constant folding,
+empty IN-list) are not scanned — they are context-dependent optimizations
+guarded by literal pattern matching, not standalone rewrite functions.
 
 Annotation format (Lean comment above a rewrite arm):
   -- @rewrite <category> <var>:<type> [<var>:<type>...] [guard:<name>]
 
 Categories: identity, annihilation, structural, constant-fold, idempotent
-Types: int, bool, any
+Types: int, bool, any, null
 Guards: isDefinitelyNonBool, short_circuit, structural_eq, literal_match,
         exprCompare, or any Lean function name
 
