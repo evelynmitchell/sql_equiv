@@ -100,6 +100,11 @@ private def nullMulOne := Expr.binOp .mul (.lit (.null none)) (.lit (.int 1))
 private def oneMulBool := Expr.binOp .mul (.lit (.int 1)) (.lit (.bool false))
 private def stringDivOne := Expr.binOp .div (.lit (.string "x")) (.lit (.int 1))
 
+-- Non-literal non-int expressions (boolean/string sub-expressions)
+private def boolExprAddZero := Expr.binOp .add (.binOp .and (.lit (.bool true)) (.lit (.bool false))) (.lit (.int 0))
+private def cmpExprMulOne := Expr.binOp .mul (.binOp .eq (.lit (.int 1)) (.lit (.int 1))) (.lit (.int 1))
+private def concatExprAddZero := Expr.binOp .add (.binOp .concat (.lit (.string "a")) (.lit (.string "b"))) (.lit (.int 0))
+
 def arithmeticSoundnessTests : TestSeq :=
   -- Null propagation
   test "NULL*0: annihilation must not fire" (
@@ -123,7 +128,14 @@ def arithmeticSoundnessTests : TestSeq :=
   test "1*bool: identity must not fire" (
     evalExpr [] (simplifyArithmetic oneMulBool) == evalExpr [] oneMulBool) $
   test "string/1: identity must not fire" (
-    evalExpr [] (simplifyArithmetic stringDivOne) == evalExpr [] stringDivOne)
+    evalExpr [] (simplifyArithmetic stringDivOne) == evalExpr [] stringDivOne) $
+  -- Non-literal non-int expressions
+  test "(TRUE AND FALSE)+0: identity must not fire" (
+    evalExpr [] (simplifyArithmetic boolExprAddZero) == evalExpr [] boolExprAddZero) $
+  test "(1=1)*1: identity must not fire" (
+    evalExpr [] (simplifyArithmetic cmpExprMulOne) == evalExpr [] cmpExprMulOne) $
+  test "(\"a\"||\"b\")+0: identity must not fire" (
+    evalExpr [] (simplifyArithmetic concatExprAddZero) == evalExpr [] concatExprAddZero)
 
 -- ============================================================================
 -- Individual optimizer passes

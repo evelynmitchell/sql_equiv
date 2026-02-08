@@ -147,6 +147,15 @@ def testMulZero : TestResult :=
   else
     .fail "Mul zero: 5 * 0 = 0" s!"Expected lit 0, got {repr optimized}"
 
+def testMulZeroCol : TestResult :=
+  -- col("x") * 0 must NOT rewrite to 0 (preserves null propagation)
+  let expr := Expr.binOp .mul (col "x") (intLit 0)
+  let optimized := optimizeExpr expr
+  if optimized == expr then
+    .pass "Mul zero col: x * 0 stays unrewritten"
+  else
+    .fail "Mul zero col: x * 0 stays unrewritten" s!"Expected unchanged, got {repr optimized}"
+
 def testMulOne : TestResult :=
   let expr := Expr.binOp .mul (col "x") (intLit 1)
   let optimized := optimizeExpr expr
@@ -531,6 +540,7 @@ def allTests : List TestResult := [
   -- Arithmetic identities
   testAddZero,
   testMulZero,
+  testMulZeroCol,
   testMulOne,
   testSubZero,
   testDivOne,

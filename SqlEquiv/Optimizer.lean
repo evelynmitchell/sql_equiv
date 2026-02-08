@@ -176,12 +176,36 @@ def applyComplementLaws : Expr -> Expr
   | e => e
 
 /-- Conservative check: is expression definitely non-integer?
-    Returns true for literals statically known to never be integers.
-    Column refs, functions return false (safe: identity fires conservatively). -/
+    Returns true for literals and expression forms statically known to never
+    produce integers. Column refs, functions return false (safe: identity
+    fires conservatively). -/
 private def isDefinitelyNonInt : Expr → Bool
+  -- non-integer literals
   | .lit (.string _) => true
   | .lit (.bool _) => true
   | .lit (.null _) => true
+  -- logical operations (always boolean)
+  | .binOp .and _ _ => true
+  | .binOp .or _ _ => true
+  -- comparison operations (always boolean)
+  | .binOp .eq _ _ => true
+  | .binOp .ne _ _ => true
+  | .binOp .lt _ _ => true
+  | .binOp .le _ _ => true
+  | .binOp .gt _ _ => true
+  | .binOp .ge _ _ => true
+  -- string operations (non-integer result)
+  | .binOp .concat _ _ => true
+  | .binOp .like _ _ => true
+  -- unary boolean-returning operations
+  | .unaryOp .not _ => true
+  | .unaryOp .isNull _ => true
+  | .unaryOp .isNotNull _ => true
+  -- other boolean-returning expression forms
+  | .between _ _ _ => true
+  | .inList _ _ _ => true
+  | .inSubquery _ _ _ => true
+  | .exists _ _ => true
   | _ => false
 
 /-- Simplify arithmetic identities -/
