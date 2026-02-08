@@ -177,8 +177,11 @@ def applyComplementLaws : Expr -> Expr
 
 /-- Conservative check: is expression definitely non-integer?
     Returns true for literals and expression forms statically known to never
-    produce integers. Column refs, functions return false (safe: identity
-    fires conservatively). -/
+    produce integers. Column refs, function calls, and other unknown-typed
+    expressions return `false`, so arithmetic identity rewrites (e.g. `a + 0`)
+    may still fire for them. This is sound under the assumption that
+    expressions reaching arithmetic operators are well-typed (integer);
+    behavior on ill-typed runtime values is not preserved by the optimizer. -/
 private def isDefinitelyNonInt : Expr → Bool
   -- non-integer literals
   | .lit (.string _) => true
