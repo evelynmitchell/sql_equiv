@@ -295,7 +295,7 @@ def validate_audit(audit: FunctionAudit) -> None:
 
     # Check 3: Guard declared but not used in arm body (ERROR)
     # Whitelisted guards are enforced by pattern matching, not by name in code
-    PATTERN_GUARDS = {"short_circuit", "literal_match", "structural_eq"}
+    PATTERN_GUARDS = {"short_circuit", "literal_match", "literal_int_match", "structural_eq"}
     file_path = PROJECT_ROOT / audit.file
     if file_path.exists():
         source_lines = file_path.read_text().splitlines()

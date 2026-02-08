@@ -137,12 +137,15 @@ def testAddZero : TestResult :=
     .fail "Add zero: x + 0 = x" s!"Expected col x, got {repr optimized}"
 
 def testMulZero : TestResult :=
-  let expr := Expr.binOp .mul (col "x") (intLit 0)
+  -- col("x") * 0 no longer rewrites to 0: col is not a known int literal,
+  -- so the annihilation guard preserves null propagation.
+  -- Use a known int literal to test that annihilation still works.
+  let expr := Expr.binOp .mul (intLit 5) (intLit 0)
   let optimized := optimizeExpr expr
   if optimized == intLit 0 then
-    .pass "Mul zero: x * 0 = 0"
+    .pass "Mul zero: 5 * 0 = 0"
   else
-    .fail "Mul zero: x * 0 = 0" s!"Expected lit 0, got {repr optimized}"
+    .fail "Mul zero: 5 * 0 = 0" s!"Expected lit 0, got {repr optimized}"
 
 def testMulOne : TestResult :=
   let expr := Expr.binOp .mul (col "x") (intLit 1)

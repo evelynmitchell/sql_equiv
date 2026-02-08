@@ -175,32 +175,48 @@ def applyComplementLaws : Expr -> Expr
     if a == b then .lit (.bool true) else .binOp .or (.unaryOp .not a) b
   | e => e
 
+/-- Conservative check: is expression definitely non-integer?
+    Returns true for literals statically known to never be integers.
+    Column refs, functions return false (safe: identity fires conservatively). -/
+private def isDefinitelyNonInt : Expr → Bool
+  | .lit (.string _) => true
+  | .lit (.bool _) => true
+  | .lit (.null _) => true
+  | _ => false
+
 /-- Simplify arithmetic identities -/
 def simplifyArithmetic : Expr -> Expr
-  -- a + 0 => a
-  -- @rewrite identity a:int
-  | .binOp .add a (.lit (.int 0)) => a
-  -- @rewrite identity a:int
-  | .binOp .add (.lit (.int 0)) a => a
-  -- a - 0 => a
-  -- @rewrite identity a:int
-  | .binOp .sub a (.lit (.int 0)) => a
-  -- a * 0 => 0
-  -- @rewrite annihilation a:int
-  | .binOp .mul _ (.lit (.int 0)) => .lit (.int 0)
-  -- @rewrite annihilation a:int
-  | .binOp .mul (.lit (.int 0)) _ => .lit (.int 0)
-  -- a * 1 => a
-  -- @rewrite identity a:int
-  | .binOp .mul a (.lit (.int 1)) => a
-  -- @rewrite identity a:int
-  | .binOp .mul (.lit (.int 1)) a => a
-  -- a / 1 => a
-  -- @rewrite identity a:int
-  | .binOp .div a (.lit (.int 1)) => a
-  -- 0 / a => 0 (assuming a != 0)
-  -- @rewrite annihilation a:int
-  | .binOp .div (.lit (.int 0)) _ => .lit (.int 0)
+  -- a + 0 => a (only when a could plausibly be int)
+  -- @rewrite identity a:int guard:isDefinitelyNonInt
+  | .binOp .add a (.lit (.int 0)) =>
+    if isDefinitelyNonInt a then .binOp .add a (.lit (.int 0)) else a
+  -- @rewrite identity a:int guard:isDefinitelyNonInt
+  | .binOp .add (.lit (.int 0)) a =>
+    if isDefinitelyNonInt a then .binOp .add (.lit (.int 0)) a else a
+  -- a - 0 => a (only when a could plausibly be int)
+  -- @rewrite identity a:int guard:isDefinitelyNonInt
+  | .binOp .sub a (.lit (.int 0)) =>
+    if isDefinitelyNonInt a then .binOp .sub a (.lit (.int 0)) else a
+  -- a * 0 => 0 (only when a is a known int literal; preserves null propagation)
+  -- @rewrite annihilation a:int guard:literal_int_match
+  | .binOp .mul a (.lit (.int 0)) =>
+    match a with | .lit (.int _) => .lit (.int 0) | _ => .binOp .mul a (.lit (.int 0))
+  -- @rewrite annihilation a:int guard:literal_int_match
+  | .binOp .mul (.lit (.int 0)) a =>
+    match a with | .lit (.int _) => .lit (.int 0) | _ => .binOp .mul (.lit (.int 0)) a
+  -- a * 1 => a (only when a could plausibly be int)
+  -- @rewrite identity a:int guard:isDefinitelyNonInt
+  | .binOp .mul a (.lit (.int 1)) =>
+    if isDefinitelyNonInt a then .binOp .mul a (.lit (.int 1)) else a
+  -- @rewrite identity a:int guard:isDefinitelyNonInt
+  | .binOp .mul (.lit (.int 1)) a =>
+    if isDefinitelyNonInt a then .binOp .mul (.lit (.int 1)) a else a
+  -- a / 1 => a (only when a could plausibly be int)
+  -- @rewrite identity a:int guard:isDefinitelyNonInt
+  | .binOp .div a (.lit (.int 1)) =>
+    if isDefinitelyNonInt a then .binOp .div a (.lit (.int 1)) else a
+  -- 0 / a removed: unsound (null propagation + division by zero)
+  -- constantFoldBinOp handles 0 / <literal> when both sides are known
   | e => e
 
 -- ============================================================================
