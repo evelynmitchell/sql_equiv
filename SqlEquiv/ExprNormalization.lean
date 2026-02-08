@@ -70,6 +70,7 @@ def exprLt (e1 e2 : Expr) : Bool :=
     - Idempotent: normalizeExprCanonical (normalizeExprCanonical e) = normalizeExprCanonical e -/
 partial def normalizeExprCanonical : Expr → Expr
   -- AND: flatten, normalize each conjunct, sort, rebuild
+  -- @rewrite structural l:any r:any guard:exprCompare
   | .binOp .and l r =>
     let conjuncts := (flattenAnd l ++ flattenAnd r).map normalizeExprCanonical
     let sorted := conjuncts.toArray.qsort exprLt |>.toList
@@ -78,6 +79,7 @@ partial def normalizeExprCanonical : Expr → Expr
     unflattenAnd sorted |>.getD (.lit (.bool true))
 
   -- OR: flatten, normalize each disjunct, sort, rebuild
+  -- @rewrite structural l:any r:any guard:exprCompare
   | .binOp .or l r =>
     let disjuncts := (flattenOr l ++ flattenOr r).map normalizeExprCanonical
     let sorted := disjuncts.toArray.qsort exprLt |>.toList
@@ -86,21 +88,25 @@ partial def normalizeExprCanonical : Expr → Expr
     unflattenOr sorted |>.getD (.lit (.bool false))
 
   -- Commutative binary ops: normalize children, then order them
+  -- @rewrite structural l:any r:any guard:exprCompare
   | .binOp .add l r =>
     let nl := normalizeExprCanonical l
     let nr := normalizeExprCanonical r
     if exprCompare nl nr == .gt then .binOp .add nr nl else .binOp .add nl nr
 
+  -- @rewrite structural l:any r:any guard:exprCompare
   | .binOp .mul l r =>
     let nl := normalizeExprCanonical l
     let nr := normalizeExprCanonical r
     if exprCompare nl nr == .gt then .binOp .mul nr nl else .binOp .mul nl nr
 
+  -- @rewrite structural l:any r:any guard:exprCompare
   | .binOp .eq l r =>
     let nl := normalizeExprCanonical l
     let nr := normalizeExprCanonical r
     if exprCompare nl nr == .gt then .binOp .eq nr nl else .binOp .eq nl nr
 
+  -- @rewrite structural l:any r:any guard:exprCompare
   | .binOp .ne l r =>
     let nl := normalizeExprCanonical l
     let nr := normalizeExprCanonical r

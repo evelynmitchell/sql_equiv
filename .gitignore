@@ -12,3 +12,4 @@ build/
 # OS files
 .DS_Store
 Thumbs.db
+tools/rewrite_audit_report.json
