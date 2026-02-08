@@ -29,7 +29,10 @@
             restore-keys: |                                                                                                                                  
               ${{ runner.os }}-lake-                                                                                                                         
                                                                                                                                                              
-        - name: Build library                                                                                                                                
+        - name: Check axiom coverage ratchet
+          run: python3 tools/axiom_coverage_validator.py --runtime
+
+        - name: Build library
           run: lake build SqlEquiv                                                                                                                           
                                                                                                                                                              
         - name: Build tests                                                                                                                                  

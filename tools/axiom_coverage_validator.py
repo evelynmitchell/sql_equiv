@@ -51,29 +51,12 @@ DEFAULT_TEST_TIMEOUT = 120    # 2 minutes
 
 CHECKPOINT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_checkpoint.json"
 REPORT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_report.json"
+RATCHET_FILE = PROJECT_ROOT / "tools" / "axiom_count_minimum.txt"
 
-AXIOM_FILES = [
-    SQLEQUIV_DIR / "Equiv" / "ExprAxioms.lean",
-    SQLEQUIV_DIR / "Equiv" / "StatementAxioms.lean",
-    SQLEQUIV_DIR / "Equiv" / "Comparison.lean",
-    SQLEQUIV_DIR / "Equiv" / "Decidable.lean",
-    SQLEQUIV_DIR / "Semantics.lean",
-    SQLEQUIV_DIR / "OptimizerUtils.lean",
-    SQLEQUIV_DIR / "ExprNormalization.lean",
-    SQLEQUIV_DIR / "Optimizer.lean",
-    SQLEQUIV_DIR / "JoinReordering.lean",
-    SQLEQUIV_DIR / "PredicatePushdown.lean",
-]
+AXIOM_FILES = sorted(SQLEQUIV_DIR.rglob("*.lean"))
 
 TEST_DIR = PROJECT_ROOT / "Test"
-TEST_FILES = [
-    TEST_DIR / "AxiomCoverageTest.lean",
-    TEST_DIR / "EquivTest.lean",
-    TEST_DIR / "OptimizerTest.lean",
-    TEST_DIR / "PredicatePushdownTest.lean",
-    TEST_DIR / "JoinReorderingTest.lean",
-    TEST_DIR / "ExprNormalizationTest.lean",
-]
+TEST_FILES = sorted(TEST_DIR.rglob("*.lean")) if TEST_DIR.exists() else []
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +666,8 @@ def parse_args() -> argparse.Namespace:
                    help="CI mode: skip interactive prompts")
     p.add_argument("--runtime", action="store_true",
                    help="Static runtime coverage: match test names to axiom names (no build)")
+    p.add_argument("--update-ratchet", action="store_true",
+                   help="Update the axiom count ratchet file to the current count")
     return p.parse_args()
 
 
@@ -729,6 +714,23 @@ def main() -> None:
         report_path = Path(args.report)
         save_runtime_report(analysis, report_path)
         print(f"Full report: {report_path}")
+
+        # Ratchet: update or check
+        if args.update_ratchet:
+            RATCHET_FILE.write_text(f"{analysis['total_axioms']}\n")
+            print(f"Updated ratchet to {analysis['total_axioms']} in {RATCHET_FILE}")
+        elif RATCHET_FILE.exists():
+            minimum = int(RATCHET_FILE.read_text().strip())
+            actual = analysis["total_axioms"]
+            if actual < minimum:
+                print(f"\nERROR: Axiom count regression! "
+                      f"Found {actual} axioms, expected >= {minimum}.",
+                      file=sys.stderr)
+                print(f"  If axioms were intentionally removed, run with "
+                      f"--runtime --update-ratchet", file=sys.stderr)
+                sys.exit(1)
+            else:
+                print(f"Ratchet check passed: {actual} >= {minimum}")
         return
 
     # Pre-flight
