@@ -53,7 +53,10 @@ CHECKPOINT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_checkpoint.json"
 REPORT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_report.json"
 
 AXIOM_FILES = [
-    SQLEQUIV_DIR / "Equiv.lean",
+    SQLEQUIV_DIR / "Equiv" / "ExprAxioms.lean",
+    SQLEQUIV_DIR / "Equiv" / "StatementAxioms.lean",
+    SQLEQUIV_DIR / "Equiv" / "Comparison.lean",
+    SQLEQUIV_DIR / "Equiv" / "Decidable.lean",
     SQLEQUIV_DIR / "Semantics.lean",
     SQLEQUIV_DIR / "OptimizerUtils.lean",
     SQLEQUIV_DIR / "ExprNormalization.lean",
