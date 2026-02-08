@@ -91,23 +91,30 @@ def identityLawRegressionTests : TestSeq :=
 private def notNotInt := Expr.unaryOp .not (.unaryOp .not (.lit (.int 42)))
 private def notNotString := Expr.unaryOp .not (.unaryOp .not (.lit (.string "hi")))
 private def notNotNull := Expr.unaryOp .not (.unaryOp .not (.lit (.null none)))
+-- Double negation on non-literal non-boolean (CASE returning int)
+private def notNotCase := Expr.unaryOp .not (.unaryOp .not
+  (.case [(.lit (.bool true), .lit (.int 1))] (some (.lit (.int 2)))))
 -- Idempotent on non-boolean
 private def intAndInt := Expr.binOp .and (.lit (.int 5)) (.lit (.int 5))
 private def intOrInt := Expr.binOp .or (.lit (.int 5)) (.lit (.int 5))
 private def nullAndNull := Expr.binOp .and (.lit (.null none)) (.lit (.null none))
+-- Idempotent on col ref (unknown type)
+private def colAndCol := Expr.binOp .and (.col ⟨none, "x"⟩) (.col ⟨none, "x"⟩)
 -- Complement on non-boolean
 private def intAndNotInt := Expr.binOp .and (.lit (.int 3)) (.unaryOp .not (.lit (.int 3)))
 private def intOrNotInt := Expr.binOp .or (.lit (.int 3)) (.unaryOp .not (.lit (.int 3)))
 private def strAndNotStr := Expr.binOp .and (.lit (.string "x")) (.unaryOp .not (.lit (.string "x")))
 
 def boolGuardRegressionTests : TestSeq :=
-  -- eliminateDoubleNegation
+  -- eliminateDoubleNegation: check AST unchanged (eval alone can't distinguish for NULL)
   test "NOT NOT int: must not fire" (
-    evalExpr [] (eliminateDoubleNegation notNotInt) == evalExpr [] notNotInt) $
+    eliminateDoubleNegation notNotInt == notNotInt) $
   test "NOT NOT string: must not fire" (
-    evalExpr [] (eliminateDoubleNegation notNotString) == evalExpr [] notNotString) $
-  test "NOT NOT null: must not fire" (
-    evalExpr [] (eliminateDoubleNegation notNotNull) == evalExpr [] notNotNull) $
+    eliminateDoubleNegation notNotString == notNotString) $
+  test "NOT NOT null: AST must stay unchanged" (
+    eliminateDoubleNegation notNotNull == notNotNull) $
+  test "NOT NOT (CASE int): must not fire" (
+    eliminateDoubleNegation notNotCase == notNotCase) $
   -- applyIdempotentLaws
   test "int AND int: idempotent must not fire" (
     evalExpr [] (applyIdempotentLaws intAndInt) == evalExpr [] intAndInt) $
@@ -115,6 +122,8 @@ def boolGuardRegressionTests : TestSeq :=
     evalExpr [] (applyIdempotentLaws intOrInt) == evalExpr [] intOrInt) $
   test "null AND null: idempotent must not fire" (
     evalExpr [] (applyIdempotentLaws nullAndNull) == evalExpr [] nullAndNull) $
+  test "col AND col: idempotent must not fire (unknown type)" (
+    applyIdempotentLaws colAndCol == colAndCol) $
   -- applyComplementLaws
   test "int AND NOT int: complement must not fire" (
     evalExpr [] (applyComplementLaws intAndNotInt) == evalExpr [] intAndNotInt) $

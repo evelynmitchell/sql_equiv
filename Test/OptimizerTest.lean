@@ -69,20 +69,24 @@ def testConstantFoldNested : TestResult :=
 -- ============================================================================
 
 def testDoubleNegation : TestResult :=
-  let expr := Expr.unaryOp .not (Expr.unaryOp .not (col "x"))
+  -- Use a definitely-boolean expression (comparison) so the guard fires
+  let inner := Expr.binOp .eq (col "x") (intLit 1)
+  let expr := Expr.unaryOp .not (Expr.unaryOp .not inner)
   let optimized := optimizeExpr expr
-  if optimized == col "x" then
-    .pass "Double negation: NOT NOT x = x"
+  if optimized == inner then
+    .pass "Double negation: NOT NOT (x=1) = (x=1)"
   else
-    .fail "Double negation: NOT NOT x = x" s!"Expected col x, got {repr optimized}"
+    .fail "Double negation: NOT NOT (x=1) = (x=1)" s!"Expected {repr inner}, got {repr optimized}"
 
 def testAndTrue : TestResult :=
-  let expr := Expr.binOp .and (col "x") (boolLit true)
+  -- Use a definitely-boolean expression so the identity law fires
+  let inner := Expr.binOp .eq (col "x") (intLit 1)
+  let expr := Expr.binOp .and inner (boolLit true)
   let optimized := optimizeExpr expr
-  if optimized == col "x" then
-    .pass "AND TRUE: x AND TRUE = x"
+  if optimized == inner then
+    .pass "AND TRUE: (x=1) AND TRUE = (x=1)"
   else
-    .fail "AND TRUE: x AND TRUE = x" s!"Expected col x, got {repr optimized}"
+    .fail "AND TRUE: (x=1) AND TRUE = (x=1)" s!"Expected {repr inner}, got {repr optimized}"
 
 def testAndFalse : TestResult :=
   let expr := Expr.binOp .and (col "x") (boolLit false)
@@ -101,12 +105,14 @@ def testOrTrue : TestResult :=
     .fail "OR TRUE: x OR TRUE = TRUE" s!"Expected lit true, got {repr optimized}"
 
 def testOrFalse : TestResult :=
-  let expr := Expr.binOp .or (col "x") (boolLit false)
+  -- Use a definitely-boolean expression so the identity law fires
+  let inner := Expr.binOp .eq (col "x") (intLit 1)
+  let expr := Expr.binOp .or inner (boolLit false)
   let optimized := optimizeExpr expr
-  if optimized == col "x" then
-    .pass "OR FALSE: x OR FALSE = x"
+  if optimized == inner then
+    .pass "OR FALSE: (x=1) OR FALSE = (x=1)"
   else
-    .fail "OR FALSE: x OR FALSE = x" s!"Expected col x, got {repr optimized}"
+    .fail "OR FALSE: (x=1) OR FALSE = (x=1)" s!"Expected {repr inner}, got {repr optimized}"
 
 def testTrueAndTrue : TestResult :=
   let expr := Expr.binOp .and (boolLit true) (boolLit true)
@@ -335,15 +341,17 @@ def testOptimizationReport : TestResult :=
 -- ============================================================================
 
 def testComplexBooleanSimplification : TestResult :=
-  -- (x AND TRUE) OR (FALSE AND y) should simplify to x
+  -- ((x=1) AND TRUE) OR (FALSE AND (y>0)) should simplify to (x=1)
+  let xEq1 := Expr.binOp .eq (col "x") (intLit 1)
+  let yGt0 := Expr.binOp .gt (col "y") (intLit 0)
   let expr := Expr.binOp .or
-    (Expr.binOp .and (col "x") (boolLit true))
-    (Expr.binOp .and (boolLit false) (col "y"))
+    (Expr.binOp .and xEq1 (boolLit true))
+    (Expr.binOp .and (boolLit false) yGt0)
   let optimized := optimizeExpr expr
-  if optimized == col "x" then
-    .pass "Complex: (x AND TRUE) OR (FALSE AND y) = x"
+  if optimized == xEq1 then
+    .pass "Complex: ((x=1) AND TRUE) OR (FALSE AND (y>0)) = (x=1)"
   else
-    .fail "Complex boolean" s!"Expected col x, got {repr optimized}"
+    .fail "Complex boolean" s!"Expected {repr xEq1}, got {repr optimized}"
 
 def testCaseSimplification : TestResult :=
   -- CASE WHEN TRUE THEN 1 ELSE 2 END should simplify to 1
