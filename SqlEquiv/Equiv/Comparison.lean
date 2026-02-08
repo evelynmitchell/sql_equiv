@@ -793,33 +793,96 @@ axiom predicate_pushdown (db : Database) (t : String) (p q : Expr) :
 -- Arithmetic Expression Theorems
 -- ============================================================================
 
-/-- x + 0 = x for expressions (when x evaluates to int) -/
-axiom expr_add_zero (e : Expr) :
-    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e
+/-- Type precondition: expression always evaluates to an integer value.
+    This excludes expressions that produce errors (type mismatches, missing columns)
+    or non-integer values (strings, booleans, nulls). Needed for arithmetic identities. -/
+def Expr.isIntValued (e : Expr) : Prop :=
+  ∀ row : Row, ∃ n : Int, evalExpr row e = some (.int n)
 
-/-- 0 + x = x for expressions (when x evaluates to int) -/
-axiom expr_zero_add (e : Expr) :
-    Expr.binOp .add (Expr.lit (.int 0)) e ≃ₑ e
+/-- x + 0 = x for expressions evaluating to int.
+    Requires `isIntValued` — the expression must always produce an integer. -/
+theorem expr_add_zero (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (n + 0)) = some (Value.int n)
+  rw [Int.add_zero]
 
-/-- x * 1 = x for expressions (when x evaluates to int) -/
-axiom expr_mul_one (e : Expr) :
-    Expr.binOp .mul e (Expr.lit (.int 1)) ≃ₑ e
+/-- 0 + x = x for expressions evaluating to int. -/
+theorem expr_zero_add (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .add (Expr.lit (.int 0)) e ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (0 + n)) = some (Value.int n)
+  rw [Int.zero_add]
 
-/-- 1 * x = x for expressions (when x evaluates to int) -/
-axiom expr_one_mul (e : Expr) :
-    Expr.binOp .mul (Expr.lit (.int 1)) e ≃ₑ e
+/-- x * 1 = x for expressions evaluating to int. -/
+theorem expr_mul_one (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .mul e (Expr.lit (.int 1)) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (n * 1)) = some (Value.int n)
+  rw [Int.mul_one]
 
-/-- x * 0 = 0 for expressions (when x evaluates to int) -/
-axiom expr_mul_zero (e : Expr) :
-    Expr.binOp .mul e (Expr.lit (.int 0)) ≃ₑ Expr.lit (.int 0)
+/-- 1 * x = x for expressions evaluating to int. -/
+theorem expr_one_mul (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .mul (Expr.lit (.int 1)) e ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (1 * n)) = some (Value.int n)
+  rw [Int.one_mul]
 
-/-- 0 * x = 0 for expressions (when x evaluates to int) -/
-axiom expr_zero_mul (e : Expr) :
-    Expr.binOp .mul (Expr.lit (.int 0)) e ≃ₑ Expr.lit (.int 0)
+/-- x * 0 = 0 for expressions evaluating to int. -/
+theorem expr_mul_zero (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .mul e (Expr.lit (.int 0)) ≃ₑ Expr.lit (.int 0) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (n * 0)) = some (Value.int 0)
+  rw [Int.mul_zero]
 
-/-- x - 0 = x for expressions (when x evaluates to int) -/
-axiom expr_sub_zero (e : Expr) :
-    Expr.binOp .sub e (Expr.lit (.int 0)) ≃ₑ e
+/-- 0 * x = 0 for expressions evaluating to int. -/
+theorem expr_zero_mul (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .mul (Expr.lit (.int 0)) e ≃ₑ Expr.lit (.int 0) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (0 * n)) = some (Value.int 0)
+  rw [Int.zero_mul]
+
+/-- x - 0 = x for expressions evaluating to int. -/
+theorem expr_sub_zero (e : Expr) (h : e.isIntValued) :
+    Expr.binOp .sub e (Expr.lit (.int 0)) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨n, hn⟩ := h row
+  simp only [evalExpr] at hn
+  rw [hn]
+  show some (Value.int (n - 0)) = some (Value.int n)
+  rw [Int.sub_zero]
 
 -- ============================================================================
 -- IN List Theorems

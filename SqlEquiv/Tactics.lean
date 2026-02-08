@@ -129,16 +129,16 @@ elab "sql_equiv" : tactic => do
       | exact not_self_or _))
   if ← tryTactic tryComplement then return
 
-  -- Step 9: Try arithmetic identity laws
+  -- Step 9: Try arithmetic identity laws (require isIntValued hypothesis)
   let tryArith : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact expr_add_zero _
-      | exact expr_zero_add _
-      | exact expr_mul_one _
-      | exact expr_one_mul _
-      | exact expr_mul_zero _
-      | exact expr_zero_mul _
-      | exact expr_sub_zero _))
+      | exact expr_add_zero _ (by assumption)
+      | exact expr_zero_add _ (by assumption)
+      | exact expr_mul_one _ (by assumption)
+      | exact expr_one_mul _ (by assumption)
+      | exact expr_mul_zero _ (by assumption)
+      | exact expr_zero_mul _ (by assumption)
+      | exact expr_sub_zero _ (by assumption)))
   if ← tryTactic tryArith then return
 
   -- Step 10: Try comparison rules
@@ -314,16 +314,16 @@ elab "sql_rw_identity" : tactic => do
     | exact or_self _
     | fail "No identity rule applies"))
 
-/-- sql_rw_arith tactic: Apply arithmetic identity rules -/
+/-- sql_rw_arith tactic: Apply arithmetic identity rules (requires isIntValued in context) -/
 elab "sql_rw_arith" : tactic => do
   evalTactic (← `(tactic| first
-    | exact expr_add_zero _
-    | exact expr_zero_add _
-    | exact expr_mul_one _
-    | exact expr_one_mul _
-    | exact expr_mul_zero _
-    | exact expr_zero_mul _
-    | exact expr_sub_zero _
+    | exact expr_add_zero _ (by assumption)
+    | exact expr_zero_add _ (by assumption)
+    | exact expr_mul_one _ (by assumption)
+    | exact expr_one_mul _ (by assumption)
+    | exact expr_mul_zero _ (by assumption)
+    | exact expr_zero_mul _ (by assumption)
+    | exact expr_sub_zero _ (by assumption)
     | fail "No arithmetic identity rule applies"))
 
 /-- sql_rw_compare tactic: Apply comparison flip/negation rules -/
@@ -519,14 +519,14 @@ example : Expr.binOp .and (Expr.binOp .and a b) c ≃ₑ
 example : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by
   exact exprCalc2 (and_comm a b) (expr_equiv_refl _)
 
-/-- Example: Arithmetic identity x + 0 = x -/
-example : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := by sql_equiv
+/-- Example: Arithmetic identity x + 0 = x (requires isIntValued) -/
+example (h : a.isIntValued) : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := by sql_equiv
 
-/-- Example: Arithmetic identity x * 1 = x -/
-example : Expr.binOp .mul a (Expr.lit (.int 1)) ≃ₑ a := by sql_equiv
+/-- Example: Arithmetic identity x * 1 = x (requires isIntValued) -/
+example (h : a.isIntValued) : Expr.binOp .mul a (Expr.lit (.int 1)) ≃ₑ a := by sql_equiv
 
-/-- Example: Arithmetic annihilation x * 0 = 0 -/
-example : Expr.binOp .mul a (Expr.lit (.int 0)) ≃ₑ Expr.lit (.int 0) := by sql_equiv
+/-- Example: Arithmetic annihilation x * 0 = 0 (requires isIntValued) -/
+example (h : a.isIntValued) : Expr.binOp .mul a (Expr.lit (.int 0)) ≃ₑ Expr.lit (.int 0) := by sql_equiv
 
 /-- Example: Comparison flip x < y = y > x -/
 example : Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a := by sql_equiv
@@ -537,8 +537,8 @@ example : Expr.unaryOp .not (Expr.binOp .lt a b) ≃ₑ Expr.binOp .ge a b := by
 /-- Example: NOT (x = y) = x <> y -/
 example : Expr.unaryOp .not (Expr.binOp .eq a b) ≃ₑ Expr.binOp .ne a b := by sql_equiv
 
-/-- Example: Using sql_rw_arith -/
-example : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := by sql_rw_arith
+/-- Example: Using sql_rw_arith (requires isIntValued) -/
+example (h : a.isIntValued) : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := by sql_rw_arith
 
 /-- Example: Using sql_rw_compare -/
 example : Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a := by sql_rw_compare
