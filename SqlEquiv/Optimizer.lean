@@ -93,20 +93,35 @@ def eliminateDoubleNegation : Expr -> Expr
   | .unaryOp .not (.unaryOp .not e) => e
   | e => e
 
-/-- Apply identity laws for AND/OR -/
+/-- Conservative check: is expression definitely non-boolean?
+    Returns true only for literals of known non-boolean types. -/
+private def isDefinitelyNonBool : Expr → Bool
+  | .lit (.int _) => true
+  | .lit (.string _) => true
+  | _ => false
+
+/-- Apply identity laws for AND/OR.
+    Identity laws (a AND TRUE => a, a OR FALSE => a) are only sound when
+    `a` is boolean-valued. We guard against known non-boolean literals.
+    Annihilation laws (a AND FALSE => FALSE, a OR TRUE => TRUE) are always
+    sound because evalBinOp short-circuits these cases. -/
 def applyIdentityLaws : Expr -> Expr
-  -- a AND TRUE => a
-  | .binOp .and a (.lit (.bool true)) => a
-  | .binOp .and (.lit (.bool true)) a => a
-  -- a AND FALSE => FALSE
+  -- a AND TRUE => a (only when a could be boolean)
+  | .binOp .and a (.lit (.bool true)) =>
+    if isDefinitelyNonBool a then .binOp .and a (.lit (.bool true)) else a
+  | .binOp .and (.lit (.bool true)) a =>
+    if isDefinitelyNonBool a then .binOp .and (.lit (.bool true)) a else a
+  -- a AND FALSE => FALSE (always sound: evaluator short-circuits)
   | .binOp .and _ (.lit (.bool false)) => .lit (.bool false)
   | .binOp .and (.lit (.bool false)) _ => .lit (.bool false)
-  -- a OR TRUE => TRUE
+  -- a OR TRUE => TRUE (always sound: evaluator short-circuits)
   | .binOp .or _ (.lit (.bool true)) => .lit (.bool true)
   | .binOp .or (.lit (.bool true)) _ => .lit (.bool true)
-  -- a OR FALSE => a
-  | .binOp .or a (.lit (.bool false)) => a
-  | .binOp .or (.lit (.bool false)) a => a
+  -- a OR FALSE => a (only when a could be boolean)
+  | .binOp .or a (.lit (.bool false)) =>
+    if isDefinitelyNonBool a then .binOp .or a (.lit (.bool false)) else a
+  | .binOp .or (.lit (.bool false)) a =>
+    if isDefinitelyNonBool a then .binOp .or (.lit (.bool false)) a else a
   | e => e
 
 /-- Apply idempotent laws -/
