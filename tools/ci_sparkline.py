@@ -62,9 +62,11 @@ def sparkline(values: list[float]) -> str:
 
 def fetch_runs(repo: str, workflow: str, count: int) -> list[int]:
     """Fetch recent workflow runs via gh CLI."""
+    # Escape backslashes and double quotes for safe jq string interpolation
+    safe_workflow = workflow.replace("\\", "\\\\").replace('"', '\\"')
     jq_filter = (
-        f'.workflow_runs | map(select(.name == "{workflow}" and .status == "completed"))'
-        f' | .[:{ count}] | .[].id'
+        f'.workflow_runs | map(select(.name == "{safe_workflow}" and .status == "completed"))'
+        f' | .[:{count}] | .[].id'
     )
     result = subprocess.run(
         ["gh", "api", f"/repos/{repo}/actions/runs?per_page=100",
@@ -82,19 +84,23 @@ def fetch_step_durations(repo: str, run_id: int) -> dict[str, float]:
     """Fetch step-level durations for a single run."""
     result = subprocess.run(
         ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}/jobs",
-         "--jq", ".jobs[0].steps[] | {name, started_at, completed_at}"],
+         "--jq", ".jobs[0].steps | map({name, started_at, completed_at})"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         return {}
 
+    try:
+        steps = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(steps, list):
+        return {}
+
     durations: dict[str, float] = {}
-    for line in result.stdout.strip().split("\n"):
-        if not line.strip():
-            continue
-        try:
-            step = json.loads(line)
-        except json.JSONDecodeError:
+    for step in steps:
+        if not isinstance(step, dict):
             continue
         name = step.get("name", "")
         started = step.get("started_at")
@@ -181,14 +187,14 @@ def main() -> None:
         print("No tracked steps found in run data.")
         return
 
-    # Calculate total job duration
+    # Sum of tracked step durations per run (not wall-clock job time)
     totals = []
     for d in all_durations:
         total = sum(v for k, v in d.items() if k in all_steps)
         totals.append(total)
 
     # Print header
-    max_name_len = max(len(s) for s in steps + ["TOTAL"])
+    max_name_len = max(len(s) for s in steps + ["SUM"])
     n_runs = len(all_durations)
 
     print()
@@ -196,19 +202,27 @@ def main() -> None:
     print("─" * (max_name_len + n_runs + 40))
 
     for step in steps:
-        values = [d.get(step, 0) for d in all_durations]
-        nonzero = [v for v in values if v > 0]
+        values = [d.get(step) for d in all_durations]
 
-        if not nonzero:
+        # Compute stats only from runs where this step existed
+        present_indices = [i for i, v in enumerate(values) if v is not None]
+        present_values = [values[i] for i in present_indices]
+
+        if not present_values:
             continue
 
-        avg = sum(nonzero) / len(nonzero)
-        last = nonzero[-1] if nonzero else 0
-        lo = min(nonzero)
-        hi = max(nonzero)
+        avg = sum(present_values) / len(present_values)
+        last = present_values[-1]
+        lo = min(present_values)
+        hi = max(present_values)
 
-        spark = sparkline(values)
-        anomalies = detect_anomalies(values)
+        # For sparkline rendering, use 0 for missing runs
+        spark_values = [v if v is not None else 0 for v in values]
+        spark = sparkline(spark_values)
+
+        # Run anomaly detection only on runs where this step exists
+        anomalies_in_present = detect_anomalies(present_values)
+        anomalies = [present_indices[i] for i in anomalies_in_present]
 
         notes = ""
         if anomalies:
@@ -232,7 +246,7 @@ def main() -> None:
             notes = "⚠ latest run is anomalous"
 
         print("─" * (max_name_len + n_runs + 40))
-        print(f"{'TOTAL':<{max_name_len}}  {spark:<{n_runs}}  "
+        print(f"{'SUM':<{max_name_len}}  {spark:<{n_runs}}  "
               f"{fmt_duration(totals[-1]):>6}  {fmt_duration(avg):>6}  "
               f"{fmt_duration(min(totals)):>6}  {fmt_duration(max(totals)):>6}  {notes}")
 
