@@ -37,12 +37,24 @@ def normalizeTests : TestSeq :=
 -- Regression: identity laws must not fire on non-boolean operands
 -- ============================================================================
 
+-- Non-boolean int literals
 private def intAndTrue := Expr.binOp .and (.lit (.int 4)) (.lit (.bool true))
 private def trueAndInt := Expr.binOp .and (.lit (.bool true)) (.lit (.int 4))
 private def intOrFalse := Expr.binOp .or (.lit (.int 4)) (.lit (.bool false))
 private def falseOrInt := Expr.binOp .or (.lit (.bool false)) (.lit (.int 4))
+-- NULL literals
+private def nullAndTrue := Expr.binOp .and (.lit (.null none)) (.lit (.bool true))
+private def trueAndNull := Expr.binOp .and (.lit (.bool true)) (.lit (.null none))
+private def nullOrFalse := Expr.binOp .or (.lit (.null none)) (.lit (.bool false))
+private def falseOrNull := Expr.binOp .or (.lit (.bool false)) (.lit (.null none))
+-- Non-literal non-boolean (arithmetic expression)
+private def arithAndTrue := Expr.binOp .and (.binOp .add (.lit (.int 1)) (.lit (.int 2))) (.lit (.bool true))
+private def trueAndArith := Expr.binOp .and (.lit (.bool true)) (.binOp .add (.lit (.int 1)) (.lit (.int 2)))
+private def arithOrFalse := Expr.binOp .or (.binOp .add (.lit (.int 1)) (.lit (.int 2))) (.lit (.bool false))
+private def falseOrArith := Expr.binOp .or (.lit (.bool false)) (.binOp .add (.lit (.int 1)) (.lit (.int 2)))
 
 def identityLawRegressionTests : TestSeq :=
+  -- Int literals
   test "int AND TRUE: identity law must not fire" (
     evalExpr [] (applyIdentityLaws intAndTrue) == evalExpr [] intAndTrue) $
   test "TRUE AND int: identity law must not fire" (
@@ -50,7 +62,25 @@ def identityLawRegressionTests : TestSeq :=
   test "int OR FALSE: identity law must not fire" (
     evalExpr [] (applyIdentityLaws intOrFalse) == evalExpr [] intOrFalse) $
   test "FALSE OR int: identity law must not fire" (
-    evalExpr [] (applyIdentityLaws falseOrInt) == evalExpr [] falseOrInt)
+    evalExpr [] (applyIdentityLaws falseOrInt) == evalExpr [] falseOrInt) $
+  -- NULL literals
+  test "NULL AND TRUE: identity law must not fire" (
+    evalExpr [] (applyIdentityLaws nullAndTrue) == evalExpr [] nullAndTrue) $
+  test "TRUE AND NULL: identity law must not fire" (
+    evalExpr [] (applyIdentityLaws trueAndNull) == evalExpr [] trueAndNull) $
+  test "NULL OR FALSE: identity law must not fire" (
+    evalExpr [] (applyIdentityLaws nullOrFalse) == evalExpr [] nullOrFalse) $
+  test "FALSE OR NULL: identity law must not fire" (
+    evalExpr [] (applyIdentityLaws falseOrNull) == evalExpr [] falseOrNull) $
+  -- Non-literal non-boolean (arithmetic sub-expressions)
+  test "(1+2) AND TRUE: identity law must not fire" (
+    evalExpr [] (applyIdentityLaws arithAndTrue) == evalExpr [] arithAndTrue) $
+  test "TRUE AND (1+2): identity law must not fire" (
+    evalExpr [] (applyIdentityLaws trueAndArith) == evalExpr [] trueAndArith) $
+  test "(1+2) OR FALSE: identity law must not fire" (
+    evalExpr [] (applyIdentityLaws arithOrFalse) == evalExpr [] arithOrFalse) $
+  test "FALSE OR (1+2): identity law must not fire" (
+    evalExpr [] (applyIdentityLaws falseOrArith) == evalExpr [] falseOrArith)
 
 -- ============================================================================
 -- Individual optimizer passes

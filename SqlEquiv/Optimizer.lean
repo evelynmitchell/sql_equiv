@@ -94,15 +94,27 @@ def eliminateDoubleNegation : Expr -> Expr
   | e => e
 
 /-- Conservative check: is expression definitely non-boolean?
-    Returns true only for literals of known non-boolean types. -/
+    Returns true for literals and operators known to never produce a boolean.
+    Note: Column refs, function calls, and subqueries that evaluate to
+    non-boolean values at runtime are NOT caught — LSpec property tests
+    cover those cases. -/
 private def isDefinitelyNonBool : Expr → Bool
   | .lit (.int _) => true
   | .lit (.string _) => true
+  | .lit (.null _) => true
+  | .binOp .add _ _ => true
+  | .binOp .sub _ _ => true
+  | .binOp .mul _ _ => true
+  | .binOp .div _ _ => true
+  | .binOp .mod _ _ => true
+  | .binOp .concat _ _ => true
+  | .unaryOp .neg _ => true
   | _ => false
 
 /-- Apply identity laws for AND/OR.
     Identity laws (a AND TRUE => a, a OR FALSE => a) are only sound when
-    `a` is boolean-valued. We guard against known non-boolean literals.
+    `a` is boolean-valued. We guard against known non-boolean literals
+    (int, string, null). See `isDefinitelyNonBool`.
     Annihilation laws (a AND FALSE => FALSE, a OR TRUE => TRUE) are always
     sound because evalBinOp short-circuits these cases. -/
 def applyIdentityLaws : Expr -> Expr
