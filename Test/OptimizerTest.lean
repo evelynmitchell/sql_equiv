@@ -137,12 +137,24 @@ def testAddZero : TestResult :=
     .fail "Add zero: x + 0 = x" s!"Expected col x, got {repr optimized}"
 
 def testMulZero : TestResult :=
+  -- Test simplifyArithmetic directly: optimizeExpr would constant-fold 5*0
+  -- before simplifyArithmetic runs, so we call the pass directly to exercise
+  -- the annihilation guard.
+  let expr := Expr.binOp .mul (intLit 5) (intLit 0)
+  let optimized := simplifyArithmetic expr
+  if optimized == intLit 0 then
+    .pass "Mul zero: 5 * 0 = 0 (via simplifyArithmetic)"
+  else
+    .fail "Mul zero: 5 * 0 = 0 (via simplifyArithmetic)" s!"Expected lit 0, got {repr optimized}"
+
+def testMulZeroCol : TestResult :=
+  -- col("x") * 0 must NOT rewrite to 0 (preserves null propagation)
   let expr := Expr.binOp .mul (col "x") (intLit 0)
   let optimized := optimizeExpr expr
-  if optimized == intLit 0 then
-    .pass "Mul zero: x * 0 = 0"
+  if optimized == expr then
+    .pass "Mul zero col: x * 0 stays unrewritten"
   else
-    .fail "Mul zero: x * 0 = 0" s!"Expected lit 0, got {repr optimized}"
+    .fail "Mul zero col: x * 0 stays unrewritten" s!"Expected unchanged, got {repr optimized}"
 
 def testMulOne : TestResult :=
   let expr := Expr.binOp .mul (col "x") (intLit 1)
@@ -528,6 +540,7 @@ def allTests : List TestResult := [
   -- Arithmetic identities
   testAddZero,
   testMulZero,
+  testMulZeroCol,
   testMulOne,
   testSubZero,
   testDivOne,

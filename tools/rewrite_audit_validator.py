@@ -15,8 +15,10 @@ Annotation format (Lean comment above a rewrite arm):
 
 Categories: identity, annihilation, structural, constant-fold, idempotent
 Types: int, bool, any, null
-Guards: isDefinitelyNonBool, short_circuit, structural_eq, literal_match,
-        exprCompare, or any Lean function name
+Guards: isDefinitelyNonBool, isDefinitelyNonInt, short_circuit, structural_eq,
+        literal_match, literal_int_match, exprCompare, or any Lean function name
+Pattern guards (short_circuit, literal_match, literal_int_match, structural_eq)
+are enforced by pattern matching in the arm body, not by calling a named function.
 
 Usage:
   python3 tools/rewrite_audit_validator.py [--function NAME] [--report PATH] [--verify-parse]
@@ -295,7 +297,7 @@ def validate_audit(audit: FunctionAudit) -> None:
 
     # Check 3: Guard declared but not used in arm body (ERROR)
     # Whitelisted guards are enforced by pattern matching, not by name in code
-    PATTERN_GUARDS = {"short_circuit", "literal_match", "structural_eq"}
+    PATTERN_GUARDS = {"short_circuit", "literal_match", "literal_int_match", "structural_eq"}
     file_path = PROJECT_ROOT / audit.file
     if file_path.exists():
         source_lines = file_path.read_text().splitlines()

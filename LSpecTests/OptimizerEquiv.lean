@@ -83,6 +83,61 @@ def identityLawRegressionTests : TestSeq :=
     evalExpr [] (applyIdentityLaws falseOrArith) == evalExpr [] falseOrArith)
 
 -- ============================================================================
+-- Regression: simplifyArithmetic null propagation / type mismatch / div-by-zero
+-- ============================================================================
+
+-- Null propagation: NULL * 0 must stay NULL, not become 0
+private def nullMulZero := Expr.binOp .mul (.lit (.null none)) (.lit (.int 0))
+private def zeroMulNull := Expr.binOp .mul (.lit (.int 0)) (.lit (.null none))
+private def zeroDivNull := Expr.binOp .div (.lit (.int 0)) (.lit (.null none))
+-- Division by zero: 0 / 0 must not become 0
+private def zeroDivZero := Expr.binOp .div (.lit (.int 0)) (.lit (.int 0))
+-- Type mismatches on identity arms
+private def stringAddZero := Expr.binOp .add (.lit (.string "hi")) (.lit (.int 0))
+private def zeroAddString := Expr.binOp .add (.lit (.int 0)) (.lit (.string "hi"))
+private def boolSubZero := Expr.binOp .sub (.lit (.bool true)) (.lit (.int 0))
+private def nullMulOne := Expr.binOp .mul (.lit (.null none)) (.lit (.int 1))
+private def oneMulBool := Expr.binOp .mul (.lit (.int 1)) (.lit (.bool false))
+private def stringDivOne := Expr.binOp .div (.lit (.string "x")) (.lit (.int 1))
+
+-- Non-literal non-int expressions (boolean/string sub-expressions)
+private def boolExprAddZero := Expr.binOp .add (.binOp .and (.lit (.bool true)) (.lit (.bool false))) (.lit (.int 0))
+private def cmpExprMulOne := Expr.binOp .mul (.binOp .eq (.lit (.int 1)) (.lit (.int 1))) (.lit (.int 1))
+private def concatExprAddZero := Expr.binOp .add (.binOp .concat (.lit (.string "a")) (.lit (.string "b"))) (.lit (.int 0))
+
+def arithmeticSoundnessTests : TestSeq :=
+  -- Null propagation
+  test "NULL*0: annihilation must not fire" (
+    evalExpr [] (simplifyArithmetic nullMulZero) == evalExpr [] nullMulZero) $
+  test "0*NULL: annihilation must not fire" (
+    evalExpr [] (simplifyArithmetic zeroMulNull) == evalExpr [] zeroMulNull) $
+  test "0/NULL: must preserve null propagation" (
+    evalExpr [] (optimizeExpr zeroDivNull) == evalExpr [] zeroDivNull) $
+  -- Division by zero
+  test "0/0: must not rewrite to 0" (
+    evalExpr [] (optimizeExpr zeroDivZero) == evalExpr [] zeroDivZero) $
+  -- Type mismatches on identity arms
+  test "string+0: identity must not fire" (
+    evalExpr [] (simplifyArithmetic stringAddZero) == evalExpr [] stringAddZero) $
+  test "0+string: identity must not fire" (
+    evalExpr [] (simplifyArithmetic zeroAddString) == evalExpr [] zeroAddString) $
+  test "bool-0: identity must not fire" (
+    evalExpr [] (simplifyArithmetic boolSubZero) == evalExpr [] boolSubZero) $
+  test "NULL*1: identity must not fire" (
+    evalExpr [] (simplifyArithmetic nullMulOne) == evalExpr [] nullMulOne) $
+  test "1*bool: identity must not fire" (
+    evalExpr [] (simplifyArithmetic oneMulBool) == evalExpr [] oneMulBool) $
+  test "string/1: identity must not fire" (
+    evalExpr [] (simplifyArithmetic stringDivOne) == evalExpr [] stringDivOne) $
+  -- Non-literal non-int expressions
+  test "(TRUE AND FALSE)+0: identity must not fire" (
+    evalExpr [] (simplifyArithmetic boolExprAddZero) == evalExpr [] boolExprAddZero) $
+  test "(1=1)*1: identity must not fire" (
+    evalExpr [] (simplifyArithmetic cmpExprMulOne) == evalExpr [] cmpExprMulOne) $
+  test "(\"a\"||\"b\")+0: identity must not fire" (
+    evalExpr [] (simplifyArithmetic concatExprAddZero) == evalExpr [] concatExprAddZero)
+
+-- ============================================================================
 -- Individual optimizer passes
 -- ============================================================================
 
@@ -102,6 +157,7 @@ def allTests : TestSeq :=
   group "optimizeExpr" optimizeExprTests $
   group "normalizeExprCanonical" normalizeTests $
   group "Identity Law Regression" identityLawRegressionTests $
+  group "Arithmetic Soundness" arithmeticSoundnessTests $
   group "Individual Passes" optimizerPassTests
 
 end OptimizerEquiv
