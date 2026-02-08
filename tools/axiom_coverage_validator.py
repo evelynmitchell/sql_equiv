@@ -52,18 +52,7 @@ DEFAULT_TEST_TIMEOUT = 120    # 2 minutes
 CHECKPOINT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_checkpoint.json"
 REPORT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_report.json"
 
-AXIOM_FILES = [
-    SQLEQUIV_DIR / "Equiv" / "ExprAxioms.lean",
-    SQLEQUIV_DIR / "Equiv" / "StatementAxioms.lean",
-    SQLEQUIV_DIR / "Equiv" / "Comparison.lean",
-    SQLEQUIV_DIR / "Equiv" / "Decidable.lean",
-    SQLEQUIV_DIR / "Semantics.lean",
-    SQLEQUIV_DIR / "OptimizerUtils.lean",
-    SQLEQUIV_DIR / "ExprNormalization.lean",
-    SQLEQUIV_DIR / "Optimizer.lean",
-    SQLEQUIV_DIR / "JoinReordering.lean",
-    SQLEQUIV_DIR / "PredicatePushdown.lean",
-]
+AXIOM_FILES = sorted(SQLEQUIV_DIR.rglob("*.lean"))
 
 TEST_DIR = PROJECT_ROOT / "Test"
 TEST_FILES = [
