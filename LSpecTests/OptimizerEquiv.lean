@@ -53,3 +53,5 @@ def allTests : TestSeq :=
   group "optimizeExpr" optimizeExprTests $
   group "normalizeExprCanonical" normalizeTests $
   group "Individual Passes" optimizerPassTests
+
+end OptimizerEquiv

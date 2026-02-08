@@ -179,3 +179,5 @@ def allTests : TestSeq :=
   group "Arithmetic" arithmeticTests $
   group "Comparison Flips" comparisonFlipTests $
   group "Double Negation" doubleNegTests
+
+end ExprAlgebra

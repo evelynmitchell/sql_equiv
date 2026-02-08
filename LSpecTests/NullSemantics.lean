@@ -2,7 +2,7 @@
   Property-based tests for SQL NULL propagation semantics.
 
   NULL handling is the trickiest part of SQL. These properties test
-  evalBinOp/evalUnaryOp directly against the theorems proven in
+  evalBinOp/evalUnaryOp directly against theorems proven in
   Comparison.lean and ValueLemmas.lean.
 -/
 import LSpec
@@ -124,3 +124,5 @@ def allTests : TestSeq :=
   group "Three-Valued Logic" threeValuedLogicTests $
   group "IS NULL / IS NOT NULL" isNullTests $
   group "COALESCE" coalesceTests
+
+end NullSemantics
