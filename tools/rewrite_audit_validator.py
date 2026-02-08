@@ -23,7 +23,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ VALID_CATEGORIES = {"identity", "annihilation", "structural", "constant-fold", "
 ANNOTATION_RE = re.compile(
     r"--\s*@rewrite\s+"
     r"(?P<category>\S+)"
-    r"(?P<vars>(?:\s+\w+:\w+)+)"
+    r"(?P<vars>(?:\s+(?!guard:)\w+:\w+)+)"
     r"(?:\s+guard:(?P<guard>\S+))?"
 )
 
@@ -413,6 +413,11 @@ def main() -> int:
         action="store_true",
         help="Show detailed parse results for each function",
     )
+    parser.add_argument(
+        "--no-report",
+        action="store_true",
+        help="Skip writing the JSON report file",
+    )
     args = parser.parse_args()
 
     # Filter functions if --function specified
@@ -447,8 +452,9 @@ def main() -> int:
 
     # Output
     print_summary(audits, verify_parse=args.verify_parse)
-    report_path = Path(args.report) if Path(args.report).is_absolute() else PROJECT_ROOT / args.report
-    write_report(audits, report_path)
+    if not args.no_report:
+        report_path = Path(args.report) if Path(args.report).is_absolute() else PROJECT_ROOT / args.report
+        write_report(audits, report_path)
 
     # Exit code
     total_errors = sum(len(a.errors) for a in audits)

@@ -15,7 +15,7 @@
           uses: actions/checkout@v4                                                                                                                          
                                                                                                                                                              
         - name: Validate rewrite audit annotations
-          run: python3 tools/rewrite_audit_validator.py
+          run: python3 tools/rewrite_audit_validator.py --no-report
 
         - name: Install elan                                                                                                                                 
           run: |                                                                                                                                             
