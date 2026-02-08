@@ -38,5 +38,11 @@
         - name: Build tests                                                                                                                                  
           run: lake build sql_equiv_test                                                                                                                     
                                                                                                                                                              
-        - name: Run tests                                                                                                                                    
-          run: lake exe sql_equiv_test                                                                                                                       
+        - name: Run tests
+          run: lake exe sql_equiv_test
+
+        - name: Build LSpec property tests
+          run: lake build sql_equiv_lspec
+
+        - name: Run LSpec property tests
+          run: lake exe sql_equiv_lspec                                                                                                                       
