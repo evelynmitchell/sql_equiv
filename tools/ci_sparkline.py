@@ -81,38 +81,48 @@ def fetch_runs(repo: str, workflow: str, count: int) -> list[int]:
 
 
 def fetch_step_durations(repo: str, run_id: int) -> dict[str, float]:
-    """Fetch step-level durations for a single run."""
+    """Fetch step-level durations for a single run.
+
+    Step names are prefixed with the job name when there are multiple jobs,
+    to avoid collisions from identically-named steps across jobs."""
     result = subprocess.run(
         ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}/jobs",
-         "--jq", "[.jobs[].steps[] | {name, started_at, completed_at}]"],
+         "--jq", "[.jobs[] | {job_name: .name, steps: [.steps[] | {name, started_at, completed_at}]}]"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
         return {}
 
     try:
-        steps = json.loads(result.stdout)
+        jobs = json.loads(result.stdout)
     except json.JSONDecodeError:
         return {}
 
-    if not isinstance(steps, list):
+    if not isinstance(jobs, list):
         return {}
 
+    multi_job = len(jobs) > 1
+
     durations: dict[str, float] = {}
-    for step in steps:
-        if not isinstance(step, dict):
+    for job in jobs:
+        if not isinstance(job, dict):
             continue
-        name = step.get("name", "")
-        started = step.get("started_at")
-        completed = step.get("completed_at")
-        if not started or not completed:
-            continue
-        try:
-            t0 = datetime.fromisoformat(started.replace("Z", "+00:00"))
-            t1 = datetime.fromisoformat(completed.replace("Z", "+00:00"))
-            durations[name] = (t1 - t0).total_seconds()
-        except (ValueError, TypeError):
-            continue
+        job_name = job.get("job_name", "")
+        for step in job.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            step_name = step.get("name", "")
+            name = f"{job_name} :: {step_name}" if multi_job else step_name
+            started = step.get("started_at")
+            completed = step.get("completed_at")
+            if not started or not completed:
+                continue
+            try:
+                t0 = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                t1 = datetime.fromisoformat(completed.replace("Z", "+00:00"))
+                durations[name] = (t1 - t0).total_seconds()
+            except (ValueError, TypeError):
+                continue
 
     return durations
 
