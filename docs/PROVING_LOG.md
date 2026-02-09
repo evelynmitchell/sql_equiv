@@ -893,8 +893,60 @@ assertion) is more robust than "not definitely non-boolean".
 | #60 | `like_empty_pattern` | PR #86 | commit 711581c | Restored in PR #102 |
 | #62 | `length_empty` | PR #86 | commit 711581c | Restored in PR #102 |
 
-### Next priorities
+## Batch 7: String Function Axioms (#62)
 
-1. **Define `Expr.isBoolValued`** and prove boolean axioms (#46-50)
-2. **String function axioms** (#62) — mostly mechanical
+**Branch**: `claude/prove-string-func-axioms` | **PR**: #105
+
+### upper_idempotent, lower_idempotent — 2 axioms → theorems
+
+**Strategy**: Four-layer proof architecture:
+1. Char-level: prove `c.toUpper.toUpper = c.toUpper` by unfolding `Char.toUpper/toLower/ofNat/ofNatAux`, then `split` on the range condition + `split` on `isValidChar`, closing with `simp_all <;> omega`.
+2. String-level: lift via `String.ext` + `String.toList_map` + `List.map_map` + `congr 1; funext`.
+3. evalFunc-level: match on `Option Value` cases, use `native_decide` for string constant equality (`"UPPER".toUpper = "UPPER"`).
+4. Expr-level: use `evalExprWithDb_func` axiom + `List.map`.
+
+**Key insight**: For idempotence (2 function applications), after unfolding `Char.ofNatAux`, the `split` on `isValidChar` + the range condition gives only 3 branches, and `simp_all <;> omega` handles the UInt32/BitVec arithmetic. `omega` can see through one level of `Char.ofNat` round-trip.
+
+### upper_lower_upper, lower_upper_lower — 2 axioms → theorems
+
+**Problem**: Cross-composition (3 function applications) requires the `Char.ofNat` round-trip: after `toUpper` creates `Char.ofNat (c.toNat - 32)`, applying `toLower` needs `(Char.ofNat n).toNat = n`, which requires reducing through UInt32 → BitVec → Fin → Nat struct projections. The brute-force `simp_all <;> omega` approach that worked for idempotence fails here.
+
+**What failed**:
+- `dsimp at *` + `simp_all <;> omega` — struct projections partially reduced but `omega` couldn't handle remaining Char equality
+- `bv_omega` — converts BitVec→Nat but not Char/UInt32 struct projections
+- `ext` to decompose struct equality — `UInt32` lacks `@[ext]`
+- `show P = True from by omega, ite_true` — `omega` proves `P`, not `P = True`
+- `UInt32.toNat` in simp set — loops with `UInt32.toNat_toBitVec`
+
+**Solution**: Keep `Char.ofNat` opaque; prove a bridge lemma + use surgical `rw` chains:
+
+```lean
+-- Bridge lemma: full simp lets @[simp] lemmas fire through UInt32 layer
+private theorem toNat_ofNat_of_isValid (n : Nat) (h : n.isValidChar) :
+    (Char.ofNat n).toNat = n := by
+  have hlt : n < 4294967296 := by simp only [Nat.isValidChar] at h; omega
+  simp [Char.ofNat, Char.ofNatAux, h, Char.toNat]
+```
+
+Proof pattern for each branch:
+1. `rw [toNat_ofNat_of_isValid _ hv]` — strip `.toNat` off `Char.ofNat` results
+2. `have h : condition := by omega; rw [if_pos h]` — resolve each if-then-else
+3. `rw [show n ± 32 ∓ 32 = n from by omega, Char.ofNat_toNat]` — collapse round-trip
+
+**Key lessons**:
+- Two lemmas serve different roles: `toNat_ofNat_of_isValid` clears `.toNat` in conditions; `Char.ofNat_toNat` closes the final `Char.ofNat c.toNat = c` goal
+- The "isTrue" branches (3 nested rewrites) keep `.toNat` in context throughout, so `toNat_ofNat_of_isValid` suffices
+- The "isFalse.isTrue" branches end with `Char.ofNat (c.toNat ± 32 ∓ 32) = c` — no `.toNat` present, need arithmetic simplification + `Char.ofNat_toNat` directly
+
+### Summary table update
+
+| Issue | Count | Axioms | PR |
+|-------|--------|-----|-----|
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | 2 eq_reflexive, ne_irreflexive | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #61 | 5 CASE/WHEN | #85 |
+| #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
+| #62 | 4 of 5 string function axioms (upper/lower idem + cross-comp) | #105 |
 3. **Wave 3** (statement-level, no join dependency) — independent of type issues

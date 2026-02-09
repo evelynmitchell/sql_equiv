@@ -1027,23 +1027,166 @@ axiom concat_empty_left (e : Expr) :
 axiom concat_empty_right (e : Expr) :
     Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e
 
+-- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
+-- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
+private theorem toNat_ofNat_of_isValid (n : Nat) (h : n.isValidChar) :
+    (Char.ofNat n).toNat = n := by
+  simp [Char.ofNat, Char.ofNatAux, h, Char.toNat]
+
+-- Cross-composition: keep Char.ofNat opaque, use toNat_ofNat helper + Char.ofNat_toNat
+private theorem char_toUpper_toLower_toUpper (c : Char) :
+    (c.toUpper.toLower).toUpper = c.toUpper := by
+  simp only [Char.toUpper, Char.toLower]
+  split
+  · -- c.toNat ∈ [97,122] (lowercase)
+    rename_i h1
+    have hv1 : (c.toNat - 32).isValidChar := by
+      simp only [Nat.isValidChar, Char.toNat] at *; omega
+    rw [toNat_ofNat_of_isValid _ hv1]
+    have h2 : c.toNat - 32 ≥ 65 ∧ c.toNat - 32 ≤ 90 := by omega
+    rw [if_pos h2]
+    have hv2 : (c.toNat - 32 + 32).isValidChar := by
+      simp only [Nat.isValidChar, Char.toNat] at *; omega
+    rw [toNat_ofNat_of_isValid _ hv2, show c.toNat - 32 + 32 = c.toNat from by omega]
+    have h4 : c.toNat ≥ 97 ∧ c.toNat ≤ 122 := by omega
+    rw [if_pos h4]
+  · -- c.toNat ∉ [97,122]
+    rename_i h1
+    split
+    · -- c.toNat ∈ [65,90] (uppercase): toLower +32, toUpper -32 → round-trip to c
+      rename_i h2
+      have hv1 : (c.toNat + 32).isValidChar := by
+        simp only [Nat.isValidChar, Char.toNat] at *; omega
+      rw [toNat_ofNat_of_isValid _ hv1]
+      have h3 : c.toNat + 32 ≥ 97 ∧ c.toNat + 32 ≤ 122 := by omega
+      rw [if_pos h3]
+      rw [show c.toNat + 32 - 32 = c.toNat from by omega, Char.ofNat_toNat]
+    · -- Neither: all three operations are identity
+      rfl
+
+private theorem char_toLower_toUpper_toLower (c : Char) :
+    (c.toLower.toUpper).toLower = c.toLower := by
+  simp only [Char.toLower, Char.toUpper]
+  split
+  · -- c.toNat ∈ [65,90] (uppercase)
+    rename_i h1
+    have hv1 : (c.toNat + 32).isValidChar := by
+      simp only [Nat.isValidChar, Char.toNat] at *; omega
+    rw [toNat_ofNat_of_isValid _ hv1]
+    have h2 : c.toNat + 32 ≥ 97 ∧ c.toNat + 32 ≤ 122 := by omega
+    rw [if_pos h2]
+    rw [show c.toNat + 32 - 32 = c.toNat from by omega, Char.ofNat_toNat]
+    have h4 : c.toNat ≥ 65 ∧ c.toNat ≤ 90 := by omega
+    rw [if_pos h4]
+  · -- c.toNat ∉ [65,90]
+    rename_i h1
+    split
+    · -- c.toNat ∈ [97,122] (lowercase): toUpper -32, toLower +32 → round-trip to c
+      rename_i h2
+      have hv1 : (c.toNat - 32).isValidChar := by
+        simp only [Nat.isValidChar, Char.toNat] at *; omega
+      rw [toNat_ofNat_of_isValid _ hv1]
+      have h3 : c.toNat - 32 ≥ 65 ∧ c.toNat - 32 ≤ 90 := by omega
+      rw [if_pos h3]
+      rw [show c.toNat - 32 + 32 = c.toNat from by omega, Char.ofNat_toNat]
+    · -- Neither: identity
+      rfl
+
+-- Char-level idempotence: toUpper maps [97,122]→[65,90], toLower maps [65,90]→[97,122]
+-- After unfolding Char.ofNatAux, omega can see through UInt32 arithmetic.
+private theorem char_toUpper_idem (c : Char) : c.toUpper.toUpper = c.toUpper := by
+  simp only [Char.toUpper, Char.toNat, Char.ofNat, Char.ofNatAux]
+  split
+  · split <;> split <;> simp_all <;> omega
+  · rfl
+
+private theorem char_toLower_idem (c : Char) : c.toLower.toLower = c.toLower := by
+  simp only [Char.toLower, Char.toNat, Char.ofNat, Char.ofNatAux]
+  split
+  · split <;> split <;> simp_all <;> omega
+  · rfl
+
+-- String-level idempotence (lifted from Char via String.ext + toList_map + List.map_map)
+private theorem string_toUpper_idem (s : String) : s.toUpper.toUpper = s.toUpper := by
+  apply String.ext
+  simp only [String.toUpper, String.toList_map, List.map_map]
+  congr 1; funext c; exact char_toUpper_idem c
+
+private theorem string_toLower_idem (s : String) : s.toLower.toLower = s.toLower := by
+  apply String.ext
+  simp only [String.toLower, String.toList_map, List.map_map]
+  congr 1; funext c; exact char_toLower_idem c
+
+-- Value-level helpers for evalFunc
+private theorem evalFunc_upper_idem (v : Option Value) :
+    evalFunc "UPPER" [evalFunc "UPPER" [v]] = evalFunc "UPPER" [v] := by
+  have hup : "UPPER".toUpper = "UPPER" := by native_decide
+  match v with
+  | some (.string s) => simp [evalFunc, hup, string_toUpper_idem]
+  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hup]
+
+private theorem evalFunc_lower_idem (v : Option Value) :
+    evalFunc "LOWER" [evalFunc "LOWER" [v]] = evalFunc "LOWER" [v] := by
+  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
+  match v with
+  | some (.string s) => simp [evalFunc, hlo, string_toLower_idem]
+  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hlo]
+
 /-- UPPER(UPPER(x)) = UPPER(x) (idempotent) -/
-axiom upper_idempotent (e : Expr) :
-    Expr.func "UPPER" [Expr.func "UPPER" [e]] ≃ₑ Expr.func "UPPER" [e]
+theorem upper_idempotent (e : Expr) :
+    Expr.func "UPPER" [Expr.func "UPPER" [e]] ≃ₑ Expr.func "UPPER" [e] := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  exact evalFunc_upper_idem _
 
 /-- LOWER(LOWER(x)) = LOWER(x) (idempotent) -/
-axiom lower_idempotent (e : Expr) :
-    Expr.func "LOWER" [Expr.func "LOWER" [e]] ≃ₑ Expr.func "LOWER" [e]
+theorem lower_idempotent (e : Expr) :
+    Expr.func "LOWER" [Expr.func "LOWER" [e]] ≃ₑ Expr.func "LOWER" [e] := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  exact evalFunc_lower_idem _
+
+-- String-level cross-composition (lifted from Char)
+private theorem string_toUpper_toLower_toUpper (s : String) :
+    (s.toUpper.toLower).toUpper = s.toUpper := by
+  apply String.ext
+  simp only [String.toUpper, String.toLower, String.toList_map, List.map_map]
+  congr 1; funext c; exact char_toUpper_toLower_toUpper c
+
+private theorem string_toLower_toUpper_toLower (s : String) :
+    (s.toLower.toUpper).toLower = s.toLower := by
+  apply String.ext
+  simp only [String.toLower, String.toUpper, String.toList_map, List.map_map]
+  congr 1; funext c; exact char_toLower_toUpper_toLower c
+
+-- Value-level helpers for evalFunc (cross-composition)
+private theorem evalFunc_upper_lower_upper (v : Option Value) :
+    evalFunc "UPPER" [evalFunc "LOWER" [evalFunc "UPPER" [v]]] = evalFunc "UPPER" [v] := by
+  have hup : "UPPER".toUpper = "UPPER" := by native_decide
+  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
+  match v with
+  | some (.string s) => simp [evalFunc, hup, hlo, string_toUpper_toLower_toUpper]
+  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hup, hlo]
+
+private theorem evalFunc_lower_upper_lower (v : Option Value) :
+    evalFunc "LOWER" [evalFunc "UPPER" [evalFunc "LOWER" [v]]] = evalFunc "LOWER" [v] := by
+  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
+  have hup : "UPPER".toUpper = "UPPER" := by native_decide
+  match v with
+  | some (.string s) => simp [evalFunc, hlo, hup, string_toLower_toUpper_toLower]
+  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hlo, hup]
 
 /-- UPPER(LOWER(UPPER(x))) = UPPER(x) -/
-axiom upper_lower_upper (e : Expr) :
+theorem upper_lower_upper (e : Expr) :
     Expr.func "UPPER" [Expr.func "LOWER" [Expr.func "UPPER" [e]]] ≃ₑ
-    Expr.func "UPPER" [e]
+    Expr.func "UPPER" [e] := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  exact evalFunc_upper_lower_upper _
 
 /-- LOWER(UPPER(LOWER(x))) = LOWER(x) -/
-axiom lower_upper_lower (e : Expr) :
+theorem lower_upper_lower (e : Expr) :
     Expr.func "LOWER" [Expr.func "UPPER" [Expr.func "LOWER" [e]]] ≃ₑ
-    Expr.func "LOWER" [e]
+    Expr.func "LOWER" [e] := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  exact evalFunc_lower_upper_lower _
 
 /-- LENGTH('') = 0 -/
 theorem length_empty :
