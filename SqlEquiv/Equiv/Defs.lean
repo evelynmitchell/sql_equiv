@@ -26,6 +26,13 @@ def StmtEquiv (s1 s2 : Stmt) : Prop :=
   ∀ db : Database, evalStmt db s1 = evalStmt db s2
 scoped infix:50 " ≃ " => StmtEquiv
 
+/-- Type precondition: expression always evaluates to a boolean value.
+    This excludes expressions that produce errors (type mismatches, missing columns)
+    or non-boolean values (ints, strings, nulls). Needed for boolean algebra identities
+    (NOT NOT, AND TRUE, OR FALSE, idempotence, complement, absorption). -/
+def Expr.isBoolValued (e : Expr) : Prop :=
+  ∀ row : Row, ∃ b : Bool, evalExpr row e = some (.bool b)
+
 theorem expr_equiv_refl (e : Expr) : e ≃ₑ e := by intro row; rfl
 theorem expr_equiv_symm {e1 e2 : Expr} (h : e1 ≃ₑ e2) : e2 ≃ₑ e1 := by intro row; exact (h row).symm
 theorem expr_equiv_trans {e1 e2 e3 : Expr} (h12 : e1 ≃ₑ e2) (h23 : e2 ≃ₑ e3) : e1 ≃ₑ e3 := by intro row; rw [h12 row, h23 row]

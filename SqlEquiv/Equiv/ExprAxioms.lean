@@ -40,11 +40,17 @@ theorem not_not_bool (b : Bool) :
     evalUnaryOp .not (evalUnaryOp .not (some (.bool b))) = some (.bool b) := by
   cases b <;> rfl
 
-/-- The general not_not is only valid for boolean-valued expressions.
-    This axiom is included for compatibility but should only be used when
-    the expression is known to evaluate to a boolean.
-    Axiom: NOT (NOT e) ≃ e for boolean-valued e. -/
-axiom not_not (e : Expr) : Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e
+/-- NOT (NOT e) = e for boolean-valued expressions.
+    Requires `isBoolValued` — NOT on non-boolean yields none, so NOT NOT e = none ≠ e. -/
+theorem not_not (e : Expr) (h : e.isBoolValued) :
+    Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact not_not_bool b
 
 theorem eq_comm (a b : Expr) : Expr.binOp .eq a b ≃ₑ Expr.binOp .eq b a := by
   intro row
@@ -569,26 +575,60 @@ theorem or_and_distrib_right (a b c : Expr) :
 -- For non-boolean a (e.g., int): a AND (a OR b) = none ≠ a
 -- Value-level versions proven above (evalBinOp_and_absorb_or, evalBinOp_or_absorb_and)
 
-/-- Absorption: a AND (a OR b) = a. Axiom: only valid for boolean-valued a, b. -/
-axiom and_absorb_or (a b : Expr) :
-    Expr.binOp .and a (Expr.binOp .or a b) ≃ₑ a
+/-- Absorption: a AND (a OR b) = a for boolean-valued expressions.
+    Requires `isBoolValued` — non-boolean AND/OR yields none. -/
+theorem and_absorb_or (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
+    Expr.binOp .and a (Expr.binOp .or a b) ≃ₑ a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  obtain ⟨ba, hba⟩ := ha row
+  obtain ⟨bb, hbb⟩ := hb row
+  simp only [evalExpr] at hba hbb
+  rw [hba, hbb]
+  exact evalBinOp_and_absorb_or ba bb
 
-/-- Absorption: a OR (a AND b) = a. Axiom: only valid for boolean-valued a, b. -/
-axiom or_absorb_and (a b : Expr) :
-    Expr.binOp .or a (Expr.binOp .and a b) ≃ₑ a
+/-- Absorption: a OR (a AND b) = a for boolean-valued expressions.
+    Requires `isBoolValued` — non-boolean AND/OR yields none. -/
+theorem or_absorb_and (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
+    Expr.binOp .or a (Expr.binOp .and a b) ≃ₑ a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+  obtain ⟨ba, hba⟩ := ha row
+  obtain ⟨bb, hbb⟩ := hb row
+  simp only [evalExpr] at hba hbb
+  rw [hba, hbb]
+  exact evalBinOp_or_absorb_and ba bb
 
 -- Identity Laws
 -- Note: and_true and or_false only hold for boolean-valued expressions.
 -- For non-boolean expressions, e.g., (5 AND TRUE) = none ≠ 5.
 -- Value-level versions proven above (evalBinOp_and_true_right, evalBinOp_or_false_right)
 
-/-- Identity: a AND TRUE = a. Axiom: only valid for boolean-valued a. -/
-axiom and_true (a : Expr) :
-    Expr.binOp .and a (Expr.lit (.bool true)) ≃ₑ a
+/-- Identity: a AND TRUE = a for boolean-valued expressions.
+    Requires `isBoolValued` — for non-boolean a, (a AND TRUE) = none ≠ a. -/
+theorem and_true (a : Expr) (h : a.isBoolValued) :
+    Expr.binOp .and a (Expr.lit (.bool true)) ≃ₑ a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalBinOp_and_true_right b
 
-/-- Identity: a OR FALSE = a. Axiom: only valid for boolean-valued a. -/
-axiom or_false (a : Expr) :
-    Expr.binOp .or a (Expr.lit (.bool false)) ≃ₑ a
+/-- Identity: a OR FALSE = a for boolean-valued expressions.
+    Requires `isBoolValued` — for non-boolean a, (a OR FALSE) = none ≠ a. -/
+theorem or_false (a : Expr) (h : a.isBoolValued) :
+    Expr.binOp .or a (Expr.lit (.bool false)) ≃ₑ a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_lit]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalBinOp_or_false_right b
 
 -- These ARE provable due to short-circuit evaluation
 theorem and_false (a : Expr) :
@@ -655,19 +695,19 @@ theorem expr_equiv_subst {e1 e2 : Expr} (h : e1 ≃ₑ e2) (row : Row) : evalExp
 -- Additional Identity Laws (commuted versions)
 -- ============================================================================
 
-theorem true_and (a : Expr) :
+theorem true_and (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and (Expr.lit (.bool true)) a ≃ₑ a := by
   intro row
-  have h := and_comm (Expr.lit (.bool true)) a row
-  rw [h]
-  exact and_true a row
+  have hc := and_comm (Expr.lit (.bool true)) a row
+  rw [hc]
+  exact and_true a h row
 
-theorem false_or (a : Expr) :
+theorem false_or (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or (Expr.lit (.bool false)) a ≃ₑ a := by
   intro row
-  have h := or_comm (Expr.lit (.bool false)) a row
-  rw [h]
-  exact or_false a row
+  have hc := or_comm (Expr.lit (.bool false)) a row
+  rw [hc]
+  exact or_false a h row
 
 theorem false_and (a : Expr) :
     Expr.binOp .and (Expr.lit (.bool false)) a ≃ₑ Expr.lit (.bool false) := by
@@ -690,11 +730,29 @@ theorem true_or (a : Expr) :
 -- Value-level versions proven above (evalBinOp_and_idem, evalBinOp_or_idem)
 -- ============================================================================
 
-/-- Idempotent: a AND a = a. Axiom: only valid for boolean-valued a. -/
-axiom and_self (a : Expr) : Expr.binOp .and a a ≃ₑ a
+/-- Idempotent: a AND a = a for boolean-valued expressions.
+    Requires `isBoolValued` — for non-boolean a, (a AND a) = none ≠ a. -/
+theorem and_self (a : Expr) (h : a.isBoolValued) :
+    Expr.binOp .and a a ≃ₑ a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalBinOp_and_idem b
 
-/-- Idempotent: a OR a = a. Axiom: only valid for boolean-valued a. -/
-axiom or_self (a : Expr) : Expr.binOp .or a a ≃ₑ a
+/-- Idempotent: a OR a = a for boolean-valued expressions.
+    Requires `isBoolValued` — for non-boolean a, (a OR a) = none ≠ a. -/
+theorem or_self (a : Expr) (h : a.isBoolValued) :
+    Expr.binOp .or a a ≃ₑ a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalBinOp_or_idem b
 
 -- ============================================================================
 -- Complement Laws
@@ -703,27 +761,43 @@ axiom or_self (a : Expr) : Expr.binOp .or a a ≃ₑ a
 -- Value-level versions proven above (evalBinOp_and_not_self, evalBinOp_or_not_self)
 -- ============================================================================
 
-/-- Complement: a AND (NOT a) = FALSE. Axiom: only valid for boolean-valued a. -/
-axiom and_not_self (a : Expr) :
-    Expr.binOp .and a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool false)
+/-- Complement: a AND (NOT a) = FALSE for boolean-valued expressions.
+    Requires `isBoolValued` — NOT on non-boolean yields none. -/
+theorem and_not_self (a : Expr) (h : a.isBoolValued) :
+    Expr.binOp .and a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool false) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_unaryOp, evalExprWithDb_lit]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalBinOp_and_not_self b
 
-/-- Complement: a OR (NOT a) = TRUE. Axiom: only valid for boolean-valued a. -/
-axiom or_not_self (a : Expr) :
-    Expr.binOp .or a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool true)
+/-- Complement: a OR (NOT a) = TRUE for boolean-valued expressions.
+    Requires `isBoolValued` — NOT on non-boolean yields none. -/
+theorem or_not_self (a : Expr) (h : a.isBoolValued) :
+    Expr.binOp .or a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool true) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_binOp, evalExprWithDb_unaryOp, evalExprWithDb_lit]
+  obtain ⟨b, hb⟩ := h row
+  simp only [evalExpr] at hb
+  rw [hb]
+  exact evalBinOp_or_not_self b
 
-theorem not_self_and (a : Expr) :
+theorem not_self_and (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and (Expr.unaryOp .not a) a ≃ₑ Expr.lit (.bool false) := by
   intro row
-  have h := and_comm (Expr.unaryOp .not a) a row
-  rw [h]
-  exact and_not_self a row
+  have hc := and_comm (Expr.unaryOp .not a) a row
+  rw [hc]
+  exact and_not_self a h row
 
-theorem not_self_or (a : Expr) :
+theorem not_self_or (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or (Expr.unaryOp .not a) a ≃ₑ Expr.lit (.bool true) := by
   intro row
-  have h := or_comm (Expr.unaryOp .not a) a row
-  rw [h]
-  exact or_not_self a row
+  have hc := or_comm (Expr.unaryOp .not a) a row
+  rw [hc]
+  exact or_not_self a h row
 
 -- ============================================================================
 -- Reverse De Morgan Laws (for factoring)

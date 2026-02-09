@@ -701,13 +701,14 @@ theorem where_false_preserves_equiv (sel : SelectStmt) :
   exact optimizeSelectStmt_equiv sel
 
 /-- Double negation elimination preserves semantics.
-    Theorem: follows from optimizeExpr_equiv. -/
-theorem double_neg_elim_correct (e : Expr) :
+    Theorem: follows from optimizeExpr_equiv.
+    Requires isBoolValued — NOT NOT e = e only holds for boolean-valued e. -/
+theorem double_neg_elim_correct (e : Expr) (hb : e.isBoolValued) :
     optimizeExpr (.unaryOp .not (.unaryOp .not e)) ≃ₑ e := by
   intro row
   have h := optimizeExpr_equiv (.unaryOp .not (.unaryOp .not e)) row
   rw [h]
-  exact not_not e row
+  exact not_not e hb row
 
 /-- Constant folding preserves semantics.
     Theorem: follows from optimizeExpr_equiv. -/
