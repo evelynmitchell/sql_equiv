@@ -67,7 +67,7 @@ elab "sql_equiv" : tactic => do
       | exact or_comm _ _
       | exact add_comm _ _
       | exact mul_comm _ _
-      | exact not_not _
+      | exact not_not _ (by assumption)
       | exact eq_comm _ _))
   if ← tryTactic tryComm then return
 
@@ -98,35 +98,35 @@ elab "sql_equiv" : tactic => do
       | exact and_or_factor_left _ _ _))
   if ← tryTactic tryDistrib then return
 
-  -- Step 6: Try absorption laws
+  -- Step 6: Try absorption laws (require isBoolValued hypothesis)
   let tryAbsorb : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact and_absorb_or _ _
-      | exact or_absorb_and _ _))
+      | exact and_absorb_or _ _ (by assumption) (by assumption)
+      | exact or_absorb_and _ _ (by assumption) (by assumption)))
   if ← tryTactic tryAbsorb then return
 
-  -- Step 7: Try identity laws
+  -- Step 7: Try identity laws (some require isBoolValued hypothesis)
   let tryIdentity : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact and_true _
-      | exact true_and _
-      | exact or_false _
-      | exact false_or _
+      | exact and_true _ (by assumption)
+      | exact true_and _ (by assumption)
+      | exact or_false _ (by assumption)
+      | exact false_or _ (by assumption)
       | exact and_false _
       | exact false_and _
       | exact or_true _
       | exact true_or _
-      | exact and_self _
-      | exact or_self _))
+      | exact and_self _ (by assumption)
+      | exact or_self _ (by assumption)))
   if ← tryTactic tryIdentity then return
 
-  -- Step 8: Try complement laws
+  -- Step 8: Try complement laws (require isBoolValued hypothesis)
   let tryComplement : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact and_not_self _
-      | exact not_self_and _
-      | exact or_not_self _
-      | exact not_self_or _))
+      | exact and_not_self _ (by assumption)
+      | exact not_self_and _ (by assumption)
+      | exact or_not_self _ (by assumption)
+      | exact not_self_or _ (by assumption)))
   if ← tryTactic tryComplement then return
 
   -- Step 9: Try arithmetic identity laws (require isIntValued hypothesis)
@@ -227,7 +227,7 @@ macro_rules
             | exact or_comm _ _
             | exact add_comm _ _
             | exact mul_comm _ _
-            | exact not_not _
+            | exact not_not _ (by assumption)
             | exact eq_comm _ _
             | exact and_assoc _ _ _
             | exact or_assoc _ _ _
@@ -241,22 +241,22 @@ macro_rules
             | exact or_and_distrib_right _ _ _
             | exact or_and_factor_left _ _ _
             | exact and_or_factor_left _ _ _
-            | exact and_absorb_or _ _
-            | exact or_absorb_and _ _
-            | exact and_true _
-            | exact true_and _
-            | exact or_false _
-            | exact false_or _
+            | exact and_absorb_or _ _ (by assumption) (by assumption)
+            | exact or_absorb_and _ _ (by assumption) (by assumption)
+            | exact and_true _ (by assumption)
+            | exact true_and _ (by assumption)
+            | exact or_false _ (by assumption)
+            | exact false_or _ (by assumption)
             | exact and_false _
             | exact false_and _
             | exact or_true _
             | exact true_or _
-            | exact and_self _
-            | exact or_self _
-            | exact and_not_self _
-            | exact not_self_and _
-            | exact or_not_self _
-            | exact not_self_or _
+            | exact and_self _ (by assumption)
+            | exact or_self _ (by assumption)
+            | exact and_not_self _ (by assumption)
+            | exact not_self_and _ (by assumption)
+            | exact or_not_self _ (by assumption)
+            | exact not_self_or _ (by assumption)
             | apply binOp_congr <;> sql_equiv
             | apply unaryOp_congr <;> sql_equiv
             | rfl))
@@ -296,22 +296,22 @@ elab "sql_rw_distrib" : tactic => do
 
 elab "sql_rw_absorb" : tactic => do
   evalTactic (← `(tactic| first
-    | exact and_absorb_or _ _
-    | exact or_absorb_and _ _
+    | exact and_absorb_or _ _ (by assumption) (by assumption)
+    | exact or_absorb_and _ _ (by assumption) (by assumption)
     | fail "No absorption rule applies"))
 
 elab "sql_rw_identity" : tactic => do
   evalTactic (← `(tactic| first
-    | exact and_true _
-    | exact true_and _
-    | exact or_false _
-    | exact false_or _
+    | exact and_true _ (by assumption)
+    | exact true_and _ (by assumption)
+    | exact or_false _ (by assumption)
+    | exact false_or _ (by assumption)
     | exact and_false _
     | exact false_and _
     | exact or_true _
     | exact true_or _
-    | exact and_self _
-    | exact or_self _
+    | exact and_self _ (by assumption)
+    | exact or_self _ (by assumption)
     | fail "No identity rule applies"))
 
 /-- sql_rw_arith tactic: Apply arithmetic identity rules (requires isIntValued in context) -/
@@ -448,8 +448,8 @@ example : Expr.binOp .add a b ≃ₑ Expr.binOp .add b a := by sql_equiv
 /-- Example: Multiplication commutativity -/
 example : Expr.binOp .mul a b ≃ₑ Expr.binOp .mul b a := by sql_equiv
 
-/-- Example: Double negation elimination -/
-example : Expr.unaryOp .not (Expr.unaryOp .not a) ≃ₑ a := by sql_equiv
+/-- Example: Double negation elimination (requires isBoolValued) -/
+example (h : a.isBoolValued) : Expr.unaryOp .not (Expr.unaryOp .not a) ≃ₑ a := by sql_equiv
 
 /-- Example: Reflexivity -/
 example : a ≃ₑ a := by sql_refl
@@ -473,14 +473,17 @@ example : Expr.unaryOp .not (Expr.binOp .and a b) ≃ₑ
 example : Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ
           Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) := by sql_equiv
 
-/-- Example: Absorption -/
-example : Expr.binOp .and a (Expr.binOp .or a b) ≃ₑ a := by sql_equiv
+/-- Example: Absorption (requires isBoolValued) -/
+example (ha : a.isBoolValued) (hb : b.isBoolValued) :
+    Expr.binOp .and a (Expr.binOp .or a b) ≃ₑ a := by sql_equiv
 
-/-- Example: Identity AND TRUE -/
-example : Expr.binOp .and a (Expr.lit (.bool true)) ≃ₑ a := by sql_equiv
+/-- Example: Identity AND TRUE (requires isBoolValued) -/
+example (h : a.isBoolValued) :
+    Expr.binOp .and a (Expr.lit (.bool true)) ≃ₑ a := by sql_equiv
 
-/-- Example: Identity OR FALSE -/
-example : Expr.binOp .or a (Expr.lit (.bool false)) ≃ₑ a := by sql_equiv
+/-- Example: Identity OR FALSE (requires isBoolValued) -/
+example (h : a.isBoolValued) :
+    Expr.binOp .or a (Expr.lit (.bool false)) ≃ₑ a := by sql_equiv
 
 /-- Example: Annihilation AND FALSE -/
 example : Expr.binOp .and a (Expr.lit (.bool false)) ≃ₑ Expr.lit (.bool false) := by sql_equiv
@@ -488,17 +491,19 @@ example : Expr.binOp .and a (Expr.lit (.bool false)) ≃ₑ Expr.lit (.bool fals
 /-- Example: Annihilation OR TRUE -/
 example : Expr.binOp .or a (Expr.lit (.bool true)) ≃ₑ Expr.lit (.bool true) := by sql_equiv
 
-/-- Example: Idempotent AND -/
-example : Expr.binOp .and a a ≃ₑ a := by sql_equiv
+/-- Example: Idempotent AND (requires isBoolValued) -/
+example (h : a.isBoolValued) : Expr.binOp .and a a ≃ₑ a := by sql_equiv
 
-/-- Example: Idempotent OR -/
-example : Expr.binOp .or a a ≃ₑ a := by sql_equiv
+/-- Example: Idempotent OR (requires isBoolValued) -/
+example (h : a.isBoolValued) : Expr.binOp .or a a ≃ₑ a := by sql_equiv
 
-/-- Example: Complement AND -/
-example : Expr.binOp .and a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool false) := by sql_equiv
+/-- Example: Complement AND (requires isBoolValued) -/
+example (h : a.isBoolValued) :
+    Expr.binOp .and a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool false) := by sql_equiv
 
-/-- Example: Complement OR -/
-example : Expr.binOp .or a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool true) := by sql_equiv
+/-- Example: Complement OR (requires isBoolValued) -/
+example (h : a.isBoolValued) :
+    Expr.binOp .or a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool true) := by sql_equiv
 
 /-- Example: Congruence for binary ops -/
 example (h : a ≃ₑ b) : Expr.binOp .and a c ≃ₑ Expr.binOp .and b c := by
