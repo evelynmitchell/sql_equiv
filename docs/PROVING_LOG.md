@@ -866,13 +866,13 @@ assertion) is more robust than "not definitely non-boolean".
 
 ### Axiom/theorem counts
 
-- **147 axioms** remaining (across all .lean files in SqlEquiv/)
-  - 127 in `Equiv/*.lean` (equivalence axioms)
+- **144 axioms** remaining (across all .lean files in SqlEquiv/)
+  - 124 in `Equiv/*.lean` (equivalence axioms)
   - 10 in `Semantics.lean` (infrastructure/eval unfolding bridges)
   - 10 in `Optimizer.lean`, `ExprNormalization.lean`, `JoinReordering.lean`,
     `OptimizerUtils.lean`, `PredicatePushdown.lean` (runtime axioms)
-- **178 theorems** proved (in `Equiv/*.lean`)
-- Axiom ratchet: 147 (in `tools/axiom_count_minimum.txt`)
+- **181 theorems** proved (in `Equiv/*.lean`)
+- Axiom ratchet: 144 (in `tools/axiom_count_minimum.txt`)
 
 ### Issues fully proved (can be closed)
 
@@ -885,17 +885,16 @@ assertion) is more robust than "not definitely non-boolean".
 | #61 | 5 CASE/WHEN | #85 |
 | #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
 
-### Issues with regressions
+### Previously regressed issues (now restored)
 
-| Issue | Axiom | Was proved in | Reverted in |
-|-------|-------|--------------|-------------|
-| #59 | `between_reflexive` | PR #86 | commit 711581c |
-| #60 | `like_empty_pattern` | PR #86 | commit 711581c |
-| #62 | `length_empty` | PR #86 | commit 711581c |
+| Issue | Axiom | Was proved in | Reverted in | Status |
+|-------|-------|--------------|-------------|--------|
+| #59 | `between_reflexive` | PR #86 | commit 711581c | Restored in PR #102 |
+| #60 | `like_empty_pattern` | PR #86 | commit 711581c | Restored in PR #102 |
+| #62 | `length_empty` | PR #86 | commit 711581c | Restored in PR #102 |
 
 ### Next priorities
 
-1. **Re-apply 3 regressed proofs** — low-hanging fruit, proofs exist in git
-2. **Define `Expr.isBoolValued`** and prove boolean axioms (#46-50)
-3. **String function axioms** (#62) — mostly mechanical
-4. **Wave 3** (statement-level, no join dependency) — independent of type issues
+1. **Define `Expr.isBoolValued`** and prove boolean axioms (#46-50)
+2. **String function axioms** (#62) — mostly mechanical
+3. **Wave 3** (statement-level, no join dependency) — independent of type issues

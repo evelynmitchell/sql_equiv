@@ -151,15 +151,13 @@ with case analysis on the evaluated sub-expressions.
 - `in_pair`, `not_in_pair` -- two-element expansion
 - `in_list_or_expansion`, `not_in_list_and_expansion` -- general list induction
 
-**BETWEEN (3 axioms) — 1 was proved but regressed:**
+**BETWEEN (3 axioms) — 1 proved:**
 - `between_expansion`, `between_reflexive`, `not_between_expansion`
-- `between_reflexive` was proved in PR #86 but **reverted to axiom** during
-  the Equiv.lean → submodule split (commit 711581c). Needs re-application.
+- `between_reflexive` proved (PR #86, restored in PR #102)
 
-**LIKE (3 axioms) — 1 was proved but regressed:**
+**LIKE (3 axioms) — 1 proved:**
 - `like_match_all`, `like_empty_pattern`, `like_self`
-- `like_empty_pattern` was proved in PR #86 but **reverted to axiom** during
-  the Equiv.lean → submodule split. Needs re-application.
+- `like_empty_pattern` proved (PR #86, restored in PR #102)
 
 **Estimated complexity:** Easy-Medium.
 
@@ -174,8 +172,7 @@ with case analysis on the evaluated sub-expressions.
   should use `Expr.binOp .concat`. See issue #24.)
 - `upper_idempotent`, `lower_idempotent` -- function idempotence
 - `upper_lower_upper`, `lower_upper_lower` -- function composition
-- `length_empty` -- length of empty string (was proved in PR #86 but
-  **reverted to axiom** during Equiv.lean → submodule split. Needs re-application.)
+- `length_empty` -- length of empty string (proved in PR #86, restored in PR #102)
 
 **Estimated complexity:** Easy -- unfold `evalFunc` and `simp`.
 
@@ -349,15 +346,15 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 147 axioms remaining (across all .lean files), 178 theorems proved.
-Axiom ratchet: 147 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 144 axioms remaining (across all .lean files), 181 theorems proved.
+Axiom ratchet: 144 (in `tools/axiom_count_minimum.txt`).
 
 | Phase | Description | Proved | Remaining | Difficulty |
 |-------|-------------|--------|-----------|------------|
 | 1 | Value/Boolean properties | 22 | 0 (done) | -- |
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~24 | ~11 (unsound bool axioms) | Easy |
-| 1c | IN / BETWEEN / LIKE | 0 (3 regressed) | ~11 | Easy-Medium |
-| 1d | String/Function | 0 (1 regressed) | ~7 | Easy |
+| 1c | IN / BETWEEN / LIKE | 1 (restored) | ~10 | Easy-Medium |
+| 1d | String/Function | 1 (restored) | ~6 | Easy |
 | 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
@@ -369,7 +366,7 @@ Axiom ratchet: 147 (in `tools/axiom_count_minimum.txt`).
 | 10 | Optimizer correctness | 0 | ~3 | High |
 | infra | Infrastructure (Semantics.lean) | 0 | 10 | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 10 | N/A |
-| | **Total** | **~47** | **~147** | |
+| | **Total** | **~50** | **~144** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split and need
@@ -404,9 +401,9 @@ decision first (see "Unsound Axiom Strategy" below).
 | Order | Issue | Description | Axioms | Status |
 |:-----:|-------|-------------|:------:|--------|
 | 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 6 | **Unsound** — needs evaluable precondition |
-| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 1 proved in PR #86 but **regressed** during split; 2 unsound |
-| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 1 proved in PR #86 but **regressed** during split; 2 unsound |
-| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | 1 proved in PR #86 but **regressed** during split; 2 have bug (#24) |
+| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 1 **proved** (PR #86/#102); 2 unsound |
+| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 1 **proved** (PR #86/#102); 2 unsound |
+| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | 1 **proved** (PR #86/#102); 2 have bug (#24) |
 
 ### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
 
