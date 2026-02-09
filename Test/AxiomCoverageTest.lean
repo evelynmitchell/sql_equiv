@@ -400,33 +400,31 @@ def stringFuncTests : List TestResult :=
   let eHello := Expr.lit (.string "hello")
   let eEmpty := Expr.lit (.string "")
   [
-    -- concat_empty_left: CONCAT('', e) ≃ₑ e
-    -- The axiom uses Expr.func "CONCAT". If evalFunc doesn't support CONCAT yet,
-    -- the axiom form is skipped. Once CONCAT is implemented, we compare both sides.
+    -- concat_empty_left: CONCAT('', e) ≃ₑ e (for string-valued e)
+    testExprEquiv "concat_empty_left (string)"
+      (.func "CONCAT" [eEmpty, eHello]) eHello [],
+    -- concat_empty_left with null: CONCAT('', NULL) = NULL
+    testExprEquiv "concat_empty_left (null)"
+      (.func "CONCAT" [eEmpty, Expr.lit (.null none)]) (Expr.lit (.null none)) [],
+    -- concat_empty_left with typed null: CONCAT('', NULL::int) = NULL::int
+    testExprEquiv "concat_empty_left (typed null)"
+      (.func "CONCAT" [eEmpty, Expr.lit (.null (some .int))]) (Expr.lit (.null (some .int))) [],
+
+    -- concat_empty_right: CONCAT(e, '') ≃ₑ e (for string-valued e)
+    testExprEquiv "concat_empty_right (string)"
+      (.func "CONCAT" [eHello, eEmpty]) eHello [],
+    -- concat_empty_right with null: CONCAT(NULL, '') = NULL
+    testExprEquiv "concat_empty_right (null)"
+      (.func "CONCAT" [Expr.lit (.null none), eEmpty]) (Expr.lit (.null none)) [],
+    -- concat_empty_right with typed null: CONCAT(NULL::int, '') = NULL::int
+    testExprEquiv "concat_empty_right (typed null)"
+      (.func "CONCAT" [Expr.lit (.null (some .int)), eEmpty]) (Expr.lit (.null (some .int))) [],
+
+    -- BinOp.concat path (parser emits || as binop): '' || 'hello' = 'hello'
     testExprEquiv "concat_empty_left (binop)"
       (.binOp .concat eEmpty eHello) eHello [],
-    let rFuncLeft := evalExpr [] (.func "CONCAT" [eEmpty, eHello])
-    let rExpectedLeft := evalExpr [] (.binOp .concat eEmpty eHello)
-    if rFuncLeft.isNone then
-      .pass "concat_empty_left (axiom form skipped - CONCAT not in evalFunc yet)"
-    else if rFuncLeft == rExpectedLeft then
-      .pass "concat_empty_left (axiom form)"
-    else
-      .fail "concat_empty_left (axiom form)"
-        s!"Unexpected: {showOptVal rFuncLeft} vs expected {showOptVal rExpectedLeft}",
-
-    -- concat_empty_right: CONCAT(e, '') ≃ₑ e
     testExprEquiv "concat_empty_right (binop)"
       (.binOp .concat eHello eEmpty) eHello [],
-    let rFuncRight := evalExpr [] (.func "CONCAT" [eHello, eEmpty])
-    let rExpectedRight := evalExpr [] (.binOp .concat eHello eEmpty)
-    if rFuncRight.isNone then
-      .pass "concat_empty_right (axiom form skipped - CONCAT not in evalFunc yet)"
-    else if rFuncRight == rExpectedRight then
-      .pass "concat_empty_right (axiom form)"
-    else
-      .fail "concat_empty_right (axiom form)"
-        s!"Unexpected: {showOptVal rFuncRight} vs expected {showOptVal rExpectedRight}",
 
     -- upper_idempotent: UPPER(UPPER(e)) ≃ₑ UPPER(e)
     testExprEquiv "upper_idempotent"

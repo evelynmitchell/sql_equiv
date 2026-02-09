@@ -1019,13 +1019,35 @@ axiom like_self (e : Expr) :
 -- String Function Theorems
 -- ============================================================================
 
-/-- CONCAT('', x) = x (empty string is identity for concat) -/
-axiom concat_empty_left (e : Expr) :
-    Expr.func "CONCAT" [Expr.lit (.string ""), e] ≃ₑ e
+-- Value-level helper: CONCAT("", v) = v for string/null/none values
+private theorem evalFunc_concat_empty_left (v : Option Value) :
+    (∃ s, v = some (.string s)) ∨ (∃ n, v = some (.null n)) ∨ v = none →
+    evalFunc "CONCAT" [some (.string ""), v] = v := by
+  have hup : "CONCAT".toUpper = "CONCAT" := by native_decide
+  intro h; rcases h with ⟨s, hs⟩ | ⟨n, hn⟩ | hn <;> subst_vars <;> simp [evalFunc, hup]
 
-/-- CONCAT(x, '') = x (empty string is identity for concat) -/
-axiom concat_empty_right (e : Expr) :
-    Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e
+-- Value-level helper: CONCAT(v, "") = v for string/null/none values
+private theorem evalFunc_concat_empty_right (v : Option Value) :
+    (∃ s, v = some (.string s)) ∨ (∃ n, v = some (.null n)) ∨ v = none →
+    evalFunc "CONCAT" [v, some (.string "")] = v := by
+  have hup : "CONCAT".toUpper = "CONCAT" := by native_decide
+  intro h; rcases h with ⟨s, hs⟩ | ⟨n, hn⟩ | hn <;> subst_vars <;> simp [evalFunc, hup]
+
+/-- CONCAT('', x) = x (empty string is identity for concat).
+    Requires `isStringOrNullValued` — expression must evaluate to string, null, or error. -/
+theorem concat_empty_left (e : Expr) (h : e.isStringOrNullValued) :
+    Expr.func "CONCAT" [Expr.lit (.string ""), e] ≃ₑ e := by
+  intro row
+  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
+  exact evalFunc_concat_empty_left _ (h row)
+
+/-- CONCAT(x, '') = x (empty string is identity for concat).
+    Requires `isStringOrNullValued` — expression must evaluate to string, null, or error. -/
+theorem concat_empty_right (e : Expr) (h : e.isStringOrNullValued) :
+    Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e := by
+  intro row
+  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
+  exact evalFunc_concat_empty_right _ (h row)
 
 -- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
 -- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
