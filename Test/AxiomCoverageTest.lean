@@ -406,6 +406,9 @@ def stringFuncTests : List TestResult :=
     -- concat_empty_left with null: CONCAT('', NULL) = NULL
     testExprEquiv "concat_empty_left (null)"
       (.func "CONCAT" [eEmpty, Expr.lit (.null none)]) (Expr.lit (.null none)) [],
+    -- concat_empty_left with typed null: CONCAT('', NULL::int) = NULL::int
+    testExprEquiv "concat_empty_left (typed null)"
+      (.func "CONCAT" [eEmpty, Expr.lit (.null (some .int))]) (Expr.lit (.null (some .int))) [],
 
     -- concat_empty_right: CONCAT(e, '') ≃ₑ e (for string-valued e)
     testExprEquiv "concat_empty_right (string)"
@@ -413,6 +416,15 @@ def stringFuncTests : List TestResult :=
     -- concat_empty_right with null: CONCAT(NULL, '') = NULL
     testExprEquiv "concat_empty_right (null)"
       (.func "CONCAT" [Expr.lit (.null none), eEmpty]) (Expr.lit (.null none)) [],
+    -- concat_empty_right with typed null: CONCAT(NULL::int, '') = NULL::int
+    testExprEquiv "concat_empty_right (typed null)"
+      (.func "CONCAT" [Expr.lit (.null (some .int)), eEmpty]) (Expr.lit (.null (some .int))) [],
+
+    -- BinOp.concat path (parser emits || as binop): '' || 'hello' = 'hello'
+    testExprEquiv "concat_empty_left (binop)"
+      (.binOp .concat eEmpty eHello) eHello [],
+    testExprEquiv "concat_empty_right (binop)"
+      (.binOp .concat eHello eEmpty) eHello [],
 
     -- upper_idempotent: UPPER(UPPER(e)) ≃ₑ UPPER(e)
     testExprEquiv "upper_idempotent"

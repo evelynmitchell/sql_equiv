@@ -965,8 +965,8 @@ This was documented in Category 5 (Implementation bugs) of the Unsound Axioms se
 
 Added three pattern-match arms before the catch-all:
 ```lean
-| "CONCAT", [some (.null t), _] => some (.null t)
-| "CONCAT", [_, some (.null t)] => some (.null t)
+| "CONCAT", [some (.null t), some _] => some (.null t)
+| "CONCAT", [some _, some (.null t)] => some (.null t)
 | "CONCAT", [some (.string a), some (.string b)] => some (.string (a ++ b))
 ```
 
