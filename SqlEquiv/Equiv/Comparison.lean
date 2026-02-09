@@ -1049,6 +1049,50 @@ theorem concat_empty_right (e : Expr) (h : e.isStringOrNullValued) :
   simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
   exact evalFunc_concat_empty_right _ (h row)
 
+-- ============================================================================
+-- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)
+-- ============================================================================
+
+-- Value-level helper: LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)
+-- No precondition needed — all non-string cases reduce to none on both sides.
+private theorem evalFunc_length_concat (av bv : Option Value) :
+    evalFunc "LENGTH" [evalFunc "CONCAT" [av, bv]] =
+    evalBinOp .add (evalFunc "LENGTH" [av]) (evalFunc "LENGTH" [bv]) := by
+  have hL : "LENGTH".toUpper = "LENGTH" := by native_decide
+  have hC : "CONCAT".toUpper = "CONCAT" := by native_decide
+  match av, bv with
+  | none, _ => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.int _), none => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.int _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.int _), some (.string _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.int _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.int _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.string _), none => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.string _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.string a), some (.string b) =>
+    simp [evalFunc, hC, hL, evalBinOp, String.length_append]
+  | some (.string _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.string _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.bool _), none => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.bool _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.bool _), some (.string _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.bool _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.bool _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.null _), none => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.null _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.null _), some (.string _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.null _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
+  | some (.null _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
+
+/-- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b).
+    No precondition needed — non-string and null cases all reduce to none on both sides. -/
+theorem length_concat (a b : Expr) :
+    Expr.func "LENGTH" [Expr.func "CONCAT" [a, b]] ≃ₑ
+    Expr.binOp .add (Expr.func "LENGTH" [a]) (Expr.func "LENGTH" [b]) := by
+  intro row
+  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_binOp]
+  exact evalFunc_length_concat _ _
+
 -- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
 -- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
 private theorem toNat_ofNat_of_isValid (n : Nat) (h : n.isValidChar) :
