@@ -1031,7 +1031,6 @@ axiom concat_empty_right (e : Expr) :
 -- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
 private theorem toNat_ofNat_of_isValid (n : Nat) (h : n.isValidChar) :
     (Char.ofNat n).toNat = n := by
-  have hlt : n < 4294967296 := by simp only [Nat.isValidChar] at h; omega
   simp [Char.ofNat, Char.ofNatAux, h, Char.toNat]
 
 -- Cross-composition: keep Char.ofNat opaque, use toNat_ofNat helper + Char.ofNat_toNat
