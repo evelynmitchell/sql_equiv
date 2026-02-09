@@ -130,7 +130,12 @@ def boolGuardRegressionTests : TestSeq :=
   test "int OR NOT int: complement must not fire" (
     evalExpr [] (applyComplementLaws intOrNotInt) == evalExpr [] intOrNotInt) $
   test "string AND NOT string: complement must not fire" (
-    evalExpr [] (applyComplementLaws strAndNotStr) == evalExpr [] strAndNotStr)
+    evalExpr [] (applyComplementLaws strAndNotStr) == evalExpr [] strAndNotStr) $
+  -- Comparisons are not definitely bool (can return none under NULL propagation)
+  test "(x=1) AND NOT (x=1): complement must not fire" (
+    let cmp := Expr.binOp .eq (.col ⟨none, "x"⟩) (.lit (.int 1))
+    let e := Expr.binOp .and cmp (.unaryOp .not cmp)
+    applyComplementLaws e == e)
 
 -- ============================================================================
 -- Regression: simplifyArithmetic null propagation / type mismatch / div-by-zero

@@ -69,24 +69,24 @@ def testConstantFoldNested : TestResult :=
 -- ============================================================================
 
 def testDoubleNegation : TestResult :=
-  -- Use a definitely-boolean expression (comparison) so the guard fires
-  let inner := Expr.binOp .eq (col "x") (intLit 1)
+  -- Use a definitely-boolean expression (IS NULL) so the guard fires
+  let inner := Expr.unaryOp .isNull (col "x")
   let expr := Expr.unaryOp .not (Expr.unaryOp .not inner)
   let optimized := optimizeExpr expr
   if optimized == inner then
-    .pass "Double negation: NOT NOT (x=1) = (x=1)"
+    .pass "Double negation: NOT NOT (x IS NULL) = (x IS NULL)"
   else
-    .fail "Double negation: NOT NOT (x=1) = (x=1)" s!"Expected {repr inner}, got {repr optimized}"
+    .fail "Double negation: NOT NOT (x IS NULL) = (x IS NULL)" s!"Expected {repr inner}, got {repr optimized}"
 
 def testAndTrue : TestResult :=
-  -- Use a definitely-boolean expression so the identity law fires
-  let inner := Expr.binOp .eq (col "x") (intLit 1)
+  -- Use a definitely-boolean expression (IS NULL) so the identity law fires
+  let inner := Expr.unaryOp .isNull (col "x")
   let expr := Expr.binOp .and inner (boolLit true)
   let optimized := optimizeExpr expr
   if optimized == inner then
-    .pass "AND TRUE: (x=1) AND TRUE = (x=1)"
+    .pass "AND TRUE: (x IS NULL) AND TRUE = (x IS NULL)"
   else
-    .fail "AND TRUE: (x=1) AND TRUE = (x=1)" s!"Expected {repr inner}, got {repr optimized}"
+    .fail "AND TRUE: (x IS NULL) AND TRUE = (x IS NULL)" s!"Expected {repr inner}, got {repr optimized}"
 
 def testAndFalse : TestResult :=
   let expr := Expr.binOp .and (col "x") (boolLit false)
@@ -105,14 +105,14 @@ def testOrTrue : TestResult :=
     .fail "OR TRUE: x OR TRUE = TRUE" s!"Expected lit true, got {repr optimized}"
 
 def testOrFalse : TestResult :=
-  -- Use a definitely-boolean expression so the identity law fires
-  let inner := Expr.binOp .eq (col "x") (intLit 1)
+  -- Use a definitely-boolean expression (IS NOT NULL) so the identity law fires
+  let inner := Expr.unaryOp .isNotNull (col "x")
   let expr := Expr.binOp .or inner (boolLit false)
   let optimized := optimizeExpr expr
   if optimized == inner then
-    .pass "OR FALSE: (x=1) OR FALSE = (x=1)"
+    .pass "OR FALSE: (x IS NOT NULL) OR FALSE = (x IS NOT NULL)"
   else
-    .fail "OR FALSE: (x=1) OR FALSE = (x=1)" s!"Expected {repr inner}, got {repr optimized}"
+    .fail "OR FALSE: (x IS NOT NULL) OR FALSE = (x IS NOT NULL)" s!"Expected {repr inner}, got {repr optimized}"
 
 def testTrueAndTrue : TestResult :=
   let expr := Expr.binOp .and (boolLit true) (boolLit true)
@@ -341,17 +341,19 @@ def testOptimizationReport : TestResult :=
 -- ============================================================================
 
 def testComplexBooleanSimplification : TestResult :=
-  -- ((x=1) AND TRUE) OR (FALSE AND (y>0)) should simplify to (x=1)
-  let xEq1 := Expr.binOp .eq (col "x") (intLit 1)
-  let yGt0 := Expr.binOp .gt (col "y") (intLit 0)
+  -- ((x IS NULL) AND TRUE) OR (FALSE AND (y IS NOT NULL)) should simplify
+  -- to (x IS NULL): AND TRUE fires (isNull is definitely bool), AND FALSE
+  -- annihilates (short-circuit), OR FALSE fires (isNull is definitely bool)
+  let xIsNull := Expr.unaryOp .isNull (col "x")
+  let yIsNotNull := Expr.unaryOp .isNotNull (col "y")
   let expr := Expr.binOp .or
-    (Expr.binOp .and xEq1 (boolLit true))
-    (Expr.binOp .and (boolLit false) yGt0)
+    (Expr.binOp .and xIsNull (boolLit true))
+    (Expr.binOp .and (boolLit false) yIsNotNull)
   let optimized := optimizeExpr expr
-  if optimized == xEq1 then
-    .pass "Complex: ((x=1) AND TRUE) OR (FALSE AND (y>0)) = (x=1)"
+  if optimized == xIsNull then
+    .pass "Complex: ((x IS NULL) AND TRUE) OR (FALSE AND (y IS NOT NULL)) = (x IS NULL)"
   else
-    .fail "Complex boolean" s!"Expected {repr xEq1}, got {repr optimized}"
+    .fail "Complex boolean" s!"Expected {repr xIsNull}, got {repr optimized}"
 
 def testCaseSimplification : TestResult :=
   -- CASE WHEN TRUE THEN 1 ELSE 2 END should simplify to 1

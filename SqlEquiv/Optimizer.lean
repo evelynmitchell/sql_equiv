@@ -90,28 +90,18 @@ def applyDeMorgan : Expr -> Expr
   | e => e
 
 /-- Conservative check: is expression definitely boolean?
-    Returns true only for expression forms guaranteed to evaluate to a
-    boolean regardless of runtime data. Any other form (column refs,
-    function calls, CASE, aggregates, subqueries) is treated as potentially
-    non-boolean and thus unsafe for boolean-only rewrites. -/
+    Returns true only for expression forms guaranteed to evaluate to
+    `some (.bool _)` (never `none` or a non-boolean value) regardless of
+    runtime data. Comparisons, BETWEEN, IN, etc. are excluded because they
+    can return `none` under NULL propagation. Column refs, function calls,
+    CASE, aggregates, and subqueries are also excluded. -/
 private def isDefinitelyBool : Expr → Bool
   | .lit (.bool _) => true
-  | .binOp .and _ _ => true
-  | .binOp .or _ _ => true
-  | .binOp .eq _ _ => true
-  | .binOp .ne _ _ => true
-  | .binOp .lt _ _ => true
-  | .binOp .le _ _ => true
-  | .binOp .gt _ _ => true
-  | .binOp .ge _ _ => true
-  | .binOp .like _ _ => true
+  | .binOp .and a b => isDefinitelyBool a && isDefinitelyBool b
+  | .binOp .or a b => isDefinitelyBool a && isDefinitelyBool b
   | .unaryOp .not e => isDefinitelyBool e
   | .unaryOp .isNull _ => true
   | .unaryOp .isNotNull _ => true
-  | .between _ _ _ => true
-  | .inList _ _ _ => true
-  | .inSubquery _ _ _ => true
-  | .exists _ _ => true
   | _ => false
 
 /-- Apply double negation elimination.
