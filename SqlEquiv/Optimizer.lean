@@ -91,10 +91,12 @@ def applyDeMorgan : Expr -> Expr
 
 /-- Conservative check: is expression definitely boolean?
     Returns true only for expression forms guaranteed to evaluate to
-    `some (.bool _)` (never `none` or a non-boolean value) regardless of
-    runtime data. Comparisons, BETWEEN, IN, etc. are excluded because they
-    can return `none` under NULL propagation. Column refs, function calls,
-    CASE, aggregates, and subqueries are also excluded. -/
+    `some (.bool _)` (never `none` or `some (.null _)`) regardless of
+    runtime data. Comparisons, BETWEEN, IN, etc. are excluded because
+    under NULL propagation they produce `some (.null _)` rather than a
+    definite boolean. Column refs, function calls, CASE, aggregates,
+    and subqueries are also excluded. `EXISTS` is included because it
+    always returns `some (.bool _)` regardless of input. -/
 private def isDefinitelyBool : Expr → Bool
   | .lit (.bool _) => true
   | .binOp .and a b => isDefinitelyBool a && isDefinitelyBool b
@@ -102,6 +104,7 @@ private def isDefinitelyBool : Expr → Bool
   | .unaryOp .not e => isDefinitelyBool e
   | .unaryOp .isNull _ => true
   | .unaryOp .isNotNull _ => true
+  | .exists _ _ => true
   | _ => false
 
 /-- Apply double negation elimination.
