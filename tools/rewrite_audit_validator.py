@@ -15,7 +15,7 @@ Annotation format (Lean comment above a rewrite arm):
 
 Categories: identity, annihilation, structural, constant-fold, idempotent
 Types: int, bool, any, null
-Guards: isDefinitelyNonBool, isDefinitelyNonInt, short_circuit, structural_eq,
+Guards: isDefinitelyBool, isDefinitelyNonInt, short_circuit, structural_eq,
         literal_match, literal_int_match, exprCompare, or any Lean function name
 Pattern guards (short_circuit, literal_match, literal_int_match, structural_eq)
 are enforced by pattern matching in the arm body, not by calling a named function.

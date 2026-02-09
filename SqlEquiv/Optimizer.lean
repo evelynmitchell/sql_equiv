@@ -89,45 +89,53 @@ def applyDeMorgan : Expr -> Expr
     .binOp .and (.unaryOp .not a) (.unaryOp .not b)
   | e => e
 
-/-- Apply double negation elimination -/
-def eliminateDoubleNegation : Expr -> Expr
-  -- NOT NOT e => e
-  -- @rewrite identity e:bool
-  | .unaryOp .not (.unaryOp .not e) => e
-  | e => e
-
-/-- Conservative check: is expression definitely non-boolean?
-    Returns true for literals and operators known to never produce a boolean.
-    Note: Column refs, function calls, and subqueries that evaluate to
-    non-boolean values at runtime are NOT caught — LSpec property tests
-    cover those cases. -/
-private def isDefinitelyNonBool : Expr → Bool
-  | .lit (.int _) => true
-  | .lit (.string _) => true
-  | .lit (.null _) => true
-  | .binOp .add _ _ => true
-  | .binOp .sub _ _ => true
-  | .binOp .mul _ _ => true
-  | .binOp .div _ _ => true
-  | .binOp .mod _ _ => true
-  | .binOp .concat _ _ => true
-  | .unaryOp .neg _ => true
+/-- Conservative check: is expression definitely boolean?
+    Returns true only for expression forms guaranteed to evaluate to
+    `some (.bool _)` (never `none` or `some (.null _)`) regardless of
+    runtime data. Comparisons, BETWEEN, IN, etc. are excluded because
+    under NULL propagation they produce `some (.null _)` rather than a
+    definite boolean. Column refs, function calls, CASE, aggregates,
+    and subqueries are also excluded. `EXISTS` is included because it
+    always returns `some (.bool _)` regardless of input. -/
+private def isDefinitelyBool : Expr → Bool
+  | .lit (.bool _) => true
+  | .binOp .and a b => isDefinitelyBool a && isDefinitelyBool b
+  | .binOp .or a b => isDefinitelyBool a && isDefinitelyBool b
+  | .unaryOp .not e => isDefinitelyBool e
+  | .unaryOp .isNull _ => true
+  | .unaryOp .isNotNull _ => true
+  | .exists _ _ => true
   | _ => false
+
+/-- Apply double negation elimination.
+    `NOT NOT e => e` is only sound when `e` is boolean-valued. For
+    non-boolean values such as int and string, applying NOT at runtime
+    yields `none` (an error), whereas the unreduced `e` would return
+    the raw non-boolean value, so rewriting would be unsound. For NULL,
+    `NOT NULL = NULL` so `NOT NOT NULL = NULL` is semantically safe, but
+    we conservatively avoid rewriting whenever `e` is not definitely
+    boolean (see `isDefinitelyBool`). -/
+def eliminateDoubleNegation : Expr -> Expr
+  -- NOT NOT e => e (only when e is definitely boolean)
+  -- @rewrite identity e:bool guard:isDefinitelyBool
+  | .unaryOp .not (.unaryOp .not e) =>
+    if isDefinitelyBool e then e else .unaryOp .not (.unaryOp .not e)
+  | e => e
 
 /-- Apply identity laws for AND/OR.
     Identity laws (a AND TRUE => a, a OR FALSE => a) are only sound when
-    `a` is boolean-valued. We guard against known non-boolean literals
-    (int, string, null). See `isDefinitelyNonBool`.
+    `a` is boolean-valued. We only fire when `a` is definitely boolean
+    (see `isDefinitelyBool`).
     Annihilation laws (a AND FALSE => FALSE, a OR TRUE => TRUE) are always
     sound because evalBinOp short-circuits these cases. -/
 def applyIdentityLaws : Expr -> Expr
-  -- a AND TRUE => a (only when a could be boolean)
-  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+  -- a AND TRUE => a (only when a is definitely boolean)
+  -- @rewrite identity a:bool guard:isDefinitelyBool
   | .binOp .and a (.lit (.bool true)) =>
-    if isDefinitelyNonBool a then .binOp .and a (.lit (.bool true)) else a
-  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+    if isDefinitelyBool a then a else .binOp .and a (.lit (.bool true))
+  -- @rewrite identity a:bool guard:isDefinitelyBool
   | .binOp .and (.lit (.bool true)) a =>
-    if isDefinitelyNonBool a then .binOp .and (.lit (.bool true)) a else a
+    if isDefinitelyBool a then a else .binOp .and (.lit (.bool true)) a
   -- a AND FALSE => FALSE (always sound: evaluator short-circuits)
   -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .and _ (.lit (.bool false)) => .lit (.bool false)
@@ -138,41 +146,53 @@ def applyIdentityLaws : Expr -> Expr
   | .binOp .or _ (.lit (.bool true)) => .lit (.bool true)
   -- @rewrite annihilation a:any guard:short_circuit
   | .binOp .or (.lit (.bool true)) _ => .lit (.bool true)
-  -- a OR FALSE => a (only when a could be boolean)
-  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+  -- a OR FALSE => a (only when a is definitely boolean)
+  -- @rewrite identity a:bool guard:isDefinitelyBool
   | .binOp .or a (.lit (.bool false)) =>
-    if isDefinitelyNonBool a then .binOp .or a (.lit (.bool false)) else a
-  -- @rewrite identity a:bool guard:isDefinitelyNonBool
+    if isDefinitelyBool a then a else .binOp .or a (.lit (.bool false))
+  -- @rewrite identity a:bool guard:isDefinitelyBool
   | .binOp .or (.lit (.bool false)) a =>
-    if isDefinitelyNonBool a then .binOp .or (.lit (.bool false)) a else a
+    if isDefinitelyBool a then a else .binOp .or (.lit (.bool false)) a
   | e => e
 
-/-- Apply idempotent laws -/
+/-- Apply idempotent laws.
+    a AND a => a and a OR a => a are only sound when a is boolean-valued.
+    If a evaluates to non-boolean, AND/OR catch-all returns none, but the
+    rewritten a returns the raw value. -/
 def applyIdempotentLaws : Expr -> Expr
-  -- a AND a => a (structural equality)
-  -- @rewrite idempotent a:bool guard:structural_eq
-  | .binOp .and a b => if a == b then a else .binOp .and a b
+  -- a AND a => a (structural equality, only when a is definitely boolean)
+  -- @rewrite idempotent a:bool guard:isDefinitelyBool
+  | .binOp .and a b =>
+    if a == b && isDefinitelyBool a then a else .binOp .and a b
   -- a OR a => a
-  -- @rewrite idempotent a:bool guard:structural_eq
-  | .binOp .or a b => if a == b then a else .binOp .or a b
+  -- @rewrite idempotent a:bool guard:isDefinitelyBool
+  | .binOp .or a b =>
+    if a == b && isDefinitelyBool a then a else .binOp .or a b
   | e => e
 
-/-- Apply complement laws -/
+/-- Apply complement laws.
+    a AND NOT a => FALSE and a OR NOT a => TRUE are only sound when a is
+    boolean-valued. If a is non-boolean, NOT a → none, AND/OR with none
+    → none, but the rewrite produces a concrete boolean. -/
 def applyComplementLaws : Expr -> Expr
-  -- a AND NOT a => FALSE
-  -- @rewrite annihilation a:bool guard:structural_eq
+  -- a AND NOT a => FALSE (only when a is definitely boolean)
+  -- @rewrite annihilation a:bool guard:isDefinitelyBool
   | .binOp .and a (.unaryOp .not b) =>
-    if a == b then .lit (.bool false) else .binOp .and a (.unaryOp .not b)
-  -- @rewrite annihilation a:bool guard:structural_eq
+    if a == b && isDefinitelyBool a then .lit (.bool false)
+    else .binOp .and a (.unaryOp .not b)
+  -- @rewrite annihilation a:bool guard:isDefinitelyBool
   | .binOp .and (.unaryOp .not a) b =>
-    if a == b then .lit (.bool false) else .binOp .and (.unaryOp .not a) b
-  -- a OR NOT a => TRUE
-  -- @rewrite annihilation a:bool guard:structural_eq
+    if a == b && isDefinitelyBool a then .lit (.bool false)
+    else .binOp .and (.unaryOp .not a) b
+  -- a OR NOT a => TRUE (only when a is definitely boolean)
+  -- @rewrite annihilation a:bool guard:isDefinitelyBool
   | .binOp .or a (.unaryOp .not b) =>
-    if a == b then .lit (.bool true) else .binOp .or a (.unaryOp .not b)
-  -- @rewrite annihilation a:bool guard:structural_eq
+    if a == b && isDefinitelyBool a then .lit (.bool true)
+    else .binOp .or a (.unaryOp .not b)
+  -- @rewrite annihilation a:bool guard:isDefinitelyBool
   | .binOp .or (.unaryOp .not a) b =>
-    if a == b then .lit (.bool true) else .binOp .or (.unaryOp .not a) b
+    if a == b && isDefinitelyBool a then .lit (.bool true)
+    else .binOp .or (.unaryOp .not a) b
   | e => e
 
 /-- Conservative check: is expression definitely non-integer?
@@ -311,10 +331,8 @@ partial def optimizeExpr : Expr -> Expr
   | .unaryOp op e =>
     let e' := optimizeExpr e
     let folded := constantFoldUnaryOp op e'
-    -- Apply double negation elimination
-    match folded with
-    | .unaryOp .not (.unaryOp .not inner) => inner
-    | other => other
+    -- Apply guarded double negation elimination
+    eliminateDoubleNegation folded
   | .func name args =>
     .func name (args.map optimizeExpr)
   | .agg fn arg distinct =>
