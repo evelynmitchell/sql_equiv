@@ -982,11 +982,13 @@ Semantic divergence from `BinOp.concat`:
 |----------|----------------|---------------------|
 | null × string | `some (.null none)` | `some (.null t)` |
 | string × null | `some (.null none)` | `some (.null t)` |
-| none × null | `none` | `some (.null t)` |
 | string × string | `some (.string (a++b))` | `some (.string (a++b))` |
 
-Not exploitable: no optimizer rewrite converts between `BinOp.concat` and
-`Expr.func "CONCAT"`.
+The null-type preservation difference is intentional (needed for proofs).
+Initial implementation used bare `_` wildcards for the non-null argument,
+which would have matched `none` (evaluation errors) and masked them as nulls.
+Copilot review caught this — tightened to `some _` to match the `BinOp`
+convention from Option 3 null semantics (PR #89). See "Obstacles" below.
 
 ### Fix 2: isStringOrNullValued precondition (Defs.lean)
 
@@ -1047,6 +1049,13 @@ infrastructure axioms, then apply the value-level helper.
    evalFunc would make the axioms provable as-is. But identity elimination
    (`f(identity, e) = e`) is almost always unsound without a type precondition —
    the same pattern as `a + 0 = a` and `a AND TRUE = a`.
+
+3. **Bare `_` wildcard in null patterns.** Initial implementation used
+   `[some (.null t), _]` — the `_` matches `none` (evaluation errors), silently
+   converting them to nulls. The `/audit` flagged this as a divergence from
+   `BinOp.concat` but rationalized it as "not exploitable." Copilot review
+   correctly caught it and suggested `some _`. **Lesson**: when the audit flags
+   a convention violation, fix it — don't rationalize individual exceptions.
 
 ### Lessons learned
 
