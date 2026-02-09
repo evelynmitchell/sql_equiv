@@ -103,7 +103,7 @@ def evalSelect : Database → SelectStmt → Table
 
 ---
 
-### Phase 1b: Expression-Level Axioms (~35 axioms) -- NEXT
+### Phase 1b: Expression-Level Axioms (~35 axioms) -- IN PROGRESS
 
 **Goal:** Prove the remaining expression-level axioms that use `≃ₑ` (ExprEquiv).
 These all follow the same pattern: unfold `evalExprWithDb`, case-split on the
@@ -114,24 +114,26 @@ other and of later phases.
 `row`, unfold `evalExpr`, and use `simp [evalExprWithDb, evalBinOp, evalUnaryOp]`
 with case analysis on the evaluated sub-expressions.
 
-**Arithmetic identities (7 axioms):**
+**Arithmetic identities (7 axioms) — PROVED (PR #93):**
 - `expr_add_zero`, `expr_zero_add`, `expr_mul_one`, `expr_one_mul`,
   `expr_mul_zero`, `expr_zero_mul`, `expr_sub_zero`
+- Required `Expr.isIntValued` precondition (see Batch 3 in PROVING_LOG.md)
 
-**Boolean identities (7 axioms):**
+**Boolean identities (7 axioms) — unsound, needs `Expr.isBoolValued`:**
 - `not_not`, `and_true`, `or_false`, `and_self`, `or_self`,
   `and_not_self`, `or_not_self`
 
 **Boolean absorption (2 axioms):**
 - `and_absorb_or`, `or_absorb_and`
 
-**Comparison operators (14 axioms):**
-- `eq_reflexive`, `ne_irreflexive`, `eq_comm` (already a theorem, just used by later axioms)
+**Comparison operators (14 axioms) — PROVED:**
+- `eq_reflexive`, `ne_irreflexive` — proved with `Expr.evaluable` precondition (PR #92)
+- `eq_comm` (already a theorem, just used by later axioms)
 - `not_eq_is_ne`, `not_ne_is_eq`, `not_lt_is_ge`, `not_le_is_gt`,
-  `not_gt_is_le`, `not_ge_is_lt`
-- `lt_flip`, `le_flip`, `gt_flip`, `ge_flip`
+  `not_gt_is_le`, `not_ge_is_lt` — proved (PR #85)
+- `lt_flip`, `le_flip`, `gt_flip`, `ge_flip` — proved (PR #85)
 
-**CASE expressions (5 axioms):**
+**CASE expressions (5 axioms) — PROVED (PR #85):**
 - `case_when_true`, `case_when_false`, `case_when_false_no_else`,
   `case_empty_else`, `case_empty_no_else`
 
@@ -143,18 +145,21 @@ with case analysis on the evaluated sub-expressions.
 
 **Goal:** Prove expression-level axioms involving IN lists, BETWEEN, and LIKE.
 
-**IN/NOT IN (8 axioms):**
+**IN/NOT IN (8 axioms) — unsound, needs `Expr.evaluable` precondition:**
 - `in_empty_false`, `not_in_empty_true` -- trivial (empty list)
 - `in_singleton`, `not_in_singleton` -- single-element expansion
 - `in_pair`, `not_in_pair` -- two-element expansion
 - `in_list_or_expansion`, `not_in_list_and_expansion` -- general list induction
 
-**BETWEEN (3 axioms):**
+**BETWEEN (3 axioms) — 1 was proved but regressed:**
 - `between_expansion`, `between_reflexive`, `not_between_expansion`
+- `between_reflexive` was proved in PR #86 but **reverted to axiom** during
+  the Equiv.lean → submodule split (commit 711581c). Needs re-application.
 
-**LIKE (3 axioms):**
+**LIKE (3 axioms) — 1 was proved but regressed:**
 - `like_match_all`, `like_empty_pattern`, `like_self`
-  (harder -- depends on `simpleLike` pattern matching semantics)
+- `like_empty_pattern` was proved in PR #86 but **reverted to axiom** during
+  the Equiv.lean → submodule split. Needs re-application.
 
 **Estimated complexity:** Easy-Medium.
 
@@ -165,9 +170,12 @@ with case analysis on the evaluated sub-expressions.
 **Goal:** Prove string concatenation and function idempotence axioms.
 
 - `concat_empty_left`, `concat_empty_right` -- concat identity
+  (**Bug:** uses `Expr.func "CONCAT"` but `evalFunc` has no CONCAT handler;
+  should use `Expr.binOp .concat`. See issue #24.)
 - `upper_idempotent`, `lower_idempotent` -- function idempotence
 - `upper_lower_upper`, `lower_upper_lower` -- function composition
-- `length_empty` -- length of empty string
+- `length_empty` -- length of empty string (was proved in PR #86 but
+  **reverted to axiom** during Equiv.lean → submodule split. Needs re-application.)
 
 **Estimated complexity:** Easy -- unfold `evalFunc` and `simp`.
 
@@ -341,22 +349,32 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-| Phase | Description | Axioms | Difficulty |
-|-------|-------------|--------|------------|
-| 1 | Value/Boolean properties | 0 (done) | -- |
-| 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | Easy |
-| 1c | IN / BETWEEN / LIKE | ~11 | Easy-Medium |
-| 1d | String/Function | ~7 | Easy |
-| 2 | Statement-level filter/WHERE | ~7 | Medium |
-| 3 | Aggregate/Distinct | ~4 | Medium |
-| 4 | Set operations | ~13 | Medium |
-| 5 | ORDER BY / LIMIT / OFFSET | ~14 | Easy-Medium |
-| 6 | Join axioms | ~21 | Medium-Hard |
-| 7 | Subquery / EXISTS / IN | ~17 | Medium-Hard |
-| 8 | Expression evaluation helpers | ~4 | Medium-High |
-| 9 | Filter pushdown through joins | ~3 | High |
-| 10 | Optimizer correctness | ~3 | High |
-| | **Total remaining** | **~152** | |
+**Current totals**: 147 axioms remaining (across all .lean files), 178 theorems proved.
+Axiom ratchet: 147 (in `tools/axiom_count_minimum.txt`).
+
+| Phase | Description | Proved | Remaining | Difficulty |
+|-------|-------------|--------|-----------|------------|
+| 1 | Value/Boolean properties | 22 | 0 (done) | -- |
+| 1b | Expression-level (bool, arith, cmp, CASE) | ~24 | ~11 (unsound bool axioms) | Easy |
+| 1c | IN / BETWEEN / LIKE | 0 (3 regressed) | ~11 | Easy-Medium |
+| 1d | String/Function | 0 (1 regressed) | ~7 | Easy |
+| 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
+| 3 | Aggregate/Distinct | 0 | ~4 | Medium |
+| 4 | Set operations | 0 | ~13 | Medium |
+| 5 | ORDER BY / LIMIT / OFFSET | 0 | ~14 | Easy-Medium |
+| 6 | Join axioms | 0 | ~21 | Medium-Hard |
+| 7 | Subquery / EXISTS / IN | 0 | ~17 | Medium-Hard |
+| 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
+| 9 | Filter pushdown through joins | 0 | ~3 | High |
+| 10 | Optimizer correctness | 0 | ~3 | High |
+| infra | Infrastructure (Semantics.lean) | 0 | 10 | N/A |
+| runtime | Optimizer/Normalization/Pushdown | 0 | 10 | N/A |
+| | **Total** | **~47** | **~147** | |
+
+**Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
+`length_empty`) were lost during the Equiv.lean → submodule split and need
+re-application. The proofs exist in git history (commit c36360c) and can be
+cherry-picked into the current submodule structure.
 
 ## Implementation Order (with GitHub Issues)
 
@@ -375,10 +393,10 @@ decision first (see "Unsound Axiom Strategy" below).
 | 3 | [#47](https://github.com/evelynmitchell/sql_equiv/issues/47) | `and_absorb_or`, `or_absorb_and` (absorption) | 2 | **Unsound** — needs bool precondition |
 | 4 | [#49](https://github.com/evelynmitchell/sql_equiv/issues/49) | `and_self`, `or_self` (idempotent) | 2 | **Unsound** — needs bool precondition |
 | 5 | [#50](https://github.com/evelynmitchell/sql_equiv/issues/50) | `and_not_self`, `or_not_self` (complement) | 2 | **Unsound** — needs bool precondition |
-| 6 | [#57](https://github.com/evelynmitchell/sql_equiv/issues/57) | Arithmetic identities (x+0, x*1, etc.) | 7 | **Unsound** — needs int precondition |
+| 6 | [#57](https://github.com/evelynmitchell/sql_equiv/issues/57) | Arithmetic identities (x+0, x*1, etc.) | 7 | **Proved** (PR #93) — `isIntValued` precondition |
 | 7 | [#54](https://github.com/evelynmitchell/sql_equiv/issues/54) | Comparison negation rules | 6 | **Proved** (PR #85) |
 | 8 | [#55](https://github.com/evelynmitchell/sql_equiv/issues/55) | Comparison flip rules | 4 | **Proved** (PR #85) |
-| 9 | [#56](https://github.com/evelynmitchell/sql_equiv/issues/56) | `eq_reflexive`, `ne_irreflexive` | 2 | **Unsound** — needs null semantics fix |
+| 9 | [#56](https://github.com/evelynmitchell/sql_equiv/issues/56) | `eq_reflexive`, `ne_irreflexive` | 2 | **Proved** (PR #92) — `evaluable` precondition |
 | 10 | [#61](https://github.com/evelynmitchell/sql_equiv/issues/61) | CASE/WHEN simplification | 5 | **Proved** (PR #85) |
 
 ### Wave 2 -- IN/BETWEEN/LIKE/String (still expression-level)
@@ -386,9 +404,9 @@ decision first (see "Unsound Axiom Strategy" below).
 | Order | Issue | Description | Axioms | Status |
 |:-----:|-------|-------------|:------:|--------|
 | 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 6 | **Unsound** — needs evaluable precondition |
-| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 1 **proved** (PR #86), 2 unsound |
-| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 1 **proved** (PR #86), 2 unsound |
-| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | Easy |
+| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 1 proved in PR #86 but **regressed** during split; 2 unsound |
+| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 1 proved in PR #86 but **regressed** during split; 2 unsound |
+| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | 1 proved in PR #86 but **regressed** during split; 2 have bug (#24) |
 
 ### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
 
@@ -409,7 +427,7 @@ decision first (see "Unsound Axiom Strategy" below).
 | Order | Issue | Description | Axioms | Difficulty |
 |:-----:|-------|-------------|:------:|------------|
 | 24 | [#52](https://github.com/evelynmitchell/sql_equiv/issues/52) | Normalization equivalence | 2 | Medium-High |
-| 25 | [#53](https://github.com/evelynmitchell/sql_equiv/issues/53) | Ground expr independence | 2 | Medium-High |
+| 25 | [#53](https://github.com/evelynmitchell/sql_equiv/issues/53) | Ground expr independence | 2 | 1 **proved** (PR #94), 1 kept as axiom (`partial def` limitation) |
 
 ### Wave 5 -- Joins (sequential dependency chain)
 
@@ -462,7 +480,7 @@ All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
 
 ---
 
-## Option 3: Null Semantics Fix (Adopted)
+## Option 3: Null Semantics Fix (Adopted — PR #92, merged)
 
 ### Problem
 
@@ -566,32 +584,40 @@ full details.
 2. **Type mismatches**: `NOT 5`, `"hello" + 0`, etc. return `none` but axioms
    claim they equal the original expression. These need type preconditions.
 
-### Recommended path (from prototype comparison)
+### Adopted path
 
-**Step 1 — Fix null semantics (Option 3, PR #89):**
-Change `evalBinOp`/`evalUnaryOp` to return `some (.null none)` for null
-propagation, distinguishing it from `none` (errors). This:
-- Fixes problem 1 at the root
-- Makes `eq_reflexive` provable with only `Expr.evaluable`
-- Improves semantic correctness regardless of proving
-- Proof repair burden is manageable (~90 mechanical fixes)
+**Step 1 — Fix null semantics (Option 3) — DONE (PR #92):**
+Changed `evalBinOp`/`evalUnaryOp` to return `some (.null none)` for null
+propagation, distinguishing it from `none` (errors). Results:
+- `eq_reflexive` and `ne_irreflexive` proved with `Expr.evaluable` precondition
+- All 7 arithmetic identities proved with `Expr.isIntValued` precondition (PR #93)
+- Proof repair was manageable (~90 mechanical fixes)
+- AND/OR kept original semantics to preserve distributivity laws
 
-**Step 2 — Add type system (Option 2, PR #88):**
-Add `Expr.wellTyped` predicate with type preservation. This:
-- Fixes problem 2 (boolean/integer axioms get type preconditions)
-- Provides composability (type preservation lets proofs chain)
-- Needs `SqlType.nullable` extension for comparisons that return bool-or-null
+**Step 2 — Type preconditions (interim approach):**
+Rather than a full type system (Option 2), we're using ad-hoc predicates:
+- `Expr.evaluable` — expression always produces `some` value (for `eq_reflexive`)
+- `Expr.isIntValued` — expression always produces `some (.int n)` (for arithmetic)
+- `Expr.isBoolValued` — needed for boolean axioms (#46-50), not yet defined
 
-**Do NOT use Option 1** (PR #87) — ad-hoc type preconditions have no
-composability and create technical debt.
+A full `Expr.wellTyped` type system (Option 2, PR #88) remains the long-term
+goal for composability, but the ad-hoc predicates are proving sufficient for
+now and don't block progress.
+
+**Optimizer guards mirror axiom preconditions (PRs #100-101):**
+The optimizer now has runtime type guards that match the proof preconditions:
+- `isDefinitelyBool` (allowlist) guards boolean rewrites — mirrors `isBoolValued`
+- `isDefinitelyNonInt` (blocklist) guards arithmetic rewrites — mirrors `isIntValued`
+This creates a virtuous cycle: the same type reasoning protects both the
+optimizer (at runtime) and the axioms (in proofs).
 
 ### What this means for the wave plan
 
-- **Waves 1-2 sound axioms** (#54, #55, #61, `like_empty_pattern`,
-  `between_reflexive`, `length_empty`): provable now, no changes needed
-- **Wave 1 #56** (`eq_reflexive`, `ne_irreflexive`): provable after Step 1
-- **Waves 1-2 type-mismatch axioms** (#46-50, #57, #58, #60): provable
-  after Step 2
+- **Waves 1-2 sound axioms** (#54, #55, #61): proved
+- **Wave 1 #56** (`eq_reflexive`, `ne_irreflexive`): proved (PR #92)
+- **Wave 1 #57** (arithmetic identities): proved (PR #93) with `isIntValued`
+- **Waves 1-2 type-mismatch axioms** (#46-50, #58, #60): need `isBoolValued`
+  or `evaluable` preconditions; provable now with Option 3 semantics
 - **Waves 3+**: unaffected by this design decision
 
 ---
@@ -640,13 +666,39 @@ that then get a single qualifier from the outer `evalFrom`.
 
 ---
 
+## Known Regressions
+
+### PR #86 proofs lost during Equiv.lean split
+
+**Date discovered:** 2026-02-09
+**Cause:** Commit 711581c split `SqlEquiv/Equiv.lean` (4105 lines) into 6
+submodules. During the split, 3 theorem proofs from PR #86 were reverted to
+axiom declarations, and their helper lemmas were dropped entirely.
+
+**Affected axioms:**
+| Axiom | Helper lemmas lost | Original file location |
+|-------|-------------------|----------------------|
+| `between_reflexive` | `evalBetween_reflexive` | `Equiv.lean` → `Equiv/Comparison.lean` |
+| `like_empty_pattern` | `simpleLike_empty`, `evalBinOp_like_empty_eq_eq` | `Equiv.lean` → `Equiv/Comparison.lean` |
+| `length_empty` | (inline proof) | `Equiv.lean` → `Equiv/Comparison.lean` |
+
+**Recovery:** The original proofs exist in git history at commit c36360c.
+They can be cherry-picked and adapted to the current submodule structure.
+The proofs are straightforward (see PROVING_LOG.md Batch 2 for details).
+
+**Prevention:** When splitting large files, verify theorem/axiom counts
+before and after the split match. A CI check comparing `grep -c "^axiom\|^theorem"`
+counts would catch this automatically.
+
+---
+
 ## Open Questions
 
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
-2. **NULL handling:** Three-valued logic adds complexity - start with two-valued subset?
+2. ~~**NULL handling:** Three-valued logic adds complexity - start with two-valued subset?~~ **Resolved** — Option 3 null semantics adopted (PR #92).
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
-4. **Termination:** Some proofs may need well-founded recursion arguments.
-5. **Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion. A systematic audit is still recommended.
+4. **Termination:** Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent` (see Batch 4 in PROVING_LOG.md).
+5. ~~**Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion.~~ **Partially resolved** — Option 3 fixes `none` vs `some (.null _)` conflation. The `/audit` tool (PR #99) now catches unsound optimizer rewrites. Remaining unsound axioms are documented in PROVING_LOG.md.
 
 ---
 

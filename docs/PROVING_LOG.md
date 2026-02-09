@@ -768,3 +768,134 @@ entirely.
 - Build: clean, no warnings
 - Tests: all 199 pass
 - Axiom count: reduced by 1 (`decideGroundExprEquiv_sound` → theorem)
+
+---
+
+## Proof Regression: Equiv.lean Split (commit 711581c)
+
+**Date discovered:** 2026-02-09
+**Date of regression:** 2026-02-07 (commit 711581c, between PRs #92 and #93)
+
+### What happened
+
+Commit 711581c split the monolithic `SqlEquiv/Equiv.lean` (4105 lines) into
+6 focused submodules (`Equiv/Defs.lean`, `Equiv/ValueLemmas.lean`,
+`Equiv/ExprAxioms.lean`, `Equiv/Decidable.lean`, `Equiv/Comparison.lean`,
+`Equiv/StatementAxioms.lean`). During the split, **3 theorem proofs from
+PR #86 were reverted to axiom declarations**.
+
+### Proofs lost
+
+| Axiom | PR | Git commit with proof |
+|-------|----|--------------------|
+| `between_reflexive` | #86 | c36360c |
+| `like_empty_pattern` | #86 | c36360c |
+| `length_empty` | #86 | c36360c |
+
+Helper lemmas also lost: `evalBetween_reflexive`, `simpleLike_empty`,
+`evalBinOp_like_empty_eq_eq`.
+
+### Root cause
+
+The split was done by copying content from `Equiv.lean` into submodules.
+Between PR #86 (which proved the 3 axioms) and PR #92 (null semantics fix),
+the Option 3 prototype branch may have had a different version of `Equiv.lean`.
+When the split was performed from that state, it used the pre-proof versions
+of these 3 declarations.
+
+### Recovery plan
+
+The original proofs in commit c36360c used infrastructure axioms
+(`evalExprWithDb_between`, `evalExprWithDb_func`) that still exist in
+`Semantics.lean`. The proofs can be re-applied to `Equiv/Comparison.lean`
+with minimal adaptation. See Batch 2 notes above for proof details.
+
+### Lesson
+
+When splitting large files, verify `axiom`/`theorem` counts match before and
+after. Consider adding a CI check: `grep -c "^axiom " SqlEquiv/Equiv/*.lean`
+should be monotonically non-increasing across commits.
+
+---
+
+## Optimizer Soundness Guards (PRs #99-101)
+
+**Date:** 2026-02-08
+**Not a proving batch** — but deeply connected to the unsound axiom problem.
+
+### Context
+
+While proving axioms, we discovered ~20 unsound axioms caused by type
+mismatches (Categories 1-2 in the Unsound Axioms section). The *same* class
+of bugs existed in the runtime optimizer:
+
+- `applyIdentityLaws`: `a AND TRUE => a` unsound when `a` is non-boolean
+- `simplifyArithmetic`: `a + 0 => a` unsound when `a` is non-integer
+- `eliminateDoubleNegation`: `NOT NOT a => a` unsound when `a` is non-boolean
+
+### What was done
+
+| PR | Fix | Guard function |
+|----|-----|---------------|
+| #99 | `@rewrite` annotations + audit validator | (tooling) |
+| #100 | Guard `simplifyArithmetic` identity/annihilation arms | `isDefinitelyNonInt` (blocklist) |
+| #101 | Guard `eliminateDoubleNegation`, `applyIdempotentLaws`, `applyComplementLaws` | `isDefinitelyBool` (allowlist) |
+
+### Connection to axiom preconditions
+
+The optimizer guards and axiom preconditions solve the same problem from
+different sides:
+
+| Problem | Axiom precondition | Optimizer guard |
+|---------|-------------------|----------------|
+| Boolean rewrites on non-bool | `Expr.isBoolValued` | `isDefinitelyBool` |
+| Arithmetic rewrites on non-int | `Expr.isIntValued` | `isDefinitelyNonInt` |
+| Null/error conflation | `Expr.evaluable` | `some _` wildcards (not bare `_`) |
+
+### Key design insight
+
+**Allowlist > blocklist for type guards.** `isDefinitelyNonBool` (blocklist)
+missed `.col`, `.case`, `.agg`, `.subquery`. `isDefinitelyBool` (allowlist) is
+safer — only fires when the expression is *statically guaranteed* boolean.
+This same principle applies to axiom preconditions: `isBoolValued` (positive
+assertion) is more robust than "not definitely non-boolean".
+
+---
+
+## Current Status Summary (2026-02-09)
+
+### Axiom/theorem counts
+
+- **147 axioms** remaining (across all .lean files in SqlEquiv/)
+  - 127 in `Equiv/*.lean` (equivalence axioms)
+  - 10 in `Semantics.lean` (infrastructure/eval unfolding bridges)
+  - 10 in `Optimizer.lean`, `ExprNormalization.lean`, `JoinReordering.lean`,
+    `OptimizerUtils.lean`, `PredicatePushdown.lean` (runtime axioms)
+- **178 theorems** proved (in `Equiv/*.lean`)
+- Axiom ratchet: 147 (in `tools/axiom_count_minimum.txt`)
+
+### Issues fully proved (can be closed)
+
+| Issue | Axioms | PR |
+|-------|--------|-----|
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | 2 eq_reflexive, ne_irreflexive | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #61 | 5 CASE/WHEN | #85 |
+| #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
+
+### Issues with regressions
+
+| Issue | Axiom | Was proved in | Reverted in |
+|-------|-------|--------------|-------------|
+| #59 | `between_reflexive` | PR #86 | commit 711581c |
+| #60 | `like_empty_pattern` | PR #86 | commit 711581c |
+| #62 | `length_empty` | PR #86 | commit 711581c |
+
+### Next priorities
+
+1. **Re-apply 3 regressed proofs** — low-hanging fruit, proofs exist in git
+2. **Define `Expr.isBoolValued`** and prove boolean axioms (#46-50)
+3. **String function axioms** (#62) — mostly mechanical
+4. **Wave 3** (statement-level, no join dependency) — independent of type issues
