@@ -369,9 +369,8 @@ Axiom ratchet: 144 (in `tools/axiom_count_minimum.txt`).
 | | **Total** | **~50** | **~144** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
-`length_empty`) were lost during the Equiv.lean → submodule split and need
-re-application. The proofs exist in git history (commit c36360c) and can be
-cherry-picked into the current submodule structure.
+`length_empty`) were lost during the Equiv.lean → submodule split but have
+been restored in PR #102.
 
 ## Implementation Order (with GitHub Issues)
 
@@ -663,25 +662,21 @@ that then get a single qualifier from the outer `evalFrom`.
 
 ---
 
-## Known Regressions
+## Known Regressions (all resolved)
 
-### PR #86 proofs lost during Equiv.lean split
+### PR #86 proofs lost during Equiv.lean split — FIXED (PR #102)
 
-**Date discovered:** 2026-02-09
+**Date discovered:** 2026-02-09 | **Date fixed:** 2026-02-09
 **Cause:** Commit 711581c split `SqlEquiv/Equiv.lean` (4105 lines) into 6
 submodules. During the split, 3 theorem proofs from PR #86 were reverted to
 axiom declarations, and their helper lemmas were dropped entirely.
 
-**Affected axioms:**
-| Axiom | Helper lemmas lost | Original file location |
-|-------|-------------------|----------------------|
-| `between_reflexive` | `evalBetween_reflexive` | `Equiv.lean` → `Equiv/Comparison.lean` |
-| `like_empty_pattern` | `simpleLike_empty`, `evalBinOp_like_empty_eq_eq` | `Equiv.lean` → `Equiv/Comparison.lean` |
-| `length_empty` | (inline proof) | `Equiv.lean` → `Equiv/Comparison.lean` |
-
-**Recovery:** The original proofs exist in git history at commit c36360c.
-They can be cherry-picked and adapted to the current submodule structure.
-The proofs are straightforward (see PROVING_LOG.md Batch 2 for details).
+**Affected axioms (all restored in PR #102):**
+| Axiom | Helper lemmas | Status |
+|-------|--------------|--------|
+| `between_reflexive` | `evalBetween_reflexive` | Restored |
+| `like_empty_pattern` | `simpleLike_empty`, `evalBinOp_like_empty_eq_eq` | Restored |
+| `length_empty` | (inline proof) | Restored |
 
 **Prevention:** When splitting large files, verify theorem/axiom counts
 before and after the split match. A CI check comparing `grep -c "^axiom\|^theorem"`
