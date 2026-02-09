@@ -175,14 +175,14 @@ conflates "evaluation error" and "SQL NULL propagation" under the same `none`.
 | #59 | `not_between_expansion` | **No** | OR short-circuit, same class |
 | #60 | `like_match_all` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
 | #60 | `like_self` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
-| #62 | `concat_empty_left/right` | **No** | **BUG**: `evalFunc` has no "CONCAT" case — always returns `none` |
+| #62 | `concat_empty_left/right` | **Fixed** | `evalFunc` had no "CONCAT" case (PR #107 adds it + `isStringOrNullValued` precondition) |
 
-### Category 5: Implementation bugs
+### Category 5: Implementation bugs (all fixed)
 
-| Axiom | Bug |
-|-------|-----|
-| `concat_empty_left` | Uses `Expr.func "CONCAT"` but `evalFunc` has no CONCAT handler. Should use `Expr.binOp .concat` |
-| `concat_empty_right` | Same bug |
+| Axiom | Bug | Fix |
+|-------|-----|-----|
+| `concat_empty_left` | `evalFunc` had no CONCAT handler | PR #107: added CONCAT to evalFunc + `isStringOrNullValued` precondition |
+| `concat_empty_right` | Same bug | Same fix |
 
 ### Summary
 
@@ -862,22 +862,18 @@ assertion) is more robust than "not definitely non-boolean".
 
 ---
 
-## Current Status Summary (2026-02-09)
+## Current Status Summary (2026-02-09, post-PR #107)
 
 ### Axiom/theorem counts
 
-- **144 axioms** remaining (across all .lean files in SqlEquiv/)
-  - 124 in `Equiv/*.lean` (equivalence axioms)
-  - 10 in `Semantics.lean` (infrastructure/eval unfolding bridges)
-  - 10 in `Optimizer.lean`, `ExprNormalization.lean`, `JoinReordering.lean`,
-    `OptimizerUtils.lean`, `PredicatePushdown.lean` (runtime axioms)
-- **181 theorems** proved (in `Equiv/*.lean`)
-- Axiom ratchet: 144 (in `tools/axiom_count_minimum.txt`)
+- **129 axioms** remaining (across all .lean files in SqlEquiv/)
+- Axiom ratchet: 129 (in `tools/axiom_count_minimum.txt`)
 
 ### Issues fully proved (can be closed)
 
 | Issue | Axioms | PR |
 |-------|--------|-----|
+| #24 | CONCAT evalFunc implementation + proofs | #107 |
 | #54 | 6 comparison negation | #85 |
 | #55 | 4 comparison flip | #85 |
 | #56 | 2 eq_reflexive, ne_irreflexive | #92 |
@@ -948,5 +944,146 @@ Proof pattern for each branch:
 | #57 | 7 arithmetic identities | #93 |
 | #61 | 5 CASE/WHEN | #85 |
 | #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
-| #62 | 4 of 5 string function axioms (upper/lower idem + cross-comp) | #105 |
-3. **Wave 3** (statement-level, no join dependency) — independent of type issues
+| #62 | 4 of 7 string function axioms (upper/lower idem + cross-comp) | #105 |
+
+---
+
+## Batch 8: CONCAT evalFunc + Proofs (#24, #62)
+
+**Branch**: `claude/implement-concat-evalfunc` | **PR**: #107
+**Date**: 2026-02-09
+
+### Problem
+
+The `concat_empty_left` and `concat_empty_right` axioms used `Expr.func "CONCAT" [...]`,
+but `evalFunc` had no `"CONCAT"` handler — it always returned `none` via the catch-all.
+This made the axioms trivially unsound: both sides evaluated differently for any input.
+
+This was documented in Category 5 (Implementation bugs) of the Unsound Axioms section.
+
+### Fix 1: Add CONCAT to evalFunc (Semantics.lean)
+
+Added three pattern-match arms before the catch-all:
+```lean
+| "CONCAT", [some (.null t), _] => some (.null t)
+| "CONCAT", [_, some (.null t)] => some (.null t)
+| "CONCAT", [some (.string a), some (.string b)] => some (.string (a ++ b))
+```
+
+**Design choice: null type preservation.** Unlike `BinOp.concat` which normalizes
+nulls to `.null none`, `evalFunc "CONCAT"` preserves the null's `Option SqlType`.
+This was required for the proofs — without it, `CONCAT("", NULL::int)` would
+return `some (.null none)` but the RHS `NULL::int` evaluates to
+`some (.null (some SqlType.int))`, creating an unsolvable `⊢ none = n` goal.
+
+Semantic divergence from `BinOp.concat`:
+
+| Scenario | `BinOp.concat` | `evalFunc "CONCAT"` |
+|----------|----------------|---------------------|
+| null × string | `some (.null none)` | `some (.null t)` |
+| string × null | `some (.null none)` | `some (.null t)` |
+| none × null | `none` | `some (.null t)` |
+| string × string | `some (.string (a++b))` | `some (.string (a++b))` |
+
+Not exploitable: no optimizer rewrite converts between `BinOp.concat` and
+`Expr.func "CONCAT"`.
+
+### Fix 2: isStringOrNullValued precondition (Defs.lean)
+
+The axioms were **still unsound as-is** even with CONCAT in evalFunc. For
+non-string expressions:
+- `CONCAT("", some (.int 42))` → `none` (catch-all) ≠ `some (.int 42)` (RHS)
+
+Added a new type precondition:
+```lean
+def Expr.isStringOrNullValued (e : Expr) : Prop :=
+  ∀ row : Row, (∃ s : String, evalExpr row e = some (.string s)) ∨
+              (∃ n, evalExpr row e = some (.null n)) ∨
+              evalExpr row e = none
+```
+
+This follows the pattern of `Expr.isBoolValued` and `Expr.isIntValued`, but
+covers three cases: string values, null values (any type), and evaluation errors.
+
+### Fix 3: Prove both theorems (Comparison.lean)
+
+Converted from `axiom` to `theorem` with `isStringOrNullValued` precondition.
+
+**Value-level helpers:**
+```lean
+private theorem evalFunc_concat_empty_left (v : Option Value) :
+    (∃ s, v = some (.string s)) ∨ (∃ n, v = some (.null n)) ∨ v = none →
+    evalFunc "CONCAT" [some (.string ""), v] = v
+
+private theorem evalFunc_concat_empty_right (v : Option Value) :
+    (∃ s, v = some (.string s)) ∨ (∃ n, v = some (.null n)) ∨ v = none →
+    evalFunc "CONCAT" [v, some (.string "")] = v
+```
+
+Both proved by `rcases` on the disjunction + `subst_vars` + `simp [evalFunc, hup]`.
+The left case uses `"" ++ s = s` (definitional); the right case uses
+`s ++ "" = s` (`String.append_empty`, handled by `simp`).
+
+**Expr-level theorems:**
+```lean
+theorem concat_empty_left (e : Expr) (h : e.isStringOrNullValued) :
+    Expr.func "CONCAT" [Expr.lit (.string ""), e] ≃ₑ e := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
+  exact evalFunc_concat_empty_left _ (h row)
+```
+
+Same structure as `upper_idempotent`/`lower_idempotent` — unfold via
+infrastructure axioms, then apply the value-level helper.
+
+### Obstacles
+
+1. **First build failed** with `unsolved goals: ⊢ none = n`. The null case
+   produced `evalFunc "CONCAT" [some (.string ""), some (.null n)]` = `some (.null none)`
+   but the RHS was `some (.null n)`. Root cause: initially copied `BinOp.concat`'s
+   `=> some (.null none)` which discards the null's type. Fix: `=> some (.null t)`.
+   One build iteration.
+
+2. **Axiom unsoundness not in the plan.** The plan assumed adding CONCAT to
+   evalFunc would make the axioms provable as-is. But identity elimination
+   (`f(identity, e) = e`) is almost always unsound without a type precondition —
+   the same pattern as `a + 0 = a` and `a AND TRUE = a`.
+
+### Lessons learned
+
+- **`Value.null` carries `Option SqlType` — evalFunc must preserve it for proofs.**
+  This is the typed-null lesson: `BinOp.concat` normalizes to `.null none`, but
+  proofs about identity elimination need the output null to match the input null's
+  type exactly.
+
+- **Identity elimination axioms need type preconditions.** This is now the third
+  time: boolean identity laws needed `isBoolValued`, arithmetic needed
+  `isIntValued`, and string concat needed `isStringOrNullValued`. The pattern is
+  universal: `f(identity, e) = e` fails when `e` has the wrong type because the
+  LHS returns `none` (type mismatch) but the RHS returns `e`'s raw value.
+
+### Verification
+
+- Build: clean, no warnings
+- Tests: all 199 pass
+- Axiom count: 131 → 129 (2 converted to theorems)
+- Coverage validator: 100% runtime coverage
+- `/audit evalFunc`: no soundness issues
+
+### Summary table update
+
+| Issue | Count | Axioms | PR |
+|-------|--------|-----|-----|
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | 2 eq_reflexive, ne_irreflexive | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #61 | 5 CASE/WHEN | #85 |
+| #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
+| #62 | 4 of 7 string function axioms (upper/lower idem + cross-comp) | #105 |
+| #24, #62 | 2 concat_empty_left/right | #107 |
+
+### Remaining for #62
+
+`length_concat` — `LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)`. Needs
+`isStringOrNullValued` precondition on both `a` and `b`. Should follow the same
+evalFunc-based proof pattern.
