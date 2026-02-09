@@ -1027,13 +1027,57 @@ axiom concat_empty_left (e : Expr) :
 axiom concat_empty_right (e : Expr) :
     Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e
 
+-- Char-level idempotence: toUpper maps [97,122]→[65,90], toLower maps [65,90]→[97,122]
+-- After unfolding Char.ofNatAux, omega can see through UInt32 arithmetic.
+private theorem char_toUpper_idem (c : Char) : c.toUpper.toUpper = c.toUpper := by
+  simp only [Char.toUpper, Char.toNat, Char.ofNat, Char.ofNatAux]
+  split
+  · split <;> split <;> simp_all <;> omega
+  · rfl
+
+private theorem char_toLower_idem (c : Char) : c.toLower.toLower = c.toLower := by
+  simp only [Char.toLower, Char.toNat, Char.ofNat, Char.ofNatAux]
+  split
+  · split <;> split <;> simp_all <;> omega
+  · rfl
+
+-- String-level idempotence (lifted from Char via String.ext + toList_map + List.map_map)
+private theorem string_toUpper_idem (s : String) : s.toUpper.toUpper = s.toUpper := by
+  apply String.ext
+  simp only [String.toUpper, String.toList_map, List.map_map]
+  congr 1; funext c; exact char_toUpper_idem c
+
+private theorem string_toLower_idem (s : String) : s.toLower.toLower = s.toLower := by
+  apply String.ext
+  simp only [String.toLower, String.toList_map, List.map_map]
+  congr 1; funext c; exact char_toLower_idem c
+
+-- Value-level helpers for evalFunc
+private theorem evalFunc_upper_idem (v : Option Value) :
+    evalFunc "UPPER" [evalFunc "UPPER" [v]] = evalFunc "UPPER" [v] := by
+  have hup : "UPPER".toUpper = "UPPER" := by native_decide
+  match v with
+  | some (.string s) => simp [evalFunc, hup, string_toUpper_idem]
+  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hup]
+
+private theorem evalFunc_lower_idem (v : Option Value) :
+    evalFunc "LOWER" [evalFunc "LOWER" [v]] = evalFunc "LOWER" [v] := by
+  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
+  match v with
+  | some (.string s) => simp [evalFunc, hlo, string_toLower_idem]
+  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hlo]
+
 /-- UPPER(UPPER(x)) = UPPER(x) (idempotent) -/
-axiom upper_idempotent (e : Expr) :
-    Expr.func "UPPER" [Expr.func "UPPER" [e]] ≃ₑ Expr.func "UPPER" [e]
+theorem upper_idempotent (e : Expr) :
+    Expr.func "UPPER" [Expr.func "UPPER" [e]] ≃ₑ Expr.func "UPPER" [e] := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  exact evalFunc_upper_idem _
 
 /-- LOWER(LOWER(x)) = LOWER(x) (idempotent) -/
-axiom lower_idempotent (e : Expr) :
-    Expr.func "LOWER" [Expr.func "LOWER" [e]] ≃ₑ Expr.func "LOWER" [e]
+theorem lower_idempotent (e : Expr) :
+    Expr.func "LOWER" [Expr.func "LOWER" [e]] ≃ₑ Expr.func "LOWER" [e] := by
+  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  exact evalFunc_lower_idem _
 
 /-- UPPER(LOWER(UPPER(x))) = UPPER(x) -/
 axiom upper_lower_upper (e : Expr) :

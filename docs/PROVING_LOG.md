@@ -893,8 +893,48 @@ assertion) is more robust than "not definitely non-boolean".
 | #60 | `like_empty_pattern` | PR #86 | commit 711581c | Restored in PR #102 |
 | #62 | `length_empty` | PR #86 | commit 711581c | Restored in PR #102 |
 
+## Batch 7: String Function Idempotence (#62) — partial
+
+**Branch**: `claude/prove-string-func-axioms`
+
+### upper_idempotent, lower_idempotent — 2 axioms → theorems
+
+**Strategy**: Four-layer proof architecture:
+1. Char-level: prove `c.toUpper.toUpper = c.toUpper` by unfolding `Char.toUpper/toLower/ofNat/ofNatAux`, then `split` on the range condition + `split` on `isValidChar`, closing with `simp_all <;> omega`.
+2. String-level: lift via `String.ext` + `String.toList_map` + `List.map_map` + `congr 1; funext`.
+3. evalFunc-level: match on `Option Value` cases, use `native_decide` for string constant equality (`"UPPER".toUpper = "UPPER"`).
+4. Expr-level: use `evalExprWithDb_func` axiom + `List.map`.
+
+**Key insight**: For idempotence (2 function applications), after unfolding `Char.ofNatAux`, the `split` on `isValidChar` + the range condition gives only 3 branches, and `simp_all <;> omega` handles the UInt32/BitVec arithmetic. `omega` can see through one level of `Char.ofNat` round-trip.
+
+### upper_lower_upper, lower_upper_lower — BLOCKED
+
+**Problem**: Cross-composition (3 function applications) requires the `Char.ofNat` round-trip: after `toUpper` creates `Char.ofNat (c.toNat - 32)`, applying `toLower` needs `(Char.ofNat n).toNat = n`, which requires reducing through UInt32 → BitVec → Fin → Nat struct projections. The `@[simp]` lemma `UInt32.toNat_ofNat'` matches `(OfNat.ofNat n).toNat` but NOT `(UInt32.ofNat n).toNat` (different functions syntactically). Adding `UInt32.toNat` to simp causes a loop with `UInt32.toNat_toBitVec`.
+
+**What was tried**:
+- `dsimp at *` for struct projection + `simp_all <;> omega` — struct projections partially reduced but `omega` couldn't handle remaining Char equality
+- `bv_omega` — converts BitVec→Nat but not Char/UInt32 struct projections
+- Manual `have` chains with `Char.toNat_ofNat_of_isValid` helper — `simp only` couldn't resolve the `if-then-else` conditions with `Char.ofNat` terms
+- `ext` to decompose struct equality — `UInt32` lacks `@[ext]`
+
+**Root cause**: The split on `Char.ofNatAux` (which has `dite` on `isValidChar`) creates struct literals `{ val := UInt32.ofNat n, valid := h }`. Accessing `.val.toNat` on these requires reducing through 3 struct layers (Char → UInt32 → BitVec → Fin → Nat). Neither `simp` nor `dsimp` fully reduce this chain when combined with the rest of the proof.
+
+**Promising approach (not yet tried)**: Prove a `Char.toNat_ofNat_of_isValid` helper that avoids the struct issue by using `simp [...]` (full, not `simp only`) to let @[simp] lemmas fire, then use `Nat.mod_eq_of_lt` for the final `n % 2^32 = n` step. Then restructure cross-composition proofs to keep `Char.ofNat` opaque and use this helper + `Char.ofNat_toNat` for round-trip reasoning.
+
+### Summary table update
+
+| Issue | Count | Axioms | PR |
+|-------|--------|-----|-----|
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | 2 eq_reflexive, ne_irreflexive | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #61 | 5 CASE/WHEN | #85 |
+| #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
+| #62 | 2 of 5 (upper_idempotent, lower_idempotent) | pending |
+
 ### Next priorities
 
-1. **Define `Expr.isBoolValued`** and prove boolean axioms (#46-50)
-2. **String function axioms** (#62) — mostly mechanical
+1. **Cross-composition string axioms** (#62) — prove `Char.toNat_ofNat_of_isValid` helper, then `upper_lower_upper` / `lower_upper_lower`
+2. **Define `Expr.isBoolValued`** and prove boolean axioms (#46-50)
 3. **Wave 3** (statement-level, no join dependency) — independent of type issues
