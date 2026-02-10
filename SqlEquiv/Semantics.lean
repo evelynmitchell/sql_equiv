@@ -831,6 +831,16 @@ axiom evalExprWithDb_between (db : Database) (row : Row) (e lo hi : Expr) :
     | _, _ => none
   | _, _, _ => none
 
+/-- Axiom: evalExprWithDb unfolds for IN list -/
+axiom evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool) (vals : List Expr) :
+  evalExprWithDb db row (Expr.inList e neg vals) =
+  match evalExprWithDb db row e with
+  | none => none
+  | some v =>
+    let hasMatch := vals.filterMap (evalExprWithDb db row) |>.any fun v' =>
+      v.eq v' == some true
+    some (Value.bool (if neg then !hasMatch else hasMatch))
+
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================

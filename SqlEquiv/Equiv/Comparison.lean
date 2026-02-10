@@ -888,28 +888,47 @@ theorem expr_sub_zero (e : Expr) (h : e.isIntValued) :
 -- IN List Theorems
 -- ============================================================================
 
-/-- x IN () = FALSE (empty IN list) -/
-axiom in_empty_false (e : Expr) :
-    Expr.inList e false [] ≃ₑ Expr.lit (.bool false)
+/-- x IN () = FALSE (empty IN list).
+    Requires `evaluable` — expression must not produce errors. -/
+theorem in_empty_false (e : Expr) (h : e.evaluable) :
+    Expr.inList e false [] ≃ₑ Expr.lit (.bool false) := by
+  intro row
+  simp only [evalExpr]
+  obtain ⟨v, hv⟩ := h row
+  simp only [evalExpr] at hv
+  rw [evalExprWithDb_inList, evalExprWithDb_lit, hv]
+  simp [List.filterMap]
 
-/-- x NOT IN () = TRUE (empty NOT IN list) -/
-axiom not_in_empty_true (e : Expr) :
-    Expr.inList e true [] ≃ₑ Expr.lit (.bool true)
+/-- x NOT IN () = TRUE (empty NOT IN list).
+    Requires `evaluable` — expression must not produce errors. -/
+theorem not_in_empty_true (e : Expr) (h : e.evaluable) :
+    Expr.inList e true [] ≃ₑ Expr.lit (.bool true) := by
+  intro row
+  simp only [evalExpr]
+  obtain ⟨v, hv⟩ := h row
+  simp only [evalExpr] at hv
+  rw [evalExprWithDb_inList, evalExprWithDb_lit, hv]
+  simp [List.filterMap]
 
-/-- x IN (a) = (x = a) (singleton IN list) -/
+/-- x IN (a) = (x = a) (singleton IN list).
+    Axiom: IN-list uses filterMap (drops errors) while = propagates errors,
+    so these differ when `a` produces an error or either operand is NULL. -/
 axiom in_singleton (e a : Expr) :
     Expr.inList e false [a] ≃ₑ Expr.binOp .eq e a
 
-/-- x NOT IN (a) = (x <> a) (singleton NOT IN list) -/
+/-- x NOT IN (a) = (x <> a) (singleton NOT IN list).
+    Axiom: Same filterMap vs error-propagation mismatch as in_singleton. -/
 axiom not_in_singleton (e a : Expr) :
     Expr.inList e true [a] ≃ₑ Expr.binOp .ne e a
 
-/-- x IN (a, b) = (x = a OR x = b) -/
+/-- x IN (a, b) = (x = a OR x = b).
+    Axiom: Same filterMap vs error-propagation mismatch as in_singleton. -/
 axiom in_pair (e a b : Expr) :
     Expr.inList e false [a, b] ≃ₑ
     Expr.binOp .or (Expr.binOp .eq e a) (Expr.binOp .eq e b)
 
-/-- x NOT IN (a, b) = (x <> a AND x <> b) -/
+/-- x NOT IN (a, b) = (x <> a AND x <> b).
+    Axiom: Same filterMap vs error-propagation mismatch as in_singleton. -/
 axiom not_in_pair (e a b : Expr) :
     Expr.inList e true [a, b] ≃ₑ
     Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b)

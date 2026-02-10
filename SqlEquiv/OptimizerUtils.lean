@@ -330,13 +330,38 @@ partial def exprStructuralCmp : Expr → Expr → Ordering
 -- We use axioms for now; these can be replaced with terminating recursion + proofs later.
 
 /-- flattenAnd always produces a non-empty list.
-    Axiom: Structural induction on Expr shows base case returns [e] (length 1)
-    and AND case returns concatenation of two non-empty lists. -/
-axiom flattenAnd_nonempty (e : Expr) : (flattenAnd e).length ≥ 1
+    Structural induction: base case returns [e] (length 1),
+    AND case returns concatenation of two non-empty lists. -/
+theorem flattenAnd_nonempty (e : Expr) : (flattenAnd e).length ≥ 1 := by
+  match e with
+  | .binOp .and l r =>
+    simp [flattenAnd, List.length_append]
+    have hl := flattenAnd_nonempty l
+    omega
+  | .binOp .add _ _ | .binOp .sub _ _ | .binOp .mul _ _ | .binOp .div _ _
+  | .binOp .mod _ _ | .binOp .eq _ _ | .binOp .ne _ _ | .binOp .lt _ _
+  | .binOp .le _ _ | .binOp .gt _ _ | .binOp .ge _ _ | .binOp .or _ _
+  | .binOp .concat _ _ | .binOp .like _ _ => simp [flattenAnd]
+  | .lit _ | .col _ | .unaryOp _ _ | .func _ _ | .agg _ _ _ | .countStar
+  | .case _ _ | .inList _ _ _ | .between _ _ _ | .inSubquery _ _ _
+  | .exists _ _ | .subquery _ | .windowFn _ _ _ => simp [flattenAnd]
 
 /-- flattenOr always produces a non-empty list.
-    Axiom: Similar reasoning to flattenAnd_nonempty. -/
-axiom flattenOr_nonempty (e : Expr) : (flattenOr e).length ≥ 1
+    Structural induction: base case returns [e] (length 1),
+    OR case returns concatenation of two non-empty lists. -/
+theorem flattenOr_nonempty (e : Expr) : (flattenOr e).length ≥ 1 := by
+  match e with
+  | .binOp .or l r =>
+    simp [flattenOr, List.length_append]
+    have hl := flattenOr_nonempty l
+    omega
+  | .binOp .add _ _ | .binOp .sub _ _ | .binOp .mul _ _ | .binOp .div _ _
+  | .binOp .mod _ _ | .binOp .eq _ _ | .binOp .ne _ _ | .binOp .lt _ _
+  | .binOp .le _ _ | .binOp .gt _ _ | .binOp .ge _ _ | .binOp .and _ _
+  | .binOp .concat _ _ | .binOp .like _ _ => simp [flattenOr]
+  | .lit _ | .col _ | .unaryOp _ _ | .func _ _ | .agg _ _ _ | .countStar
+  | .case _ _ | .inList _ _ _ | .between _ _ _ | .inSubquery _ _ _
+  | .exists _ _ | .subquery _ | .windowFn _ _ _ => simp [flattenOr]
 
 /-- unflattenAnd of non-empty list produces some result -/
 theorem unflattenAnd_nonempty (es : List Expr) (h : es.length ≥ 1) :
