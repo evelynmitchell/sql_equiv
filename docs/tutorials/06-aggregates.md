@@ -272,39 +272,34 @@ This is safe when:
 2. The aggregate is decomposable (SUM is)
 3. The join doesn't create duplicates
 
-### When Pushdown Fails: Non-Decomposable Aggregates
+### Why AVG Is Not Decomposable
+
+Unlike SUM, you cannot combine AVGs from partitions to get the overall AVG:
+
+```
+AVG of partitions != AVG of whole
+
+Example:
+  Partition 1: [10, 20] -> AVG = 15
+  Partition 2: [30]     -> AVG = 30
+
+  AVG of averages: (15 + 30) / 2 = 22.5
+  True AVG: (10 + 20 + 30) / 3 = 20     -- Different!
+```
+
+The error is that AVG-of-AVGs doesn't weight by partition size.
+
+### AVG Pushdown: The Safe Way
+
+To push AVG below a join, decompose it into SUM and COUNT (which are both decomposable):
 
 ```sql
--- CANNOT simply push AVG below a JOIN!
-
 -- Original
 SELECT d.name, AVG(e.salary)
 FROM employees e JOIN departments d ON e.dept_id = d.id
 GROUP BY d.name
 
--- WRONG pushdown:
-SELECT d.name, sub.avg_salary  -- This is wrong!
-FROM (SELECT dept_id, AVG(salary) as avg_salary FROM employees GROUP BY dept_id) sub
-JOIN departments d ON sub.dept_id = d.id
-```
-
-Wait—in this case the pushdown actually works because the join is 1-to-many (each employee belongs to one department). But in general, AVG is not decomposable:
-
-```
-AVG of partitions ≠ AVG of whole
-
-Example:
-  Partition 1: [10, 20] → AVG = 15
-  Partition 2: [30]     → AVG = 30
-
-  AVG of averages: (15 + 30) / 2 = 22.5
-  True AVG: (10 + 20 + 30) / 3 = 20     ← Different!
-```
-
-The correct decomposition for AVG requires both SUM and COUNT:
-
-```sql
--- Correct AVG pushdown:
+-- Correct pushdown: decompose AVG into SUM/COUNT
 SELECT d.name, sub.total_salary / sub.emp_count as avg_salary
 FROM (
   SELECT dept_id, SUM(salary) as total_salary, COUNT(salary) as emp_count
@@ -313,6 +308,8 @@ FROM (
 ) sub
 JOIN departments d ON sub.dept_id = d.id
 ```
+
+Note: In this specific example (1-to-many join where each employee belongs to exactly one department), pushing a bare AVG also happens to give the correct result because the GROUP BY key (`dept_id`) is the same as the join key. But the SUM/COUNT decomposition is the generally safe pattern and works regardless of join cardinality.
 
 ### When Pushdown Fails: Duplicating Joins
 
@@ -374,7 +371,7 @@ SELECT dept FROM employees GROUP BY dept
 
 **Yes, equivalent.** Both return one row per unique dept value (including one row for NULL if any employees have no department).
 
-Without aggregate functions, GROUP BY and DISTINCT produce the same result. The formal equivalence is the `distinct_group_by` theorem.
+Without aggregate functions, GROUP BY and DISTINCT produce the same result. This equivalence is not yet a named theorem in the codebase, but follows from the definitions of DISTINCT (deduplication) and GROUP BY without aggregates (partitioning that collapses to unique keys).
 
 </details>
 

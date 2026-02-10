@@ -364,7 +364,7 @@ WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)
 -- not_in_subquery_as_not_exists: x NOT IN (SELECT y FROM s) ≡ NOT EXISTS (SELECT 1 FROM s WHERE y = x)
 ```
 
-Note: The `not_in_subquery_as_not_exists` equivalence is an axiom that holds when the subquery column has no NULLs. When NULLs are present, NOT IN and NOT EXISTS have different semantics.
+**sql_equiv modeling note**: The NOT IN trap described above reflects standard SQL semantics, where `x NOT IN (1, NULL)` propagates UNKNOWN through the disjunction. However, the sql_equiv evaluator (`Semantics.lean:276-292`) implements a simplified model: it checks each subquery value with `Value.eq` and treats NULL comparisons as "not a match" (since `Value.eq` returns `none` for NULLs, and the evaluator tests `== some true`). This means NOT IN and NOT EXISTS behave identically in the evaluator, and the `not_in_subquery_as_not_exists` axiom holds trivially. The standard SQL NOT IN/NULL trap is not currently modeled. When writing queries for real databases, prefer NOT EXISTS to avoid this pitfall.
 
 ---
 

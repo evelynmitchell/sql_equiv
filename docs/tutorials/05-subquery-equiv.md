@@ -80,7 +80,9 @@ What happens in edge cases?
 ```
 
 If the subquery returns **no rows**, the scalar value is NULL.
-If the subquery returns **more than one row**, it's a runtime error in most databases.
+If the subquery returns **more than one row**, most SQL databases raise a runtime error.
+
+**sql_equiv modeling note**: The sql_equiv evaluator uses "first row wins" semantics for scalar subqueries -- it silently returns the first row's first column rather than erroring. This means sql_equiv cannot prove properties about the error case. When reasoning about scalar subqueries, ensure the subquery is guaranteed to return at most one row (e.g., via aggregation or a unique constraint).
 
 ### Scalar in SELECT → LEFT JOIN
 

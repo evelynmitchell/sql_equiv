@@ -236,12 +236,16 @@ LEFT JOIN orders o ON c.id = o.customer_id
 WHERE o.customer_id IS NULL
 ```
 
-**The NULL caveat**: As discussed in [Tutorial 3](03-null-logic.md), NOT IN behaves unexpectedly when the subquery contains NULLs. The anti-join pattern is safer because the LEFT JOIN + IS NULL approach doesn't suffer from the NOT IN trap.
+**The NULL caveats**: As discussed in [Tutorial 3](03-null-logic.md), NOT IN behaves unexpectedly in standard SQL when the subquery contains NULLs. The anti-join pattern (LEFT JOIN + IS NULL) is closer to NOT EXISTS semantics, which is generally the safer choice.
+
+However, the anti-join also has a subtlety with NULL outer keys: if `c.id` is NULL, the LEFT JOIN won't match any row (since `NULL = anything` is UNKNOWN), so `o.customer_id` will be NULL in the output, and the `WHERE o.customer_id IS NULL` check will include that row. This matches NOT EXISTS behavior (which also returns TRUE for NULL outer keys), but may or may not match the intended business logic. If you need to exclude NULL outer keys, add `AND c.id IS NOT NULL`.
 
 ```lean
--- not_in_subquery_as_not_exists: NOT IN ≡ NOT EXISTS (when no NULLs)
+-- not_in_subquery_as_not_exists: NOT IN ≡ NOT EXISTS
 -- not_in_subquery_unnest_to_antijoin: NOT IN becomes anti-join
 ```
+
+Note: In the sql_equiv evaluator, NOT IN and NOT EXISTS behave identically because NULL comparisons are treated as non-matches rather than propagating UNKNOWN (see [Tutorial 3 modeling note](03-null-logic.md#formal-statement)).
 
 ### NOT EXISTS → Anti-Join
 
