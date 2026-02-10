@@ -41,6 +41,13 @@ def Expr.isStringOrNullValued (e : Expr) : Prop :=
               (∃ n, evalExpr row e = some (.null n)) ∨
               evalExpr row e = none
 
+/-- Type precondition: expression always evaluates to a string or null value.
+    Excludes int/bool values AND errors (none). Needed for LIKE pattern axioms
+    (like_match_all, like_self) where evalBinOp .like only handles string/null inputs. -/
+def Expr.isStringOrNull (e : Expr) : Prop :=
+  ∀ row : Row, (∃ s : String, evalExpr row e = some (.string s)) ∨
+              (∃ n, evalExpr row e = some (.null n))
+
 /-- Mild precondition: expression always evaluates to SOME value.
     This excludes only error-producing expressions (missing columns, aggregates
     without group context). All well-formed SQL in a valid context satisfies this.
