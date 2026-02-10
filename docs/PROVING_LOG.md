@@ -862,12 +862,12 @@ assertion) is more robust than "not definitely non-boolean".
 
 ---
 
-## Current Status Summary (2026-02-09, post-PR #107)
+## Current Status Summary (2026-02-09, post-PR #109)
 
 ### Axiom/theorem counts
 
-- **129 axioms** remaining (across all .lean files in SqlEquiv/)
-- Axiom ratchet: 129 (in `tools/axiom_count_minimum.txt`)
+- **127 axioms** remaining (across all .lean files in SqlEquiv/)
+- Axiom ratchet: 127 (in `tools/axiom_count_minimum.txt`)
 
 ### Issues fully proved (can be closed)
 
@@ -1091,8 +1091,124 @@ infrastructure axioms, then apply the value-level helper.
 | #62 | 4 of 7 string function axioms (upper/lower idem + cross-comp) | #105 |
 | #24, #62 | 2 concat_empty_left/right | #107 |
 
-### Remaining for #62
+---
 
-`length_concat` — `LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)`. Needs
-`isStringOrNullValued` precondition on both `a` and `b`. Should follow the same
-evalFunc-based proof pattern.
+## Batch 9: length_concat (#108) + BETWEEN Expansion (#59)
+
+**Branch**: `claude/prove-length-concat` | **PRs**: #109 (length_concat), pending (BETWEEN)
+**Date**: 2026-02-09
+
+### length_concat (#108) — 1 axiom → theorem
+
+`LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)`.
+
+**Strategy**: Value-level helper `evalFunc_length_concat` reduces both sides
+through `evalFunc` dispatch. No preconditions needed — for non-string/null
+inputs, both sides reduce to `none`.
+
+**Proof (after Copilot review refactor)**:
+```lean
+private theorem evalFunc_length_concat (av bv : Option Value) :
+    evalFunc "LENGTH" [evalFunc "CONCAT" [av, bv]] =
+    evalBinOp .add (evalFunc "LENGTH" [av]) (evalFunc "LENGTH" [bv]) := by
+  have hL : "LENGTH".toUpper = "LENGTH" := by native_decide
+  have hC : "CONCAT".toUpper = "CONCAT" := by native_decide
+  cases av with
+  | none => simp [evalFunc, hC, hL, evalBinOp]
+  | some v => cases bv with
+    | none => cases v <;> simp [evalFunc, hC, hL, evalBinOp]
+    | some w => cases v <;> cases w <;> simp [evalFunc, hC, hL, evalBinOp, String.length_append]
+```
+
+Originally had 20+ explicit match arms (one per Value constructor pair).
+Copilot review on PR #109 suggested `cases <;> simp` — but simple
+`cases av <;> cases bv <;> simp` fails because `cases` on `Option Value`
+only splits into `none | some val` without destructuring `val`. The fix is
+nested `cases` that goes one level deeper into `Value` constructors.
+
+### between_expansion + not_between_expansion (#59) — 2 axioms → theorems
+
+**Strategy**: Two-layer proof — value-level `evalBetween_expansion` then
+expression-level `between_expansion` with `evaluatesToSome` preconditions.
+
+**New precondition: `Expr.evaluatesToSome`**:
+```lean
+def Expr.evaluatesToSome (e : Expr) : Prop :=
+  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
+```
+Needed because AND short-circuits (`anything AND FALSE = FALSE`) while
+BETWEEN returns `none` when any `Value.compare` produces `none`. Without
+this precondition, expression-level errors create a divergence.
+
+**Value-level proof — key tactic discovery**:
+
+The `evalBetween_expansion` helper must prove that BETWEEN's match-on-compare
+equals `evalBinOp .and (evalBinOp .ge ...) (evalBinOp .le ...)` for all 64
+Value constructor triples. The challenge: `evalBinOp` has overlapping AND
+patterns that create a decision tree opaque to `rfl`.
+
+**Three case categories**:
+
+1. **Both compares return `none`** (null v, bool v, or cross-type pairs):
+   Both sides reduce to `none`. Tactic: `rfl`.
+
+2. **Same-type pair with variable** (int×int, string×string): `Value.compare`
+   returns `some (compare a b)`, and `evalBinOp .ge/.le` reduces to
+   `Option.map` form. Need to case-split on the `Ordering` result.
+   Tactic: `simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl`
+   (or `cases compare a b <;> cases compare a c <;> rfl` for two same-type pairs).
+
+3. **Mixed: one null + one same-type pair** (e.g., int×null×int): `evalBinOp .ge`
+   returns `some (.null none)` for the null pair, which flows into AND. Need both
+   `Value.compare` and `evalBinOp` reduced, then case-split.
+   Same tactic: `simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl`
+
+**The universal tactic**: `simp only [Value.compare, evalBinOp]; cases compare <;> rfl`
+handles categories 2 and 3. Category 1 uses `rfl` directly. This replaces
+the earlier broken approach that tried to use intermediate helper lemmas
+(`between_match_eq_and_map`, `evalBinOp_ge_nonnull_int`, etc.) to bridge
+between `Option.map` and `evalBinOp` representations.
+
+**`not_between_expansion`** proved by composition (no new case analysis):
+```
+between_expansion → unaryOp_congr → not_and → binOp_congr + not_ge_is_lt + not_le_is_gt
+```
+
+### Tactic Pattern: `simp only [Value.compare, evalBinOp]; cases compare <;> rfl`
+
+**When it works**: Proofs where one side is a `match` on `Value.compare` results
+and the other side uses `evalBinOp` calls. The `simp` reduces both `Value.compare`
+(eliminating the outer match) and `evalBinOp` (navigating the overlapping pattern
+decision tree), leaving goals that depend only on the `Ordering` result. `cases`
+on the `Ordering` (3 values: `.lt`, `.eq`, `.gt`) then closes each sub-goal by `rfl`.
+
+**Where it applies**:
+- `evalBetween_expansion` — BETWEEN match vs AND(ge, le) (this batch)
+- Comparison flip helpers (`evalBinOp_lt_eq_gt_flip`, `evalBinOp_le_eq_ge_flip`) — could simplify the 27-arm match proofs in Comparison.lean
+- Any future proof comparing raw `Value.compare` dispatch against `evalBinOp` comparison operators
+
+**Where it does NOT apply**:
+- `evalBinOp` commutativity (both sides are `evalBinOp` — no `Value.compare` to reduce)
+- `evalBinOp` associativity (nested `evalBinOp` calls; the inner call must fully evaluate before the outer one can, and overlapping AND/OR patterns prevent `rfl` on abstract `Bool` variables)
+- Proofs involving `evalFunc` (use `cases v <;> cases w <;> simp [evalFunc, ...]` instead)
+
+### Related pattern: `cases v <;> cases w <;> simp [evalFunc, ...]`
+
+For `evalFunc`-based proofs, `cases` on `Option Value` then `Value` constructors
+with `<;> simp` is more maintainable than exhaustive match. The key is that
+`cases` on `Option Value` only gives `none | some val` — you must also `cases val`
+to get concrete `Value` constructors that `simp [evalFunc]` can reduce.
+
+### Summary table update
+
+| Issue | Count | Axioms | PR |
+|-------|--------|-----|-----|
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | 2 eq_reflexive, ne_irreflexive | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #61 | 5 CASE/WHEN | #85 |
+| #53 | 1 of 2 (decideGroundExprEquiv_sound) | #94 |
+| #62 | 4 of 7 string function axioms (upper/lower idem + cross-comp) | #105 |
+| #24, #62 | 3 concat_empty_left/right + length_concat | #107, #109 |
+| #59 | 2 of 3 between_expansion + not_between_expansion | #109 |
