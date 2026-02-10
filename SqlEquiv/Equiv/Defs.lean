@@ -41,6 +41,12 @@ def Expr.isStringOrNullValued (e : Expr) : Prop :=
               (∃ n, evalExpr row e = some (.null n)) ∨
               evalExpr row e = none
 
+/-- Type precondition: expression always evaluates successfully (no error).
+    Needed for BETWEEN expansion where evaluation errors break the equivalence
+    due to AND's short-circuit behavior. -/
+def Expr.evaluatesToSome (e : Expr) : Prop :=
+  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
+
 theorem expr_equiv_refl (e : Expr) : e ≃ₑ e := by intro row; rfl
 theorem expr_equiv_symm {e1 e2 : Expr} (h : e1 ≃ₑ e2) : e2 ≃ₑ e1 := by intro row; exact (h row).symm
 theorem expr_equiv_trans {e1 e2 e3 : Expr} (h12 : e1 ≃ₑ e2) (h23 : e2 ≃ₑ e3) : e1 ≃ₑ e3 := by intro row; rw [h12 row, h23 row]
