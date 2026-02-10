@@ -1024,7 +1024,7 @@ private theorem evalBetween_expansion (v vlo vhi : Value) :
     because AND's short-circuit behavior disagrees with BETWEEN's when
     sub-expressions produce evaluation errors. -/
 theorem between_expansion (e lo hi : Expr)
-    (he : e.evaluatesToSome) (hlo : lo.evaluatesToSome) (hhi : hi.evaluatesToSome) :
+    (he : e.evaluable) (hlo : lo.evaluable) (hhi : hi.evaluable) :
     Expr.between e lo hi ≃ₑ
     Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi) := by
   intro row
@@ -1347,12 +1347,6 @@ theorem length_empty :
 -- Comparison Theorems
 -- ============================================================================
 
-/-- Mild precondition: expression always evaluates to SOME value.
-    This excludes only error-producing expressions (missing columns, aggregates
-    without group context). All well-formed SQL in a valid context satisfies this. -/
-def Expr.evaluable (e : Expr) : Prop :=
-  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
-
 /-- x = x is TRUE for non-null, NULL for null (reflexivity of equality).
     Requires `Expr.evaluable` — the expression must not produce errors.
     This is the key theorem enabled by Option 3 null semantics. -/
@@ -1573,9 +1567,9 @@ theorem not_ge_is_lt (a b : Expr) :
 
 /-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b)
     Proved by composition: between_expansion + De Morgan + NOT comparison identities.
-    Same evaluatesToSome precondition as between_expansion. -/
+    Same `Expr.evaluable` precondition as between_expansion. -/
 theorem not_between_expansion (e lo hi : Expr)
-    (he : e.evaluatesToSome) (hlo : lo.evaluatesToSome) (hhi : hi.evaluatesToSome) :
+    (he : e.evaluable) (hlo : lo.evaluable) (hhi : hi.evaluable) :
     Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
     Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) := by
   -- Step 1: NOT BETWEEN ≃ NOT (ge AND le) via between_expansion + unaryOp_congr

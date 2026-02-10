@@ -1095,7 +1095,7 @@ infrastructure axioms, then apply the value-level helper.
 
 ## Batch 9: length_concat (#108) + BETWEEN Expansion (#59)
 
-**Branch**: `claude/prove-length-concat` | **PRs**: #109 (length_concat), pending (BETWEEN)
+**Branch**: `claude/prove-length-concat` | **PR**: #109 (length_concat + BETWEEN expansion)
 **Date**: 2026-02-09
 
 ### length_concat (#108) — 1 axiom → theorem
@@ -1129,11 +1129,11 @@ nested `cases` that goes one level deeper into `Value` constructors.
 ### between_expansion + not_between_expansion (#59) — 2 axioms → theorems
 
 **Strategy**: Two-layer proof — value-level `evalBetween_expansion` then
-expression-level `between_expansion` with `evaluatesToSome` preconditions.
+expression-level `between_expansion` with `Expr.evaluable` preconditions.
 
-**New precondition: `Expr.evaluatesToSome`**:
+**Precondition: `Expr.evaluable`** (reused from `eq_reflexive`):
 ```lean
-def Expr.evaluatesToSome (e : Expr) : Prop :=
+def Expr.evaluable (e : Expr) : Prop :=
   ∀ row : Row, ∃ v : Value, evalExpr row e = some v
 ```
 Needed because AND short-circuits (`anything AND FALSE = FALSE`) while
