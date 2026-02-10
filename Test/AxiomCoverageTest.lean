@@ -1708,6 +1708,45 @@ def equivAdditionalTests : List TestResult :=
   ]
 
 -- ============================================================================
+-- Infrastructure Axiom Tests (evalSelect decomposition)
+-- ============================================================================
+
+def infrastructureAxiomTests : List TestResult :=
+  let selAll := mkSelectWithLimitOffset "users" none none
+  let allRows := evalSelect testDb selAll
+  let orderAsc := [OrderByItem.mk (col "age") .asc]
+  let orderDesc := [OrderByItem.mk (col "age") .desc]
+  [
+    -- evalSelect_limit_offset: LIMIT n OFFSET m = (all.drop m).take n
+    let sel := mkSelectWithLimitOffset "users" (some 2) (some 1)
+    let result := evalSelect testDb sel
+    let expected := (allRows.drop 1).take 2
+    if result == expected then .pass "evalSelect_limit_offset (LIMIT 2 OFFSET 1)"
+    else .fail "evalSelect_limit_offset (LIMIT 2 OFFSET 1)" s!"got {result.length} expected {expected.length}",
+
+    -- evalSelect_limit_offset: LIMIT none case
+    let sel := mkSelectWithLimitOffset "users" none (some 1)
+    let result := evalSelect testDb sel
+    let expected := allRows.drop 1
+    if result == expected then .pass "evalSelect_limit_offset (no limit, OFFSET 1)"
+    else .fail "evalSelect_limit_offset (no limit, OFFSET 1)" s!"got {result.length} expected {expected.length}",
+
+    -- evalSelect_orderBy_length: different ORDER BY, same row count
+    let selAsc := mkSelectFull false "users" none orderAsc none none
+    let selDesc := mkSelectFull false "users" none orderDesc none none
+    testLengthEq "evalSelect_orderBy_length (ASC vs DESC)"
+      (evalSelect testDb selAsc).length
+      (evalSelect testDb selDesc).length,
+
+    -- evalSelect_orderBy_length: with LIMIT
+    let selAscLim := mkSelectFull false "users" none orderAsc (some 2) none
+    let selDescLim := mkSelectFull false "users" none orderDesc (some 2) none
+    testLengthEq "evalSelect_orderBy_length (ASC vs DESC with LIMIT)"
+      (evalSelect testDb selAscLim).length
+      (evalSelect testDb selDescLim).length
+  ]
+
+-- ============================================================================
 -- All Tests
 -- ============================================================================
 
@@ -1732,7 +1771,8 @@ def allAxiomCoverageTests : List TestResult :=
   additionalLogicTests ++
   subqueryUnnestingTests ++
   semanticsUnfoldTests ++
-  equivAdditionalTests
+  equivAdditionalTests ++
+  infrastructureAxiomTests
 
 def runAxiomCoverageTests : IO (Nat × Nat) :=
   runTests "Axiom Coverage Tests" allAxiomCoverageTests

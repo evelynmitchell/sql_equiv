@@ -842,6 +842,30 @@ axiom evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool) 
     some (Value.bool (if neg then !hasMatch else hasMatch))
 
 -- ============================================================================
+-- Infrastructure axioms for evalSelect limit/offset decomposition
+-- ============================================================================
+
+/-- Infrastructure: evalSelect decomposes limit/offset into drop/take on the base result.
+    This captures steps 8 (OFFSET) and 9 (LIMIT) of the evaluation pipeline (lines 765-772). -/
+axiom evalSelect_limit_offset (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
+    let base := evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none)
+    let offsetRows := match offset with | some n => base.drop n | none => base
+    match limit with | some n => offsetRows.take n | none => offsetRows
+
+/-- Infrastructure: ORDER BY preserves row count (mergeSort preserves length).
+    Changing the ORDER BY clause does not change the number of result rows. -/
+axiom evalSelect_orderBy_length (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat) :
+  (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
+  (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length
+
+-- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================
 
