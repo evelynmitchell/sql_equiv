@@ -465,15 +465,6 @@ theorem order_by_preserves_count (db : Database)
   simp only []
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having [] orderBy limit offset
 
-/-- Empty ORDER BY list is identity -/
-theorem order_by_empty_identity (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (limit offset : Option Nat) :
-    let sel := SelectStmt.mk distinct items from_ where_ groupBy having [] limit offset
-    evalSelect db sel = evalSelect db sel := by
-  simp only []
-
 /-- ORDER BY is idempotent: ordering twice by same criteria is same as once -/
 axiom order_by_idempotent (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
@@ -484,8 +475,8 @@ axiom order_by_idempotent (db : Database)
     let result := evalSelect db sel
     result.mergeSort (fun r1 r2 => compareByOrderItems db r1 r2 orderBy) = result
 
-/-- ORDER BY ASC then DESC on same column: second order takes precedence -/
-theorem order_by_last_wins (db : Database)
+/-- Different ORDER BY clauses produce same number of rows -/
+theorem order_by_length_invariant (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (limit offset : Option Nat) (col : Expr) :
@@ -493,7 +484,6 @@ theorem order_by_last_wins (db : Database)
       [OrderByItem.mk col .asc, OrderByItem.mk col .desc] limit offset
     let selDesc := SelectStmt.mk distinct items from_ where_ groupBy having
       [OrderByItem.mk col .desc] limit offset
-    -- When ordering by same column twice, later order dominates
     (evalSelect db selAscDesc).length = (evalSelect db selDesc).length := by
   simp only []
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having

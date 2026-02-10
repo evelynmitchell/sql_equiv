@@ -726,20 +726,14 @@ def orderByTests : List TestResult :=
       (evalSelect testDb selAsc).length
       (evalSelect testDb selNoOrder).length,
 
-    -- order_by_empty_identity: ORDER BY [] has same row count as ORDER BY [col]
-    -- (this test only checks row counts, not row contents or ordering)
-    testLengthEq "order_by_empty_identity"
-      (evalSelect testDb (mkSelectFull false "users" none [] none none)).length
-      (evalSelect testDb selAsc).length,
-
     -- order_by_idempotent: sorting twice by same criteria = once
     let sorted := evalSelect testDb selAsc
     let reSorted := sorted.mergeSort (fun r1 r2 => compareByOrderItems testDb r1 r2 orderAsc)
     if sorted == reSorted then .pass "order_by_idempotent"
     else .fail "order_by_idempotent" "Re-sorting changed result",
 
-    -- order_by_last_wins: ORDER BY col ASC, col DESC has same count as ORDER BY col DESC
-    testLengthEq "order_by_last_wins"
+    -- order_by_length_invariant: different ORDER BY clauses produce same row count
+    testLengthEq "order_by_length_invariant"
       (evalSelect testDb (mkSelectFull false "users" none
         [OrderByItem.mk (col "age") .asc, OrderByItem.mk (col "age") .desc] none none)).length
       (evalSelect testDb selDesc).length,

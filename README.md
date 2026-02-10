@@ -612,9 +612,8 @@ inductive Stmt where
 | Theorem | Description |
 |---------|-------------|
 | `order_by_preserves_count` | ORDER BY doesn't change row count |
-| `order_by_empty_identity` | Empty ORDER BY list is identity |
 | `order_by_idempotent` | Ordering twice by same criteria = once |
-| `order_by_last_wins` | Multiple ORDER BY on same column: last wins |
+| `order_by_length_invariant` | Different ORDER BY clauses produce same row count |
 | `order_by_reverse` | ASC vs DESC reverses the result |
 
 ### LIMIT Theorems

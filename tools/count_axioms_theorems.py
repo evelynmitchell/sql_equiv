@@ -10,26 +10,28 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SQLEQUIV_DIR = PROJECT_ROOT / "SqlEquiv"
 
-AXIOM_RE = re.compile(r"^axiom\s+(\w+)")
-THEOREM_RE = re.compile(r"^theorem\s+(\w+)")
+AXIOM_RE = re.compile(r"^\s*(?:private\s+)?axiom\s+(\w+)")
+THEOREM_RE = re.compile(r"^\s*(?:private\s+)?theorem\s+(\w+)")
 
 
 def scan_file(path: Path) -> tuple[list[str], list[str]]:
     """Return (axiom_names, theorem_names) found in a .lean file."""
     axioms: list[str] = []
     theorems: list[str] = []
-    for line in path.read_text().splitlines():
-        m = AXIOM_RE.match(line)
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.lstrip()
+        if not line or line.startswith("--"):
+            continue
+        m = AXIOM_RE.match(raw_line)
         if m:
             axioms.append(m.group(1))
             continue
-        m = THEOREM_RE.match(line)
+        m = THEOREM_RE.match(raw_line)
         if m:
             theorems.append(m.group(1))
     return axioms, theorems

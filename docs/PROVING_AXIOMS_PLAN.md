@@ -235,9 +235,8 @@ of set operations.
 
 **All 18 axioms proved (PR #115):**
 
-**ORDER BY (6):** `order_by_preserves_count`, `order_by_empty_identity`,
-  `order_by_idempotent`, `order_by_last_wins`, `order_by_reverse`,
-  `order_limit_deterministic`
+**ORDER BY (5):** `order_by_preserves_count`, `order_by_idempotent`,
+  `order_by_length_invariant`, `order_by_reverse`, `order_limit_deterministic`
 
 **LIMIT/OFFSET (12):** `limit_zero_empty`, `limit_upper_bound`,
   `limit_none_all_rows`, `limit_monotonic`, `limit_one_singleton`,
