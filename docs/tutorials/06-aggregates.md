@@ -107,8 +107,9 @@ This means `COUNT(*) = 0` is NOT the same as `SUM(1) = 0`:
 -- count_star_nonneg: COUNT(*) >= 0
 -- count_star_empty: COUNT(*) = 0 on empty table
 -- count_star_singleton: COUNT(*) = 1 on single-row table
--- sum_empty: SUM([]) = 0 (in our model)
 ```
+
+Note: The codebase lemma `sum_empty` proves `[].foldl (+) 0 = 0`, which is about the underlying list fold helper, not the SQL-level SUM aggregate. In SQL, `SUM` on an empty table returns NULL. The SQL aggregate layer wraps the fold and converts empty-input cases to NULL.
 
 ### DISTINCT in Aggregates
 
@@ -121,7 +122,7 @@ SELECT COUNT(DISTINCT x) FROM t    -- 2 (1 and 2, skips NULL)
 
 ```lean
 -- count_distinct_le_count: COUNT(DISTINCT x) ≤ COUNT(x)
--- distinct_idem: DISTINCT(DISTINCT(xs)) = DISTINCT(xs)
+-- distinct_idempotent: DISTINCT(DISTINCT(xs)) = DISTINCT(xs)
 ```
 
 ### Decomposability
@@ -141,7 +142,6 @@ Some aggregates can be decomposed across partitions. This matters for parallel e
 ```lean
 -- sum_singleton: SUM([n]) = n
 -- sum_add_zero: SUM(xs ++ [0]) = SUM(xs)
--- sum_additive: SUM of concatenation is additive
 -- min_singleton: MIN([n]) = n
 -- max_singleton: MAX([n]) = n
 -- min_le_elem: MIN(xs) ≤ any element in xs
@@ -438,16 +438,15 @@ The pushdown reduces the number of rows flowing through the join from (number of
 | `count_star_empty` | `COUNT(*) = 0` on empty | Empty table behavior |
 | `count_star_singleton` | `COUNT(*) = 1` on single row | Singleton behavior |
 | `count_after_filter_le` | `COUNT(*) WHERE p ≤ COUNT(*)` | Filter reduces count |
-| `sum_empty` | `SUM([]) = 0` | Empty sum |
+| `sum_empty` | `[].foldl (+) 0 = 0` (list fold, not SQL SUM) | Empty list fold |
 | `sum_singleton` | `SUM([n]) = n` | Singleton sum |
 | `sum_add_zero` | `SUM(xs ++ [0]) = SUM(xs)` | Zero identity |
-| `sum_additive` | `SUM(xs ++ ys) = SUM(xs) + SUM(ys)` | Decomposability |
 | `min_singleton` | `MIN([n]) = n` | Singleton min |
 | `max_singleton` | `MAX([n]) = n` | Singleton max |
 | `min_le_elem` | `MIN(xs) ≤ n` for n in xs | Min bound |
 | `max_ge_elem` | `MAX(xs) ≥ n` for n in xs | Max bound |
 | `count_distinct_le_count` | `COUNT(DISTINCT x) ≤ COUNT(x)` | Distinct reduces count |
-| `distinct_idem` | `DISTINCT(DISTINCT(xs)) = DISTINCT(xs)` | Idempotence |
+| `distinct_idempotent` | `DISTINCT(DISTINCT(xs)) = DISTINCT(xs)` | Idempotence |
 
 ---
 

@@ -520,7 +520,7 @@ Note: We use INNER JOIN (not LEFT JOIN) because the original correlated subquery
 | Transformation | Pitfall | Condition for Safety |
 |----------------|---------|---------------------|
 | NOT IN → NOT EXISTS | Different NULL semantics | No NULLs in subquery column |
-| Scalar → JOIN | Multiple matches cause duplication | Subquery returns ≤ 1 row |
+| Scalar → JOIN | Scalar errors on >1 row; JOIN silently duplicates | Join key must be unique |
 | IN → JOIN | Duplicates | Add DISTINCT |
 | Decorrelation | Changes evaluation order | No side effects, deterministic |
 | Flatten nested | Wrong scoping | Careful with aliases |

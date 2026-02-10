@@ -206,7 +206,7 @@ This is formally proven in sql_equiv:
 -- null_sub_left: NULL - x = NULL
 -- null_sub_right: x - NULL = NULL
 -- null_mul_left: NULL * x = NULL
--- null_mul_right: x + NULL = NULL
+-- null_mul_right: x * NULL = NULL
 -- null_div_left: NULL / x = NULL
 -- null_div_right: x / NULL = NULL
 ```
@@ -286,9 +286,10 @@ SELECT MAX(x)   FROM t    -- NULL
 ```
 
 ```lean
--- sum_empty: SUM of empty list returns 0 (in our model, the integer 0)
 -- count_star_empty: COUNT(*) of empty table returns 0
 ```
+
+Note: In SQL, `SUM` on an empty table returns NULL, not 0. The codebase lemma `sum_empty` proves that `[].foldl (+) 0 = 0`, which is about the underlying list fold, not the SQL aggregate. The SQL-level SUM wraps this and returns NULL when no rows are present.
 
 ### COALESCE for Default Values
 
