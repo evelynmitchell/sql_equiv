@@ -1716,16 +1716,14 @@ def infrastructureAxiomTests : List TestResult :=
     let result := evalSelect testDb sel
     let expected := (allRows.drop 1).take 2
     if result == expected then .pass "evalSelect_limit_offset (LIMIT 2 OFFSET 1)"
-    else .fail "evalSelect_limit_offset (LIMIT 2 OFFSET 1)"
-      s!"len got {result.length} expected {expected.length}, head got={result.take 3} expected={expected.take 3}",
+    else .fail "evalSelect_limit_offset (LIMIT 2 OFFSET 1)" s!"got {result.length} expected {expected.length}",
 
     -- evalSelect_limit_offset: LIMIT none case
     let sel := mkSelectWithLimitOffset "users" none (some 1)
     let result := evalSelect testDb sel
     let expected := allRows.drop 1
     if result == expected then .pass "evalSelect_limit_offset (no limit, OFFSET 1)"
-    else .fail "evalSelect_limit_offset (no limit, OFFSET 1)"
-      s!"len got {result.length} expected {expected.length}, head got={result.take 3} expected={expected.take 3}",
+    else .fail "evalSelect_limit_offset (no limit, OFFSET 1)" s!"got {result.length} expected {expected.length}",
 
     -- evalSelect_orderBy_length: different ORDER BY, same row count
     let selAsc := mkSelectFull false "users" none orderAsc none none
