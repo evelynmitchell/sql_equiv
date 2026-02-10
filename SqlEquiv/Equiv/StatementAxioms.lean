@@ -455,21 +455,15 @@ axiom join_match_implies_in_subquery (db : Database) (row : Row)
 -- ============================================================================
 
 /-- ORDER BY preserves row count -/
-axiom order_by_preserves_count (db : Database)
+theorem order_by_preserves_count (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (limit offset : Option Nat) (orderBy : List OrderByItem) :
     let selNoOrder := SelectStmt.mk distinct items from_ where_ groupBy having [] limit offset
     let selWithOrder := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset
-    (evalSelect db selNoOrder).length = (evalSelect db selWithOrder).length
-
-/-- Empty ORDER BY list is identity -/
-axiom order_by_empty_identity (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (limit offset : Option Nat) :
-    let sel := SelectStmt.mk distinct items from_ where_ groupBy having [] limit offset
-    evalSelect db sel = evalSelect db sel
+    (evalSelect db selNoOrder).length = (evalSelect db selWithOrder).length := by
+  simp only []
+  exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having [] orderBy limit offset
 
 /-- ORDER BY is idempotent: ordering twice by same criteria is same as once -/
 axiom order_by_idempotent (db : Database)
@@ -481,8 +475,8 @@ axiom order_by_idempotent (db : Database)
     let result := evalSelect db sel
     result.mergeSort (fun r1 r2 => compareByOrderItems db r1 r2 orderBy) = result
 
-/-- ORDER BY ASC then DESC on same column: second order takes precedence -/
-axiom order_by_last_wins (db : Database)
+/-- Different ORDER BY clauses produce same number of rows -/
+theorem order_by_length_invariant (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (limit offset : Option Nat) (col : Expr) :
@@ -490,8 +484,10 @@ axiom order_by_last_wins (db : Database)
       [OrderByItem.mk col .asc, OrderByItem.mk col .desc] limit offset
     let selDesc := SelectStmt.mk distinct items from_ where_ groupBy having
       [OrderByItem.mk col .desc] limit offset
-    -- When ordering by same column twice, later order dominates
-    (evalSelect db selAscDesc).length = (evalSelect db selDesc).length
+    (evalSelect db selAscDesc).length = (evalSelect db selDesc).length := by
+  simp only []
+  exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having
+    [OrderByItem.mk col .asc, OrderByItem.mk col .desc] [OrderByItem.mk col .desc] limit offset
 
 /-- Reversing ORDER BY direction reverses the result (for single column) -/
 axiom order_by_reverse (db : Database)
@@ -509,146 +505,252 @@ axiom order_by_reverse (db : Database)
 -- ============================================================================
 
 /-- LIMIT 0 returns empty result -/
-axiom limit_zero_empty (db : Database)
+theorem limit_zero_empty (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (offset : Option Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some 0) offset
-    evalSelect db sel = []
+    evalSelect db sel = [] := by
+  simp only []
+  rw [evalSelect_limit_offset]
+  simp [List.take_zero]
 
 /-- LIMIT n returns at most n rows -/
-axiom limit_upper_bound (db : Database)
+theorem limit_upper_bound (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (offset : Option Nat) (n : Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some n) offset
-    (evalSelect db sel).length ≤ n
+    (evalSelect db sel).length ≤ n := by
+  simp only []
+  rw [evalSelect_limit_offset]
+  simp [List.length_take]
+  omega
 
 /-- No LIMIT returns all rows (LIMIT none vs LIMIT large) -/
-axiom limit_none_all_rows (db : Database)
+theorem limit_none_all_rows (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (offset : Option Nat) :
     let selNoLimit := SelectStmt.mk distinct items from_ where_ groupBy having orderBy none offset
     let count := (evalSelect db selNoLimit).length
     let selLargeLimit := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some count) offset
-    evalSelect db selNoLimit = evalSelect db selLargeLimit
+    evalSelect db selNoLimit = evalSelect db selLargeLimit := by
+  simp only []
+  rw [evalSelect_limit_offset (limit := none)]
+  rw [evalSelect_limit_offset (limit := some _)]
+  simp [List.take_length]
 
 /-- LIMIT is monotonic: larger limit gives superset (by length) -/
-axiom limit_monotonic (db : Database)
+theorem limit_monotonic (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (offset : Option Nat) (m n : Nat) (h : m ≤ n) :
     let selM := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some m) offset
     let selN := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some n) offset
-    (evalSelect db selM).length ≤ (evalSelect db selN).length
+    (evalSelect db selM).length ≤ (evalSelect db selN).length := by
+  simp only []
+  rw [evalSelect_limit_offset (limit := some m)]
+  rw [evalSelect_limit_offset (limit := some n)]
+  simp [List.length_take]
+  omega
 
 /-- LIMIT 1 returns at most one row -/
-axiom limit_one_singleton (db : Database)
+theorem limit_one_singleton (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (offset : Option Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some 1) offset
-    (evalSelect db sel).length ≤ 1
+    (evalSelect db sel).length ≤ 1 := by
+  simp only []
+  rw [evalSelect_limit_offset]
+  simp [List.length_take]
+  omega
 
 -- ============================================================================
 -- OFFSET Theorems
 -- ============================================================================
 
+-- Helper lemmas: specialize evalSelect_limit_offset for concrete limit/offset values
+-- These avoid `let` bindings on the RHS, making `rw` reliable.
+
+private theorem evalSelect_SN (db : Database) (d : Bool) (i : List SelectItem)
+    (f : Option FromClause) (w : Option Expr) (g : List Expr) (hv : Option Expr)
+    (ob : List OrderByItem) (lim : Nat) (off : Nat) :
+  evalSelect db (SelectStmt.mk d i f w g hv ob (some lim) (some off)) =
+    ((evalSelect db (SelectStmt.mk d i f w g hv ob none none)).drop off).take lim := by
+  rw [evalSelect_limit_offset]
+
+private theorem evalSelect_S0 (db : Database) (d : Bool) (i : List SelectItem)
+    (f : Option FromClause) (w : Option Expr) (g : List Expr) (hv : Option Expr)
+    (ob : List OrderByItem) (lim : Nat) :
+  evalSelect db (SelectStmt.mk d i f w g hv ob (some lim) none) =
+    (evalSelect db (SelectStmt.mk d i f w g hv ob none none)).take lim := by
+  rw [evalSelect_limit_offset]
+
+private theorem evalSelect_0N (db : Database) (d : Bool) (i : List SelectItem)
+    (f : Option FromClause) (w : Option Expr) (g : List Expr) (hv : Option Expr)
+    (ob : List OrderByItem) (off : Nat) :
+  evalSelect db (SelectStmt.mk d i f w g hv ob none (some off)) =
+    (evalSelect db (SelectStmt.mk d i f w g hv ob none none)).drop off := by
+  rw [evalSelect_limit_offset]
+
 /-- OFFSET 0 is identity -/
-axiom offset_zero_identity (db : Database)
+theorem offset_zero_identity (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit : Option Nat) :
     let selNoOffset := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit none
     let selZeroOffset := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit (some 0)
-    evalSelect db selNoOffset = evalSelect db selZeroOffset
+    evalSelect db selNoOffset = evalSelect db selZeroOffset := by
+  simp only []
+  rw [evalSelect_limit_offset (offset := none)]
+  rw [evalSelect_limit_offset (offset := some 0)]
+  simp [List.drop_zero]
 
-/-- OFFSET >= row count returns empty -/
-axiom offset_too_large_empty (db : Database)
+/-- OFFSET >= base row count returns empty.
+    Note: count is measured from the base query (no limit, no offset) to ensure soundness. -/
+theorem offset_too_large_empty (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit : Option Nat) (n : Nat) :
-    let selNoOffset := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit none
-    let count := (evalSelect db selNoOffset).length
+    let selBase := SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none
+    let count := (evalSelect db selBase).length
     let selOffset := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit (some (count + n))
-    evalSelect db selOffset = []
+    evalSelect db selOffset = [] := by
+  simp only []
+  rw [evalSelect_limit_offset]
+  generalize evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none) = base
+  have hdrop : base.drop (base.length + n) = [] := List.drop_eq_nil_of_le (by omega)
+  cases limit <;> simp [hdrop]
 
 /-- OFFSET reduces row count -/
-axiom offset_reduces_count (db : Database)
+theorem offset_reduces_count (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit : Option Nat) (n : Nat) :
     let selNoOffset := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit none
     let selOffset := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit (some n)
-    (evalSelect db selOffset).length ≤ (evalSelect db selNoOffset).length
+    (evalSelect db selOffset).length ≤ (evalSelect db selNoOffset).length := by
+  simp only []
+  cases limit with
+  | none =>
+    rw [evalSelect_0N]
+    generalize evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none) = base
+    simp [List.length_drop]
+  | some L =>
+    rw [evalSelect_SN, evalSelect_S0]
+    generalize evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none) = base
+    simp [List.length_take, List.length_drop]; omega
 
 /-- OFFSET is monotonic: larger offset gives fewer or equal rows -/
-axiom offset_monotonic (db : Database)
+theorem offset_monotonic (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit : Option Nat) (m n : Nat) (h : m ≤ n) :
     let selM := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit (some m)
     let selN := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit (some n)
-    (evalSelect db selN).length ≤ (evalSelect db selM).length
+    (evalSelect db selN).length ≤ (evalSelect db selM).length := by
+  simp only []
+  cases limit with
+  | none =>
+    rw [evalSelect_0N (off := n), evalSelect_0N (off := m)]
+    generalize evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none) = base
+    simp [List.length_drop]; omega
+  | some L =>
+    rw [evalSelect_SN (off := n), evalSelect_SN (off := m)]
+    generalize evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none) = base
+    simp [List.length_take, List.length_drop]; omega
 
 -- ============================================================================
 -- LIMIT + OFFSET Combination Theorems
 -- ============================================================================
 
+-- Helper: take n ++ take m from drop n = take (n + m)
+private theorem take_add_eq {α : Type} (n m : Nat) (l : List α) :
+    l.take n ++ (l.drop n).take m = l.take (n + m) := by
+  induction n generalizing l with
+  | zero => simp
+  | succ k ih =>
+    cases l with
+    | nil => simp
+    | cons x xs =>
+      simp only [show k + 1 + m = (k + m) + 1 from by omega]
+      show (x :: xs.take k) ++ (xs.drop k).take m = x :: xs.take (k + m)
+      rw [List.cons_append]
+      exact congrArg (x :: ·) (ih xs)
+
 /-- LIMIT and OFFSET compose: OFFSET m then LIMIT n = skip m, take n -/
-axiom limit_offset_compose (db : Database)
+theorem limit_offset_compose (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (m n : Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some n) (some m)
     let selAll := SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none
-    evalSelect db sel = ((evalSelect db selAll).drop m).take n
+    evalSelect db sel = ((evalSelect db selAll).drop m).take n := by
+  simp only []
+  rw [evalSelect_SN]
 
 /-- OFFSET then LIMIT 0 = empty regardless of offset -/
-axiom offset_limit_zero_empty (db : Database)
+theorem offset_limit_zero_empty (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (offset : Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some 0) (some offset)
-    evalSelect db sel = []
+    evalSelect db sel = [] := by
+  simp only []
+  rw [evalSelect_SN]
+  simp [List.take_zero]
 
 /-- Total pagination: LIMIT n OFFSET m returns at most n rows -/
-axiom pagination_upper_bound (db : Database)
+theorem pagination_upper_bound (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (m n : Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some n) (some m)
-    (evalSelect db sel).length ≤ n
+    (evalSelect db sel).length ≤ n := by
+  simp only []
+  rw [evalSelect_SN]
+  exact List.length_take_le n _
 
 /-- Pagination identity: OFFSET 0 LIMIT count = all rows -/
-axiom pagination_identity (db : Database)
+theorem pagination_identity (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) :
     let selAll := SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none
     let count := (evalSelect db selAll).length
     let selPaged := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some count) (some 0)
-    evalSelect db selAll = evalSelect db selPaged
+    evalSelect db selAll = evalSelect db selPaged := by
+  simp only []
+  rw [evalSelect_SN]
+  simp [List.drop_zero, List.take_length]
 
 /-- Consecutive pages cover all rows: page1 ++ page2 when properly offset -/
-axiom consecutive_pages (db : Database)
+theorem consecutive_pages (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (pageSize : Nat) :
     let selPage1 := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some pageSize) (some 0)
     let selPage2 := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some pageSize) (some pageSize)
     let selBoth := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some (pageSize * 2)) (some 0)
-    evalSelect db selPage1 ++ evalSelect db selPage2 = evalSelect db selBoth
+    evalSelect db selPage1 ++ evalSelect db selPage2 = evalSelect db selBoth := by
+  simp only []
+  rw [evalSelect_SN (off := 0), evalSelect_SN (off := pageSize), evalSelect_SN (off := 0)]
+  generalize evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none) = base
+  simp [List.drop_zero]
+  rw [take_add_eq pageSize pageSize base, show pageSize + pageSize = pageSize * 2 from by omega]
 
 /-- ORDER BY + LIMIT: first n rows are deterministic (assuming stable sort) -/
-axiom order_limit_deterministic (db : Database)
+theorem order_limit_deterministic (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (n : Nat) :
     let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy (some n) none
     let selAll := SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none
-    evalSelect db sel = (evalSelect db selAll).take n
+    evalSelect db sel = (evalSelect db selAll).take n := by
+  simp only []
+  rw [evalSelect_S0]
 
 
 end SqlEquiv

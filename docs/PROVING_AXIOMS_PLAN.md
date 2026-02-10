@@ -103,7 +103,7 @@ def evalSelect : Database → SelectStmt → Table
 
 ---
 
-### Phase 1b: Expression-Level Axioms (~35 axioms) -- IN PROGRESS
+### Phase 1b: Expression-Level Axioms (~35 axioms) -- COMPLETE
 
 **Goal:** Prove the remaining expression-level axioms that use `≃ₑ` (ExprEquiv).
 These all follow the same pattern: unfold `evalExprWithDb`, case-split on the
@@ -119,12 +119,14 @@ with case analysis on the evaluated sub-expressions.
   `expr_mul_zero`, `expr_zero_mul`, `expr_sub_zero`
 - Required `Expr.isIntValued` precondition (see Batch 3 in PROVING_LOG.md)
 
-**Boolean identities (7 axioms) — unsound, needs `Expr.isBoolValued`:**
+**Boolean identities (7 axioms) — PROVED (PR #104):**
 - `not_not`, `and_true`, `or_false`, `and_self`, `or_self`,
   `and_not_self`, `or_not_self`
+- Required `Expr.isBoolValued` precondition
 
-**Boolean absorption (2 axioms):**
+**Boolean absorption (2 axioms) — PROVED (PR #104):**
 - `and_absorb_or`, `or_absorb_and`
+- Required `Expr.isBoolValued` precondition
 
 **Comparison operators (14 axioms) — PROVED:**
 - `eq_reflexive`, `ne_irreflexive` — proved with `Expr.evaluable` precondition (PR #92)
@@ -145,19 +147,22 @@ with case analysis on the evaluated sub-expressions.
 
 **Goal:** Prove expression-level axioms involving IN lists, BETWEEN, and LIKE.
 
-**IN/NOT IN (8 axioms) — unsound, needs `Expr.evaluable` precondition:**
-- `in_empty_false`, `not_in_empty_true` -- trivial (empty list)
-- `in_singleton`, `not_in_singleton` -- single-element expansion
-- `in_pair`, `not_in_pair` -- two-element expansion
-- `in_list_or_expansion`, `not_in_list_and_expansion` -- general list induction
+**IN/NOT IN (8 axioms) — 2 proved, 6 unsound (need `Expr.evaluable`):**
+- `in_empty_false` — **PROVED** (PR #112)
+- `not_in_empty_true` — **PROVED** (PR #112)
+- `in_singleton`, `not_in_singleton` -- single-element expansion (unsound)
+- `in_pair`, `not_in_pair` -- two-element expansion (unsound)
+- `in_list_or_expansion`, `not_in_list_and_expansion` -- general list induction (unsound)
 
-**BETWEEN (3 axioms) — 1 proved:**
-- `between_expansion`, `between_reflexive`, `not_between_expansion`
-- `between_reflexive` proved (PR #86, restored in PR #102)
+**BETWEEN (3 axioms) — ALL PROVED:**
+- `between_reflexive` — proved (PR #86, restored in PR #102)
+- `between_expansion` — **PROVED** (PR #109)
+- `not_between_expansion` — **PROVED** (PR #109)
 
-**LIKE (3 axioms) — 1 proved:**
-- `like_match_all`, `like_empty_pattern`, `like_self`
-- `like_empty_pattern` proved (PR #86, restored in PR #102)
+**LIKE (3 axioms) — 2 proved, 1 remaining:**
+- `like_empty_pattern` — proved (PR #86, restored in PR #102)
+- `like_match_all` — **PROVED** (PR #111) with `isStringOrNull` precondition
+- `like_self` — axiom (needs `simpleLike_self_eq` string lemma)
 
 **Estimated complexity:** Easy-Medium.
 
@@ -167,12 +172,11 @@ with case analysis on the evaluated sub-expressions.
 
 **Goal:** Prove string concatenation and function idempotence axioms.
 
-- `concat_empty_left`, `concat_empty_right` -- concat identity
-  (**Bug:** uses `Expr.func "CONCAT"` but `evalFunc` has no CONCAT handler;
-  should use `Expr.binOp .concat`. See issue #24.)
-- `upper_idempotent`, `lower_idempotent` -- function idempotence
-- `upper_lower_upper`, `lower_upper_lower` -- function composition
-- `length_empty` -- length of empty string (proved in PR #86, restored in PR #102)
+- `concat_empty_left`, `concat_empty_right` -- concat identity — **PROVED** (PR #107)
+- `upper_idempotent`, `lower_idempotent` -- function idempotence — **PROVED** (PR #105)
+- `upper_lower_upper`, `lower_upper_lower` -- function composition — **PROVED** (PR #105)
+- `length_empty` -- length of empty string — proved (PR #86, restored in PR #102)
+- `length_concat` -- length of concatenation — **PROVED** (PR #109)
 
 **Estimated complexity:** Easy -- unfold `evalFunc` and `simp`.
 
@@ -225,23 +229,26 @@ of set operations.
 
 ---
 
-### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~14 axioms)
+### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~18 axioms)
 
 **Goal:** Prove properties of ORDER BY, LIMIT, and OFFSET.
 
-**ORDER BY (6):** `order_by_preserves_count`, `order_by_empty_identity`,
-  `order_by_idempotent`, `order_by_last_wins`, `order_by_reverse`,
-  `order_limit_deterministic`
+**16 proved (PR #115), 2 remaining axioms:**
 
-**LIMIT/OFFSET (8):** `limit_zero_empty`, `limit_upper_bound`,
+**ORDER BY (5 total, 3 proved, 2 axioms):**
+- Proved: `order_by_preserves_count`, `order_by_length_invariant`, `order_limit_deterministic`
+- Axioms: `order_by_idempotent`, `order_by_reverse`
+
+**LIMIT/OFFSET (12):** `limit_zero_empty`, `limit_upper_bound`,
   `limit_none_all_rows`, `limit_monotonic`, `limit_one_singleton`,
   `offset_zero_identity`, `offset_too_large_empty`, `offset_reduces_count`,
   `offset_monotonic`, `limit_offset_compose`, `offset_limit_zero_empty`,
   `pagination_upper_bound`, `pagination_identity`, `consecutive_pages`
 
-**Approach:** These reduce to `List.take`/`List.drop`/`List.length` lemmas.
-
-**Estimated complexity:** Easy-Medium.
+**Approach:** Infrastructure axioms `evalSelect_limit_offset` and
+`evalSelect_orderBy_length` in Semantics.lean decompose `evalSelect` into
+`List.take`/`List.drop`/`List.length` reasoning. Helper lemmas specialize
+for concrete `Option` values to avoid rewrite ambiguity.
 
 ---
 
@@ -346,27 +353,28 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 144 axioms remaining (across all .lean files), 181 theorems proved.
-Axiom ratchet: 144 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 107 axioms remaining (86 in Equiv/, 21 in infrastructure files), 275 theorems proved (72.0%).
+Axiom ratchet: 107 (in `tools/axiom_count_minimum.txt`).
+Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
 |-------|-------------|--------|-----------|------------|
 | 1 | Value/Boolean properties | 22 | 0 (done) | -- |
-| 1b | Expression-level (bool, arith, cmp, CASE) | ~24 | ~11 (unsound bool axioms) | Easy |
-| 1c | IN / BETWEEN / LIKE | 1 (restored) | ~10 | Easy-Medium |
-| 1d | String/Function | 1 (restored) | ~6 | Easy |
+| 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
+| 1c | IN / BETWEEN / LIKE | 7 | ~4 | Easy-Medium |
+| 1d | String/Function | 8 | 0 (done) | -- |
 | 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
-| 5 | ORDER BY / LIMIT / OFFSET | 0 | ~14 | Easy-Medium |
+| 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 0 | ~21 | Medium-Hard |
 | 7 | Subquery / EXISTS / IN | 0 | ~17 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 0 | 10 | N/A |
-| runtime | Optimizer/Normalization/Pushdown | 0 | 10 | N/A |
-| | **Total** | **~50** | **~144** | |
+| infra | Infrastructure (Semantics.lean) | 0 | 13 | N/A |
+| runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
+| | **Total** | **~91** | **~96** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
@@ -384,11 +392,11 @@ decision first (see "Unsound Axiom Strategy" below).
 
 | Order | Issue | Description | Axioms | Status |
 |:-----:|-------|-------------|:------:|--------|
-| 1 | [#46](https://github.com/evelynmitchell/sql_equiv/issues/46) | `not_not` (double negation) | 1 | **Unsound** — needs bool precondition |
-| 2 | [#48](https://github.com/evelynmitchell/sql_equiv/issues/48) | `and_true`, `or_false` (identity) | 2 | **Unsound** — needs bool precondition |
-| 3 | [#47](https://github.com/evelynmitchell/sql_equiv/issues/47) | `and_absorb_or`, `or_absorb_and` (absorption) | 2 | **Unsound** — needs bool precondition |
-| 4 | [#49](https://github.com/evelynmitchell/sql_equiv/issues/49) | `and_self`, `or_self` (idempotent) | 2 | **Unsound** — needs bool precondition |
-| 5 | [#50](https://github.com/evelynmitchell/sql_equiv/issues/50) | `and_not_self`, `or_not_self` (complement) | 2 | **Unsound** — needs bool precondition |
+| 1 | [#46](https://github.com/evelynmitchell/sql_equiv/issues/46) | `not_not` (double negation) | 1 | **Proved** (PR #104) — `isBoolValued` precondition |
+| 2 | [#48](https://github.com/evelynmitchell/sql_equiv/issues/48) | `and_true`, `or_false` (identity) | 2 | **Proved** (PR #104) — `isBoolValued` precondition |
+| 3 | [#47](https://github.com/evelynmitchell/sql_equiv/issues/47) | `and_absorb_or`, `or_absorb_and` (absorption) | 2 | **Proved** (PR #104) — `isBoolValued` precondition |
+| 4 | [#49](https://github.com/evelynmitchell/sql_equiv/issues/49) | `and_self`, `or_self` (idempotent) | 2 | **Proved** (PR #104) — `isBoolValued` precondition |
+| 5 | [#50](https://github.com/evelynmitchell/sql_equiv/issues/50) | `and_not_self`, `or_not_self` (complement) | 2 | **Proved** (PR #104) — `isBoolValued` precondition |
 | 6 | [#57](https://github.com/evelynmitchell/sql_equiv/issues/57) | Arithmetic identities (x+0, x*1, etc.) | 7 | **Proved** (PR #93) — `isIntValued` precondition |
 | 7 | [#54](https://github.com/evelynmitchell/sql_equiv/issues/54) | Comparison negation rules | 6 | **Proved** (PR #85) |
 | 8 | [#55](https://github.com/evelynmitchell/sql_equiv/issues/55) | Comparison flip rules | 4 | **Proved** (PR #85) |
@@ -399,10 +407,10 @@ decision first (see "Unsound Axiom Strategy" below).
 
 | Order | Issue | Description | Axioms | Status |
 |:-----:|-------|-------------|:------:|--------|
-| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 6 | **Unsound** — needs evaluable precondition |
-| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 1 **proved** (PR #86/#102); 2 unsound |
-| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 1 **proved** (PR #86/#102); 2 unsound |
-| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 7 | 1 **proved** (PR #86/#102); 2 have bug (#24) |
+| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 8 | 2 **proved** (PR #112: `in_empty_false`, `not_in_empty_true`); 6 unsound |
+| 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 3 **proved** (PR #102: `between_reflexive`; PR #109: `between_expansion`, `not_between_expansion`) |
+| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 2 **proved** (PR #102: `like_empty_pattern`; PR #111: `like_match_all`); `like_self` axiom |
+| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 8 | 8 **proved** (PR #102: `length_empty`; PR #105: `upper/lower_idempotent`, `upper_lower_upper`, `lower_upper_lower`; PR #107: `concat_empty_left/right`; PR #109: `length_concat`) |
 
 ### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
 
