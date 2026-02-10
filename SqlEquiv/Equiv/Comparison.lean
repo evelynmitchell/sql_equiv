@@ -1157,29 +1157,11 @@ private theorem evalFunc_length_concat (av bv : Option Value) :
     evalBinOp .add (evalFunc "LENGTH" [av]) (evalFunc "LENGTH" [bv]) := by
   have hL : "LENGTH".toUpper = "LENGTH" := by native_decide
   have hC : "CONCAT".toUpper = "CONCAT" := by native_decide
-  match av, bv with
-  | none, _ => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.int _), none => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.int _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.int _), some (.string _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.int _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.int _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.string _), none => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.string _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.string a), some (.string b) =>
-    simp [evalFunc, hC, hL, evalBinOp, String.length_append]
-  | some (.string _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.string _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.bool _), none => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.bool _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.bool _), some (.string _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.bool _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.bool _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.null _), none => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.null _), some (.int _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.null _), some (.string _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.null _), some (.bool _) => simp [evalFunc, hC, hL, evalBinOp]
-  | some (.null _), some (.null _) => simp [evalFunc, hC, hL, evalBinOp]
+  cases av with
+  | none => simp [evalFunc, hC, hL, evalBinOp]
+  | some v => cases bv with
+    | none => cases v <;> simp [evalFunc, hC, hL, evalBinOp]
+    | some w => cases v <;> cases w <;> simp [evalFunc, hC, hL, evalBinOp, String.length_append]
 
 /-- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b).
     No precondition needed — non-string and null cases all reduce to none on both sides. -/
