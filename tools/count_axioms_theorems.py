@@ -15,15 +15,15 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SQLEQUIV_DIR = PROJECT_ROOT / "SqlEquiv"
 
-AXIOM_RE = re.compile(r"^\s*(?:private\s+)?axiom\s+(\w+)")
-THEOREM_RE = re.compile(r"^\s*(?:private\s+)?theorem\s+(\w+)")
+AXIOM_RE = re.compile(r"^\s*(?:private\s+)?axiom\s+([^\s:({]+)")
+THEOREM_RE = re.compile(r"^\s*(?:private\s+)?theorem\s+([^\s:({]+)")
 
 
 def scan_file(path: Path) -> tuple[list[str], list[str]]:
     """Return (axiom_names, theorem_names) found in a .lean file."""
     axioms: list[str] = []
     theorems: list[str] = []
-    for raw_line in path.read_text().splitlines():
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.lstrip()
         if not line or line.startswith("--"):
             continue

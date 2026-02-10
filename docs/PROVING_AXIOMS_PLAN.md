@@ -229,14 +229,15 @@ of set operations.
 
 ---
 
-### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~18 axioms) -- COMPLETE
+### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~18 axioms)
 
 **Goal:** Prove properties of ORDER BY, LIMIT, and OFFSET.
 
-**All 18 axioms proved (PR #115):**
+**16 proved (PR #115), 2 remaining axioms:**
 
-**ORDER BY (5):** `order_by_preserves_count`, `order_by_idempotent`,
-  `order_by_length_invariant`, `order_by_reverse`, `order_limit_deterministic`
+**ORDER BY (5 total, 3 proved, 2 axioms):**
+- Proved: `order_by_preserves_count`, `order_by_length_invariant`, `order_limit_deterministic`
+- Axioms: `order_by_idempotent`, `order_by_reverse`
 
 **LIMIT/OFFSET (12):** `limit_zero_empty`, `limit_upper_bound`,
   `limit_none_all_rows`, `limit_monotonic`, `limit_one_singleton`,
@@ -365,7 +366,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown.
 | 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
-| 5 | ORDER BY / LIMIT / OFFSET | 18 | 0 (done) | -- |
+| 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 0 | ~21 | Medium-Hard |
 | 7 | Subquery / EXISTS / IN | 0 | ~17 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
