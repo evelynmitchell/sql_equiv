@@ -28,15 +28,15 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 | Binary operators (+, -, *, /) | ✅ `Ast.lean` | ⚠️ | ✅ Catalog | Need tutorial examples |
 | Comparison operators | ✅ `Ast.lean` | ✅ T01 | ✅ Catalog | |
 | Boolean operators (AND, OR, NOT) | ✅ `Ast.lean` | ✅ T01, T02 | ✅ Catalog | Well covered |
-| NULL literal | ✅ `Ast.lean` | 📋 T03 | ✅ Pitfalls | Outline ready |
-| IS NULL / IS NOT NULL | ✅ `Ast.lean` | 📋 T03 | ✅ Pitfalls | |
+| NULL literal | ✅ `Ast.lean` | ✅ T03 | ✅ Pitfalls | Full tutorial |
+| IS NULL / IS NOT NULL | ✅ `Ast.lean` | ✅ T03 | ✅ Pitfalls | |
 | BETWEEN | ✅ `Ast.lean` | ✅ T01 | ✅ Catalog | |
 | IN (value list) | ✅ `Ast.lean` | ✅ T01 | ✅ Catalog | |
-| IN (subquery) | ✅ `Ast.lean` | 📋 T05 | ✅ Pitfalls | NOT IN trap covered |
+| IN (subquery) | ✅ `Ast.lean` | ✅ T05 | ✅ Pitfalls | NOT IN trap covered |
 | LIKE | ✅ `Ast.lean` | ⚠️ | ⚠️ | Needs examples |
 | CASE/WHEN/THEN/ELSE | ✅ `Ast.lean` | ⚠️ | ⚠️ | Needs tutorial |
-| EXISTS / NOT EXISTS | ✅ `Ast.lean` | 📋 T05 | ✅ Pitfalls | |
-| Scalar subquery | ✅ `Ast.lean` | 📋 T05 | ✅ Catalog | |
+| EXISTS / NOT EXISTS | ✅ `Ast.lean` | ✅ T05 | ✅ Pitfalls | |
+| Scalar subquery | ✅ `Ast.lean` | ✅ T05 | ✅ Catalog | |
 | Function calls | ✅ `Ast.lean` | ⚠️ | ⚠️ | Generic, few built-ins |
 | CAST | ❌ | ❌ | 📝 Gap doc | High priority gap |
 | COALESCE | ❌ | ❌ | 📝 Gap doc | High priority gap |
@@ -47,13 +47,13 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 |---------|------|----------|-----------|-------|
 | SELECT columns | ✅ `Ast.lean` | ✅ T01 | ✅ Catalog | |
 | SELECT * | ✅ `Ast.lean` | ✅ T01 | ⚠️ | |
-| SELECT DISTINCT | ✅ `Ast.lean` | 📋 T06 | ✅ Catalog | DISTINCT↔GROUP BY |
+| SELECT DISTINCT | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | DISTINCT↔GROUP BY |
 | Column aliases (AS) | ✅ `Ast.lean` | ✅ T01 | ⚠️ | |
 | FROM clause | ✅ `Ast.lean` | ✅ T01 | ✅ Catalog | |
 | Table aliases | ✅ `Ast.lean` | ✅ T01 | ⚠️ | |
 | WHERE clause | ✅ `Ast.lean` | ✅ T01, T02 | ✅ Catalog | Well covered |
-| GROUP BY | ✅ `Ast.lean` | 📋 T06 | ✅ Catalog | |
-| HAVING | ✅ `Ast.lean` | 📋 T06 | ✅ Catalog | |
+| GROUP BY | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | |
+| HAVING | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | |
 | ORDER BY | ✅ `Ast.lean` | ⚠️ | ✅ Pitfalls | Subquery ORDER BY pitfall |
 | LIMIT | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
 | OFFSET | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
@@ -62,12 +62,12 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 | Feature | Code | Tutorial | Reference | Notes |
 |---------|------|----------|-----------|-------|
-| INNER JOIN | ✅ `Ast.lean` | 📋 T04 | ✅ Catalog | Comm/assoc covered |
-| LEFT JOIN | ✅ `Ast.lean` | 📋 T04 | ✅ Pitfalls | LEFT≠INNER pitfall |
-| RIGHT JOIN | ✅ `Ast.lean` | 📋 T04 | ✅ Catalog | |
-| FULL JOIN | ✅ `Ast.lean` | 📋 T04 | ⚠️ | Needs examples |
-| CROSS JOIN | ✅ `Ast.lean` | 📋 T04 | ✅ Catalog | |
-| ON clause | ✅ `Ast.lean` | 📋 T04 | ✅ Pitfalls | ON vs WHERE |
+| INNER JOIN | ✅ `Ast.lean` | ✅ T04 | ✅ Catalog | Comm/assoc covered |
+| LEFT JOIN | ✅ `Ast.lean` | ✅ T04 | ✅ Pitfalls | LEFT≠INNER pitfall |
+| RIGHT JOIN | ✅ `Ast.lean` | ✅ T04 | ✅ Catalog | |
+| FULL JOIN | ✅ `Ast.lean` | ✅ T04 | ⚠️ | Covered in tutorial |
+| CROSS JOIN | ✅ `Ast.lean` | ✅ T04 | ✅ Catalog | |
+| ON clause | ✅ `Ast.lean` | ✅ T04 | ✅ Pitfalls | ON vs WHERE |
 | USING clause | ❌ | ❌ | 📝 Gap doc | Not implemented |
 | NATURAL JOIN | ❌ | ❌ | 📝 Gap doc | Not implemented |
 
@@ -75,13 +75,13 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 | Feature | Code | Tutorial | Reference | Notes |
 |---------|------|----------|-----------|-------|
-| COUNT(*) | ✅ `Ast.lean` | 📋 T06 | ✅ Pitfalls | COUNT(*) vs COUNT(x) |
-| COUNT(column) | ✅ `Ast.lean` | 📋 T06 | ✅ Pitfalls | |
-| COUNT(DISTINCT) | ✅ `Ast.lean` | 📋 T06 | ⚠️ | |
-| SUM | ✅ `Ast.lean` | 📋 T06 | ✅ Catalog | Decomposition |
-| AVG | ✅ `Ast.lean` | 📋 T06 | ✅ Pitfalls | NULL handling |
-| MIN | ✅ `Ast.lean` | 📋 T06 | ✅ Catalog | |
-| MAX | ✅ `Ast.lean` | 📋 T06 | ✅ Catalog | |
+| COUNT(*) | ✅ `Ast.lean` | ✅ T06 | ✅ Pitfalls | COUNT(*) vs COUNT(x) |
+| COUNT(column) | ✅ `Ast.lean` | ✅ T06 | ✅ Pitfalls | |
+| COUNT(DISTINCT) | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | |
+| SUM | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | Decomposition |
+| AVG | ✅ `Ast.lean` | ✅ T06 | ✅ Pitfalls | NULL handling |
+| MIN | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | |
+| MAX | ✅ `Ast.lean` | ✅ T06 | ✅ Catalog | |
 | STDDEV, VARIANCE | ❌ | ❌ | 📝 Gap doc | |
 
 ### 1.5 Window Functions
@@ -140,16 +140,16 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 | Feature | Code | Tutorial | Reference | Notes |
 |---------|------|----------|-----------|-------|
-| Predicate pushdown | 🚧 PR #7 | 📋 T04 | 📝 Redesign doc | Under review |
-| Join reordering | 🚧 PR #8 | 📋 T04 | 📝 Redesign doc | Under review |
+| Predicate pushdown | 🚧 PR #7 | ✅ T04 | 📝 Redesign doc | Under review |
+| Join reordering | 🚧 PR #8 | ✅ T04 | 📝 Redesign doc | Under review |
 
 ### 2.3 Planned (Specs Written)
 
 | Feature | Code | Tutorial | Reference | Notes |
 |---------|------|----------|-----------|-------|
 | Advanced cost estimation | 📝 Spec | ⚠️ | ✅ Spec doc | Phase 3 |
-| Aggregate pushdown | 📝 Spec | 📋 T06 | ✅ Spec doc | Phase 4 |
-| Subquery flattening | 📝 Spec | 📋 T05 | ✅ Spec doc | Phase 4 |
+| Aggregate pushdown | 📝 Spec | ✅ T06 | ✅ Spec doc | Phase 4 |
+| Subquery flattening | 📝 Spec | ✅ T05 | ✅ Spec doc | Phase 4 |
 | Window optimization | 📝 Spec | ⚠️ | ✅ Spec doc | Phase 4 |
 | DP join optimizer | 📝 Spec | ⚠️ | ✅ Spec doc | Phase 5 |
 | Partition pruning | 📝 Spec | ⚠️ | ✅ Spec doc | Phase 6 |
@@ -163,7 +163,7 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 |---------|------|----------|-----------|-------|
 | Semantics (evalExpr, evalFrom) | ✅ `Semantics.lean` | ✅ T07 | ⚠️ | Core definitions |
 | Equivalence theorems | ✅ `Equiv.lean` | ✅ T07 | ✅ Catalog | 305+ theorems |
-| Three-valued logic | ✅ `Semantics.lean` | 📋 T03 | ✅ Glossary | |
+| Three-valued logic | ✅ `Semantics.lean` | ✅ T03 | ✅ Glossary | |
 | Proof tactics | ✅ `Tactics.lean` | 📋 T08 | ⚠️ | Lean-specific |
 | Axioms (to be proven) | ✅ `Equiv.lean` | ✅ T07 | 📝 Verify doc | Axiom inventory |
 
@@ -191,7 +191,7 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 | OPTIMIZER_ROADMAP.md | ✅ | All phases |
 | SQL_GAP_ANALYSIS.md | ✅ | Feature gaps |
 | Cleanroom specs (7 docs) | ✅ | Future features |
-| Tutorials (10 docs) | 🚧 4 full, 6 outline | User training |
+| Tutorials (10 docs) | 🚧 8 full, 2 outline | User training |
 | Reference (3 docs) | ✅ | Catalog, pitfalls, glossary |
 
 ---
@@ -202,13 +202,13 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 | Category | Implemented | Tutorialized | Documented |
 |----------|-------------|--------------|------------|
-| Core SQL | 85% | 40% | 70% |
-| Joins | 90% | 50% | 80% |
-| Aggregates | 70% | 30% | 60% |
+| Core SQL | 85% | 65% | 75% |
+| Joins | 90% | 85% | 85% |
+| Aggregates | 70% | 70% | 75% |
 | Window functions | 40% | 10% | 40% |
-| Subqueries | 90% | 40% | 70% |
-| Optimizer | 30% | 20% | 90% |
-| Formal methods | 80% | 60% | 50% |
+| Subqueries | 90% | 75% | 80% |
+| Optimizer | 30% | 30% | 90% |
+| Formal methods | 80% | 65% | 55% |
 | Tools | 100% | 20% | 80% |
 
 ### Priority Gaps
@@ -235,14 +235,14 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 ### Tutorials to Expand (from outline to full)
 
-| Priority | Tutorial | Effort | Dependency |
+| Priority | Tutorial | Status | Dependency |
 |----------|----------|--------|------------|
-| P1 | T03: NULL Logic | 2 hrs | None |
-| P1 | T04: Joins | 3 hrs | T03 |
-| P1 | T05: Subqueries | 3 hrs | T04 |
-| P2 | T06: Aggregates | 2 hrs | T03 |
-| P2 | T08: Lean Proofs | 4 hrs | T07 |
-| P3 | T10: Beyond Automation | 2 hrs | T09 |
+| ~~P1~~ | ~~T03: NULL Logic~~ | ✅ Done | None |
+| ~~P1~~ | ~~T04: Joins~~ | ✅ Done | T03 |
+| ~~P1~~ | ~~T05: Subqueries~~ | ✅ Done | T04 |
+| ~~P2~~ | ~~T06: Aggregates~~ | ✅ Done | T03 |
+| P2 | T08: Lean Proofs | 📋 Outline | T07 |
+| P3 | T10: Beyond Automation | 📋 Outline | T09 |
 
 ### New Tutorials Needed
 
@@ -281,4 +281,4 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 ---
 
-*Last updated: 2026-01-31*
+*Last updated: 2026-02-10*
