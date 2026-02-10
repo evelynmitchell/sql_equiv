@@ -865,6 +865,33 @@ axiom evalSelect_orderBy_length (db : Database)
   (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
   (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length
 
+/-- Infrastructure: WHERE clause only affects filtering; if two WHERE clauses
+    produce the same filtering behavior for every row, evalSelect produces the same result.
+    Sound because: WHERE only affects `filteredRows` via `List.filter`, and all downstream
+    steps (projection, DISTINCT, ORDER BY, LIMIT/OFFSET) are pure functions of `filteredRows`. -/
+axiom evalSelect_where_congr (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (w1 w2 : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  (∀ row : Row,
+    (match w1 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true) =
+    (match w2 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true)) →
+  evalSelect db (SelectStmt.mk distinct items from_ w1 groupBy having orderBy limit offset) =
+  evalSelect db (SelectStmt.mk distinct items from_ w2 groupBy having orderBy limit offset)
+
+/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates.
+    Sound because: `List.filter` with an always-false predicate returns `[]`, and without
+    aggregates the empty filteredRows propagates to `[]` through all downstream steps
+    (projection on `[]` = `[]`, DISTINCT/ORDER BY/LIMIT of `[]` = `[]`).
+    GROUP BY on empty rows also produces `[]` (no groups). -/
+axiom evalSelect_filter_all_false (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (cond : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  selectHasAggregate items = false →
+  (∀ row : Row, evalExprWithDb db row cond ≠ some (Value.bool true)) →
+  evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = []
+
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================

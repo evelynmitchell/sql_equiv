@@ -1737,7 +1737,30 @@ def infrastructureAxiomTests : List TestResult :=
     let selDescLim := mkSelectFull false "users" none orderDesc (some 2) none
     testLengthEq "evalSelect_orderBy_length (ASC vs DESC with LIMIT)"
       (evalSelect testDb selAscLim).length
-      (evalSelect testDb selDescLim).length
+      (evalSelect testDb selDescLim).length,
+
+    -- evalSelect_where_congr: two equivalent WHERE clauses produce same result
+    -- TRUE filter vs no filter should give same result
+    let selTrue := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool true))) [] none [] none none
+    let selNone := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      none [] none [] none none
+    testSelectEquiv "evalSelect_where_congr (WHERE TRUE vs no WHERE)"
+      selTrue selNone testDb,
+
+    -- evalSelect_filter_all_false: WHERE FALSE with no aggregates = empty result
+    let selFalse := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool false))) [] none [] none none
+    testLengthEq "evalSelect_filter_all_false (WHERE FALSE = empty)"
+      (evalSelect testDb selFalse).length
+      0,
+
+    -- evalSelect_filter_all_false: with ORDER BY
+    let selFalseOrd := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool false))) [] none orderAsc none none
+    testLengthEq "evalSelect_filter_all_false (WHERE FALSE + ORDER BY = empty)"
+      (evalSelect testDb selFalseOrd).length
+      0
   ]
 
 -- ============================================================================

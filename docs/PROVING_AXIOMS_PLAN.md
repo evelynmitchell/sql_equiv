@@ -182,22 +182,31 @@ with case analysis on the evaluated sub-expressions.
 
 ---
 
-### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms)
+### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms) -- PARTIALLY COMPLETED
 
 **Goal:** Prove axioms about WHERE clause behavior at the `evalSelect`/`evalStmt` level.
 
 **Target axioms:**
-- `where_true_elim` -- WHERE TRUE is identity
-- `where_false_empty` -- WHERE FALSE produces empty result
-- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q
-- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p
-- `filter_idempotent` -- WHERE p then WHERE p = WHERE p
-- `filter_false_empty'` -- variant of WHERE FALSE
-- `predicate_pushdown` -- WHERE pushdown for single table
+- `where_true_elim` -- WHERE TRUE is identity — **PROVED** (via `evalSelect_where_congr`)
+- `where_false_empty` -- WHERE FALSE produces empty result — **PROVED** (with `h_no_agg` precondition, via `evalSelect_filter_all_false`)
+- `filter_false_empty'` -- variant of WHERE FALSE — **PROVED** (delegates to `where_false_empty`)
+- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q — **BLOCKED** (evalFrom .subquery double-qualification bug)
+- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p — **BLOCKED** (same)
+- `filter_idempotent` -- WHERE p then WHERE p = WHERE p — **BLOCKED** (same)
+- `predicate_pushdown` -- WHERE pushdown for single table — **BLOCKED** (evalExpr vs evalExprWithDb gap)
 
-**Approach:** Unfold `evalSelect`/`evalStmt`, reason about `List.filter`.
+**Infrastructure axioms added:**
+- `evalSelect_where_congr` — if two WHERE clauses produce the same filtering, evalSelect produces the same result
+- `evalSelect_filter_all_false` — WHERE that rejects all rows produces empty result (when no aggregates)
 
-**Estimated complexity:** Medium -- requires understanding `evalSelect` structure.
+**Soundness fixes:**
+- `where_false_empty` and `filter_false_empty'` were unsound for aggregate queries (e.g., `SELECT COUNT(*) ... WHERE FALSE` produces 1 row, not 0). Added `h_no_agg : selectHasAggregate items = false` precondition.
+
+**Blocked axioms:**
+- `filter_and`, `filter_commute`, `filter_idempotent`: blocked by evalFrom .subquery double-qualification bug — subquery wrapping causes columns like `t.col` to become `inner.t.col`, so the outer WHERE can't find them.
+- `predicate_pushdown`: blocked by `evalExpr` vs `evalExprWithDb` gap — the external filter uses `evalExpr` (no db context) while `evalSelect` internally uses `evalExprWithDb db`. Could be proved with a `q.hasNoSubquery` precondition.
+
+**Approach used:** Infrastructure axioms capturing evalSelect's WHERE clause behavior, then theorem proofs using those axioms.
 
 ---
 

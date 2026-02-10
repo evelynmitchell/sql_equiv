@@ -103,7 +103,8 @@ theorem project_star_identity (db : Database) (from_ : FromClause)
 -- ============================================================================
 
 /-- Filter combination: consecutive WHERE clauses can be combined with AND.
-    Axiom: Filters compose conjunctively. -/
+    Blocked by evalFrom .subquery double-qualification bug: the subquery wrapping causes
+    columns like `t.col` to become `inner.t.col`, so the outer WHERE clause can't find them. -/
 axiom filter_and (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
@@ -113,7 +114,7 @@ axiom filter_and (db : Database) (items : List SelectItem) (from_ : Option FromC
     evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset)
 
 /-- Filter order doesn't matter: (WHERE p) WHERE q ≃ (WHERE q) WHERE p.
-    Axiom: Filter conjunction is commutative. -/
+    Blocked by evalFrom .subquery double-qualification bug (same as filter_and). -/
 axiom filter_commute (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
@@ -125,7 +126,7 @@ axiom filter_commute (db : Database) (items : List SelectItem) (from_ : Option F
       (some p) groupBy having orderBy limit offset)
 
 /-- Idempotence of filter: WHERE p WHERE p ≃ WHERE p.
-    Axiom: Applying the same filter twice is redundant. -/
+    Blocked by evalFrom .subquery double-qualification bug (same as filter_and). -/
 axiom filter_idempotent (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (p : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
@@ -143,12 +144,16 @@ theorem filter_true_elim' (db : Database) (items : List SelectItem) (from_ : Opt
     evalSelect db (.mk false items from_ none groupBy having orderBy limit offset) :=
   where_true_elim db items from_ groupBy having orderBy limit offset
 
-/-- FALSE filter yields empty result (or FROM is none).
-    Axiom: FALSE filter removes all rows. -/
-axiom filter_false_empty' (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- FALSE filter yields empty result when no aggregates.
+    Proved using where_false_empty.
+    Requires no aggregates because aggregate queries with empty filtered rows
+    still produce 1 row. -/
+theorem filter_false_empty' (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_no_agg : selectHasAggregate items = false) :
+    (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 :=
+  where_false_empty db items from_ groupBy having orderBy limit offset h_no_agg
 
 -- ============================================================================
 -- Combined Optimization Theorems
@@ -783,7 +788,10 @@ theorem filter_comm (rows : Table) (p q : Row → Bool) :
 
 /-- Predicate pushdown: filtering after select = select with combined WHERE
     This captures: SELECT * FROM (SELECT * FROM t WHERE p) WHERE q
-                 = SELECT * FROM t WHERE (p AND q) -/
+                 = SELECT * FROM t WHERE (p AND q)
+    Blocked: The external filter uses `evalExpr` (no db context) while `evalSelect`
+    internally uses `evalExprWithDb db`. These differ when `q` contains subqueries.
+    Could be proved with a `q.hasNoSubquery` precondition. -/
 axiom predicate_pushdown (db : Database) (t : String) (p q : Expr) :
     let inner := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some p) [] none [] none none
     let outer := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some (.binOp .and p q)) [] none [] none none
