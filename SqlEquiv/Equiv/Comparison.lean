@@ -1069,12 +1069,42 @@ theorem between_reflexive (e : Expr) :
 -- LIKE Pattern Theorems
 -- ============================================================================
 
-/-- x LIKE '%' = TRUE for non-null x (matches everything) -/
-axiom like_match_all (e : Expr) :
-    -- When e evaluates to a non-null string, LIKE '%' is true
+/-- simpleLike with "%" pattern always returns true -/
+private theorem simpleLike_pct (s : String) : simpleLike s "%" = true := by
+  unfold simpleLike
+  simp
+
+/-- x LIKE '%' = TRUE for non-null x (matches everything).
+    Requires `isStringOrNull` — expression must evaluate to string or null. -/
+theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
     Expr.binOp .like e (Expr.lit (.string "%")) ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
-              (some (Expr.lit (.bool true)))
+              (some (Expr.lit (.bool true))) := by
+  intro row
+  simp only [evalExpr]
+  -- Get the hypothesis for this row
+  have hrow := h row
+  simp only [evalExpr] at hrow
+  -- Unfold LHS
+  rw [evalExprWithDb_binOp]
+  simp only [evalExprWithDb_lit]
+  -- Unfold RHS
+  rw [evalExprWithDb_case]
+  rcases hrow with ⟨s, hs⟩ | ⟨n, hn⟩
+  · -- String case: e evaluates to some (.string s)
+    rw [hs]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+        some (.bool false) := by
+      rw [evalExprWithDb_unaryOp, hs]; rfl
+    rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
+    simp [evalBinOp, simpleLike_pct]
+  · -- Null case: e evaluates to some (.null n)
+    rw [hn]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+        some (.bool true) := by
+      rw [evalExprWithDb_unaryOp, hn]; rfl
+    rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
+    rfl
 
 /-- simpleLike with empty pattern reduces to string equality -/
 private theorem simpleLike_empty (s : String) : simpleLike s "" = (s == "") := by
@@ -1105,9 +1135,11 @@ theorem like_empty_pattern (e : Expr) :
   simp only [evalExprWithDb_lit]
   exact evalBinOp_like_empty_eq_eq _
 
-/-- x LIKE x = TRUE for non-null x with no wildcards -/
-axiom like_self (e : Expr) :
-    -- Pattern with no wildcards: LIKE behaves like equality
+/-- x LIKE x = TRUE for non-null x.
+    Requires `isStringOrNull` — expression must evaluate to string or null.
+    Axiom: proving simpleLike s s = true requires non-trivial string library lemmas
+    for branches 2-4 (startsWith/endsWith/stringContains on substrings). -/
+axiom like_self (e : Expr) (h : e.isStringOrNull) :
     Expr.binOp .like e e ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool true)))
