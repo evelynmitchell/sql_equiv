@@ -449,7 +449,25 @@ def stringFuncTests : List TestResult :=
     -- length_empty: LENGTH('') ≃ₑ 0
     testExprEquiv "length_empty"
       (.func "LENGTH" [eEmpty])
-      (.lit (.int 0)) []
+      (.lit (.int 0)) [],
+
+    -- length_concat: LENGTH(CONCAT(a, b)) ≃ₑ LENGTH(a) + LENGTH(b)
+    testExprEquiv "length_concat (strings)"
+      (.func "LENGTH" [.func "CONCAT" [eHello, Expr.lit (.string "world")]])
+      (.binOp .add (.func "LENGTH" [eHello]) (.func "LENGTH" [Expr.lit (.string "world")])) [],
+    testExprEquiv "length_concat (null)"
+      (.func "LENGTH" [.func "CONCAT" [Expr.lit (.null none), eHello]])
+      (.binOp .add (.func "LENGTH" [Expr.lit (.null none)]) (.func "LENGTH" [eHello])) [],
+    testExprEquiv "length_concat (empty)"
+      (.func "LENGTH" [.func "CONCAT" [eEmpty, eHello]])
+      (.binOp .add (.func "LENGTH" [eEmpty]) (.func "LENGTH" [eHello])) [],
+    -- Non-string inputs: both sides reduce to none (type mismatch)
+    testExprEquiv "length_concat (int args)"
+      (.func "LENGTH" [.func "CONCAT" [Expr.lit (.int 5), Expr.lit (.string "world")]])
+      (.binOp .add (.func "LENGTH" [Expr.lit (.int 5)]) (.func "LENGTH" [Expr.lit (.string "world")])) [],
+    testExprEquiv "length_concat (typed null)"
+      (.func "LENGTH" [.func "CONCAT" [Expr.lit (.null (some .int)), Expr.lit (.string "world")]])
+      (.binOp .add (.func "LENGTH" [Expr.lit (.null (some .int))]) (.func "LENGTH" [Expr.lit (.string "world")])) []
   ]
 
 -- ============================================================================

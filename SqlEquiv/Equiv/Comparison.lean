@@ -930,10 +930,112 @@ axiom not_in_list_and_expansion (e : Expr) (vals : List Expr) :
 -- BETWEEN Theorems
 -- ============================================================================
 
-/-- x BETWEEN a AND b = (x >= a AND x <= b) -/
-axiom between_expansion (e lo hi : Expr) :
+/-- Value-level helper: BETWEEN evaluation equals AND of (>=, <=) for all Value triples.
+    Exhaustive case analysis on v, vlo, vhi constructors. For same-type pairs containing
+    variables (int×int, string×string), simp reduces Value.compare and evalBinOp, then
+    cases on the Ordering result closes the goal. -/
+private theorem evalBetween_expansion (v vlo vhi : Value) :
+    (match v.compare vlo, v.compare vhi with
+    | some .lt, _ => some (Value.bool false)
+    | _, some .gt => some (Value.bool false)
+    | some _, some _ => some (Value.bool true)
+    | _, _ => none) =
+    evalBinOp .and (evalBinOp .ge (some v) (some vlo)) (evalBinOp .le (some v) (some vhi)) := by
+  match v, vlo, vhi with
+  -- v is null: ge returns some (.null none), both compares return none
+  | .null _, .null _, _ => rfl
+  | .null _, .bool _, _ => rfl
+  | .null _, .int _, _ => rfl
+  | .null _, .string _, _ => rfl
+  -- v is bool: Value.compare always returns none for bool, ge/le return none
+  | .bool _, .null _, .null _ => rfl
+  | .bool _, .null _, .bool _ => rfl
+  | .bool _, .null _, .int _ => rfl
+  | .bool _, .null _, .string _ => rfl
+  | .bool _, .bool _, .null _ => rfl
+  | .bool _, .bool _, .bool _ => rfl
+  | .bool _, .bool _, .int _ => rfl
+  | .bool _, .bool _, .string _ => rfl
+  | .bool _, .int _, .null _ => rfl
+  | .bool _, .int _, .bool _ => rfl
+  | .bool _, .int _, .int _ => rfl
+  | .bool _, .int _, .string _ => rfl
+  | .bool _, .string _, .null _ => rfl
+  | .bool _, .string _, .bool _ => rfl
+  | .bool _, .string _, .int _ => rfl
+  | .bool _, .string _, .string _ => rfl
+  -- v is int, vlo is int: same-type, need cases on compare
+  | .int a, .int b, .null _ =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
+  | .int a, .int b, .bool _ =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
+  | .int a, .int b, .int c =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> cases compare a c <;> rfl
+  | .int a, .int b, .string _ =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
+  -- v is int, vlo is null: ge returns null
+  | .int _, .null _, .null _ => rfl
+  | .int _, .null _, .bool _ => rfl
+  | .int a, .null _, .int c =>
+    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
+  | .int _, .null _, .string _ => rfl
+  -- v is int, vlo is bool: ge returns none (cross-type non-null)
+  | .int _, .bool _, .null _ => rfl
+  | .int _, .bool _, .bool _ => rfl
+  | .int a, .bool _, .int c =>
+    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
+  | .int _, .bool _, .string _ => rfl
+  -- v is int, vlo is string: ge returns none
+  | .int _, .string _, .null _ => rfl
+  | .int _, .string _, .bool _ => rfl
+  | .int a, .string _, .int c =>
+    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
+  | .int _, .string _, .string _ => rfl
+  -- v is string, vlo is string: same-type, need cases on compare
+  | .string a, .string b, .null _ =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
+  | .string a, .string b, .bool _ =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
+  | .string a, .string b, .int _ =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
+  | .string a, .string b, .string c =>
+    simp only [Value.compare, evalBinOp]; cases compare a b <;> cases compare a c <;> rfl
+  -- v is string, vlo is null: ge returns null
+  | .string _, .null _, .null _ => rfl
+  | .string _, .null _, .bool _ => rfl
+  | .string _, .null _, .int _ => rfl
+  | .string a, .null _, .string c =>
+    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
+  -- v is string, vlo is bool: ge returns none
+  | .string _, .bool _, .null _ => rfl
+  | .string _, .bool _, .bool _ => rfl
+  | .string _, .bool _, .int _ => rfl
+  | .string a, .bool _, .string c =>
+    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
+  -- v is string, vlo is int: ge returns none
+  | .string _, .int _, .null _ => rfl
+  | .string _, .int _, .bool _ => rfl
+  | .string _, .int _, .int _ => rfl
+  | .string a, .int _, .string c =>
+    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
+
+/-- x BETWEEN a AND b = (x >= a AND x <= b)
+    Requires all three expressions evaluate successfully (no errors),
+    because AND's short-circuit behavior disagrees with BETWEEN's when
+    sub-expressions produce evaluation errors. -/
+theorem between_expansion (e lo hi : Expr)
+    (he : e.evaluable) (hlo : lo.evaluable) (hhi : hi.evaluable) :
     Expr.between e lo hi ≃ₑ
-    Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)
+    Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_between, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  obtain ⟨v, hv⟩ := he row
+  obtain ⟨vlo, hvlo⟩ := hlo row
+  obtain ⟨vhi, hvhi⟩ := hhi row
+  simp only [evalExpr] at hv hvlo hvhi
+  rw [hv, hvlo, hvhi]
+  exact evalBetween_expansion v vlo vhi
 
 /-- Value-level helper: BETWEEN x x x = (x >= x AND x <= x) -/
 private theorem evalBetween_reflexive (v : Option Value) :
@@ -962,11 +1064,6 @@ theorem between_reflexive (e : Expr) :
   simp only [evalExpr]
   rw [evalExprWithDb_between, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBetween_reflexive _
-
-/-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b) -/
-axiom not_between_expansion (e lo hi : Expr) :
-    Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
-    Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi)
 
 -- ============================================================================
 -- LIKE Pattern Theorems
@@ -1048,6 +1145,32 @@ theorem concat_empty_right (e : Expr) (h : e.isStringOrNullValued) :
   intro row
   simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
   exact evalFunc_concat_empty_right _ (h row)
+
+-- ============================================================================
+-- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)
+-- ============================================================================
+
+-- Value-level helper: LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)
+-- No precondition needed — all non-string cases reduce to none on both sides.
+private theorem evalFunc_length_concat (av bv : Option Value) :
+    evalFunc "LENGTH" [evalFunc "CONCAT" [av, bv]] =
+    evalBinOp .add (evalFunc "LENGTH" [av]) (evalFunc "LENGTH" [bv]) := by
+  have hL : "LENGTH".toUpper = "LENGTH" := by native_decide
+  have hC : "CONCAT".toUpper = "CONCAT" := by native_decide
+  cases av with
+  | none => simp [evalFunc, hC, hL, evalBinOp]
+  | some v => cases bv with
+    | none => cases v <;> simp [evalFunc, hC, hL, evalBinOp]
+    | some w => cases v <;> cases w <;> simp [evalFunc, hC, hL, evalBinOp, String.length_append]
+
+/-- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b).
+    No precondition needed — non-string and null cases all reduce to none on both sides. -/
+theorem length_concat (a b : Expr) :
+    Expr.func "LENGTH" [Expr.func "CONCAT" [a, b]] ≃ₑ
+    Expr.binOp .add (Expr.func "LENGTH" [a]) (Expr.func "LENGTH" [b]) := by
+  intro row
+  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_binOp]
+  exact evalFunc_length_concat _ _
 
 -- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
 -- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
@@ -1224,12 +1347,6 @@ theorem length_empty :
 -- Comparison Theorems
 -- ============================================================================
 
-/-- Mild precondition: expression always evaluates to SOME value.
-    This excludes only error-producing expressions (missing columns, aggregates
-    without group context). All well-formed SQL in a valid context satisfies this. -/
-def Expr.evaluable (e : Expr) : Prop :=
-  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
-
 /-- x = x is TRUE for non-null, NULL for null (reflexivity of equality).
     Requires `Expr.evaluable` — the expression must not produce errors.
     This is the key theorem enabled by Option 3 null semantics. -/
@@ -1348,159 +1465,57 @@ private theorem not_map_ordering_ne_lt (o : Option Ordering) :
 -- NOT(null) = null = negated_comparison(null, _), both sides `some (.null none)`.
 private theorem evalUnaryOp_not_eq (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
-  match l, r with
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | none, none => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some _ => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.int a) (.int b))
-  | some (.int a), some (.string b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.int a) (.string b))
-  | some (.int a), some (.bool b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.int a) (.bool b))
-  | some (.string a), some (.int b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.string a) (.int b))
-  | some (.string a), some (.string b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.string a) (.string b))
-  | some (.string a), some (.bool b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.string a) (.bool b))
-  | some (.bool a), some (.int b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.bool a) (.int b))
-  | some (.bool a), some (.string b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.bool a) (.string b))
-  | some (.bool a), some (.bool b) => simp only [evalBinOp]; exact not_map_bool_eq (Value.eq (.bool a) (.bool b))
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_bool_eq _)
 
 private theorem evalUnaryOp_not_ne (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .ne l r) = evalBinOp .eq l r := by
-  match l, r with
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | none, none => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some _ => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.int a) (.int b))
-  | some (.int a), some (.string b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.int a) (.string b))
-  | some (.int a), some (.bool b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.int a) (.bool b))
-  | some (.string a), some (.int b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.string a) (.int b))
-  | some (.string a), some (.string b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.string a) (.string b))
-  | some (.string a), some (.bool b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.string a) (.bool b))
-  | some (.bool a), some (.int b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.bool a) (.int b))
-  | some (.bool a), some (.string b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.bool a) (.string b))
-  | some (.bool a), some (.bool b) => simp only [evalBinOp]; exact not_map_bool_cancel (Value.eq (.bool a) (.bool b))
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_bool_cancel _)
 
 private theorem evalUnaryOp_not_lt (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .lt l r) = evalBinOp .ge l r := by
-  match l, r with
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | none, none => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some _ => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.int a) (.int b))
-  | some (.int a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.int a) (.string b))
-  | some (.int a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.int a) (.bool b))
-  | some (.string a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.string a) (.int b))
-  | some (.string a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.string a) (.string b))
-  | some (.string a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.string a) (.bool b))
-  | some (.bool a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.bool a) (.int b))
-  | some (.bool a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.bool a) (.string b))
-  | some (.bool a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_eq_lt (Value.compare (.bool a) (.bool b))
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_ordering_eq_lt _)
 
 private theorem evalUnaryOp_not_le (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .le l r) = evalBinOp .gt l r := by
-  match l, r with
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | none, none => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some _ => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.int a) (.int b))
-  | some (.int a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.int a) (.string b))
-  | some (.int a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.int a) (.bool b))
-  | some (.string a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.string a) (.int b))
-  | some (.string a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.string a) (.string b))
-  | some (.string a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.string a) (.bool b))
-  | some (.bool a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.bool a) (.int b))
-  | some (.bool a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.bool a) (.string b))
-  | some (.bool a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_ne_gt (Value.compare (.bool a) (.bool b))
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_ordering_ne_gt _)
 
 private theorem evalUnaryOp_not_gt (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .gt l r) = evalBinOp .le l r := by
-  match l, r with
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | none, none => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some _ => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.int a) (.int b))
-  | some (.int a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.int a) (.string b))
-  | some (.int a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.int a) (.bool b))
-  | some (.string a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.string a) (.int b))
-  | some (.string a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.string a) (.string b))
-  | some (.string a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.string a) (.bool b))
-  | some (.bool a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.bool a) (.int b))
-  | some (.bool a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.bool a) (.string b))
-  | some (.bool a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_eq_gt (Value.compare (.bool a) (.bool b))
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_ordering_eq_gt _)
 
 private theorem evalUnaryOp_not_ge (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .ge l r) = evalBinOp .lt l r := by
-  match l, r with
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | none, none => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some _ => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.int a) (.int b))
-  | some (.int a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.int a) (.string b))
-  | some (.int a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.int a) (.bool b))
-  | some (.string a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.string a) (.int b))
-  | some (.string a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.string a) (.string b))
-  | some (.string a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.string a) (.bool b))
-  | some (.bool a), some (.int b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.bool a) (.int b))
-  | some (.bool a), some (.string b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.bool a) (.string b))
-  | some (.bool a), some (.bool b) => simp only [evalBinOp]; exact not_map_ordering_ne_lt (Value.compare (.bool a) (.bool b))
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_ordering_ne_lt _)
 
 /-- NOT (x = y) = (x <> y) -/
 theorem not_eq_is_ne (a b : Expr) :
@@ -1550,6 +1565,28 @@ theorem not_ge_is_lt (a b : Expr) :
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_ge _ _
 
+/-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b)
+    Proved by composition: between_expansion + De Morgan + NOT comparison identities.
+    Same `Expr.evaluable` precondition as between_expansion. -/
+theorem not_between_expansion (e lo hi : Expr)
+    (he : e.evaluable) (hlo : lo.evaluable) (hhi : hi.evaluable) :
+    Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
+    Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) := by
+  -- Step 1: NOT BETWEEN ≃ NOT (ge AND le) via between_expansion + unaryOp_congr
+  have step1 : Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
+      Expr.unaryOp .not (Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)) :=
+    unaryOp_congr (between_expansion e lo hi he hlo hhi)
+  -- Step 2: NOT (ge AND le) ≃ NOT ge OR NOT le via De Morgan
+  have step2 : Expr.unaryOp .not (Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)) ≃ₑ
+      Expr.binOp .or (Expr.unaryOp .not (Expr.binOp .ge e lo)) (Expr.unaryOp .not (Expr.binOp .le e hi)) :=
+    not_and _ _
+  -- Step 3: NOT ge ≃ lt and NOT le ≃ gt
+  have step3 : Expr.binOp .or (Expr.unaryOp .not (Expr.binOp .ge e lo)) (Expr.unaryOp .not (Expr.binOp .le e hi)) ≃ₑ
+      Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) :=
+    binOp_congr (not_ge_is_lt e lo) (not_le_is_gt e hi)
+  -- Chain: step1 → step2 → step3
+  exact expr_equiv_trans (expr_equiv_trans step1 step2) step3
+
 -- Ordering swap helper: (compare a b == .lt) = (compare b a == .gt), etc.
 -- Use Std.OrientedCmp to get compare swap for free
 private theorem compare_swap_gen {α : Type} [Ord α] [Std.OrientedCmp (α := α) compare]
@@ -1566,70 +1603,25 @@ private theorem ordering_ne_gt_eq_swap_ne_lt (o : Ordering) :
 -- Value-level helpers for comparison flips
 private theorem evalBinOp_lt_eq_gt_flip (l r : Option Value) :
     evalBinOp .lt l r = evalBinOp .gt r l := by
-  match l, r with
-  | none, none => rfl
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some (.int _) => rfl
-  | some (.null _), some (.string _) => rfl
-  | some (.null _), some (.bool _) => rfl
-  | some (.null _), some (.null _) => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) =>
-    simp only [evalBinOp, Value.compare, Option.map]
-    rw [ordering_lt_eq_swap_gt, compare_swap_gen]
-  | some (.string a), some (.string b) =>
-    simp only [evalBinOp, Value.compare, Option.map]
-    rw [ordering_lt_eq_swap_gt, compare_swap_gen]
-  | some (.int _), some (.string _) => rfl
-  | some (.int _), some (.bool _) => rfl
-  | some (.string _), some (.int _) => rfl
-  | some (.string _), some (.bool _) => rfl
-  | some (.bool _), some (.int _) => rfl
-  | some (.bool _), some (.string _) => rfl
-  | some (.bool _), some (.bool _) => rfl
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first
+      | rfl
+      | (simp only [evalBinOp, Value.compare, Option.map]; rw [ordering_lt_eq_swap_gt, compare_swap_gen])
 
--- le/ge and gt/lt flip helpers reuse the same pattern as lt/gt
 private theorem evalBinOp_le_eq_ge_flip (l r : Option Value) :
     evalBinOp .le l r = evalBinOp .ge r l := by
-  match l, r with
-  | none, none => rfl
-  | none, some (.int _) => rfl
-  | none, some (.string _) => rfl
-  | none, some (.bool _) => rfl
-  | none, some (.null _) => rfl
-  | some (.int _), none => rfl
-  | some (.string _), none => rfl
-  | some (.bool _), none => rfl
-  | some (.null _), none => rfl
-  | some (.null _), some (.int _) => rfl
-  | some (.null _), some (.string _) => rfl
-  | some (.null _), some (.bool _) => rfl
-  | some (.null _), some (.null _) => rfl
-  | some (.int _), some (.null _) => rfl
-  | some (.string _), some (.null _) => rfl
-  | some (.bool _), some (.null _) => rfl
-  | some (.int a), some (.int b) =>
-    simp only [evalBinOp, Value.compare, Option.map]
-    rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen]
-  | some (.string a), some (.string b) =>
-    simp only [evalBinOp, Value.compare, Option.map]
-    rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen]
-  | some (.int _), some (.string _) => rfl
-  | some (.int _), some (.bool _) => rfl
-  | some (.string _), some (.int _) => rfl
-  | some (.string _), some (.bool _) => rfl
-  | some (.bool _), some (.int _) => rfl
-  | some (.bool _), some (.string _) => rfl
-  | some (.bool _), some (.bool _) => rfl
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first
+      | rfl
+      | (simp only [evalBinOp, Value.compare, Option.map]; rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen])
 
 /-- x < y = y > x (flip) -/
 theorem lt_flip (a b : Expr) :

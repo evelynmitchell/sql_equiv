@@ -41,6 +41,14 @@ def Expr.isStringOrNullValued (e : Expr) : Prop :=
               (∃ n, evalExpr row e = some (.null n)) ∨
               evalExpr row e = none
 
+/-- Mild precondition: expression always evaluates to SOME value.
+    This excludes only error-producing expressions (missing columns, aggregates
+    without group context). All well-formed SQL in a valid context satisfies this.
+    Used by eq_reflexive, between_expansion, not_between_expansion. -/
+def Expr.evaluable (e : Expr) : Prop :=
+  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
+
+
 theorem expr_equiv_refl (e : Expr) : e ≃ₑ e := by intro row; rfl
 theorem expr_equiv_symm {e1 e2 : Expr} (h : e1 ≃ₑ e2) : e2 ≃ₑ e1 := by intro row; exact (h row).symm
 theorem expr_equiv_trans {e1 e2 e3 : Expr} (h12 : e1 ≃ₑ e2) (h23 : e2 ≃ₑ e3) : e1 ≃ₑ e3 := by intro row; rw [h12 row, h23 row]
