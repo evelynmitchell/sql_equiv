@@ -1572,7 +1572,21 @@ def semanticsUnfoldTests : List TestResult :=
     let hi := Expr.lit (.int 10)
     let direct := evalExprWithDb db row (.between e lo hi)
     if direct == some (.bool false) then .pass "evalExprWithDb_between (15 BETWEEN 1 AND 10 = false)"
-    else .fail "evalExprWithDb_between (15 BETWEEN 1 AND 10 = false)" s!"Expected some false, got {showOptVal direct}"
+    else .fail "evalExprWithDb_between (15 BETWEEN 1 AND 10 = false)" s!"Expected some false, got {showOptVal direct}",
+
+    -- evalExprWithDb_inList: evalExprWithDb db row (inList e neg vals) matches IN semantics
+    let e := Expr.lit (.int 2)
+    let vals := [Expr.lit (.int 1), Expr.lit (.int 2), Expr.lit (.int 3)]
+    let direct := evalExprWithDb db row (.inList e false vals)
+    let stepwise :=
+      match evalExprWithDb db row e with
+      | none => none
+      | some v =>
+        let hasMatch := vals.filterMap (evalExprWithDb db row) |>.any fun v' =>
+          v.eq v' == some true
+        some (Value.bool (if false then !hasMatch else hasMatch))
+    if direct == stepwise then .pass "evalExprWithDb_inList (2 IN (1,2,3))"
+    else .fail "evalExprWithDb_inList (2 IN (1,2,3))" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}"
   ]
 
 -- ============================================================================
