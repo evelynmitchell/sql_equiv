@@ -1192,6 +1192,34 @@ on the `Ordering` (3 values: `.lt`, `.eq`, `.gt`) then closes each sub-goal by `
 - `evalBinOp` associativity (nested `evalBinOp` calls; the inner call must fully evaluate before the outer one can, and overlapping AND/OR patterns prevent `rfl` on abstract `Bool` variables)
 - Proofs involving `evalFunc` (use `cases v <;> cases w <;> simp [evalFunc, ...]` instead)
 
+### Tactic Pattern: `cases <;> first | rfl | (simp ...; exact helper _)`
+
+For proofs over `Option Value × Option Value` where most constructor pairs close
+by `rfl` and only a few need a specific helper lemma, this pattern eliminates
+exhaustive match enumeration:
+
+```lean
+cases l with
+| none => cases r with | none => rfl | some v => cases v <;> rfl
+| some v => cases r with
+  | none => cases v <;> rfl
+  | some w => cases v <;> cases w <;>
+    first | rfl | (simp only [evalBinOp]; exact helper_lemma _)
+```
+
+The `first | rfl | ...` combinator tries `rfl` on each generated sub-goal and
+only falls through to the helper for the cases that need it (typically non-null
+same-type pairs). This turned 8 helpers with ~25 match arms each into ~7 lines each
+(-200 lines total):
+
+- `evalUnaryOp_not_{eq,ne,lt,le,gt,ge}` — NOT comparison negation
+- `evalBinOp_{lt_eq_gt,le_eq_ge}_flip` — comparison argument flips
+
+**Key insight**: `cases v <;> cases w` on `Value` generates all 16 constructor
+pairs (4×4). Most pairs hit the `evalBinOp` catch-all on both sides → `rfl`.
+The `first` combinator handles the asymmetry cleanly without listing which
+pairs need the helper.
+
 ### Related pattern: `cases v <;> cases w <;> simp [evalFunc, ...]`
 
 For `evalFunc`-based proofs, `cases` on `Option Value` then `Value` constructors
