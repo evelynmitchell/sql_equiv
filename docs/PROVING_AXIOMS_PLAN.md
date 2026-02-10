@@ -229,23 +229,26 @@ of set operations.
 
 ---
 
-### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~14 axioms)
+### Phase 5: ORDER BY / LIMIT / OFFSET Axioms (~18 axioms) -- COMPLETE
 
 **Goal:** Prove properties of ORDER BY, LIMIT, and OFFSET.
+
+**All 18 axioms proved (PR #115):**
 
 **ORDER BY (6):** `order_by_preserves_count`, `order_by_empty_identity`,
   `order_by_idempotent`, `order_by_last_wins`, `order_by_reverse`,
   `order_limit_deterministic`
 
-**LIMIT/OFFSET (8):** `limit_zero_empty`, `limit_upper_bound`,
+**LIMIT/OFFSET (12):** `limit_zero_empty`, `limit_upper_bound`,
   `limit_none_all_rows`, `limit_monotonic`, `limit_one_singleton`,
   `offset_zero_identity`, `offset_too_large_empty`, `offset_reduces_count`,
   `offset_monotonic`, `limit_offset_compose`, `offset_limit_zero_empty`,
   `pagination_upper_bound`, `pagination_identity`, `consecutive_pages`
 
-**Approach:** These reduce to `List.take`/`List.drop`/`List.length` lemmas.
-
-**Estimated complexity:** Easy-Medium.
+**Approach:** Infrastructure axioms `evalSelect_limit_offset` and
+`evalSelect_orderBy_length` in Semantics.lean decompose `evalSelect` into
+`List.take`/`List.drop`/`List.length` reasoning. Helper lemmas specialize
+for concrete `Option` values to avoid rewrite ambiguity.
 
 ---
 
@@ -350,27 +353,28 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 107 axioms remaining (86 in Equiv/, 21 in infrastructure files), 232 theorems proved.
+**Current totals**: 107 axioms remaining (86 in Equiv/, 21 in infrastructure files), 232 theorems proved (68.4%).
 Axiom ratchet: 107 (in `tools/axiom_count_minimum.txt`).
+Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown.
 
 | Phase | Description | Proved | Remaining | Difficulty |
 |-------|-------------|--------|-----------|------------|
 | 1 | Value/Boolean properties | 22 | 0 (done) | -- |
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
-| 1c | IN / BETWEEN / LIKE | 7 | ~7 | Easy-Medium |
+| 1c | IN / BETWEEN / LIKE | 7 | ~4 | Easy-Medium |
 | 1d | String/Function | 8 | 0 (done) | -- |
 | 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
-| 5 | ORDER BY / LIMIT / OFFSET | 0 | ~14 | Easy-Medium |
+| 5 | ORDER BY / LIMIT / OFFSET | 18 | 0 (done) | -- |
 | 6 | Join axioms | 0 | ~21 | Medium-Hard |
 | 7 | Subquery / EXISTS / IN | 0 | ~17 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 0 | 11 | N/A |
+| infra | Infrastructure (Semantics.lean) | 0 | 13 | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
-| | **Total** | **~71** | **~123** | |
+| | **Total** | **~91** | **~96** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
