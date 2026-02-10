@@ -1074,7 +1074,8 @@ private theorem simpleLike_pct (s : String) : simpleLike s "%" = true := by
   unfold simpleLike
   simp
 
-/-- x LIKE '%' = TRUE for non-null x (matches everything).
+/-- x LIKE '%' = TRUE for non-null string x (matches all strings);
+    for NULL x, the result is NULL.
     Requires `isStringOrNull` — expression must evaluate to string or null. -/
 theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
     Expr.binOp .like e (Expr.lit (.string "%")) ≃ₑ
@@ -1135,7 +1136,8 @@ theorem like_empty_pattern (e : Expr) :
   simp only [evalExprWithDb_lit]
   exact evalBinOp_like_empty_eq_eq _
 
-/-- x LIKE x = TRUE for non-null x.
+/-- For string-typed expressions, x LIKE x evaluates to TRUE for non-null strings
+    and to NULL when x is NULL.
     Requires `isStringOrNull` — expression must evaluate to string or null.
     Axiom: proving simpleLike s s = true requires non-trivial string library lemmas
     for branches 2-4 (startsWith/endsWith/stringContains on substrings). -/
