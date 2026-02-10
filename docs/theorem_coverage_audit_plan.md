@@ -3,8 +3,9 @@
 ## Status
 - Branch: `master` (current)
 - **107 axioms** across 12 `.lean` files (86 in `Equiv/`, 21 in infrastructure)
-- **232 theorems** proved
+- **275 theorems** proved (72.0%) — includes `private theorem` declarations
 - Axiom ratchet: 107 (`tools/axiom_count_minimum.txt`)
+- Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
 ## Goal
@@ -50,7 +51,7 @@ Run with `--runtime` flag for full analysis. No build required.
 | `OptimizerUtils.lean` | 0 | 5 | Optimizer utility lemmas |
 | **Subtotal** | **21** | **12** | |
 
-### Grand Total: 107 axioms, 232 theorems (68.4% proved)
+### Grand Total: 107 axioms, 275 theorems (72.0% proved)
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)
