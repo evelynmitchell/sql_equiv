@@ -174,7 +174,7 @@ with case analysis on the evaluated sub-expressions.
 
 - `concat_empty_left`, `concat_empty_right` -- concat identity — **PROVED** (PR #107)
 - `upper_idempotent`, `lower_idempotent` -- function idempotence — **PROVED** (PR #105)
-- `upper_lower_upper`, `lower_upper_lower` -- function composition (axiom)
+- `upper_lower_upper`, `lower_upper_lower` -- function composition — **PROVED** (PR #105)
 - `length_empty` -- length of empty string — proved (PR #86, restored in PR #102)
 - `length_concat` -- length of concatenation — **PROVED** (PR #109)
 
@@ -350,15 +350,15 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 123 axioms remaining (104 in Equiv/, 19 in infrastructure files), 202 theorems proved.
-Axiom ratchet: 123 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 107 axioms remaining (86 in Equiv/, 21 in infrastructure files), 232 theorems proved.
+Axiom ratchet: 107 (in `tools/axiom_count_minimum.txt`).
 
 | Phase | Description | Proved | Remaining | Difficulty |
 |-------|-------------|--------|-----------|------------|
 | 1 | Value/Boolean properties | 22 | 0 (done) | -- |
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
 | 1c | IN / BETWEEN / LIKE | 7 | ~7 | Easy-Medium |
-| 1d | String/Function | 6 | ~2 | Easy |
+| 1d | String/Function | 8 | 0 (done) | -- |
 | 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
@@ -406,7 +406,7 @@ decision first (see "Unsound Axiom Strategy" below).
 | 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 8 | 2 **proved** (PR #112: `in_empty_false`, `not_in_empty_true`); 6 unsound |
 | 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 3 **proved** (PR #102: `between_reflexive`; PR #109: `between_expansion`, `not_between_expansion`) |
 | 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 2 **proved** (PR #102: `like_empty_pattern`; PR #111: `like_match_all`); `like_self` axiom |
-| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 8 | 6 **proved** (PR #102: `length_empty`; PR #105: `upper/lower_idempotent`; PR #107: `concat_empty_left/right`; PR #109: `length_concat`); 2 axioms (`upper_lower_upper`, `lower_upper_lower`) |
+| 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 8 | 8 **proved** (PR #102: `length_empty`; PR #105: `upper/lower_idempotent`, `upper_lower_upper`, `lower_upper_lower`; PR #107: `concat_empty_left/right`; PR #109: `length_concat`) |
 
 ### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
 

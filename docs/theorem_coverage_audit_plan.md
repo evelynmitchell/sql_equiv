@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **123 axioms** across 11 `.lean` files (104 in `Equiv/`, 19 in infrastructure)
-- **202 theorems** proved (all in `Equiv/`)
-- Axiom ratchet: 123 (`tools/axiom_count_minimum.txt`)
+- **107 axioms** across 9 `.lean` files (86 in `Equiv/`, 21 in infrastructure)
+- **232 theorems** proved
+- Axiom ratchet: 107 (`tools/axiom_count_minimum.txt`)
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
 ## Goal
@@ -49,7 +49,7 @@ Run with `--runtime` flag for full analysis. No build required.
 | `PredicatePushdown.lean` | 1 | Predicate pushdown preserves semantics |
 | **Subtotal** | **19** | |
 
-### Grand Total: 123 axioms, 202 theorems
+### Grand Total: 107 axioms, 232 theorems
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)
