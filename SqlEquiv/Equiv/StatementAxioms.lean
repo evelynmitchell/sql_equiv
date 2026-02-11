@@ -191,15 +191,6 @@ private theorem List.filterMap_some_comp {α β : Type} (l : List α) (f : α �
   | nil => rfl
   | cons _ _ ih => simp [List.map_cons, ih]
 
-/-- Helper: flatMap where each element produces a 1-element list preserves length -/
-private theorem List.length_flatMap_one {α β : Type} (l : List α) (f : α → List β)
-    (hf : ∀ x, (f x).length = 1) :
-    (l.flatMap f).length = l.length := by
-  induction l with
-  | nil => rfl
-  | cons a rest ih =>
-    simp only [List.flatMap_cons, List.length_append, List.length_cons, hf a, ih]; omega
-
 /-- INNER JOIN with ON TRUE is equivalent to CROSS JOIN -/
 theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
     evalFrom db (.join a .inner b (some (.lit (.bool true)))) =

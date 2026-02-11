@@ -1855,17 +1855,28 @@ def infrastructureAxiomTests : List TestResult :=
     if innerResult == manualInner then .pass "evalFrom_inner_join (users INNER orders ON TRUE)"
     else .fail "evalFrom_inner_join (users INNER orders ON TRUE)" s!"Results differ: {innerResult.length} vs {manualInner.length} rows",
 
-    -- evalFrom_left_join: LEFT JOIN with NULL padding
+    -- evalFrom_left_join: LEFT JOIN decomposes into flatMap with NULL padding
     let tU := FromClause.table ⟨"users", none⟩
     let tO := FromClause.table ⟨"orders", none⟩
     let condFalse := Expr.lit (.bool false)
     let leftResult := evalFrom testDb (.join tU .left tO (some condFalse))
-    let leftRows := evalFrom testDb tU
-    -- With FALSE condition, each left row should produce one NULL-padded row
-    if leftResult.length == leftRows.length
+    let rightRows := evalFrom testDb tO
+    let manualLeft := (evalFrom testDb tU).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match evalExprWithDb testDb combined condFalse with
+        | some (.bool true) => some combined
+        | _ => none
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+    if leftResult == manualLeft
     then .pass "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
     else .fail "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
-      s!"Expected {leftRows.length} rows, got {leftResult.length}"
+      s!"Results differ: {leftResult.length} vs {manualLeft.length} rows"
   ]
 
 -- ============================================================================

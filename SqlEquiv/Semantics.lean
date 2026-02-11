@@ -921,8 +921,8 @@ axiom evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Optio
     Mirrors the implementation at lines 367-382. -/
 axiom evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
     evalFrom db (.join left .left right on_) =
+    let rightRows := evalFrom db right
     (evalFrom db left).flatMap fun lr =>
-      let rightRows := evalFrom db right
       let matchingRows := rightRows.filterMap fun rr =>
         let combined := lr ++ rr
         match on_ with
