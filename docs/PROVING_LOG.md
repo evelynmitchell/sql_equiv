@@ -1619,6 +1619,18 @@ Optimizer.lean and PredicatePushdown.lean which use `alias` as a variable name.
 The fix: prove `perm_ext_iff_of_nodup` ourselves from core lemmas (`perm_iff_count`
 + `Nodup.count`) rather than importing Batteries.
 
+**4. Don't trust "unsound" labels — verify the claim.**
+`intersect_assoc` was labeled "unsound — filter ordering differs" but both sides
+filter the same list in the same order. The comment was wrong. Pushing for ≃ᵩ
+instead of settling for ≃ˢ revealed it was never actually broken.
+
+**5. Infrastructure is the hard part; individual proofs are easy.**
+Once `mem_eraseDups`, `nodup_eraseDups`, and `Perm_eraseDups` were proved,
+every theorem was 3–5 lines: unfold with `simp only [evalQuery_compound]`,
+rewrite membership, close with a propositional tautology (`or_assoc`, `And.comm`,
+`or_and_left`). The strong-induction proofs for the helpers took more thought
+than all 9 theorems combined.
+
 ---
 
 ## Current Status Summary (2026-02-11, post-Batch 16)
