@@ -1440,13 +1440,121 @@ Using the same operators avoids bridging boilerplate at every call site.
 
 ---
 
-## Current Status Summary (2026-02-11, post-PR #116)
+## Batch 15: Phase 4 — Set Operation Axioms — 4 proved, 9 documented unsound
+
+**Branch**: `claude/prove-phase4-set-operation-axioms` | **PR**: #117
+**Date**: 2026-02-11
+
+### Infrastructure axioms added
+
+| Axiom | Purpose |
+|-------|---------|
+| `evalQuery_simple` | Decomposes `evalQuery db (.simple sel)` to `evalSelect db sel` |
+| `evalQuery_compound` | Decomposes `evalQuery db (.compound left op right)` to list operations |
+
+### Dependencies added
+
+- `LawfulBEq SqlType` (derived via `ReflBEq` + `LawfulBEq`)
+- `LawfulBEq Value` (derived via `ReflBEq` + `LawfulBEq`)
+
+These are needed for `List.contains_iff_mem` which bridges `List.contains` to `∈`.
+
+### Axioms proved (4)
+
+| Axiom | Statement | Approach |
+|-------|-----------|----------|
+| `union_all_length` | `\|A UNION ALL B\| = \|A\| + \|B\|` | `evalQuery_compound` + `List.length_append` |
+| `except_self_empty` | `A EXCEPT A = []` | `List.filter_eq_nil_iff` + `List.contains_iff_mem` |
+| `intersect_empty_right` | `A INTERSECT empty = []` | `evalSelect_filter_all_false` for empty select |
+| `intersect_idempotent` | `A INTERSECT A = A` | `List.filter_eq_self` + `List.contains_iff_mem` |
+
+### Unsound axioms documented (9)
+
+The remaining 9 set operation axioms are **unsound** under our exact-list-equality
+semantics. `List.eraseDups` keeps first-occurrence order, and `List.filter` preserves
+left-side order, so commutativity/associativity/distributivity fail.
+
+| Axiom | Counterexample |
+|-------|----------------|
+| `union_comm` | `[r1]++[r2]` eraseDups = `[r1,r2]` vs `[r2,r1]` |
+| `union_all_comm` | `[r1]++[r2] ≠ [r2]++[r1]` |
+| `intersect_comm` | filter preserves left-side ordering |
+| `union_assoc` | eraseDups ordering differs |
+| `intersect_assoc` | filter ordering differs |
+| `union_idempotent` | `(a++a).eraseDups ≠ a` when a has dupes |
+| `union_empty_right` | `(a++[]).eraseDups ≠ a` when a has dupes |
+| `union_intersect_distrib` | ordering |
+| `intersect_union_distrib` | ordering |
+
+Each axiom now has an `⚠ UNSOUND` docstring warning with a counterexample.
+
+### Proof techniques
+
+- `simp only [evalQuery_compound, evalQuery_simple]` — decomposes compound queries
+- `List.filter_eq_nil_iff` + `List.filter_eq_self` — characterize filter results
+- `List.contains_iff_mem` (requires `LawfulBEq`) — bridges `contains` to `∈`
+- `evalSelect_filter_all_false` + `evalExprWithDb_lit` — proves empty select returns `[]`
+
+### Lessons learned
+
+**1. `deriving LawfulBEq` exists in Lean 4.27 — don't prove it manually.**
+We needed `LawfulBEq Value` for `List.contains_iff_mem`. Multiple attempts at
+manual proofs failed because derived `BEq` generates an opaque `instBEqValue.beq`
+that `simp [BEq.beq]` can't unfold. Tried: `simp_all (config := { decide := true })`,
+removing `BEq` from deriving and using `instBEqOfDecidableEq`, writing a manual
+`BEq` instance — all failed or broke downstream `rfl` proofs. The fix was
+`deriving ReflBEq, LawfulBEq` (Lean 4.27 has deriving handlers for both).
+**Takeaway**: check what the deriving machinery can do before writing manual instances.
+
+**2. `partial def` in `mutual` blocks requires axioms to come after the block.**
+`evalQuery` is `partial def` inside a `mutual ... end` block. Placing axioms
+referencing `evalQuery` before the `end` gave "unknown identifier" errors.
+The fix was placing `evalQuery_simple`/`evalQuery_compound` after the `end`.
+**Takeaway**: infrastructure axioms about `partial def` must be placed after
+the enclosing block, not interleaved.
+
+**3. `let` bindings in axiom statements need type annotations for dot notation.**
+`let l := evalQuery db left` in `evalQuery_compound` caused `.eraseDups` and
+`.filter` to fail — Lean couldn't resolve the method without knowing the type.
+Adding `: Table` fixed it. This doesn't happen in `def` bodies where Lean
+has more type context, but axiom statements are more rigid.
+
+**4. `simp only` vs `rw` for infrastructure axioms: use `simp only` when
+multiple occurrences need rewriting.**
+`rw [evalQuery_simple, evalQuery_simple]` failed because `rw` rewrites one
+occurrence at a time, and after the first rewrite the second had nothing to
+match. `simp only [evalQuery_compound, evalQuery_simple]` rewrites all
+occurrences simultaneously.
+
+**5. Proving "filter removes everything" vs "filter keeps everything".**
+These are dual patterns that came up repeatedly:
+- `except_self_empty` (filter removes all): `List.filter_eq_nil_iff` +
+  show the predicate is false for every element via `List.contains_iff_mem`
+- `intersect_idempotent` (filter keeps all): `List.filter_eq_self` +
+  show the predicate is true for every element via `List.contains_iff_mem`
+Both require `LawfulBEq` to bridge `List.contains` (boolean) to `∈` (propositional).
+
+**6. Most set operation axioms are unsound under list equality — and that's
+a design insight, not a bug.**
+9 of 13 set operation axioms fail because `List.eraseDups` preserves
+first-occurrence order and `List.filter` preserves left-side order. This
+means commutativity (`A ∪ B = B ∪ A`), associativity, and distributivity
+all break. These would hold under set or multiset semantics. This is a
+fundamental limitation of modeling SQL query results as ordered lists with
+propositional equality. The honest response is to document them as unsound
+rather than weaken them into uselessness.
+**Takeaway**: when an axiom can't be proved, always check whether the
+semantics model is the problem before assuming the axiom statement is wrong.
+
+---
+
+## Current Status Summary (2026-02-11, post-Batch 15)
 
 ### Axiom/theorem counts
 
-- **106 axioms** remaining (across all .lean files in SqlEquiv/)
-- **278 theorems** proved (72.4%)
-- Axiom ratchet: 106 (in `tools/axiom_count_minimum.txt`)
+- **104 axioms** remaining (across all .lean files in SqlEquiv/)
+- **282 theorems** proved (73.1%)
+- Axiom ratchet: 104 (in `tools/axiom_count_minimum.txt`)
 
 ### All issues with proved axioms
 

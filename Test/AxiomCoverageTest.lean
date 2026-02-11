@@ -1770,7 +1770,52 @@ def infrastructureAxiomTests : List TestResult :=
       (some (.lit (.bool false))) [] none [] none none
     testLengthEq "evalSelect_agg_where_false_not_empty (aggregate WHERE FALSE = 1 row)"
       (evalSelect testDb selAggFalse).length
-      1
+      1,
+
+    -- evalQuery_simple: simple query evaluates same as evalSelect
+    let selUsers := mkSimpleSelect "users"
+    let queryResult := evalQuery testDb (.simple selUsers)
+    let selectResult := evalSelect testDb selUsers
+    if queryResult == selectResult then .pass "evalQuery_simple (users)"
+    else .fail "evalQuery_simple (users)" s!"Results differ: {queryResult.length} vs {selectResult.length} rows",
+
+    -- evalQuery_compound: UNION ALL decomposes to append
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let compoundResult := evalQuery testDb (.compound (.simple selUsers) .unionAll (.simple selOrders))
+    let expectedResult := evalQuery testDb (.simple selUsers) ++ evalQuery testDb (.simple selOrders)
+    if compoundResult == expectedResult then .pass "evalQuery_compound (UNION ALL = append)"
+    else .fail "evalQuery_compound (UNION ALL = append)" s!"Results differ: {compoundResult.length} vs {expectedResult.length} rows",
+
+    -- evalQuery_compound: INTERSECT decomposes to filter+contains
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let intersectResult := evalQuery testDb (.compound (.simple selUsers) .intersect (.simple selOrders))
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let ordersResult := evalQuery testDb (.simple selOrders)
+    let expectedIntersect := usersResult.filter (ordersResult.contains ·)
+    if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains)"
+    else .fail "evalQuery_compound (INTERSECT = filter+contains)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows",
+
+    -- evalQuery_compound: UNION decomposes to append+eraseDups
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let unionResult := evalQuery testDb (.compound (.simple selUsers) .union (.simple selOrders))
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let ordersResult := evalQuery testDb (.simple selOrders)
+    let expectedUnion := (usersResult ++ ordersResult).eraseDups
+    if unionResult == expectedUnion then .pass "evalQuery_compound (UNION = append+eraseDups)"
+    else .fail "evalQuery_compound (UNION = append+eraseDups)" s!"Results differ: {unionResult.length} vs {expectedUnion.length} rows",
+
+    -- evalQuery_compound: EXCEPT decomposes to filter+!contains
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let exceptResult := evalQuery testDb (.compound (.simple selUsers) .exceptOp (.simple selOrders))
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let ordersResult := evalQuery testDb (.simple selOrders)
+    let expectedExcept := usersResult.filter (!ordersResult.contains ·)
+    if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains)"
+    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows"
   ]
 
 -- ============================================================================

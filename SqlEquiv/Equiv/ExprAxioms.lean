@@ -668,7 +668,7 @@ theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Opt
     (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 := by
   have h := evalSelect_filter_all_false db false items from_ (.lit (.bool false)) groupBy having orderBy limit offset
     h_no_agg
-    (fun row => by simp [evalExprWithDb_lit]; decide)
+    (fun row => by simp [evalExprWithDb_lit])
   simp [h]
 
 /-- Inner join is commutative up to row permutation.
