@@ -103,26 +103,27 @@ def testLengthGe (name : String) (actual bound : Nat) : TestResult :=
   else .fail name s!"Expected {actual} ≥ {bound}"
 
 /-- Test bag equivalence: two queries produce permutation-equivalent results.
-    Compares sorted results to check same elements with same multiplicities. -/
+    Compares multiplicities of each distinct row. -/
 def testQueryBagEquiv (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
   let r1 := evalQuery db q1
   let r2 := evalQuery db q2
-  let sortRow (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
-  let sorted1 := r1.mergeSort (fun a b => sortRow a < sortRow b)
-  let sorted2 := r2.mergeSort (fun a b => sortRow a < sortRow b)
-  if sorted1 == sorted2 then .pass name
-  else .fail name s!"Bag equiv failed: {r1.length} vs {r2.length} rows"
+  if r1.length != r2.length then
+    .fail name s!"Bag equiv failed: {r1.length} vs {r2.length} rows"
+  else
+    let distinctRows := (r1 ++ r2).eraseDups
+    let countsMatch := distinctRows.all (fun row => r1.count row == r2.count row)
+    if countsMatch then .pass name
+    else .fail name s!"Bag equiv failed: differing row multiplicities with {r1.length} rows"
 
 /-- Test set equivalence: two queries produce results with the same membership.
-    Compares deduplicated sorted results. -/
+    Compares deduplicated results via membership. -/
 def testQuerySetEquiv (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
   let r1 := (evalQuery db q1).eraseDups
   let r2 := (evalQuery db q2).eraseDups
-  let sortRow (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
-  let sorted1 := r1.mergeSort (fun a b => sortRow a < sortRow b)
-  let sorted2 := r2.mergeSort (fun a b => sortRow a < sortRow b)
-  if sorted1 == sorted2 then .pass name
-  else .fail name s!"Set equiv failed: {r1.length} vs {r2.length} rows"
+  let sameMembers := r1.all (fun row => r2.contains row)
+    && r2.all (fun row => r1.contains row)
+  if sameMembers then .pass name
+  else .fail name s!"Set equiv failed: membership differs"
 
 -- ============================================================================
 -- Sample expressions and rows
