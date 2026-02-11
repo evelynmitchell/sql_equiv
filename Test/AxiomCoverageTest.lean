@@ -1795,7 +1795,27 @@ def infrastructureAxiomTests : List TestResult :=
     let ordersResult := evalQuery testDb (.simple selOrders)
     let expectedIntersect := usersResult.filter (ordersResult.contains ·)
     if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains)"
-    else .fail "evalQuery_compound (INTERSECT = filter+contains)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows"
+    else .fail "evalQuery_compound (INTERSECT = filter+contains)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows",
+
+    -- evalQuery_compound: UNION decomposes to append+eraseDups
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let unionResult := evalQuery testDb (.compound (.simple selUsers) .union (.simple selOrders))
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let ordersResult := evalQuery testDb (.simple selOrders)
+    let expectedUnion := (usersResult ++ ordersResult).eraseDups
+    if unionResult == expectedUnion then .pass "evalQuery_compound (UNION = append+eraseDups)"
+    else .fail "evalQuery_compound (UNION = append+eraseDups)" s!"Results differ: {unionResult.length} vs {expectedUnion.length} rows",
+
+    -- evalQuery_compound: EXCEPT decomposes to filter+!contains
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let exceptResult := evalQuery testDb (.compound (.simple selUsers) .exceptOp (.simple selOrders))
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let ordersResult := evalQuery testDb (.simple selOrders)
+    let expectedExcept := usersResult.filter (!ordersResult.contains ·)
+    if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains)"
+    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows"
   ]
 
 -- ============================================================================
