@@ -35,7 +35,6 @@ theorem except_self_empty (db : Database) (a : SelectStmt) :
 theorem intersect_empty_right (db : Database) (a : SelectStmt) :
     let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
     evalQuery db (Query.compound (Query.simple a) .intersect (Query.simple emptySelect)) = [] := by
-  simp only []
   simp only [evalQuery_compound, evalQuery_simple]
   have h : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none

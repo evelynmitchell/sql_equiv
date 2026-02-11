@@ -995,13 +995,17 @@ partial def evalQuery (db : Database) : Query → Table
 end
 
 /-- Infrastructure: evalQuery on a simple SELECT decomposes to evalSelect.
-    Sound because: `evalQuery` pattern-matches `.simple sel` to `evalSelect db sel`. -/
+    Sound because: `evalQuery` pattern-matches `.simple sel` to `evalSelect db sel`.
+    Note: Must be axiom (not theorem) because `evalQuery` is `partial def` —
+    Lean does not unfold partial definitions, so `rfl` fails. -/
 axiom evalQuery_simple (db : Database) (sel : SelectStmt) :
     evalQuery db (.simple sel) = evalSelect db sel
 
 /-- Infrastructure: evalQuery on a compound query decomposes into the set operation.
     Sound because: `evalQuery` pattern-matches `.compound left op right` and applies
-    the corresponding list operation (append+eraseDups, append, filter+contains, filter+!contains). -/
+    the corresponding list operation (append+eraseDups, append, filter+contains, filter+!contains).
+    Note: Must be axiom (not theorem) because `evalQuery` is `partial def` —
+    Lean does not unfold partial definitions, so `rfl` fails. -/
 axiom evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     evalQuery db (.compound left op right) =
     let l : Table := evalQuery db left
