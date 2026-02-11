@@ -897,18 +897,20 @@ axiom evalSelect_filter_all_false (db : Database)
 -- ============================================================================
 
 /-- Infrastructure: evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows.
-    Mirrors the implementation at lines 353-355. -/
+    Corresponds to the `.cross` case of `evalFrom` on `.join`. -/
 axiom evalFrom_cross_join (db : Database) (left right : FromClause) :
     evalFrom db (.join left .cross right none) =
+    let rightRows := evalFrom db right
     (evalFrom db left).flatMap fun lr =>
-      (evalFrom db right).map fun rr => lr ++ rr
+      rightRows.map fun rr => lr ++ rr
 
 /-- Infrastructure: evalFrom decomposes INNER JOIN into flatMap/filterMap on left/right rows.
-    Mirrors the implementation at lines 357-365. -/
+    Corresponds to the `.inner` case of `evalFrom` on `.join`. -/
 axiom evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
     evalFrom db (.join left .inner right on_) =
+    let rightRows := evalFrom db right
     (evalFrom db left).flatMap fun lr =>
-      (evalFrom db right).filterMap fun rr =>
+      rightRows.filterMap fun rr =>
         let combined := lr ++ rr
         match on_ with
         | none => some combined
@@ -918,7 +920,7 @@ axiom evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Optio
           | _ => none
 
 /-- Infrastructure: evalFrom decomposes LEFT JOIN into flatMap with NULL-padding fallback.
-    Mirrors the implementation at lines 367-382. -/
+    Corresponds to the `.left` case of `evalFrom` on `.join`. -/
 axiom evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
     evalFrom db (.join left .left right on_) =
     let rightRows := evalFrom db right

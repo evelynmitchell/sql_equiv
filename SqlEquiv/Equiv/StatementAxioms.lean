@@ -196,6 +196,7 @@ theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
     evalFrom db (.join a .inner b (some (.lit (.bool true)))) =
     evalFrom db (.join a .cross b none) := by
   rw [evalFrom_inner_join, evalFrom_cross_join]
+  simp only -- unfold let rightRows bindings
   congr 1; funext lr
   dsimp
   simp only [evalExprWithDb_lit, List.filterMap_some_comp]
@@ -203,7 +204,7 @@ theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
 /-- INNER JOIN with ON FALSE produces empty result -/
 theorem inner_join_false_empty (db : Database) (a b : FromClause) :
     evalFrom db (.join a .inner b (some (.lit (.bool false)))) = [] := by
-  rw [evalFrom_inner_join]
+  rw [evalFrom_inner_join]; simp only
   generalize evalFrom db a = leftRows
   generalize evalFrom db b = rightRows
   induction leftRows with
@@ -218,7 +219,7 @@ theorem left_join_false_all_left (db : Database) (a b : FromClause) :
     let leftRows := evalFrom db a
     result.length = leftRows.length := by
   simp only
-  rw [evalFrom_left_join]
+  rw [evalFrom_left_join]; simp only
   generalize evalFrom db a = leftRows
   generalize evalFrom db b = rightRows
   induction leftRows with
@@ -259,28 +260,26 @@ axiom right_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option
 theorem inner_join_empty_left (db : Database) (a b : FromClause) (on_ : Option Expr)
     (h : evalFrom db a = []) :
     evalFrom db (.join a .inner b on_) = [] := by
-  rw [evalFrom_inner_join, h]; rfl
+  rw [evalFrom_inner_join]; simp only [h]; rfl
 
 /-- INNER JOIN with empty right produces empty result -/
 theorem inner_join_empty_right (db : Database) (a b : FromClause) (on_ : Option Expr)
     (h : evalFrom db b = []) :
     evalFrom db (.join a .inner b on_) = [] := by
-  rw [evalFrom_inner_join]
-  simp only [h, List.filterMap_nil]
+  rw [evalFrom_inner_join]; simp only [h, List.filterMap_nil]
   exact List.flatMap_const_nil _
 
 /-- CROSS JOIN with empty left produces empty result -/
 theorem cross_join_empty_left (db : Database) (a b : FromClause)
     (h : evalFrom db a = []) :
     evalFrom db (.join a .cross b none) = [] := by
-  rw [evalFrom_cross_join, h]; rfl
+  rw [evalFrom_cross_join]; simp only [h]; rfl
 
 /-- CROSS JOIN with empty right produces empty result -/
 theorem cross_join_empty_right (db : Database) (a b : FromClause)
     (h : evalFrom db b = []) :
     evalFrom db (.join a .cross b none) = [] := by
-  rw [evalFrom_cross_join]
-  simp only [h, List.map_nil]
+  rw [evalFrom_cross_join]; simp only [h, List.map_nil]
   exact List.flatMap_const_nil _
 
 /-- Join associativity for CROSS JOIN: (A × B) × C has same cardinality as A × (B × C) -/

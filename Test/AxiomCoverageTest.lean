@@ -1836,8 +1836,9 @@ def infrastructureAxiomTests : List TestResult :=
     let tU := FromClause.table ⟨"users", none⟩
     let tO := FromClause.table ⟨"orders", none⟩
     let crossResult := evalFrom testDb (.join tU .cross tO none)
+    let rightRows := evalFrom testDb tO
     let manualCross := (evalFrom testDb tU).flatMap fun lr =>
-      (evalFrom testDb tO).map fun rr => lr ++ rr
+      rightRows.map fun rr => lr ++ rr
     if crossResult == manualCross then .pass "evalFrom_cross_join (users × orders)"
     else .fail "evalFrom_cross_join (users × orders)" s!"Results differ: {crossResult.length} vs {manualCross.length} rows",
 
@@ -1846,8 +1847,9 @@ def infrastructureAxiomTests : List TestResult :=
     let tO := FromClause.table ⟨"orders", none⟩
     let condTrue := Expr.lit (.bool true)
     let innerResult := evalFrom testDb (.join tU .inner tO (some condTrue))
+    let rightRows := evalFrom testDb tO
     let manualInner := (evalFrom testDb tU).flatMap fun lr =>
-      (evalFrom testDb tO).filterMap fun rr =>
+      rightRows.filterMap fun rr =>
         let combined := lr ++ rr
         match evalExprWithDb testDb combined condTrue with
         | some (.bool true) => some combined

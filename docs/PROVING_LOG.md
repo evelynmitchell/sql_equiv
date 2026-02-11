@@ -1811,6 +1811,31 @@ Three comments, all valid:
    per-iteration. The implementation computes it once outside. Moved to match. No proof
    impact since `generalize evalFrom db b = rightRows` achieves the same effect either way.
 
+### PR review follow-up #2 (Copilot #120)
+
+Four comments, all applying patterns already fixed in review #1 to the remaining axioms/tests:
+
+1. **Hoist `rightRows` outside lambda in `evalFrom_cross_join` and `evalFrom_inner_join`** —
+   review #1 fixed this for `evalFrom_left_join` only. Same pattern: `evalFrom db right`
+   was recomputed inside the `flatMap` lambda. Moved `let rightRows := evalFrom db right`
+   to top level in both axioms. Classic "sweep for the same pattern" miss.
+
+2. **Replace hardcoded line numbers in docstrings** — docstrings said "Mirrors the
+   implementation at lines 353-355" etc. These are fragile and break on any edit to
+   `Semantics.lean`. Changed to semantic references: "Corresponds to the `.cross` case
+   of `evalFrom` on `.join`".
+
+3. **Hoist `evalFrom testDb tO` in cross join test** — same pattern as #1 but in test code.
+   Extracted `let rightRows := evalFrom testDb tO` before the `flatMap`.
+
+4. **Same hoist in inner join test** — identical fix for the inner join test.
+
+**Proof impact of axiom restructuring**: Hoisting `let rightRows` to the axiom's top level
+meant `rw [evalFrom_*_join]` now introduces a `let` binding at the goal's top level.
+This blocked `congr`, `funext`, and `generalize` which couldn't see through the `let`.
+Fix: add `simp only` immediately after each `rw [evalFrom_*_join]` to unfold the `let`
+binding. Applied uniformly to all 7 proofs.
+
 ---
 
 ## Current Status Summary (2026-02-11, post-Batch 17)
