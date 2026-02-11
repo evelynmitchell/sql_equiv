@@ -1760,7 +1760,17 @@ def infrastructureAxiomTests : List TestResult :=
       (some (.lit (.bool false))) [] none orderAsc none none
     testLengthEq "evalSelect_filter_all_false (WHERE FALSE + ORDER BY = empty)"
       (evalSelect testDb selFalseOrd).length
-      0
+      0,
+
+    -- Regression: aggregate query with WHERE FALSE should NOT produce empty result
+    -- SELECT COUNT(*) FROM users WHERE FALSE → should return 1 row (with count 0)
+    let selAggFalse := SelectStmt.mk false
+      [.exprItem .countStar (some "cnt")]
+      (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool false))) [] none [] none none
+    testLengthEq "evalSelect_filter_all_false (aggregate WHERE FALSE = 1 row)"
+      (evalSelect testDb selAggFalse).length
+      1
   ]
 
 -- ============================================================================

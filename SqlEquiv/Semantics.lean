@@ -889,7 +889,7 @@ axiom evalSelect_filter_all_false (db : Database)
     (cond : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
-  (∀ row : Row, evalExprWithDb db row cond ≠ some (Value.bool true)) →
+  (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = []
 
 -- ============================================================================
