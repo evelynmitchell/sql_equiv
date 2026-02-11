@@ -220,25 +220,31 @@ with case analysis on the evaluated sub-expressions.
 
 ---
 
-### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) — 4 proved, 9 unsound
+### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) — 13 proved, 0 unsound
 
 **Status:** COMPLETE
 
-**Proved (4 theorems):**
+**Proved under exact equality ≃ᵩ (5 theorems):**
 - `union_all_length` — `List.length_append`
 - `except_self_empty` — `List.filter_eq_nil_iff` + `List.contains_iff_mem`
 - `intersect_empty_right` — `evalSelect_filter_all_false` for empty select
 - `intersect_idempotent` — `List.filter_eq_self` + `List.contains_iff_mem`
+- `intersect_assoc` — `List.filter_filter` + `List.filter_congr` + Bool case analysis
 
-**Unsound (9 axioms — documented with counterexamples):**
-- `union_comm`, `union_all_comm`, `intersect_comm` — ordering differs
-- `union_assoc`, `intersect_assoc` — ordering differs
-- `union_idempotent` — `(a++a).eraseDups ≠ a` when a has dupes
-- `union_empty_right` — `(a++[]).eraseDups ≠ a` when a has dupes
-- `union_intersect_distrib`, `intersect_union_distrib` — ordering differs
+**Proved under bag equivalence ≃ᵇ (3 theorems):**
+- `union_all_comm` — `List.perm_append_comm`
+- `union_comm` — `Perm_eraseDups` + `List.perm_append_comm`
+- `union_assoc` — `perm_ext_iff_of_nodup` + `nodup_eraseDups` + `or_assoc`
 
-These 9 would hold under set/bag semantics but not under our exact-list-equality semantics
-(`List.eraseDups` keeps first-occurrence order, `List.filter` preserves left-side order).
+**Proved under set equivalence ≃ˢ (5 theorems):**
+- `intersect_comm` — `mem_filter_contains` + `And.comm`
+- `union_idempotent` — `mem_eraseDups` + `List.mem_append` + `Or.elim id id`
+- `union_empty_right` — `mem_eraseDups` + `evalSelect_filter_all_false`
+- `union_intersect_distrib` — `mem_eraseDups_append` + `mem_filter_contains` + `or_and_left`
+- `intersect_union_distrib` — `mem_filter_contains` + `mem_eraseDups_append` + `and_or_left`
+
+**Equivalence hierarchy:** `≃ᵩ` (exact list equality) → `≃ᵇ` (bag/Perm) → `≃ˢ` (set/membership).
+Defined in `Defs.lean`; helper lemmas in `SetBagLemmas.lean`.
 
 **Infrastructure added:** `evalQuery_simple`, `evalQuery_compound` (decompose `evalQuery`)
 **Dependencies added:** `LawfulBEq` for `SqlType` and `Value` (derived via `ReflBEq` + `LawfulBEq`)

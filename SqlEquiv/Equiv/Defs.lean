@@ -22,6 +22,20 @@ def QueryEquiv (q1 q2 : Query) : Prop :=
   ∀ db : Database, evalQuery db q1 = evalQuery db q2
 scoped infix:50 " ≃ᵩ " => QueryEquiv
 
+/-- Bag equivalence: query results are permutations of each other.
+    Weaker than ≃ᵩ (ignores ordering), stronger than ≃ˢ (preserves multiplicities).
+    Appropriate for UNION ALL commutativity and UNION commutativity. -/
+def QueryBagEquiv (q1 q2 : Query) : Prop :=
+  ∀ db : Database, (evalQuery db q1).Perm (evalQuery db q2)
+scoped infix:50 " ≃ᵇ " => QueryBagEquiv
+
+/-- Set equivalence: query results have the same membership.
+    Weakest equivalence — ignores both ordering and multiplicities.
+    Appropriate for UNION idempotence, INTERSECT commutativity, distributivity. -/
+def QuerySetEquiv (q1 q2 : Query) : Prop :=
+  ∀ db : Database, ∀ row : Row, row ∈ evalQuery db q1 ↔ row ∈ evalQuery db q2
+scoped infix:50 " ≃ˢ " => QuerySetEquiv
+
 def StmtEquiv (s1 s2 : Stmt) : Prop :=
   ∀ db : Database, evalStmt db s1 = evalStmt db s2
 scoped infix:50 " ≃ " => StmtEquiv
@@ -67,6 +81,22 @@ theorem select_equiv_trans {s1 s2 s3 : SelectStmt} (h12 : s1 ≃ₛ s2) (h23 : s
 theorem query_equiv_refl (q : Query) : q ≃ᵩ q := by intro db; rfl
 theorem query_equiv_symm {q1 q2 : Query} (h : q1 ≃ᵩ q2) : q2 ≃ᵩ q1 := by intro db; exact (h db).symm
 theorem query_equiv_trans {q1 q2 q3 : Query} (h12 : q1 ≃ᵩ q2) (h23 : q2 ≃ᵩ q3) : q1 ≃ᵩ q3 := by intro db; rw [h12 db, h23 db]
+
+theorem query_bag_equiv_refl (q : Query) : q ≃ᵇ q := by intro db; exact List.Perm.refl _
+theorem query_bag_equiv_symm {q1 q2 : Query} (h : q1 ≃ᵇ q2) : q2 ≃ᵇ q1 := by intro db; exact (h db).symm
+theorem query_bag_equiv_trans {q1 q2 q3 : Query} (h12 : q1 ≃ᵇ q2) (h23 : q2 ≃ᵇ q3) : q1 ≃ᵇ q3 := by intro db; exact (h12 db).trans (h23 db)
+
+theorem query_set_equiv_refl (q : Query) : q ≃ˢ q := by intro db row; exact Iff.rfl
+theorem query_set_equiv_symm {q1 q2 : Query} (h : q1 ≃ˢ q2) : q2 ≃ˢ q1 := by intro db row; exact (h db row).symm
+theorem query_set_equiv_trans {q1 q2 q3 : Query} (h12 : q1 ≃ˢ q2) (h23 : q2 ≃ˢ q3) : q1 ≃ˢ q3 := by intro db row; exact (h12 db row).trans (h23 db row)
+
+/-- Exact equality implies bag equivalence -/
+theorem QueryEquiv.toBagEquiv {q1 q2 : Query} (h : q1 ≃ᵩ q2) : q1 ≃ᵇ q2 := by
+  intro db; rw [h db]
+
+/-- Bag equivalence implies set equivalence -/
+theorem QueryBagEquiv.toSetEquiv {q1 q2 : Query} (h : q1 ≃ᵇ q2) : q1 ≃ˢ q2 := by
+  intro db row; exact (h db).mem_iff
 
 theorem stmt_equiv_refl (s : Stmt) : s ≃ s := by intro db; rfl
 theorem stmt_equiv_symm {s1 s2 : Stmt} (h : s1 ≃ s2) : s2 ≃ s1 := by intro db; exact (h db).symm

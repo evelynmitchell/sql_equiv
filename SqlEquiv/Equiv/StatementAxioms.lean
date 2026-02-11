@@ -2,6 +2,7 @@
   SQL Equivalence - Statement-Level Axioms (SET ops, JOINs, Subqueries, Pagination)
 -/
 import SqlEquiv.Equiv.Defs
+import SqlEquiv.Equiv.SetBagLemmas
 
 namespace SqlEquiv
 
@@ -55,80 +56,109 @@ theorem intersect_idempotent (a : SelectStmt) :
   intro x hx
   exact List.contains_iff_mem.mpr hx
 
--- ## Unsound axioms (9) — kept for test coverage, not provable
+-- ## Bag/Set equivalence theorems (9)
 --
--- These axioms are UNSOUND under our exact-list-equality semantics because
--- List.eraseDups keeps first-occurrence order and List.filter preserves
--- left-side order. They would hold under set/bag semantics but not under
--- ordered-list semantics.
+-- These 9 axioms held under set/bag semantics but not under exact list equality
+-- (ordering/multiplicity differences). With the introduction of ≃ᵇ (bag equiv,
+-- same elements with same multiplicities) and ≃ˢ (set equiv, same membership),
+-- they are now fully proved theorems.
 --
--- Counterexamples:
---   union_comm:              [r1]++[r2] eraseDups = [r1,r2] ≠ [r2,r1]
---   union_all_comm:          [r1]++[r2] ≠ [r2]++[r1]
---   intersect_comm:          filter preserves left-side ordering
---   union_assoc:             eraseDups ordering differs
---   intersect_assoc:         filter ordering differs
---   union_idempotent:        (a++a).eraseDups ≠ a when a has dupes
---   union_empty_right:       (a++[]).eraseDups ≠ a when a has dupes
---   union_intersect_distrib: ordering
---   intersect_union_distrib: ordering
+-- Equivalence hierarchy: ≃ᵩ (exact) → ≃ᵇ (bag/Perm) → ≃ˢ (set/membership)
+--
+-- 3 Bag (≃ᵇ): union_all_comm, union_comm, union_assoc
+-- 1 Exact (≃ᵩ): intersect_assoc
+-- 5 Set (≃ˢ): intersect_comm, union_idempotent, union_empty_right,
+--              union_intersect_distrib, intersect_union_distrib
 
-/-- UNION is commutative: A UNION B = B UNION A
-    ⚠ UNSOUND under list equality — holds only under set semantics (ordering differs) -/
-axiom union_comm (a b : SelectStmt) :
-    Query.compound (Query.simple a) .union (Query.simple b) ≃ᵩ
-    Query.compound (Query.simple b) .union (Query.simple a)
+/-- UNION ALL is commutative under bag equivalence -/
+theorem union_all_comm (a b : SelectStmt) :
+    Query.compound (Query.simple a) .unionAll (Query.simple b) ≃ᵇ
+    Query.compound (Query.simple b) .unionAll (Query.simple a) := by
+  intro db
+  simp only [evalQuery_compound, evalQuery_simple]
+  exact List.perm_append_comm
 
-/-- UNION ALL is commutative: A UNION ALL B = B UNION ALL A
-    ⚠ UNSOUND under list equality — [r1]++[r2] ≠ [r2]++[r1] -/
-axiom union_all_comm (a b : SelectStmt) :
-    Query.compound (Query.simple a) .unionAll (Query.simple b) ≃ᵩ
-    Query.compound (Query.simple b) .unionAll (Query.simple a)
+/-- UNION is commutative under bag equivalence -/
+theorem union_comm (a b : SelectStmt) :
+    Query.compound (Query.simple a) .union (Query.simple b) ≃ᵇ
+    Query.compound (Query.simple b) .union (Query.simple a) := by
+  intro db
+  simp only [evalQuery_compound, evalQuery_simple]
+  exact Perm_eraseDups List.perm_append_comm
 
-/-- INTERSECT is commutative: A INTERSECT B = B INTERSECT A
-    ⚠ UNSOUND under list equality — filter preserves left-side ordering -/
-axiom intersect_comm (a b : SelectStmt) :
-    Query.compound (Query.simple a) .intersect (Query.simple b) ≃ᵩ
-    Query.compound (Query.simple b) .intersect (Query.simple a)
+/-- UNION is associative under bag equivalence -/
+theorem union_assoc (a b c : Query) :
+    Query.compound (Query.compound a .union b) .union c ≃ᵇ
+    Query.compound a .union (Query.compound b .union c) := by
+  intro db
+  simp only [evalQuery_compound]
+  apply (perm_ext_iff_of_nodup (nodup_eraseDups _) (nodup_eraseDups _)).mpr
+  intro row
+  simp only [mem_eraseDups, List.mem_append]
+  exact or_assoc
 
-/-- UNION is associative: (A UNION B) UNION C = A UNION (B UNION C)
-    ⚠ UNSOUND under list equality — eraseDups ordering differs -/
-axiom union_assoc (a b c : Query) :
-    Query.compound (Query.compound a .union b) .union c ≃ᵩ
-    Query.compound a .union (Query.compound b .union c)
-
-/-- INTERSECT is associative: (A INTERSECT B) INTERSECT C = A INTERSECT (B INTERSECT C)
-    ⚠ UNSOUND under list equality — filter ordering differs -/
-axiom intersect_assoc (a b c : Query) :
+/-- INTERSECT is associative under exact equality.
+    Unlike the other set operations, both sides filter the same list (evalQuery db a)
+    in the same order — only the predicate differs, and the predicates are equivalent. -/
+theorem intersect_assoc (a b c : Query) :
     Query.compound (Query.compound a .intersect b) .intersect c ≃ᵩ
-    Query.compound a .intersect (Query.compound b .intersect c)
+    Query.compound a .intersect (Query.compound b .intersect c) := by
+  intro db
+  simp only [evalQuery_compound]
+  rw [List.filter_filter]
+  apply List.filter_congr
+  intro x _
+  cases hb : (evalQuery db b).contains x <;> cases hc : (evalQuery db c).contains x <;>
+    simp_all
 
-/-- UNION is idempotent: A UNION A = A
-    ⚠ UNSOUND under list equality — (a++a).eraseDups ≠ a when a has duplicates -/
-axiom union_idempotent (a : SelectStmt) :
-    Query.compound (Query.simple a) .union (Query.simple a) ≃ᵩ
-    Query.simple a
+/-- INTERSECT is commutative under set equivalence -/
+theorem intersect_comm (a b : SelectStmt) :
+    Query.compound (Query.simple a) .intersect (Query.simple b) ≃ˢ
+    Query.compound (Query.simple b) .intersect (Query.simple a) := by
+  intro db row
+  simp only [evalQuery_compound, evalQuery_simple, mem_filter_contains]
+  exact And.comm
 
-/-- UNION with empty is identity (axiom form)
-    ⚠ UNSOUND under list equality — (a++[]).eraseDups ≠ a when a has duplicates -/
-axiom union_empty_right (db : Database) (a : SelectStmt) :
-    let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
-    evalQuery db (Query.compound (Query.simple a) .union (Query.simple emptySelect)) =
-    evalQuery db (Query.simple a)
+/-- UNION is idempotent under set equivalence -/
+theorem union_idempotent (a : SelectStmt) :
+    Query.compound (Query.simple a) .union (Query.simple a) ≃ˢ
+    Query.simple a := by
+  intro db row
+  simp only [evalQuery_compound, evalQuery_simple, mem_eraseDups, List.mem_append]
+  exact ⟨fun h => h.elim id id, fun h => Or.inl h⟩
+
+/-- UNION with empty is identity under set equivalence -/
+theorem union_empty_right (a : SelectStmt) :
+    Query.compound (Query.simple a) .union
+      (Query.simple (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none)) ≃ˢ
+    Query.simple a := by
+  intro db row
+  simp only [evalQuery_compound, evalQuery_simple, mem_eraseDups, List.mem_append]
+  have hempty : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
+    evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
+      (by rfl) (fun _row => by simp [evalExprWithDb_lit])
+  rw [hempty]
+  simp
 
 -- Note: EXCEPT is NOT commutative, so we don't have a commutativity axiom for it
 
 /-- Distributivity: A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C)
-    ⚠ UNSOUND under list equality — ordering differs -/
-axiom union_intersect_distrib (a b c : Query) :
-    Query.compound a .union (Query.compound b .intersect c) ≃ᵩ
-    Query.compound (Query.compound a .union b) .intersect (Query.compound a .union c)
+    under set equivalence -/
+theorem union_intersect_distrib (a b c : Query) :
+    Query.compound a .union (Query.compound b .intersect c) ≃ˢ
+    Query.compound (Query.compound a .union b) .intersect (Query.compound a .union c) := by
+  intro db row
+  simp only [evalQuery_compound, mem_eraseDups, List.mem_append, mem_filter_contains]
+  exact or_and_left
 
 /-- Distributivity: A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C)
-    ⚠ UNSOUND under list equality — ordering differs -/
-axiom intersect_union_distrib (a b c : Query) :
-    Query.compound a .intersect (Query.compound b .union c) ≃ᵩ
-    Query.compound (Query.compound a .intersect b) .union (Query.compound a .intersect c)
+    under set equivalence -/
+theorem intersect_union_distrib (a b c : Query) :
+    Query.compound a .intersect (Query.compound b .union c) ≃ˢ
+    Query.compound (Query.compound a .intersect b) .union (Query.compound a .intersect c) := by
+  intro db row
+  simp only [evalQuery_compound, mem_filter_contains, mem_eraseDups, List.mem_append]
+  exact and_or_left
 
 -- ============================================================================
 -- JOIN Theorems

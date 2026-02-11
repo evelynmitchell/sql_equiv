@@ -7,4 +7,5 @@ import SqlEquiv.Equiv.ValueLemmas
 import SqlEquiv.Equiv.ExprAxioms
 import SqlEquiv.Equiv.Decidable
 import SqlEquiv.Equiv.Comparison
+import SqlEquiv.Equiv.SetBagLemmas
 import SqlEquiv.Equiv.StatementAxioms
