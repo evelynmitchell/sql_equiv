@@ -1991,3 +1991,79 @@ All private, in `StatementAxioms.lean`:
 - 100% axiom coverage (85/85)
 - Ratchet: 91 → 85 (7 proved - 1 infrastructure added = net 6 reduction)
 - **PR**: #121 (merged)
+
+---
+
+## Batch 19: Outer Join Preservation Axioms (#71) — 4 axioms → theorems
+
+**Branch**: `claude/prove-outer-join-preservation`
+
+### Soundness fix (1)
+
+- **`left_join_filter_null_is_inner`** was unsound as originally stated. Counterexample:
+  left table `[{a: 1}]`, right table `[{b: NULL}]`, `on_ = none`, `rightCol = "b"`.
+  Inner join: `[{a:1, b:NULL}]` (length 1). Left join filtered: `[]` (b IS NULL removed).
+  **0 ≠ 1**. Fixed by adding preconditions:
+  - `hNotInLeft`: `rightCol` does not appear in left table rows (qualified column from right table)
+  - `hRightNonNull`: `rightCol` exists and is non-null in every right table row
+
+### Axioms proved (4)
+
+**inner_subset_cross**: `|A ⋈[cond] B| ≤ |A × B|`.
+Direct from `inner_join_cardinality_le` + `cross_join_cardinality` + `omega`.
+
+**left_join_preserves_left**: every left row appears in the LEFT JOIN result.
+After `rw [evalFrom_left_join]`, use `exists_mem_flatMap_of_length_ge_one` to find a witness
+in the flatMap result, then `split at hjr` to case-split the if/match in the hypothesis.
+For the isEmpty=false case, inline `List.mem_filterMap` + `cases on_` + `generalize`/case-split
+on `evalExprWithDb` results.
+
+**right_join_preserves_right**: symmetric to left, using `evalFrom_right_join`.
+
+**left_join_filter_null_is_inner**: filtering LEFT JOIN NULLs gives INNER JOIN cardinality.
+After `rw [evalFrom_left_join, evalFrom_inner_join]; rw [List.filter_flatMap]`, apply
+`flatMap_length_eq_of_forall` to reduce to per-row equality. Three cases:
+- isEmpty=true, head?=some: null-padded row → filter removes it (pred false on nulls) → length 0 = 0
+- isEmpty=true, head?=none: lr alone → find? returns none → pred false → length 0 = 0
+- isEmpty=false: filterMap elements all pass pred (find?_append + hNotInLeft + hRightNonNull)
+
+### Helper lemmas added (3)
+
+- `flatMap_length_eq_of_forall`: flatMap length equality when per-element contributions match
+- `filter_pred_false_on_null_mapped`: filter pred is always false on null-mapped rows (by induction)
+- `exists_mem_flatMap_of_length_ge_one`: existential witness from flatMap when body has length ≥ 1
+
+### Key proof technique: bridging compiled predicate forms
+
+The lambda `fun (k, _) => k == rightCol` compiles to two different syntactic forms:
+- In hypotheses: `fun x => match x with | (k, snd) => k == rightCol`
+- In goal (after `rw [evalFrom_left_join]`): `fun x => x.fst == rightCol`
+
+These are definitionally equal but syntactically different. `rw` uses syntactic matching
+and fails to unify them. The fix: use `have` with explicit type ascription to bridge:
+```lean
+have hNotInLeft' : List.find? (fun (x : String × Value) => x.fst == rightCol) lr = none :=
+  hNotInLeft lr hlr
+```
+Since `have` only requires definitional equality between the ascribed type and the proof term's
+type, this creates a hypothesis in the goal's form. Then `rw [hNotInLeft']` matches syntactically.
+
+### Lessons learned
+
+1. **`rw` after infrastructure axiom rewrites can change lambda forms.** `rw [evalFrom_left_join]`
+   normalizes `fun (k, _) => ...` to `fun x => x.fst ...`. This means hypotheses using the same
+   source-level lambda won't match the goal with `rw`. Always check with `trace_state` after the
+   first `rw` to see what form lambdas take.
+
+2. **`congr 1` before `rw [List.filter_eq_self]` when the goal has `.length`.** The goal
+   `(filter p l).length = l.length` doesn't match `filter p l = l` (the `iff` in `filter_eq_self`).
+   `congr 1` strips the `.length` first.
+
+3. **`List.isEmpty_iff.mp` converts `isEmpty = true` to `l = []`.** Useful when the isEmpty
+   condition from `split` on `if isEmpty then ...` needs to be used as a list rewrite.
+
+### Verification
+
+- 229/229 tests pass
+- 100% axiom coverage (81/81)
+- Ratchet: 85 → 81 (4 axioms proved, 0 new infrastructure)
