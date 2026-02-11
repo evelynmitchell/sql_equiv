@@ -1548,13 +1548,86 @@ semantics model is the problem before assuming the axiom statement is wrong.
 
 ---
 
-## Current Status Summary (2026-02-11, post-Batch 15)
+## Batch 16: Bag/Set Equivalence — 9 "unsound" axioms proved
+
+**Branch**: `claude/bag-set-equivalence`
+**Date**: 2026-02-11
+
+### Problem
+
+9 set operation axioms (union_comm, union_all_comm, intersect_comm, union_assoc,
+intersect_assoc, union_idempotent, union_empty_right, union_intersect_distrib,
+intersect_union_distrib) were marked "unsound" because they failed under exact list
+equality. However, SQL set operations are inherently order-independent — the failure
+was a semantic model mismatch, not a mathematical falsehood.
+
+### Solution: Equivalence hierarchy
+
+Added two weaker equivalence relations to `Defs.lean`:
+- **`≃ᵇ` (QueryBagEquiv)**: results are `List.Perm` (same elements, same multiplicities)
+- **`≃ˢ` (QuerySetEquiv)**: results have same membership (`∀ row, row ∈ q1 ↔ row ∈ q2`)
+
+Hierarchy: `≃ᵩ` (exact) → `≃ᵇ` (bag) → `≃ˢ` (set), with proofs of each implication.
+
+### Helper lemmas (SetBagLemmas.lean)
+
+| Lemma | Statement | Proof technique |
+|-------|-----------|----------------|
+| `perm_ext_iff_of_nodup` | Nodup + same membership → Perm | `perm_iff_count` + `Nodup.count` |
+| `mem_eraseDups` | `a ∈ l.eraseDups ↔ a ∈ l` | Strong induction on list length |
+| `nodup_eraseDups` | `l.eraseDups.Nodup` | Strong induction on list length |
+| `Perm_eraseDups` | `l₁ ~ l₂ → l₁.eraseDups ~ l₂.eraseDups` | `perm_ext_iff_of_nodup` + `mem_eraseDups` |
+| `mem_filter_contains` | `x ∈ l.filter (r.contains ·) ↔ x ∈ l ∧ x ∈ r` | `List.mem_filter` + `simp` |
+| `mem_eraseDups_append` | `a ∈ (l₁ ++ l₂).eraseDups ↔ a ∈ l₁ ∨ a ∈ l₂` | `mem_eraseDups` + `List.mem_append` |
+
+### Axioms proved (9)
+
+| Axiom | Equiv | Approach |
+|-------|-------|----------|
+| `union_all_comm` | ≃ᵇ | `List.perm_append_comm` |
+| `union_comm` | ≃ᵇ | `Perm_eraseDups perm_append_comm` |
+| `union_assoc` | ≃ᵇ | `perm_ext_iff_of_nodup` + `or_assoc` |
+| `intersect_assoc` | ≃ᵩ | `List.filter_filter` + `List.filter_congr` + Bool case split |
+| `intersect_comm` | ≃ˢ | `mem_filter_contains` + `And.comm` |
+| `union_idempotent` | ≃ˢ | `mem_eraseDups` + `List.mem_append` |
+| `union_empty_right` | ≃ˢ | `mem_eraseDups` + `evalSelect_filter_all_false` |
+| `union_intersect_distrib` | ≃ˢ | `or_and_left` |
+| `intersect_union_distrib` | ≃ˢ | `and_or_left` |
+
+### Key insight: intersect_assoc is exact (≃ᵩ)
+
+`intersect_assoc` was classified as "unsound" but is actually provable under exact
+equality. Both sides filter the same list (`evalQuery db a`) in the same order —
+only the predicate differs. `List.filter_filter` reduces the LHS to a single filter,
+and `List.filter_congr` shows the predicates are Boolean-equal via case analysis on
+`contains` values. This makes it the strongest of the 9.
+
+### Lessons learned
+
+**1. "Unsound" axioms may just need a weaker equivalence.**
+All 9 axioms were provable — 1 under exact equality, 3 under bag equivalence,
+5 under set equivalence. The axioms weren't wrong; the equality relation was too strong.
+
+**2. Strong induction is required for `eraseDups` proofs.**
+`eraseDups_cons` recurses on `(xs.filter ...).eraseDups`, not `xs.eraseDups`.
+Standard structural induction gives an IH about `xs` but not `xs.filter ...`.
+The fix: `suffices ∀ n l, l.length ≤ n → P l` + induction on `n`.
+
+**3. Avoid importing Batteries.Data.List.Perm transitively.**
+Batteries re-exports `Tactic.Alias`, which makes `alias` a keyword. This broke
+Optimizer.lean and PredicatePushdown.lean which use `alias` as a variable name.
+The fix: prove `perm_ext_iff_of_nodup` ourselves from core lemmas (`perm_iff_count`
++ `Nodup.count`) rather than importing Batteries.
+
+---
+
+## Current Status Summary (2026-02-11, post-Batch 16)
 
 ### Axiom/theorem counts
 
-- **104 axioms** remaining (across all .lean files in SqlEquiv/)
-- **282 theorems** proved (73.1%)
-- Axiom ratchet: 104 (in `tools/axiom_count_minimum.txt`)
+- **95 axioms** remaining (across all .lean files in SqlEquiv/)
+- **291 theorems** proved (75.4%)
+- Axiom ratchet: 95 (in `tools/axiom_count_minimum.txt`)
 
 ### All issues with proved axioms
 

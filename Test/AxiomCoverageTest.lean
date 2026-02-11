@@ -102,6 +102,28 @@ def testLengthGe (name : String) (actual bound : Nat) : TestResult :=
   if actual ≥ bound then .pass name
   else .fail name s!"Expected {actual} ≥ {bound}"
 
+/-- Test bag equivalence: two queries produce permutation-equivalent results.
+    Compares sorted results to check same elements with same multiplicities. -/
+def testQueryBagEquiv (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
+  let r1 := evalQuery db q1
+  let r2 := evalQuery db q2
+  let sortRow (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+  let sorted1 := r1.mergeSort (fun a b => sortRow a < sortRow b)
+  let sorted2 := r2.mergeSort (fun a b => sortRow a < sortRow b)
+  if sorted1 == sorted2 then .pass name
+  else .fail name s!"Bag equiv failed: {r1.length} vs {r2.length} rows"
+
+/-- Test set equivalence: two queries produce results with the same membership.
+    Compares deduplicated sorted results. -/
+def testQuerySetEquiv (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
+  let r1 := (evalQuery db q1).eraseDups
+  let r2 := (evalQuery db q2).eraseDups
+  let sortRow (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
+  let sorted1 := r1.mergeSort (fun a b => sortRow a < sortRow b)
+  let sorted2 := r2.mergeSort (fun a b => sortRow a < sortRow b)
+  if sorted1 == sorted2 then .pass name
+  else .fail name s!"Set equiv failed: {r1.length} vs {r2.length} rows"
+
 -- ============================================================================
 -- Sample expressions and rows
 -- ============================================================================
@@ -513,51 +535,43 @@ def setOpTests : List TestResult :=
   let selOrders := mkSimpleSelect "orders"
   let selEmpty := mkEmptySelect
   [
-    -- union_comm: A UNION B ≃ᵩ B UNION A
-    -- Results may differ in ordering; compare as sets (by length and sorted)
-    let uAB := evalQuery testDb (.compound (.simple selUsers) .union (.simple selOrders))
-    let uBA := evalQuery testDb (.compound (.simple selOrders) .union (.simple selUsers))
-    let sortRow (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
-    let sortedAB := uAB.mergeSort (fun a b => sortRow a < sortRow b)
-    let sortedBA := uBA.mergeSort (fun a b => sortRow a < sortRow b)
-    if sortedAB == sortedBA then .pass "union_comm"
-    else .fail "union_comm" s!"Results differ after sorting: {uAB.length} vs {uBA.length}",
+    -- union_comm: A UNION B ≃ᵇ B UNION A (bag equiv)
+    testQueryBagEquiv "union_comm"
+      (.compound (.simple selUsers) .union (.simple selOrders))
+      (.compound (.simple selOrders) .union (.simple selUsers))
+      testDb,
 
-    -- union_all_comm: A UNION ALL B ≃ᵩ B UNION ALL A
-    -- Compare as sorted row sets (UNION ALL preserves duplicates but order may differ)
-    let uaAB := evalQuery testDb (.compound (.simple selUsers) .unionAll (.simple selOrders))
-    let uaBA := evalQuery testDb (.compound (.simple selOrders) .unionAll (.simple selUsers))
-    let sortRow' (r : Row) : String := r.foldl (fun acc (k, v) => acc ++ k ++ "=" ++ v.toSql ++ ",") ""
-    let sortedUaAB := uaAB.mergeSort (fun a b => sortRow' a < sortRow' b)
-    let sortedUaBA := uaBA.mergeSort (fun a b => sortRow' a < sortRow' b)
-    if sortedUaAB == sortedUaBA then .pass "union_all_comm"
-    else .fail "union_all_comm" s!"Results differ after sorting: {uaAB.length} vs {uaBA.length}",
+    -- union_all_comm: A UNION ALL B ≃ᵇ B UNION ALL A (bag equiv)
+    testQueryBagEquiv "union_all_comm"
+      (.compound (.simple selUsers) .unionAll (.simple selOrders))
+      (.compound (.simple selOrders) .unionAll (.simple selUsers))
+      testDb,
 
-    -- intersect_comm: A INTERSECT B ≃ᵩ B INTERSECT A
-    testQueryEquiv "intersect_comm"
+    -- intersect_comm: A INTERSECT B ≃ˢ B INTERSECT A (set equiv)
+    testQuerySetEquiv "intersect_comm"
       (.compound (.simple selUsers) .intersect (.simple selOrders))
       (.compound (.simple selOrders) .intersect (.simple selUsers))
       testDb,
 
-    -- union_assoc: (A UNION B) UNION C ≃ᵩ A UNION (B UNION C)
-    testQueryEquiv "union_assoc"
+    -- union_assoc: (A UNION B) UNION C ≃ᵇ A UNION (B UNION C) (bag equiv)
+    testQueryBagEquiv "union_assoc"
       (.compound (.compound (.simple selUsers) .union (.simple selOrders)) .union (.simple selEmpty))
       (.compound (.simple selUsers) .union (.compound (.simple selOrders) .union (.simple selEmpty)))
       testDb,
 
-    -- intersect_assoc: (A ∩ B) ∩ C ≃ᵩ A ∩ (B ∩ C)
+    -- intersect_assoc: (A ∩ B) ∩ C ≃ᵩ A ∩ (B ∩ C) (exact equiv)
     testQueryEquiv "intersect_assoc"
       (.compound (.compound (.simple selUsers) .intersect (.simple selOrders)) .intersect (.simple selEmpty))
       (.compound (.simple selUsers) .intersect (.compound (.simple selOrders) .intersect (.simple selEmpty)))
       testDb,
 
-    -- union_idempotent: A UNION A ≃ᵩ A
-    testQueryEquiv "union_idempotent"
+    -- union_idempotent: A UNION A ≃ˢ A (set equiv)
+    testQuerySetEquiv "union_idempotent"
       (.compound (.simple selUsers) .union (.simple selUsers))
       (.simple selUsers)
       testDb,
 
-    -- intersect_idempotent: A INTERSECT A ≃ᵩ A
+    -- intersect_idempotent: A INTERSECT A ≃ᵩ A (exact equiv)
     testQueryEquiv "intersect_idempotent"
       (.compound (.simple selUsers) .intersect (.simple selUsers))
       (.simple selUsers)
@@ -568,8 +582,8 @@ def setOpTests : List TestResult :=
       (evalQuery testDb (.compound (.simple selUsers) .exceptOp (.simple selUsers))).length
       0,
 
-    -- union_empty_right: A UNION empty = A
-    testQueryEquiv "union_empty_right"
+    -- union_empty_right: A UNION empty ≃ˢ A (set equiv)
+    testQuerySetEquiv "union_empty_right"
       (.compound (.simple selUsers) .union (.simple selEmpty))
       (.simple selUsers)
       testDb,
@@ -585,8 +599,8 @@ def setOpTests : List TestResult :=
       ((evalQuery testDb (.simple selUsers)).length +
        (evalQuery testDb (.simple selOrders)).length),
 
-    -- union_intersect_distrib: A UNION (B ∩ C) ≃ᵩ (A ∪ B) ∩ (A ∪ C)
-    testQueryEquiv "union_intersect_distrib"
+    -- union_intersect_distrib: A UNION (B ∩ C) ≃ˢ (A ∪ B) ∩ (A ∪ C) (set equiv)
+    testQuerySetEquiv "union_intersect_distrib"
       (.compound (.simple selUsers) .union
         (.compound (.simple selOrders) .intersect (.simple selUsers)))
       (.compound
@@ -595,8 +609,8 @@ def setOpTests : List TestResult :=
         (.compound (.simple selUsers) .union (.simple selUsers)))
       testDb,
 
-    -- intersect_union_distrib: A ∩ (B ∪ C) ≃ᵩ (A ∩ B) ∪ (A ∩ C)
-    testQueryEquiv "intersect_union_distrib"
+    -- intersect_union_distrib: A ∩ (B ∪ C) ≃ˢ (A ∩ B) ∪ (A ∩ C) (set equiv)
+    testQuerySetEquiv "intersect_union_distrib"
       (.compound (.simple selUsers) .intersect
         (.compound (.simple selOrders) .union (.simple selUsers)))
       (.compound
