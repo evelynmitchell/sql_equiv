@@ -1793,6 +1793,24 @@ The winning pattern for evalFrom join proofs:
 - 100% axiom coverage (91/91)
 - Ratchet: 95 → 91
 
+### PR review follow-up (Copilot #120)
+
+Three comments, all valid:
+
+1. **Strengthen left join test** — the `evalFrom_left_join` test only checked `.length`,
+   not full row equality. The cross/inner join tests used `==` against the manual
+   decomposition; the left join should too. Fixed by constructing `manualLeft` with the
+   same flatMap/filterMap/NULL-padding logic and asserting `leftResult == manualLeft`.
+
+2. **Remove unused `List.length_flatMap_one`** — artifact of an earlier proof approach
+   (using `apply List.length_flatMap_one`) that was replaced by direct induction with
+   `dsimp` + `simp`. The helper compiled but was never called. Removed.
+
+3. **Lift `rightRows` outside the lambda in `evalFrom_left_join`** — the axiom had
+   `let rightRows := evalFrom db right` inside the `flatMap` lambda, recomputing it
+   per-iteration. The implementation computes it once outside. Moved to match. No proof
+   impact since `generalize evalFrom db b = rightRows` achieves the same effect either way.
+
 ---
 
 ## Current Status Summary (2026-02-11, post-Batch 17)
