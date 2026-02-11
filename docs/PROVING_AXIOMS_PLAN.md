@@ -733,3 +733,40 @@ These phase groups are independent and can be worked on in parallel:
 - **Group B:** Phases 4, 5 (set operations, LIMIT/OFFSET -- independent of joins)
 - **Group C:** Phases 2, 3 (aggregate/distinct, filter/WHERE)
 - **Group D:** Phases 6, 7, 8, 9, 10 (joins, subqueries, optimizer -- sequential dependency chain)
+
+---
+
+## Batteries Migration Sequencing
+
+**Decision (2026-02-11):** Complete axiom proving work **before** the Batteries
+migration (`docs/batteries-migration-plan.md`).
+
+### Rationale
+
+1. **Most remaining axioms won't benefit from Batteries.** The plan's own
+   assessment: JOIN semantics, subquery semantics, evaluation axioms, and
+   optimizer correctness are all SQL-domain-specific. Batteries helps with
+   list permutation and boolean algebra — areas we've already covered.
+
+2. **The migration is high-risk for existing proofs.** The `evalBinOp` →
+   `nullPropBinOp` refactor (Phase 2 of the migration) is rated "High
+   likelihood" to break ExprAxioms proofs. Better to do that rework once,
+   after the axiom count is stable, rather than interleaving proof work
+   with a structural refactor.
+
+3. **The `alias` rename creates merge conflict surface.** It touches 15
+   files / 89 occurrences. Any parallel proof branches would conflict.
+   Easier to do the rename when there's no ongoing proof work.
+
+4. **Caveat — avoid new exhaustive Value case-split proofs.** If an axiom
+   requires a 36-arm Value case analysis, consider deferring it until after
+   the `nullPropBinOp` refactor makes those proofs compositional. Most
+   remaining axioms (joins, subqueries, WHERE pushdown) operate at the
+   statement/table level, so this shouldn't come up often.
+
+### Trigger for migration
+
+Start the Batteries migration when:
+- Axiom proving hits diminishing returns, OR
+- New `Value` constructors (`float`, `datetime`, `decimal`) are needed, OR
+- A specific axiom proof would benefit significantly from Batteries lemmas

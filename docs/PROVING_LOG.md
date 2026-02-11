@@ -1667,3 +1667,42 @@ than all 9 theorems combined.
 | #80 | 5 LIMIT | #115 |
 | #81 | 5+3 OFFSET/pagination | #115 |
 | — | `flattenAnd_nonempty`, `flattenOr_nonempty` | #112 |
+
+---
+
+## Sequencing Decision: Axiom Proving Before Batteries Migration
+
+**Date**: 2026-02-11
+
+### Context
+
+A Batteries migration plan was added (`docs/batteries-migration-plan.md`) proposing
+to rename `alias` → `as_name`, import Batteries, refactor `evalBinOp` with a
+`nullPropBinOp` wrapper, and add new `Value` constructors (`float`, `datetime`,
+`decimal`). The question: should we do this before or after proving remaining axioms?
+
+### Decision: Prove axioms first
+
+**Reasoning:**
+
+1. **Remaining axioms are SQL-semantic, not library-dependent.** Joins, subqueries,
+   WHERE pushdown, and optimizer correctness are domain-specific — Batteries provides
+   no relevant lemmas.
+
+2. **Migration has high risk of breaking existing proofs.** The `evalBinOp` →
+   `nullPropBinOp` refactor changes the match structure that 291 existing theorems
+   depend on. The migration plan rates this as "High likelihood / Medium impact."
+   Doing this while axiom counts are stable minimizes rework.
+
+3. **`alias` rename (15 files, 89 occurrences) creates merge conflicts** with any
+   parallel proof branches.
+
+4. **Exception:** If an axiom requires an exhaustive 36+ arm Value case analysis,
+   consider deferring it until after the `nullPropBinOp` refactor makes those proofs
+   compositional. Most statement-level axioms won't hit this.
+
+### Trigger for migration
+
+- Diminishing returns on axiom proving, OR
+- Need for new `Value` constructors (`float`, `datetime`), OR
+- A specific proof that would clearly benefit from Batteries lemmas
