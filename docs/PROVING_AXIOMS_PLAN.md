@@ -220,21 +220,28 @@ with case analysis on the evaluated sub-expressions.
 
 ---
 
-### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) (~13 axioms)
+### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) — 4 proved, 9 unsound
 
-**Goal:** Prove commutativity, associativity, idempotence, and distributivity
-of set operations.
+**Status:** COMPLETE
 
-**Commutativity (3):** `union_comm`, `union_all_comm`, `intersect_comm`
-**Associativity (2):** `union_assoc`, `intersect_assoc`
-**Idempotence (2):** `union_idempotent`, `intersect_idempotent`
-**Identity/absorption (3):** `except_self_empty`, `union_empty_right`, `intersect_empty_right`
-**Cardinality (1):** `union_all_length`
-**Distributivity (2):** `union_intersect_distrib`, `intersect_union_distrib`
+**Proved (4 theorems):**
+- `union_all_length` — `List.length_append`
+- `except_self_empty` — `List.filter_eq_nil_iff` + `List.contains_iff_mem`
+- `intersect_empty_right` — `evalSelect_filter_all_false` for empty select
+- `intersect_idempotent` — `List.filter_eq_self` + `List.contains_iff_mem`
 
-**Approach:** Unfold `evalQuery`, reason about list dedup/append/filter.
+**Unsound (9 axioms — documented with counterexamples):**
+- `union_comm`, `union_all_comm`, `intersect_comm` — ordering differs
+- `union_assoc`, `intersect_assoc` — ordering differs
+- `union_idempotent` — `(a++a).eraseDups ≠ a` when a has dupes
+- `union_empty_right` — `(a++[]).eraseDups ≠ a` when a has dupes
+- `union_intersect_distrib`, `intersect_union_distrib` — ordering differs
 
-**Estimated complexity:** Medium -- list reasoning, but no join semantics needed.
+These 9 would hold under set/bag semantics but not under our exact-list-equality semantics
+(`List.eraseDups` keeps first-occurrence order, `List.filter` preserves left-side order).
+
+**Infrastructure added:** `evalQuery_simple`, `evalQuery_compound` (decompose `evalQuery`)
+**Dependencies added:** `LawfulBEq` for `SqlType` and `Value` (derived via `ReflBEq` + `LawfulBEq`)
 
 ---
 
