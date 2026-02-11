@@ -1898,7 +1898,7 @@ grep for every occurrence of the old pattern across axioms *and* tests *and* doc
 | #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
 | #61 | 5 CASE/WHEN | #85 |
 | #62 | 7 string function axioms (all) | #102, #105, #107, #109 |
-| #69 | 7 join cardinality axioms | — |
+| #69 | 7 join cardinality axioms | #121 |
 | #70 | 7 join edge cases (empty, TRUE/FALSE conditions) | #120 |
 | #72 | `filter_false_empty'` (1 of 4) | #116 |
 | #79 | 3 ORDER BY | #115 |
@@ -1967,8 +1967,27 @@ All private, in `StatementAxioms.lean`:
    to prove a rewrite lemma bridging `match v with | some (.bool true) => ...` and `v == some (.bool true)`.
    After `generalize hv : evalExprWithDb ... = v; cases v`, each case is closed by `simp; exact ih`.
 
+### Lessons learned
+
+1. **Detailed plan with proof sketches → 0-comment Copilot review.** PR #120 (minimal plan) needed
+   3 review rounds. This batch had exact tactic sequences, helper lemma signatures, dependency
+   ordering, and a risk assessment in the plan. Copilot reviewed all 5 files and generated 0 comments.
+   Upfront planning time pays back in fewer review iterations.
+
+2. **`generalize + cases` beats `rw` for compiled match goals.** The plan called for a bridge lemma
+   (`option_value_match_eq_beq`) to rewrite `match v with | some (.bool true) => ... | _ => ...`
+   into `v == some (.bool true)`. This failed because Lean's compiled match has a different internal
+   form than the lemma's LHS. The fix: `generalize hv : evalExprWithDb ... = v; cases v` —
+   case-split on the scrutinee directly. Each constructor case closes with `simp; exact ih`.
+   This pattern will recur in any proof involving `evalExprWithDb` result matching.
+
+3. **Previously-documented gotchas saved a build iteration.** `List.mem_cons_self` implicit args and
+   `ring` unavailability were already in MEMORY.md from earlier sessions. Hit both, recognized
+   instantly, fixed in the same iteration instead of debugging from scratch.
+
 ### Verification
 
 - 229/229 tests pass (3 new `evalFrom_right_join` tests)
 - 100% axiom coverage (85/85)
 - Ratchet: 91 → 85 (7 proved - 1 infrastructure added = net 6 reduction)
+- **PR**: #121 (merged)
