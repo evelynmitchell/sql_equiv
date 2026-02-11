@@ -1830,7 +1830,42 @@ def infrastructureAxiomTests : List TestResult :=
     let ordersResult := evalQuery testDb (.simple selOrders)
     let expectedExcept := usersResult.filter (!ordersResult.contains ·)
     if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains)"
-    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows"
+    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows",
+
+    -- evalFrom_cross_join: CROSS JOIN = flatMap/map
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let crossResult := evalFrom testDb (.join tU .cross tO none)
+    let manualCross := (evalFrom testDb tU).flatMap fun lr =>
+      (evalFrom testDb tO).map fun rr => lr ++ rr
+    if crossResult == manualCross then .pass "evalFrom_cross_join (users × orders)"
+    else .fail "evalFrom_cross_join (users × orders)" s!"Results differ: {crossResult.length} vs {manualCross.length} rows",
+
+    -- evalFrom_inner_join: INNER JOIN = flatMap/filterMap
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let condTrue := Expr.lit (.bool true)
+    let innerResult := evalFrom testDb (.join tU .inner tO (some condTrue))
+    let manualInner := (evalFrom testDb tU).flatMap fun lr =>
+      (evalFrom testDb tO).filterMap fun rr =>
+        let combined := lr ++ rr
+        match evalExprWithDb testDb combined condTrue with
+        | some (.bool true) => some combined
+        | _ => none
+    if innerResult == manualInner then .pass "evalFrom_inner_join (users INNER orders ON TRUE)"
+    else .fail "evalFrom_inner_join (users INNER orders ON TRUE)" s!"Results differ: {innerResult.length} vs {manualInner.length} rows",
+
+    -- evalFrom_left_join: LEFT JOIN with NULL padding
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let condFalse := Expr.lit (.bool false)
+    let leftResult := evalFrom testDb (.join tU .left tO (some condFalse))
+    let leftRows := evalFrom testDb tU
+    -- With FALSE condition, each left row should produce one NULL-padded row
+    if leftResult.length == leftRows.length
+    then .pass "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
+    else .fail "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
+      s!"Expected {leftRows.length} rows, got {leftResult.length}"
   ]
 
 -- ============================================================================
