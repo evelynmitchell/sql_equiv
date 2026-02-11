@@ -1830,7 +1830,99 @@ def infrastructureAxiomTests : List TestResult :=
     let ordersResult := evalQuery testDb (.simple selOrders)
     let expectedExcept := usersResult.filter (!ordersResult.contains ·)
     if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains)"
-    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows"
+    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows",
+
+    -- evalFrom_cross_join: CROSS JOIN = flatMap/map
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let crossResult := evalFrom testDb (.join tU .cross tO none)
+    let rightRows := evalFrom testDb tO
+    let manualCross := (evalFrom testDb tU).flatMap fun lr =>
+      rightRows.map fun rr => lr ++ rr
+    if crossResult == manualCross then .pass "evalFrom_cross_join (users × orders)"
+    else .fail "evalFrom_cross_join (users × orders)" s!"Results differ: {crossResult.length} vs {manualCross.length} rows",
+
+    -- evalFrom_inner_join: INNER JOIN = flatMap/filterMap
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let condTrue := Expr.lit (.bool true)
+    let innerResult := evalFrom testDb (.join tU .inner tO (some condTrue))
+    let rightRows := evalFrom testDb tO
+    let manualInner := (evalFrom testDb tU).flatMap fun lr =>
+      rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match evalExprWithDb testDb combined condTrue with
+        | some (.bool true) => some combined
+        | _ => none
+    if innerResult == manualInner then .pass "evalFrom_inner_join (users INNER orders ON TRUE)"
+    else .fail "evalFrom_inner_join (users INNER orders ON TRUE)" s!"Results differ: {innerResult.length} vs {manualInner.length} rows",
+
+    -- evalFrom_left_join: LEFT JOIN decomposes into flatMap with NULL padding
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let condFalse := Expr.lit (.bool false)
+    let leftResult := evalFrom testDb (.join tU .left tO (some condFalse))
+    let rightRows := evalFrom testDb tO
+    let manualLeft := (evalFrom testDb tU).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match evalExprWithDb testDb combined condFalse with
+        | some (.bool true) => some combined
+        | _ => none
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+    if leftResult == manualLeft
+    then .pass "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
+    else .fail "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
+      s!"Results differ: {leftResult.length} vs {manualLeft.length} rows",
+
+    -- evalFrom_left_join: LEFT JOIN with real predicate (some matches, some NULL-padded)
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    -- users.id = orders.user_id — user 1 matches 2 orders, user 2 matches 1, user 3 matches 0
+    let cond := Expr.binOp .eq (qcol "users" "id") (qcol "orders" "user_id")
+    let leftResult := evalFrom testDb (.join tU .left tO (some cond))
+    let rightRows := evalFrom testDb tO
+    let manualLeft := (evalFrom testDb tU).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match evalExprWithDb testDb combined cond with
+        | some (.bool true) => some combined
+        | _ => none
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+    if leftResult == manualLeft
+    then .pass "evalFrom_left_join (LEFT JOIN with matches and NULL padding)"
+    else .fail "evalFrom_left_join (LEFT JOIN with matches and NULL padding)"
+      s!"Results differ: {leftResult.length} vs {manualLeft.length} rows",
+
+    -- evalFrom_left_join: LEFT JOIN with on_ = none (all rows combine, no NULL padding)
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let leftResult := evalFrom testDb (.join tU .left tO none)
+    let rightRows := evalFrom testDb tO
+    let manualLeft := (evalFrom testDb tU).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        some combined
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+    if leftResult == manualLeft
+    then .pass "evalFrom_left_join (LEFT JOIN with no ON = cross)"
+    else .fail "evalFrom_left_join (LEFT JOIN with no ON = cross)"
+      s!"Results differ: {leftResult.length} vs {manualLeft.length} rows"
   ]
 
 -- ============================================================================

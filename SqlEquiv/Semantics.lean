@@ -893,6 +893,54 @@ axiom evalSelect_filter_all_false (db : Database)
   evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = []
 
 -- ============================================================================
+-- Infrastructure axioms for evalFrom join decomposition
+-- ============================================================================
+
+/-- Infrastructure: evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows.
+    Corresponds to the `.cross` case of `evalFrom` on `.join`. -/
+axiom evalFrom_cross_join (db : Database) (left right : FromClause) :
+    evalFrom db (.join left .cross right none) =
+    let rightRows := evalFrom db right
+    (evalFrom db left).flatMap fun lr =>
+      rightRows.map fun rr => lr ++ rr
+
+/-- Infrastructure: evalFrom decomposes INNER JOIN into flatMap/filterMap on left/right rows.
+    Corresponds to the `.inner` case of `evalFrom` on `.join`. -/
+axiom evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
+    evalFrom db (.join left .inner right on_) =
+    let rightRows := evalFrom db right
+    (evalFrom db left).flatMap fun lr =>
+      rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match on_ with
+        | none => some combined
+        | some cond =>
+          match evalExprWithDb db combined cond with
+          | some (.bool true) => some combined
+          | _ => none
+
+/-- Infrastructure: evalFrom decomposes LEFT JOIN into flatMap with NULL-padding fallback.
+    Corresponds to the `.left` case of `evalFrom` on `.join`. -/
+axiom evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
+    evalFrom db (.join left .left right on_) =
+    let rightRows := evalFrom db right
+    (evalFrom db left).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match on_ with
+        | none => some combined
+        | some cond =>
+          match evalExprWithDb db combined cond with
+          | some (.bool true) => some combined
+          | _ => none
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+
+-- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================
 

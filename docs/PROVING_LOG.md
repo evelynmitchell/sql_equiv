@@ -1706,3 +1706,201 @@ to rename `alias` → `as_name`, import Batteries, refactor `evalBinOp` with a
 - Diminishing returns on axiom proving, OR
 - Need for new `Value` constructors (`float`, `datetime`), OR
 - A specific proof that would clearly benefit from Batteries lemmas
+
+---
+
+## Batch 17: Join Edge Cases (#70) — 7 axioms → theorems
+
+**Branch**: `claude/prove-join-edge-cases` | **PR**: #120
+
+### Infrastructure axioms added (3)
+
+Added to `Semantics.lean` after existing infrastructure axiom block:
+
+- **`evalFrom_cross_join`**: decomposes `evalFrom db (.join left .cross right none)` into `(evalFrom db left).flatMap (fun lr => (evalFrom db right).map (fun rr => lr ++ rr))`
+- **`evalFrom_inner_join`**: decomposes INNER JOIN into `flatMap`/`filterMap` with the ON condition
+- **`evalFrom_left_join`**: decomposes LEFT JOIN with NULL-padding fallback for unmatched left rows
+
+All three mirror the `evalFrom` implementation (lines 349-414) verbatim, following
+the same pattern as `evalSelect_limit_offset`.
+
+### Axioms proved (7)
+
+**Empty-table axioms (4)** — straightforward:
+- `cross_join_empty_left`: `rw [evalFrom_cross_join, h]; rfl` (empty list flatMap = [])
+- `cross_join_empty_right`: `rw [evalFrom_cross_join]; simp [h, List.map_nil]; exact List.flatMap_const_nil _`
+- `inner_join_empty_left`: `rw [evalFrom_inner_join, h]; rfl`
+- `inner_join_empty_right`: `rw [evalFrom_inner_join]; simp [h, List.filterMap_nil]; exact List.flatMap_const_nil _`
+
+**inner_join_true_is_cross**: TRUE condition makes filterMap equivalent to map.
+After `rw [evalFrom_inner_join, evalFrom_cross_join]; congr 1; funext lr; dsimp`,
+`simp only [evalExprWithDb_lit]` reduces the condition to `some (.bool true)`,
+making the filterMap body `fun rr => some (lr ++ rr)`. Closed with
+`List.filterMap_some_comp` (custom helper: `l.filterMap (fun x => some (f x)) = l.map f`).
+
+**inner_join_false_empty**: FALSE condition makes every filterMap element `none`.
+Induction on `leftRows` + `simp only [evalExprWithDb_lit, List.filterMap_none]`.
+Each left row's filterMap produces `[]`, so the flatMap also produces `[]`.
+
+**left_join_false_all_left**: FALSE condition means `matchingRows = []` for every
+left row, entering the NULL-padding branch which produces exactly 1 row.
+Proved via `List.length_flatMap_one` (custom helper) after showing each body
+produces a length-1 list. `dsimp` + `simp only [evalExprWithDb_lit, List.filterMap_none, List.isEmpty_nil, ite_true]`
+reduces the filterMap and if-then-else, then `cases rightRows.head? <;> simp <;> omega`.
+
+### Helper lemmas added (4)
+
+All private, in `StatementAxioms.lean`:
+- `List.filterMap_none`: `l.filterMap (fun _ => none) = []`
+- `List.flatMap_const_nil`: `l.flatMap (fun _ => []) = []`
+- `List.filterMap_some_comp`: `l.filterMap (fun x => some (f x)) = l.map f`
+- `List.length_flatMap_one`: `(l.flatMap f).length = l.length` when `∀ x, (f x).length = 1`
+
+### Obstacles encountered
+
+1. **`rw` with infrastructure axioms produces hostile goal forms.** `rw [evalFrom_inner_join]`
+   introduces joint matches (`match on_, lr, rr with`) and unexpanded `let` bindings
+   that block all subsequent `simp` matching. This is because Lean's match compiler
+   optimizes the axiom's RHS into a joint match on multiple scrutinees.
+
+2. **`simp only [h]` can't match when `h` has `let` bindings the goal has expanded.**
+   Built `have h_empty : rightRows.filterMap (fun rr => let combined := lr ++ rr; ...) = []`
+   but the goal had `lr ++ rr` inlined. `simp only [h_empty]` silently failed to match.
+   Multiple iterations before diagnosing (simp warns "unused argument" but doesn't explain why).
+
+3. **`ext` on lists produces `getElem?` goals.** Used `ext lr` after `congr 1` expecting
+   pointwise function equality, but Lean destructured the resulting list equality into
+   `∀ i, l₁[i]? = l₂[i]?`, making the induction hypothesis unusable. Fix: `funext lr`.
+
+4. **Induction hypotheses don't track goal simplifications.** After `simp [evalExprWithDb_lit]`
+   simplifies the filterMap body to `fun _ => none` in the goal, `ih` retains the original
+   form with the match expression. `exact congrArg _ ih` fails on type mismatch.
+
+### Key tactic pattern: `dsimp` → `simp only [evalExprWithDb_lit, ...]`
+
+The winning pattern for evalFrom join proofs:
+1. `rw [evalFrom_*_join]` — introduce the decomposition
+2. `generalize evalFrom db a = leftRows; generalize evalFrom db b = rightRows` — abstract
+3. `induction leftRows` — structural induction on the outer list
+4. `dsimp` — normalize `let` bindings and reduce joint matches on concrete constructors
+   (doesn't enter lambda bodies)
+5. `simp only [evalExprWithDb_lit, ...]` — enters lambda bodies, reduces `evalExprWithDb`
+   on literals, and applies cleanup lemmas (`List.filterMap_none`, etc.)
+
+### Verification
+
+- 224/224 tests pass (3 new infrastructure axiom tests added)
+- 100% axiom coverage (91/91)
+- Ratchet: 95 → 91
+
+### PR review follow-up (Copilot #120)
+
+Three comments, all valid:
+
+1. **Strengthen left join test** — the `evalFrom_left_join` test only checked `.length`,
+   not full row equality. The cross/inner join tests used `==` against the manual
+   decomposition; the left join should too. Fixed by constructing `manualLeft` with the
+   same flatMap/filterMap/NULL-padding logic and asserting `leftResult == manualLeft`.
+
+2. **Remove unused `List.length_flatMap_one`** — artifact of an earlier proof approach
+   (using `apply List.length_flatMap_one`) that was replaced by direct induction with
+   `dsimp` + `simp`. The helper compiled but was never called. Removed.
+
+3. **Lift `rightRows` outside the lambda in `evalFrom_left_join`** — the axiom had
+   `let rightRows := evalFrom db right` inside the `flatMap` lambda, recomputing it
+   per-iteration. The implementation computes it once outside. Moved to match. No proof
+   impact since `generalize evalFrom db b = rightRows` achieves the same effect either way.
+
+### PR review follow-up #2 (Copilot #120)
+
+Four comments, all applying patterns already fixed in review #1 to the remaining axioms/tests:
+
+1. **Hoist `rightRows` outside lambda in `evalFrom_cross_join` and `evalFrom_inner_join`** —
+   review #1 fixed this for `evalFrom_left_join` only. Same pattern: `evalFrom db right`
+   was recomputed inside the `flatMap` lambda. Moved `let rightRows := evalFrom db right`
+   to top level in both axioms. Classic "sweep for the same pattern" miss.
+
+2. **Replace hardcoded line numbers in docstrings** — docstrings said "Mirrors the
+   implementation at lines 353-355" etc. These are fragile and break on any edit to
+   `Semantics.lean`. Changed to semantic references: "Corresponds to the `.cross` case
+   of `evalFrom` on `.join`".
+
+3. **Hoist `evalFrom testDb tO` in cross join test** — same pattern as #1 but in test code.
+   Extracted `let rightRows := evalFrom testDb tO` before the `flatMap`.
+
+4. **Same hoist in inner join test** — identical fix for the inner join test.
+
+**Proof impact of axiom restructuring**: Hoisting `let rightRows` to the axiom's top level
+meant `rw [evalFrom_*_join]` now introduces a `let` binding at the goal's top level.
+This blocked `congr`, `funext`, and `generalize` which couldn't see through the `let`.
+Fix: add `simp only` immediately after each `rw [evalFrom_*_join]` to unfold the `let`
+binding. Applied uniformly to all 7 proofs.
+
+### PR review follow-up #3 (Copilot #120)
+
+One comment: the `evalFrom_left_join` test only exercised the `matchingRows.isEmpty` branch
+(FALSE condition → no matches → NULL padding). The axiom has three branches:
+
+1. `on_ = some cond` where `cond` evaluates true for some rows → `else matchingRows`
+2. `on_ = some cond` where no rows match → `if matchingRows.isEmpty` → NULL padding
+3. `on_ = none` → all rows combine (effectively a cross join)
+
+Only branch 2 was tested. Added two more test cases:
+- Real predicate (`users.id = orders.user_id`): user 1 matches 2 orders, user 2 matches 1,
+  user 3 gets NULL-padded. Exercises both the match and NULL-padding paths in a single query.
+- `on_ = none`: all right rows combine with each left row, no filtering.
+
+### Lesson: sweep means enumerate
+
+This PR took 3 review rounds, each catching instances of the same pattern left unfixed:
+
+| Round | Fix applied to | Missed |
+|-------|---------------|--------|
+| #1 | Hoist `rightRows` in left_join axiom | cross_join, inner_join axioms |
+| #2 | Hoist in all 3 axioms | Corresponding tests; also docstrings |
+| #2 | Fix docstrings, fix tests | — |
+| #3 | — | Left join test only covered 1 of 3 branches |
+
+The principle "sweep for the same pattern" was already in MEMORY.md from PR #101, but
+"sweep" was interpreted as "glance around for obvious copies." What it actually requires
+is **mechanical enumeration**: list every instance, check each one. For tests, this means
+one test per match arm minimum. For structural changes (like hoisting a `let`), this means
+grep for every occurrence of the old pattern across axioms *and* tests *and* docstrings.
+
+---
+
+## Current Status Summary (2026-02-11, post-Batch 17)
+
+### Axiom/theorem counts
+
+- **91 axioms** remaining (across all .lean files in SqlEquiv/)
+- **~298 theorems** proved (76.6%)
+- Axiom ratchet: 91 (in `tools/axiom_count_minimum.txt`)
+
+### All issues with proved axioms
+
+| Issue | Axioms proved | PR(s) |
+|-------|---------------|-------|
+| #24 | CONCAT evalFunc + proofs | #107 |
+| #46 | `not_not` | #104 |
+| #47 | `and_absorb_or`, `or_absorb_and` | #104 |
+| #48 | `and_true`, `or_false` | #104 |
+| #49 | `and_self`, `or_self` | #104 |
+| #50 | `and_not_self`, `or_not_self` | #104 |
+| #51 | `where_true_elim`, `where_false_empty` | #116 |
+| #53 | `decideGroundExprEquiv_sound` (1 of 2) | #94 |
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | `eq_reflexive`, `ne_irreflexive` | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8) | #112 |
+| #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109 |
+| #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
+| #61 | 5 CASE/WHEN | #85 |
+| #62 | 7 string function axioms (all) | #102, #105, #107, #109 |
+| #70 | 7 join edge cases (empty, TRUE/FALSE conditions) | #120 |
+| #72 | `filter_false_empty'` (1 of 4) | #116 |
+| #79 | 3 ORDER BY | #115 |
+| #80 | 5 LIMIT | #115 |
+| #81 | 5+3 OFFSET/pagination | #115 |
+| — | `flattenAnd_nonempty`, `flattenOr_nonempty` | #112 |
