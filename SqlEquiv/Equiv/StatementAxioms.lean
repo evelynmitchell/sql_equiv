@@ -538,7 +538,7 @@ private theorem filter_pred_false_on_null_mapped (rightRow : Row) (col : String)
 
 /-- Converting LEFT JOIN to INNER JOIN by filtering out NULLs:
     If we filter the result of LEFT JOIN to exclude rows where right columns are NULL,
-    we get the same result as INNER JOIN.
+    the resulting list has the same length as the INNER JOIN result.
 
     Preconditions:
     - rightCol does not appear in left table rows (qualified column from right table)
