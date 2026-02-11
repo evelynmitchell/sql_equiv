@@ -2050,17 +2050,43 @@ type, this creates a hypothesis in the goal's form. Then `rw [hNotInLeft']` matc
 
 ### Lessons learned
 
-1. **`rw` after infrastructure axiom rewrites can change lambda forms.** `rw [evalFrom_left_join]`
-   normalizes `fun (k, _) => ...` to `fun x => x.fst ...`. This means hypotheses using the same
-   source-level lambda won't match the goal with `rw`. Always check with `trace_state` after the
-   first `rw` to see what form lambdas take.
+1. **Compiled lambda form divergence is the #1 `rw` failure mode for join proofs.**
+   The same source-level lambda `fun (k, _) => k == rightCol` compiles to two different
+   syntactic forms depending on context:
+   - In hypotheses: `fun x => match x with | (k, snd) => k == rightCol`
+   - In goals (after `rw` with infrastructure axioms): `fun x => x.fst == rightCol`
 
-2. **`congr 1` before `rw [List.filter_eq_self]` when the goal has `.length`.** The goal
+   They're definitionally equal, but `rw` uses syntactic matching, so it silently fails.
+   This is invisible at the source level — the forms look identical in the `.lean` file.
+   `trace_state` is the only reliable diagnostic.
+
+2. **`have` with type ascription is the universal bridge for definitional equality gaps.**
+   When a hypothesis has one compiled form and the goal needs another:
+   ```lean
+   have h' : List.find? (fun (x : String × Value) => x.fst == rightCol) lr = none :=
+     hOriginal lr hlr
+   ```
+   `have` only requires definitional equality between the ascribed type and the proof term's
+   type. Write the ascribed type in whatever form the *goal* needs. This pattern works for
+   any definitional-but-not-syntactic mismatch, not just lambda forms.
+
+3. **Always `trace_state` after the first `rw` with an infrastructure axiom.** The
+   normalization that `rw [evalFrom_left_join]` performs on lambdas is not predictable from
+   reading the source. One `trace_state` immediately reveals the form mismatch. Without it,
+   you can spend hours trying different `rw`/`simp` strategies that all fail for the same
+   invisible reason.
+
+4. **`congr 1` before `rw [List.filter_eq_self]` when the goal has `.length`.** The goal
    `(filter p l).length = l.length` doesn't match `filter p l = l` (the `iff` in `filter_eq_self`).
    `congr 1` strips the `.length` first.
 
-3. **`List.isEmpty_iff.mp` converts `isEmpty = true` to `l = []`.** Useful when the isEmpty
+5. **`List.isEmpty_iff.mp` converts `isEmpty = true` to `l = []`.** Useful when the isEmpty
    condition from `split` on `if isEmpty then ...` needs to be used as a list rewrite.
+
+6. **Meta-lesson: when `rw` silently fails, the problem is almost always a syntactic form
+   mismatch invisible at the source level.** `trace_state` is the diagnostic, `have` with
+   type ascription is the cure. Don't iterate on alternative `rw`/`simp` strategies — look
+   at the actual goal first.
 
 ### Verification
 
