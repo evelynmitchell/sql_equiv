@@ -9,69 +9,124 @@ namespace SqlEquiv
 -- Set Operation Theorems (UNION, INTERSECT, EXCEPT)
 -- ============================================================================
 
-/-- UNION is commutative: A UNION B = B UNION A -/
+-- ## Provable theorems (4)
+--
+-- These 4 axioms have been converted to theorems with full proofs using the
+-- evalQuery_simple/evalQuery_compound infrastructure axioms.
+
+/-- UNION ALL keeps all duplicates from both sides -/
+theorem union_all_length (db : Database) (a b : SelectStmt) :
+    (evalQuery db (Query.compound (Query.simple a) .unionAll (Query.simple b))).length =
+    (evalQuery db (Query.simple a)).length + (evalQuery db (Query.simple b)).length := by
+  simp only [evalQuery_compound, evalQuery_simple]
+  exact List.length_append
+
+/-- A EXCEPT A = empty (self-difference is empty) -/
+theorem except_self_empty (db : Database) (a : SelectStmt) :
+    evalQuery db (Query.compound (Query.simple a) .exceptOp (Query.simple a)) = [] := by
+  simp only [evalQuery_compound, evalQuery_simple]
+  generalize evalSelect db a = l
+  rw [List.filter_eq_nil_iff]
+  intro x hx h
+  simp at h
+  exact absurd hx h
+
+/-- INTERSECT with empty is empty -/
+theorem intersect_empty_right (db : Database) (a : SelectStmt) :
+    let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
+    evalQuery db (Query.compound (Query.simple a) .intersect (Query.simple emptySelect)) = [] := by
+  simp only []
+  simp only [evalQuery_compound, evalQuery_simple]
+  have h : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
+    evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
+      (by rfl) (fun row => by simp [evalExprWithDb_lit])
+  rw [List.filter_eq_nil_iff]
+  intro x _ habs
+  rw [h] at habs
+  exact absurd habs (by simp)
+
+/-- INTERSECT is idempotent: A INTERSECT A = A -/
+theorem intersect_idempotent (a : SelectStmt) :
+    Query.compound (Query.simple a) .intersect (Query.simple a) ≃ᵩ
+    Query.simple a := by
+  intro db
+  simp only [evalQuery_compound, evalQuery_simple]
+  generalize evalSelect db a = l
+  rw [List.filter_eq_self]
+  intro x hx
+  exact List.contains_iff_mem.mpr hx
+
+-- ## Unsound axioms (9) — kept for test coverage, not provable
+--
+-- These axioms are UNSOUND under our exact-list-equality semantics because
+-- List.eraseDups keeps first-occurrence order and List.filter preserves
+-- left-side order. They would hold under set/bag semantics but not under
+-- ordered-list semantics.
+--
+-- Counterexamples:
+--   union_comm:              [r1]++[r2] eraseDups = [r1,r2] ≠ [r2,r1]
+--   union_all_comm:          [r1]++[r2] ≠ [r2]++[r1]
+--   intersect_comm:          filter preserves left-side ordering
+--   union_assoc:             eraseDups ordering differs
+--   intersect_assoc:         filter ordering differs
+--   union_idempotent:        (a++a).eraseDups ≠ a when a has dupes
+--   union_empty_right:       (a++[]).eraseDups ≠ a when a has dupes
+--   union_intersect_distrib: ordering
+--   intersect_union_distrib: ordering
+
+/-- UNION is commutative: A UNION B = B UNION A
+    ⚠ UNSOUND under list equality — holds only under set semantics (ordering differs) -/
 axiom union_comm (a b : SelectStmt) :
     Query.compound (Query.simple a) .union (Query.simple b) ≃ᵩ
     Query.compound (Query.simple b) .union (Query.simple a)
 
-/-- UNION ALL is commutative: A UNION ALL B = B UNION ALL A -/
+/-- UNION ALL is commutative: A UNION ALL B = B UNION ALL A
+    ⚠ UNSOUND under list equality — [r1]++[r2] ≠ [r2]++[r1] -/
 axiom union_all_comm (a b : SelectStmt) :
     Query.compound (Query.simple a) .unionAll (Query.simple b) ≃ᵩ
     Query.compound (Query.simple b) .unionAll (Query.simple a)
 
-/-- INTERSECT is commutative: A INTERSECT B = B INTERSECT A -/
+/-- INTERSECT is commutative: A INTERSECT B = B INTERSECT A
+    ⚠ UNSOUND under list equality — filter preserves left-side ordering -/
 axiom intersect_comm (a b : SelectStmt) :
     Query.compound (Query.simple a) .intersect (Query.simple b) ≃ᵩ
     Query.compound (Query.simple b) .intersect (Query.simple a)
 
-/-- UNION is associative: (A UNION B) UNION C = A UNION (B UNION C) -/
+/-- UNION is associative: (A UNION B) UNION C = A UNION (B UNION C)
+    ⚠ UNSOUND under list equality — eraseDups ordering differs -/
 axiom union_assoc (a b c : Query) :
     Query.compound (Query.compound a .union b) .union c ≃ᵩ
     Query.compound a .union (Query.compound b .union c)
 
-/-- INTERSECT is associative: (A INTERSECT B) INTERSECT C = A INTERSECT (B INTERSECT C) -/
+/-- INTERSECT is associative: (A INTERSECT B) INTERSECT C = A INTERSECT (B INTERSECT C)
+    ⚠ UNSOUND under list equality — filter ordering differs -/
 axiom intersect_assoc (a b c : Query) :
     Query.compound (Query.compound a .intersect b) .intersect c ≃ᵩ
     Query.compound a .intersect (Query.compound b .intersect c)
 
-/-- UNION is idempotent: A UNION A = A -/
+/-- UNION is idempotent: A UNION A = A
+    ⚠ UNSOUND under list equality — (a++a).eraseDups ≠ a when a has duplicates -/
 axiom union_idempotent (a : SelectStmt) :
     Query.compound (Query.simple a) .union (Query.simple a) ≃ᵩ
     Query.simple a
 
-/-- INTERSECT is idempotent: A INTERSECT A = A -/
-axiom intersect_idempotent (a : SelectStmt) :
-    Query.compound (Query.simple a) .intersect (Query.simple a) ≃ᵩ
-    Query.simple a
-
-/-- A EXCEPT A = empty (self-difference is empty) -/
-axiom except_self_empty (db : Database) (a : SelectStmt) :
-    evalQuery db (Query.compound (Query.simple a) .exceptOp (Query.simple a)) = []
-
-/-- UNION with empty is identity (axiom form) -/
+/-- UNION with empty is identity (axiom form)
+    ⚠ UNSOUND under list equality — (a++[]).eraseDups ≠ a when a has duplicates -/
 axiom union_empty_right (db : Database) (a : SelectStmt) :
     let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
     evalQuery db (Query.compound (Query.simple a) .union (Query.simple emptySelect)) =
     evalQuery db (Query.simple a)
 
-/-- INTERSECT with empty is empty -/
-axiom intersect_empty_right (db : Database) (a : SelectStmt) :
-    let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
-    evalQuery db (Query.compound (Query.simple a) .intersect (Query.simple emptySelect)) = []
-
-/-- UNION ALL keeps all duplicates from both sides -/
-axiom union_all_length (db : Database) (a b : SelectStmt) :
-    (evalQuery db (Query.compound (Query.simple a) .unionAll (Query.simple b))).length =
-    (evalQuery db (Query.simple a)).length + (evalQuery db (Query.simple b)).length
-
 -- Note: EXCEPT is NOT commutative, so we don't have a commutativity axiom for it
 
-/-- Distributivity: A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C) -/
+/-- Distributivity: A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C)
+    ⚠ UNSOUND under list equality — ordering differs -/
 axiom union_intersect_distrib (a b c : Query) :
     Query.compound a .union (Query.compound b .intersect c) ≃ᵩ
     Query.compound (Query.compound a .union b) .intersect (Query.compound a .union c)
 
-/-- Distributivity: A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C) -/
+/-- Distributivity: A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C)
+    ⚠ UNSOUND under list equality — ordering differs -/
 axiom intersect_union_distrib (a b c : Query) :
     Query.compound a .intersect (Query.compound b .union c) ≃ᵩ
     Query.compound (Query.compound a .intersect b) .union (Query.compound a .intersect c)

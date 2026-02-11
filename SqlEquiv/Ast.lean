@@ -18,7 +18,7 @@ inductive SqlType where
   | string
   | bool
   | unknown  -- for untyped NULL or expressions with indeterminate type
-  deriving Repr, BEq, Inhabited, DecidableEq
+  deriving Repr, BEq, Inhabited, DecidableEq, ReflBEq, LawfulBEq
 
 -- ============================================================================
 -- Three-Valued Logic (Trilean)
@@ -102,7 +102,7 @@ inductive Value where
   | string : String → Value
   | bool   : Bool → Value
   | null   : Option SqlType → Value  -- typed NULL (none = unknown type)
-  deriving Repr, BEq, Inhabited, DecidableEq
+  deriving Repr, BEq, Inhabited, DecidableEq, ReflBEq, LawfulBEq
 
 namespace Value
 

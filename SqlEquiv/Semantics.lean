@@ -994,6 +994,24 @@ partial def evalQuery (db : Database) : Query → Table
     evalQuery dbWithCtes query
 end
 
+/-- Infrastructure: evalQuery on a simple SELECT decomposes to evalSelect.
+    Sound because: `evalQuery` pattern-matches `.simple sel` to `evalSelect db sel`. -/
+axiom evalQuery_simple (db : Database) (sel : SelectStmt) :
+    evalQuery db (.simple sel) = evalSelect db sel
+
+/-- Infrastructure: evalQuery on a compound query decomposes into the set operation.
+    Sound because: `evalQuery` pattern-matches `.compound left op right` and applies
+    the corresponding list operation (append+eraseDups, append, filter+contains, filter+!contains). -/
+axiom evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
+    evalQuery db (.compound left op right) =
+    let l : Table := evalQuery db left
+    let r : Table := evalQuery db right
+    match op with
+    | .union => (l ++ r).eraseDups
+    | .unionAll => l ++ r
+    | .intersect => l.filter (r.contains ·)
+    | .exceptOp => l.filter (!r.contains ·)
+
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table
   | .query q => (db, some (evalQuery db q))
