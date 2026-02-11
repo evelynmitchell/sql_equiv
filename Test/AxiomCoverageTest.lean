@@ -1737,7 +1737,65 @@ def infrastructureAxiomTests : List TestResult :=
     let selDescLim := mkSelectFull false "users" none orderDesc (some 2) none
     testLengthEq "evalSelect_orderBy_length (ASC vs DESC with LIMIT)"
       (evalSelect testDb selAscLim).length
-      (evalSelect testDb selDescLim).length
+      (evalSelect testDb selDescLim).length,
+
+    -- evalSelect_where_congr: two equivalent WHERE clauses produce same result
+    -- TRUE filter vs no filter should give same result
+    let selTrue := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool true))) [] none [] none none
+    let selNone := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      none [] none [] none none
+    testSelectEquiv "evalSelect_where_congr (WHERE TRUE vs no WHERE)"
+      selTrue selNone testDb,
+
+    -- evalSelect_filter_all_false: WHERE FALSE with no aggregates = empty result
+    let selFalse := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool false))) [] none [] none none
+    testLengthEq "evalSelect_filter_all_false (WHERE FALSE = empty)"
+      (evalSelect testDb selFalse).length
+      0,
+
+    -- evalSelect_filter_all_false: with ORDER BY
+    let selFalseOrd := SelectStmt.mk false [.star none] (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool false))) [] none orderAsc none none
+    testLengthEq "evalSelect_filter_all_false (WHERE FALSE + ORDER BY = empty)"
+      (evalSelect testDb selFalseOrd).length
+      0,
+
+    -- Regression: aggregate query with WHERE FALSE should NOT produce empty result
+    -- SELECT COUNT(*) FROM users WHERE FALSE → should return 1 row (with count 0)
+    let selAggFalse := SelectStmt.mk false
+      [.exprItem .countStar (some "cnt")]
+      (some (.table ⟨"users", none⟩))
+      (some (.lit (.bool false))) [] none [] none none
+    testLengthEq "evalSelect_agg_where_false_not_empty (aggregate WHERE FALSE = 1 row)"
+      (evalSelect testDb selAggFalse).length
+      1,
+
+    -- evalQuery_simple: simple query evaluates same as evalSelect
+    let selUsers := mkSimpleSelect "users"
+    let queryResult := evalQuery testDb (.simple selUsers)
+    let selectResult := evalSelect testDb selUsers
+    if queryResult == selectResult then .pass "evalQuery_simple (users)"
+    else .fail "evalQuery_simple (users)" s!"Results differ: {queryResult.length} vs {selectResult.length} rows",
+
+    -- evalQuery_compound: UNION ALL decomposes to append
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let compoundResult := evalQuery testDb (.compound (.simple selUsers) .unionAll (.simple selOrders))
+    let expectedResult := evalQuery testDb (.simple selUsers) ++ evalQuery testDb (.simple selOrders)
+    if compoundResult == expectedResult then .pass "evalQuery_compound (UNION ALL = append)"
+    else .fail "evalQuery_compound (UNION ALL = append)" s!"Results differ: {compoundResult.length} vs {expectedResult.length} rows",
+
+    -- evalQuery_compound: INTERSECT decomposes to filter+contains
+    let selUsers := mkSimpleSelect "users"
+    let selOrders := mkSimpleSelect "orders"
+    let intersectResult := evalQuery testDb (.compound (.simple selUsers) .intersect (.simple selOrders))
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let ordersResult := evalQuery testDb (.simple selOrders)
+    let expectedIntersect := usersResult.filter (ordersResult.contains ·)
+    if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains)"
+    else .fail "evalQuery_compound (INTERSECT = filter+contains)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows"
   ]
 
 -- ============================================================================

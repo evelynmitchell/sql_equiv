@@ -646,21 +646,30 @@ theorem or_true (a : Expr) :
   exact evalBinOp_or_true_right _
 
 /-- WHERE TRUE is equivalent to no WHERE clause.
-    Axiom: TRUE filter keeps all rows, equivalent to no filter.
-    Proof requires showing filter identity at the List level. -/
-axiom where_true_elim (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+    Proved using evalSelect_where_congr: TRUE filter keeps all rows, equivalent to no filter. -/
+theorem where_true_elim (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
     (limit offset : Option Nat) :
     evalSelect db (.mk false items from_ (some (.lit (.bool true))) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ none groupBy having orderBy limit offset)
+    evalSelect db (.mk false items from_ none groupBy having orderBy limit offset) := by
+  apply evalSelect_where_congr
+  intro row
+  simp only [evalExprWithDb_lit]
+  decide
 
-/-- WHERE FALSE produces empty result (or no FROM clause).
-    Axiom: FALSE filter removes all rows. -/
-axiom where_false_empty (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- WHERE FALSE produces empty result when no aggregates.
+    Proved using evalSelect_filter_all_false: FALSE filter removes all rows.
+    Requires no aggregates because aggregate queries (e.g., COUNT(*)) with empty
+    filtered rows still produce 1 row. -/
+theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
-    (limit offset : Option Nat) :
-    (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 ∨
-    from_.isNone
+    (limit offset : Option Nat)
+    (h_no_agg : selectHasAggregate items = false) :
+    (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 := by
+  have h := evalSelect_filter_all_false db false items from_ (.lit (.bool false)) groupBy having orderBy limit offset
+    h_no_agg
+    (fun row => by simp [evalExprWithDb_lit])
+  simp [h]
 
 /-- Inner join is commutative up to row permutation.
     Axiom: swapping join order preserves rows. -/

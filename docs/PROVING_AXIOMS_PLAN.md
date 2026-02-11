@@ -182,22 +182,31 @@ with case analysis on the evaluated sub-expressions.
 
 ---
 
-### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms)
+### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms) -- PARTIALLY COMPLETED
 
 **Goal:** Prove axioms about WHERE clause behavior at the `evalSelect`/`evalStmt` level.
 
 **Target axioms:**
-- `where_true_elim` -- WHERE TRUE is identity
-- `where_false_empty` -- WHERE FALSE produces empty result
-- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q
-- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p
-- `filter_idempotent` -- WHERE p then WHERE p = WHERE p
-- `filter_false_empty'` -- variant of WHERE FALSE
-- `predicate_pushdown` -- WHERE pushdown for single table
+- `where_true_elim` -- WHERE TRUE is identity — **PROVED** (via `evalSelect_where_congr`)
+- `where_false_empty` -- WHERE FALSE produces empty result — **PROVED** (with `h_no_agg` precondition, via `evalSelect_filter_all_false`)
+- `filter_false_empty'` -- variant of WHERE FALSE — **PROVED** (delegates to `where_false_empty`)
+- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q — **BLOCKED** (evalFrom .subquery double-qualification bug)
+- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p — **BLOCKED** (same)
+- `filter_idempotent` -- WHERE p then WHERE p = WHERE p — **BLOCKED** (same)
+- `predicate_pushdown` -- WHERE pushdown for single table — **BLOCKED** (evalExpr vs evalExprWithDb gap)
 
-**Approach:** Unfold `evalSelect`/`evalStmt`, reason about `List.filter`.
+**Infrastructure axioms added:**
+- `evalSelect_where_congr` — if two WHERE clauses produce the same filtering, evalSelect produces the same result
+- `evalSelect_filter_all_false` — WHERE that rejects all rows produces empty result (when no aggregates)
 
-**Estimated complexity:** Medium -- requires understanding `evalSelect` structure.
+**Soundness fixes:**
+- `where_false_empty` and `filter_false_empty'` were unsound for aggregate queries (e.g., `SELECT COUNT(*) ... WHERE FALSE` produces 1 row, not 0). Added `h_no_agg : selectHasAggregate items = false` precondition.
+
+**Blocked axioms:**
+- `filter_and`, `filter_commute`, `filter_idempotent`: blocked by evalFrom .subquery double-qualification bug — subquery wrapping causes columns like `t.col` to become `inner.t.col`, so the outer WHERE can't find them.
+- `predicate_pushdown`: blocked by `evalExpr` vs `evalExprWithDb` gap — the external filter uses `evalExpr` (no db context) while `evalSelect` internally uses `evalExprWithDb db`. Could be proved with a `q.hasNoSubquery` precondition.
+
+**Approach used:** Infrastructure axioms capturing evalSelect's WHERE clause behavior, then theorem proofs using those axioms.
 
 ---
 
@@ -211,21 +220,28 @@ with case analysis on the evaluated sub-expressions.
 
 ---
 
-### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) (~13 axioms)
+### Phase 4: Set Operations (UNION/INTERSECT/EXCEPT) — 4 proved, 9 unsound
 
-**Goal:** Prove commutativity, associativity, idempotence, and distributivity
-of set operations.
+**Status:** COMPLETE
 
-**Commutativity (3):** `union_comm`, `union_all_comm`, `intersect_comm`
-**Associativity (2):** `union_assoc`, `intersect_assoc`
-**Idempotence (2):** `union_idempotent`, `intersect_idempotent`
-**Identity/absorption (3):** `except_self_empty`, `union_empty_right`, `intersect_empty_right`
-**Cardinality (1):** `union_all_length`
-**Distributivity (2):** `union_intersect_distrib`, `intersect_union_distrib`
+**Proved (4 theorems):**
+- `union_all_length` — `List.length_append`
+- `except_self_empty` — `List.filter_eq_nil_iff` + `List.contains_iff_mem`
+- `intersect_empty_right` — `evalSelect_filter_all_false` for empty select
+- `intersect_idempotent` — `List.filter_eq_self` + `List.contains_iff_mem`
 
-**Approach:** Unfold `evalQuery`, reason about list dedup/append/filter.
+**Unsound (9 axioms — documented with counterexamples):**
+- `union_comm`, `union_all_comm`, `intersect_comm` — ordering differs
+- `union_assoc`, `intersect_assoc` — ordering differs
+- `union_idempotent` — `(a++a).eraseDups ≠ a` when a has dupes
+- `union_empty_right` — `(a++[]).eraseDups ≠ a` when a has dupes
+- `union_intersect_distrib`, `intersect_union_distrib` — ordering differs
 
-**Estimated complexity:** Medium -- list reasoning, but no join semantics needed.
+These 9 would hold under set/bag semantics but not under our exact-list-equality semantics
+(`List.eraseDups` keeps first-occurrence order, `List.filter` preserves left-side order).
+
+**Infrastructure added:** `evalQuery_simple`, `evalQuery_compound` (decompose `evalQuery`)
+**Dependencies added:** `LawfulBEq` for `SqlType` and `Value` (derived via `ReflBEq` + `LawfulBEq`)
 
 ---
 
@@ -353,8 +369,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 107 axioms remaining (86 in Equiv/, 21 in infrastructure files), 275 theorems proved (72.0%).
-Axiom ratchet: 107 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 106 axioms remaining, 278 theorems proved (72.4%).
+Axiom ratchet: 106 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -363,7 +379,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
 | 1c | IN / BETWEEN / LIKE | 7 | ~4 | Easy-Medium |
 | 1d | String/Function | 8 | 0 (done) | -- |
-| 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
+| 2 | Statement-level filter/WHERE | 3 | ~4 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
@@ -372,9 +388,9 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 0 | 13 | N/A |
+| infra | Infrastructure (Semantics.lean) | 0 | 15 | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
-| | **Total** | **~91** | **~96** | |
+| | **Total** | **~92** | **~97** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
@@ -416,12 +432,12 @@ decision first (see "Unsound Axiom Strategy" below).
 
 | Order | Issue | Description | Axioms | Difficulty |
 |:-----:|-------|-------------|:------:|------------|
-| 15 | [#51](https://github.com/evelynmitchell/sql_equiv/issues/51) | `where_true_elim`, `where_false_empty` | 2 | Medium |
-| 16 | [#72](https://github.com/evelynmitchell/sql_equiv/issues/72) | Filter composition rules | 4 | Medium |
+| 15 | [#51](https://github.com/evelynmitchell/sql_equiv/issues/51) | `where_true_elim`, `where_false_empty` | 2 | **Proved** (PR #116) |
+| 16 | [#72](https://github.com/evelynmitchell/sql_equiv/issues/72) | Filter composition rules | 4 | 1 **proved** (PR #116: `filter_false_empty'`); 3 blocked (subquery double-qualification) |
 | 17 | [#82](https://github.com/evelynmitchell/sql_equiv/issues/82) | Aggregate properties | 4 | Medium |
-| 18 | [#79](https://github.com/evelynmitchell/sql_equiv/issues/79) | ORDER BY properties | 5 | Easy-Medium |
-| 19 | [#80](https://github.com/evelynmitchell/sql_equiv/issues/80) | LIMIT properties | 5 | Easy-Medium |
-| 20 | [#81](https://github.com/evelynmitchell/sql_equiv/issues/81) | OFFSET/pagination | 5 | Easy-Medium |
+| 18 | [#79](https://github.com/evelynmitchell/sql_equiv/issues/79) | ORDER BY properties | 5 | 3 **proved** (PR #115); 2 axioms |
+| 19 | [#80](https://github.com/evelynmitchell/sql_equiv/issues/80) | LIMIT properties | 5 | **Proved** (PR #115) |
+| 20 | [#81](https://github.com/evelynmitchell/sql_equiv/issues/81) | OFFSET/pagination | 5 | **Proved** (PR #115) |
 | 21 | [#63](https://github.com/evelynmitchell/sql_equiv/issues/63) | Set operation commutativity | 3 | Medium |
 | 22 | [#64](https://github.com/evelynmitchell/sql_equiv/issues/64) | Set operation assoc/distrib | 4 | Medium |
 | 23 | [#65](https://github.com/evelynmitchell/sql_equiv/issues/65) | Set operation edge cases | 5 | Medium |
@@ -478,6 +494,8 @@ bridges that let proofs access the evaluation semantics.
 | `evalCase_cons_false` | #61 CASE/WHEN | False condition → skip to rest |
 | `evalExprWithDb_func` | #62 String functions | Unfold function call to `evalFunc` |
 | `evalExprWithDb_between` | #59 BETWEEN | Unfold BETWEEN expression |
+| `evalSelect_where_congr` | #51 WHERE | Congruence: same filtering → same result |
+| `evalSelect_filter_all_false` | #51 WHERE | Always-false filter → empty result (no agg) |
 
 New infrastructure axioms should be added to this table as they are created.
 All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.

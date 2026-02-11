@@ -862,14 +862,16 @@ assertion) is more robust than "not definitely non-boolean".
 
 ---
 
-## Current Status Summary (2026-02-09, post-PR #109)
+## Interim Status Summary (2026-02-09, post-PR #109)
 
-### Axiom/theorem counts
+*Superseded by the current status at the end of this file.*
+
+### Axiom/theorem counts at time of writing
 
 - **127 axioms** remaining (across all .lean files in SqlEquiv/)
 - Axiom ratchet: 127 (in `tools/axiom_count_minimum.txt`)
 
-### Issues fully proved (can be closed)
+### Issues fully proved at time of writing
 
 | Issue | Axioms | PR |
 |-------|--------|-----|
@@ -1240,3 +1242,292 @@ to get concrete `Value` constructors that `simp [evalFunc]` can reduce.
 | #62 | 4 of 7 string function axioms (upper/lower idem + cross-comp) | #105 |
 | #24, #62 | 3 concat_empty_left/right + length_concat | #107, #109 |
 | #59 | 2 of 3 between_expansion + not_between_expansion | #109 |
+| #46-50 | 9 boolean identity/absorption | #104 |
+| #60 | 1 of 3 like_match_all | #111 |
+| #58 | 2 of 8 in_empty_false, not_in_empty_true | #112 |
+| — | 2 flattenAnd_nonempty, flattenOr_nonempty | #112 |
+| #79-81 | 16 ORDER BY/LIMIT/OFFSET | #115 |
+| #51 | 2 where_true_elim, where_false_empty | #116 |
+| #72 | 1 of 4 filter_false_empty' | #116 |
+
+---
+
+## Batch 10: Boolean Identity & Absorption Axioms (#46-50) — 9 axioms → theorems
+
+**Branch**: `claude/define-bool-valued-axioms-QlSLF` | **PR**: #104 (merged)
+**Date**: 2026-02-09
+
+### Axioms proved
+
+| Axiom | Issue | Statement |
+|-------|-------|-----------|
+| `not_not` | #46 | `NOT NOT e ≃ₑ e` |
+| `and_true` | #48 | `e AND TRUE ≃ₑ e` |
+| `or_false` | #48 | `e OR FALSE ≃ₑ e` |
+| `and_self` | #49 | `e AND e ≃ₑ e` |
+| `or_self` | #49 | `e OR e ≃ₑ e` |
+| `and_not_self` | #50 | `e AND (NOT e) ≃ₑ FALSE` |
+| `or_not_self` | #50 | `e OR (NOT e) ≃ₑ TRUE` |
+| `and_absorb_or` | #47 | `e AND (e OR f) ≃ₑ e` |
+| `or_absorb_and` | #47 | `e OR (e AND f) ≃ₑ e` |
+
+### Precondition: `Expr.isBoolValued`
+
+```lean
+def Expr.isBoolValued (e : Expr) : Prop :=
+  ∀ row : Row, ∃ b : Bool, evalExpr row e = some (.bool b)
+```
+
+Same pattern as `isIntValued` for arithmetic — these axioms only hold when
+all expression arguments evaluate to booleans. For non-boolean inputs,
+`AND`/`OR`/`NOT` return `none`, breaking the identity.
+
+### Proof pattern
+
+All follow the same structure: unfold via `evalExprWithDb_binOp`/`evalExprWithDb_unaryOp`,
+extract the boolean witness from `isBoolValued`, then case-split on the `Bool` value
+(only 2 cases: `true`/`false`). The absorption proofs additionally need the second
+expression's boolean witness.
+
+### Connection to optimizer guards
+
+PR #101 (same timeframe) added `isDefinitelyBool` allowlist to the optimizer,
+mirroring `isBoolValued`. The axiom preconditions and optimizer guards now protect
+the same rewrites from both the proof and runtime sides.
+
+---
+
+## Batch 11: LIKE Match All (#60) — 1 axiom → theorem
+
+**Branch**: `claude/prove-like-match-all` | **PR**: #111 (merged)
+**Date**: 2026-02-10
+
+### like_match_all
+
+`Expr.binOp .like e (lit (.string "%")) ≃ₑ CASE WHEN IS_NULL(e) THEN NULL ELSE TRUE`
+
+**Precondition**: `Expr.isStringOrNull` — expression evaluates to string or null.
+
+**Value-level helper**: `evalBinOp_like_match_all` proves that `simpleLike s "%"` = `true`
+for any string `s`, because `simpleLike` checks `pat == "%"` first (branch 1).
+
+**Soundness fix**: Added `isStringOrNull` precondition to both `like_match_all` and
+`like_self`. Without it, `5 LIKE '%'` → `none` but RHS → `some (.bool true)`.
+
+---
+
+## Batch 12: IN Empty + Flatten Axioms (#58, normalization)
+
+**Branch**: `claude/prove-inlist-flatten-axioms` | **PR**: #112 (merged)
+**Date**: 2026-02-10
+
+### Axioms proved
+
+| Axiom | Statement |
+|-------|-----------|
+| `in_empty_false` | `e IN () ≃ₑ FALSE` |
+| `not_in_empty_true` | `e NOT IN () ≃ₑ TRUE` |
+| `flattenAnd_nonempty` | flattening AND preserves semantics |
+| `flattenOr_nonempty` | flattening OR preserves semantics |
+
+### Infrastructure axiom added
+
+`evalExprWithDb_inList` — unfolds `.inList` expression evaluation.
+
+### Soundness gap documented
+
+The remaining IN axioms (`in_singleton`, `in_pair`, `in_list_or_expansion`, etc.)
+are unsound because `filterMap` in `evalExprWithDb` for IN lists handles evaluation
+errors differently from the OR/AND expansion. The expansion propagates `none` from
+individual comparisons, while `filterMap` silently drops them.
+
+---
+
+## Batch 13: Phase 5 — ORDER BY / LIMIT / OFFSET (#79-81) — 16 axioms → theorems
+
+**Branch**: `claude/prove-phase5-limit-offset-axioms` | **PR**: #115 (merged)
+**Date**: 2026-02-10
+
+### Infrastructure axioms added
+
+| Axiom | Purpose |
+|-------|---------|
+| `evalSelect_limit_offset` | Decomposes `evalSelect` with LIMIT/OFFSET into `List.take`/`List.drop` on the base result |
+| `evalSelect_orderBy_length` | ORDER BY preserves `List.length` |
+
+### Axioms proved (16)
+
+**ORDER BY (3):**
+- `order_by_preserves_count`, `order_by_length_invariant`, `order_limit_deterministic`
+
+**LIMIT (5):**
+- `limit_zero_empty`, `limit_upper_bound`, `limit_none_all_rows`, `limit_monotonic`, `limit_one_singleton`
+
+**OFFSET (4):**
+- `offset_zero_identity`, `offset_too_large_empty`, `offset_reduces_count`, `offset_monotonic`
+
+**LIMIT+OFFSET combinations (4):**
+- `limit_offset_compose`, `offset_limit_zero_empty`, `pagination_upper_bound`, `consecutive_pages`
+
+### Soundness fix
+
+`offset_too_large_empty` was unsound for `limit = some L` — it measured count
+from `evalSelect ... (some L) none` instead of `evalSelect ... none none`.
+Fixed by measuring from the base query with no limit/offset.
+
+### Proof patterns
+
+Private helper lemmas (`evalSelect_SN`, `evalSelect_S0`, `evalSelect_0N`) specialize
+`evalSelect_limit_offset` for concrete `Option` values. Essential when goals have
+TWO `evalSelect` calls — raw `rw` twice causes the second to match the `base`
+expression from the first rewrite. With helpers + `cases limit`, each branch
+uses a clean specialized lemma.
+
+`generalize evalSelect db (... none none) = base` after rewriting replaces the
+long expression with a variable for `simp`/`omega` reasoning.
+
+### Removed axiom
+
+`order_by_empty_identity` — was vacuously true (`∀ row ∈ [], ...`), replaced by
+`order_by_preserves_count` which is more useful.
+
+---
+
+## Batch 14: Phase 2 — WHERE / Filter Axioms (#51, #72) — 3 axioms → theorems
+
+**Branch**: `claude/prove-phase2-where-filter-axioms` | **PR**: #116 (open)
+**Date**: 2026-02-10
+
+### Infrastructure axioms added
+
+| Axiom | Purpose |
+|-------|---------|
+| `evalSelect_where_congr` | If two WHERE clauses produce the same filtering for every row, `evalSelect` produces the same result |
+| `evalSelect_filter_all_false` | WHERE clause that rejects all rows → empty result (when no aggregates) |
+
+### Axioms proved (3)
+
+| Axiom | Statement | Approach |
+|-------|-----------|----------|
+| `where_true_elim` | `WHERE TRUE` is identity | Via `evalSelect_where_congr`: `TRUE == TRUE` = `true` matches `none` filter (both pass all rows) |
+| `where_false_empty` | `WHERE FALSE` → empty result | Via `evalSelect_filter_all_false` + `h_no_agg` precondition |
+| `filter_false_empty'` | Variant of above | Delegates to `where_false_empty` |
+
+### Soundness fix: aggregate queries
+
+`where_false_empty` and `filter_false_empty'` were originally stated without
+preconditions, but are **unsound for aggregate queries**: `SELECT COUNT(*) FROM t
+WHERE FALSE` returns 1 row (with count 0), not 0 rows. Added
+`h_no_agg : selectHasAggregate items = false` precondition.
+
+### Blocked axioms (4)
+
+| Axiom | Blocker |
+|-------|---------|
+| `filter_and` | `evalFrom .subquery` double-qualifies columns (`t.col` → `inner.t.col`) |
+| `filter_commute` | Same |
+| `filter_idempotent` | Same |
+| `predicate_pushdown` | `evalExpr` vs `evalExprWithDb` gap (no db context in external filter) |
+
+### PR review feedback (Copilot)
+
+1. Changed `evalSelect_filter_all_false` premise from propositional `≠` to
+   boolean `== ... = false` — aligns with `List.filter`'s actual predicate form.
+2. Added regression test: `SELECT COUNT(*) WHERE FALSE` returns 1 row.
+
+**Lesson**: Axiom premises should mirror the implementation's predicate form.
+Using the same operators avoids bridging boilerplate at every call site.
+
+---
+
+## Batch 15: Phase 4 — Set Operation Axioms — 4 proved, 9 documented unsound
+
+**Branch**: `claude/prove-phase2-where-filter-axioms` | **PR**: TBD
+**Date**: 2026-02-11
+
+### Infrastructure axioms added
+
+| Axiom | Purpose |
+|-------|---------|
+| `evalQuery_simple` | Decomposes `evalQuery db (.simple sel)` to `evalSelect db sel` |
+| `evalQuery_compound` | Decomposes `evalQuery db (.compound left op right)` to list operations |
+
+### Dependencies added
+
+- `LawfulBEq SqlType` (derived via `ReflBEq` + `LawfulBEq`)
+- `LawfulBEq Value` (derived via `ReflBEq` + `LawfulBEq`)
+
+These are needed for `List.contains_iff_mem` which bridges `List.contains` to `∈`.
+
+### Axioms proved (4)
+
+| Axiom | Statement | Approach |
+|-------|-----------|----------|
+| `union_all_length` | `\|A UNION ALL B\| = \|A\| + \|B\|` | `evalQuery_compound` + `List.length_append` |
+| `except_self_empty` | `A EXCEPT A = []` | `List.filter_eq_nil_iff` + `List.contains_iff_mem` |
+| `intersect_empty_right` | `A INTERSECT empty = []` | `evalSelect_filter_all_false` for empty select |
+| `intersect_idempotent` | `A INTERSECT A = A` | `List.filter_eq_self` + `List.contains_iff_mem` |
+
+### Unsound axioms documented (9)
+
+The remaining 9 set operation axioms are **unsound** under our exact-list-equality
+semantics. `List.eraseDups` keeps first-occurrence order, and `List.filter` preserves
+left-side order, so commutativity/associativity/distributivity fail.
+
+| Axiom | Counterexample |
+|-------|----------------|
+| `union_comm` | `[r1]++[r2]` eraseDups = `[r1,r2]` vs `[r2,r1]` |
+| `union_all_comm` | `[r1]++[r2] ≠ [r2]++[r1]` |
+| `intersect_comm` | filter preserves left-side ordering |
+| `union_assoc` | eraseDups ordering differs |
+| `intersect_assoc` | filter ordering differs |
+| `union_idempotent` | `(a++a).eraseDups ≠ a` when a has dupes |
+| `union_empty_right` | `(a++[]).eraseDups ≠ a` when a has dupes |
+| `union_intersect_distrib` | ordering |
+| `intersect_union_distrib` | ordering |
+
+Each axiom now has an `⚠ UNSOUND` docstring warning with a counterexample.
+
+### Proof techniques
+
+- `simp only [evalQuery_compound, evalQuery_simple]` — decomposes compound queries
+- `List.filter_eq_nil_iff` + `List.filter_eq_self` — characterize filter results
+- `List.contains_iff_mem` (requires `LawfulBEq`) — bridges `contains` to `∈`
+- `evalSelect_filter_all_false` + `evalExprWithDb_lit` — proves empty select returns `[]`
+
+---
+
+## Current Status Summary (2026-02-11, post-Batch 15)
+
+### Axiom/theorem counts
+
+- **104 axioms** remaining (across all .lean files in SqlEquiv/)
+- **282 theorems** proved (73.1%)
+- Axiom ratchet: 104 (in `tools/axiom_count_minimum.txt`)
+
+### All issues with proved axioms
+
+| Issue | Axioms proved | PR(s) |
+|-------|---------------|-------|
+| #24 | CONCAT evalFunc + proofs | #107 |
+| #46 | `not_not` | #104 |
+| #47 | `and_absorb_or`, `or_absorb_and` | #104 |
+| #48 | `and_true`, `or_false` | #104 |
+| #49 | `and_self`, `or_self` | #104 |
+| #50 | `and_not_self`, `or_not_self` | #104 |
+| #51 | `where_true_elim`, `where_false_empty` | #116 |
+| #53 | `decideGroundExprEquiv_sound` (1 of 2) | #94 |
+| #54 | 6 comparison negation | #85 |
+| #55 | 4 comparison flip | #85 |
+| #56 | `eq_reflexive`, `ne_irreflexive` | #92 |
+| #57 | 7 arithmetic identities | #93 |
+| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8) | #112 |
+| #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109 |
+| #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
+| #61 | 5 CASE/WHEN | #85 |
+| #62 | 7 string function axioms (all) | #102, #105, #107, #109 |
+| #72 | `filter_false_empty'` (1 of 4) | #116 |
+| #79 | 3 ORDER BY | #115 |
+| #80 | 5 LIMIT | #115 |
+| #81 | 5+3 OFFSET/pagination | #115 |
+| — | `flattenAnd_nonempty`, `flattenOr_nonempty` | #112 |
