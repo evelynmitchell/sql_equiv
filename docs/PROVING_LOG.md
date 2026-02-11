@@ -2088,6 +2088,38 @@ type, this creates a hypothesis in the goal's form. Then `rw [hNotInLeft']` matc
    type ascription is the cure. Don't iterate on alternative `rw`/`simp` strategies — look
    at the actual goal first.
 
+### Process retrospective
+
+**~70% of the time on `left_join_filter_null_is_inner` was wasted.** The root cause — compiled
+lambda form divergence between hypotheses and goal — was diagnosed late. Before that diagnosis,
+multiple approaches were tried and abandoned:
+- Bridge lemmas (`join_filterMap_eq`) that proved the forms propositionally equal but couldn't
+  be applied by `rw` or `simp only` (same syntactic matching problem, one level up)
+- `show ... from by` blocks with explicit types (type mismatch for the same reason)
+- `simp only` variants hoping `simp` would handle definitional equality (it doesn't for
+  rewrite rules — `simp only [h]` still needs syntactic matching on `h`'s LHS)
+- `conv` navigation attempts
+
+All failed for the same invisible reason. One `trace_state` after `rw [List.find?_append]`
+revealed the problem immediately:
+```
+goal:  fun x => x.fst == rightCol
+hyp:   fun x => match x with | (k, snd) => k == rightCol
+```
+
+The fix (`have` with type ascription) took ~10 minutes after that.
+
+**Takeaway: for join proofs involving `rw` with infrastructure axioms, the first tactic after
+the rewrite should be `trace_state`.** Treat the compiled form as unknown until observed.
+Reasoning about what Lean's elaborator *should* do is unreliable; looking at what it *actually
+did* is instant. The speculative reasoning wasn't just slow — it was actively harmful, because
+each plausible-sounding but wrong theory spawned another attempt that failed for the same
+undiagnosed cause.
+
+The other three theorems (`inner_subset_cross`, `left_join_preserves_left`,
+`right_join_preserves_right`) were straightforward by comparison. The whole batch could have
+been a clean afternoon instead of a slog.
+
 ### Verification
 
 - 229/229 tests pass
