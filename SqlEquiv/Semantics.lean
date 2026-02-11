@@ -940,6 +940,27 @@ axiom evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option
       else
         matchingRows
 
+/-- Infrastructure: evalFrom decomposes RIGHT JOIN into flatMap with NULL-padding fallback.
+    Corresponds to the `.right` case of `evalFrom` on `.join`. -/
+axiom evalFrom_right_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
+    evalFrom db (.join left .right right on_) =
+    let leftRows := evalFrom db left
+    (evalFrom db right).flatMap fun rr =>
+      let matchingRows := leftRows.filterMap fun lr =>
+        let combined := lr ++ rr
+        match on_ with
+        | none => some combined
+        | some cond =>
+          match evalExprWithDb db combined cond with
+          | some (.bool true) => some combined
+          | _ => none
+      if matchingRows.isEmpty then
+        match leftRows.head? with
+        | some leftRow => [leftRow.map (fun (k, _) => (k, .null none)) ++ rr]
+        | none => [rr]
+      else
+        matchingRows
+
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
 -- ============================================================================

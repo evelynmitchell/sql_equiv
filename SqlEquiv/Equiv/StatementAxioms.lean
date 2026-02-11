@@ -164,12 +164,6 @@ theorem intersect_union_distrib (a b c : Query) :
 -- JOIN Theorems
 -- ============================================================================
 
-/-- CROSS JOIN cardinality is symmetric: |A x B| = |B x A| -/
-axiom cross_join_cardinality_comm (db : Database) (a b : FromClause) :
-    let rowsAB := evalFrom db (.join a .cross b none)
-    let rowsBA := evalFrom db (.join b .cross a none)
-    rowsAB.length = rowsBA.length
-
 /-- Helper: filterMap with constant none produces empty list -/
 private theorem List.filterMap_none {α β : Type} (l : List α) :
     l.filterMap (fun _ => (none : Option β)) = [] := by
@@ -190,6 +184,70 @@ private theorem List.filterMap_some_comp {α β : Type} (l : List α) (f : α �
   induction l with
   | nil => rfl
   | cons _ _ ih => simp [List.map_cons, ih]
+
+/-- flatMap with constant-length bodies: total length = outer length × inner length -/
+private theorem List.length_flatMap_const {α β : Type} (l : List α) (f : α → List β) (n : Nat)
+    (h : ∀ x ∈ l, (f x).length = n) :
+    (l.flatMap f).length = l.length * n := by
+  induction l with
+  | nil => simp
+  | cons a rest ih =>
+    simp only [List.flatMap_cons, List.length_append, List.length_cons]
+    rw [h a List.mem_cons_self]
+    rw [ih (fun x hx => h x (List.mem_cons_of_mem a hx))]
+    rw [Nat.add_mul, Nat.one_mul, Nat.add_comm]
+
+/-- flatMap with bounded-length bodies: total ≤ outer × bound -/
+private theorem List.length_flatMap_le {α β : Type} (l : List α) (f : α → List β) (n : Nat)
+    (h : ∀ x ∈ l, (f x).length ≤ n) :
+    (l.flatMap f).length ≤ l.length * n := by
+  induction l with
+  | nil => simp
+  | cons a rest ih =>
+    simp only [List.flatMap_cons, List.length_append, List.length_cons]
+    have ha := h a List.mem_cons_self
+    have hrest := ih (fun x hx => h x (List.mem_cons_of_mem a hx))
+    calc (f a).length + (rest.flatMap f).length
+        ≤ n + rest.length * n := Nat.add_le_add ha hrest
+      _ = (rest.length + 1) * n := by rw [Nat.add_mul, Nat.one_mul, Nat.add_comm]
+
+/-- flatMap with at-least-1 bodies gives length ≥ outer length -/
+private theorem List.length_flatMap_ge_length {α β : Type} (l : List α) (f : α → List β)
+    (h : ∀ x ∈ l, (f x).length ≥ 1) :
+    (l.flatMap f).length ≥ l.length := by
+  induction l with
+  | nil => simp
+  | cons a rest ih =>
+    simp only [List.flatMap_cons, List.length_append, List.length_cons]
+    have ha := h a List.mem_cons_self
+    have hrest := ih (fun x hx => h x (List.mem_cons_of_mem a hx))
+    omega
+
+/-- Left join body always produces at least one row -/
+private theorem left_join_body_length_ge_one (matchingRows : List Row) (rightHead : Option Row)
+    (lr : Row) :
+    (if matchingRows.isEmpty then
+      match rightHead with
+      | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, Value.null none)]
+      | none => [lr]
+    else
+      matchingRows).length ≥ 1 := by
+  cases matchingRows with
+  | nil => simp; cases rightHead <;> simp
+  | cons _ _ => simp
+
+/-- Right join body always produces at least one row -/
+private theorem right_join_body_length_ge_one (matchingRows : List Row) (leftHead : Option Row)
+    (rr : Row) :
+    (if matchingRows.isEmpty then
+      match leftHead with
+      | some leftRow => [leftRow.map (fun (k, _) => (k, Value.null none)) ++ rr]
+      | none => [rr]
+    else
+      matchingRows).length ≥ 1 := by
+  cases matchingRows with
+  | nil => simp; cases leftHead <;> simp
+  | cons _ _ => simp
 
 /-- INNER JOIN with ON TRUE is equivalent to CROSS JOIN -/
 theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
@@ -231,30 +289,61 @@ theorem left_join_false_all_left (db : Database) (a b : FromClause) :
     cases rightRows.head? <;> simp <;> omega
 
 /-- CROSS JOIN cardinality: |A CROSS JOIN B| = |A| * |B| -/
-axiom cross_join_cardinality (db : Database) (a b : FromClause) :
+theorem cross_join_cardinality (db : Database) (a b : FromClause) :
     let rowsA := evalFrom db a
     let rowsB := evalFrom db b
     let rowsAB := evalFrom db (.join a .cross b none)
-    rowsAB.length = rowsA.length * rowsB.length
+    rowsAB.length = rowsA.length * rowsB.length := by
+  simp only []
+  rw [evalFrom_cross_join]; simp only []
+  apply List.length_flatMap_const
+  intro lr _
+  exact List.length_map ..
+
+/-- CROSS JOIN cardinality is symmetric: |A x B| = |B x A| -/
+theorem cross_join_cardinality_comm (db : Database) (a b : FromClause) :
+    let rowsAB := evalFrom db (.join a .cross b none)
+    let rowsBA := evalFrom db (.join b .cross a none)
+    rowsAB.length = rowsBA.length := by
+  simp only []
+  have h1 := cross_join_cardinality db a b
+  have h2 := cross_join_cardinality db b a
+  simp only [] at h1 h2
+  rw [h1, h2, Nat.mul_comm]
 
 /-- INNER JOIN cardinality upper bound: |A INNER JOIN B| <= |A| * |B| -/
-axiom inner_join_cardinality_le (db : Database) (a b : FromClause) (on_ : Option Expr) :
+theorem inner_join_cardinality_le (db : Database) (a b : FromClause) (on_ : Option Expr) :
     let rowsA := evalFrom db a
     let rowsB := evalFrom db b
     let rowsAB := evalFrom db (.join a .inner b on_)
-    rowsAB.length ≤ rowsA.length * rowsB.length
+    rowsAB.length ≤ rowsA.length * rowsB.length := by
+  simp only []
+  rw [evalFrom_inner_join]; simp only []
+  apply List.length_flatMap_le
+  intro lr _
+  exact List.length_filterMap_le ..
 
 /-- LEFT JOIN cardinality: |A LEFT JOIN B| >= |A| -/
-axiom left_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option Expr) :
+theorem left_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option Expr) :
     let rowsA := evalFrom db a
     let rowsAB := evalFrom db (.join a .left b on_)
-    rowsAB.length ≥ rowsA.length
+    rowsAB.length ≥ rowsA.length := by
+  simp only []
+  rw [evalFrom_left_join]; simp only []
+  apply List.length_flatMap_ge_length
+  intro lr _
+  exact left_join_body_length_ge_one _ ((evalFrom db b).head?) lr
 
 /-- RIGHT JOIN cardinality: |A RIGHT JOIN B| >= |B| -/
-axiom right_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option Expr) :
+theorem right_join_cardinality_ge (db : Database) (a b : FromClause) (on_ : Option Expr) :
     let rowsB := evalFrom db b
     let rowsAB := evalFrom db (.join a .right b on_)
-    rowsAB.length ≥ rowsB.length
+    rowsAB.length ≥ rowsB.length := by
+  simp only []
+  rw [evalFrom_right_join]; simp only []
+  apply List.length_flatMap_ge_length
+  intro rr _
+  exact right_join_body_length_ge_one _ ((evalFrom db a).head?) rr
 
 /-- INNER JOIN with empty left produces empty result -/
 theorem inner_join_empty_left (db : Database) (a b : FromClause) (on_ : Option Expr)
@@ -283,19 +372,44 @@ theorem cross_join_empty_right (db : Database) (a b : FromClause)
   exact List.flatMap_const_nil _
 
 /-- Join associativity for CROSS JOIN: (A × B) × C has same cardinality as A × (B × C) -/
-axiom cross_join_assoc_cardinality (db : Database) (a b c : FromClause) :
+theorem cross_join_assoc_cardinality (db : Database) (a b c : FromClause) :
     let abc1 := evalFrom db (.join (.join a .cross b none) .cross c none)
     let abc2 := evalFrom db (.join a .cross (.join b .cross c none) none)
-    abc1.length = abc2.length
+    abc1.length = abc2.length := by
+  simp only []
+  have h1 := cross_join_cardinality db (.join a .cross b none) c
+  have h2 := cross_join_cardinality db a (.join b .cross c none)
+  have hab := cross_join_cardinality db a b
+  have hbc := cross_join_cardinality db b c
+  simp only [] at h1 h2 hab hbc
+  rw [h1, h2, hab, hbc, Nat.mul_assoc]
 
 /-- INNER JOIN condition can be moved to WHERE (join-to-where conversion) -/
-axiom inner_join_to_where (db : Database) (t1 t2 : TableRef) (cond : Expr) :
+theorem inner_join_to_where (db : Database) (t1 t2 : TableRef) (cond : Expr) :
     let joinFrom := FromClause.join (.table t1) .inner (.table t2) (some cond)
     let crossFrom := FromClause.join (.table t1) .cross (.table t2) none
     let joinResult := evalFrom db joinFrom
     let crossFiltered := (evalFrom db crossFrom).filter fun row =>
       evalExprWithDb db row cond == some (.bool true)
-    joinResult = crossFiltered
+    joinResult = crossFiltered := by
+  simp only []
+  rw [evalFrom_inner_join, evalFrom_cross_join]; simp only []
+  rw [List.filter_flatMap]
+  congr 1; funext lr
+  generalize evalFrom db (.table t2) = rightRows
+  induction rightRows with
+  | nil => simp
+  | cons rr rest ih =>
+    simp only [List.filterMap_cons, List.map_cons, List.filter_cons]
+    generalize hv : evalExprWithDb db (lr ++ rr) cond = v
+    cases v with
+    | none => simp; exact ih
+    | some val =>
+      cases val with
+      | bool b => cases b <;> simp <;> exact ih
+      | int _ => simp; exact ih
+      | string _ => simp; exact ih
+      | null _ => simp; exact ih
 
 /-- LEFT JOIN preserves all left rows: every left row appears in the result -/
 axiom left_join_preserves_left (db : Database) (a b : FromClause) (on_ : Option Expr) :
