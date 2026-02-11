@@ -1836,6 +1836,37 @@ This blocked `congr`, `funext`, and `generalize` which couldn't see through the 
 Fix: add `simp only` immediately after each `rw [evalFrom_*_join]` to unfold the `let`
 binding. Applied uniformly to all 7 proofs.
 
+### PR review follow-up #3 (Copilot #120)
+
+One comment: the `evalFrom_left_join` test only exercised the `matchingRows.isEmpty` branch
+(FALSE condition → no matches → NULL padding). The axiom has three branches:
+
+1. `on_ = some cond` where `cond` evaluates true for some rows → `else matchingRows`
+2. `on_ = some cond` where no rows match → `if matchingRows.isEmpty` → NULL padding
+3. `on_ = none` → all rows combine (effectively a cross join)
+
+Only branch 2 was tested. Added two more test cases:
+- Real predicate (`users.id = orders.user_id`): user 1 matches 2 orders, user 2 matches 1,
+  user 3 gets NULL-padded. Exercises both the match and NULL-padding paths in a single query.
+- `on_ = none`: all right rows combine with each left row, no filtering.
+
+### Lesson: sweep means enumerate
+
+This PR took 3 review rounds, each catching instances of the same pattern left unfixed:
+
+| Round | Fix applied to | Missed |
+|-------|---------------|--------|
+| #1 | Hoist `rightRows` in left_join axiom | cross_join, inner_join axioms |
+| #2 | Hoist in all 3 axioms | Corresponding tests; also docstrings |
+| #2 | Fix docstrings, fix tests | — |
+| #3 | — | Left join test only covered 1 of 3 branches |
+
+The principle "sweep for the same pattern" was already in MEMORY.md from PR #101, but
+"sweep" was interpreted as "glance around for obvious copies." What it actually requires
+is **mechanical enumeration**: list every instance, check each one. For tests, this means
+one test per match arm minimum. For structural changes (like hoisting a `let`), this means
+grep for every occurrence of the old pattern across axioms *and* tests *and* docstrings.
+
 ---
 
 ## Current Status Summary (2026-02-11, post-Batch 17)
