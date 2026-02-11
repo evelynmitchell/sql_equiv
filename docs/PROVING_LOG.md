@@ -1869,13 +1869,13 @@ grep for every occurrence of the old pattern across axioms *and* tests *and* doc
 
 ---
 
-## Current Status Summary (2026-02-11, post-Batch 17)
+## Current Status Summary (2026-02-11, post-Batch 18)
 
 ### Axiom/theorem counts
 
-- **91 axioms** remaining (across all .lean files in SqlEquiv/)
-- **~298 theorems** proved (76.6%)
-- Axiom ratchet: 91 (in `tools/axiom_count_minimum.txt`)
+- **85 axioms** remaining (across all .lean files in SqlEquiv/)
+- **~305 theorems** proved (78.2%)
+- Axiom ratchet: 85 (in `tools/axiom_count_minimum.txt`)
 
 ### All issues with proved axioms
 
@@ -1898,9 +1898,77 @@ grep for every occurrence of the old pattern across axioms *and* tests *and* doc
 | #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
 | #61 | 5 CASE/WHEN | #85 |
 | #62 | 7 string function axioms (all) | #102, #105, #107, #109 |
+| #69 | 7 join cardinality axioms | — |
 | #70 | 7 join edge cases (empty, TRUE/FALSE conditions) | #120 |
 | #72 | `filter_false_empty'` (1 of 4) | #116 |
 | #79 | 3 ORDER BY | #115 |
 | #80 | 5 LIMIT | #115 |
 | #81 | 5+3 OFFSET/pagination | #115 |
 | — | `flattenAnd_nonempty`, `flattenOr_nonempty` | #112 |
+
+---
+
+## Batch 18: Join Cardinality Axioms (#69) — 7 axioms → theorems
+
+**Branch**: `claude/prove-join-cardinality-axioms`
+
+### Infrastructure axiom added (1)
+
+- **`evalFrom_right_join`** (`Semantics.lean`): decomposes RIGHT JOIN into
+  `(evalFrom db right).flatMap` with NULL-padding fallback for unmatched right rows.
+  Mirrors the `.right` case of `evalFrom` (lines 383-398).
+
+### Axioms proved (7)
+
+**cross_join_cardinality**: `|A × B| = |A| * |B|`.
+After `rw [evalFrom_cross_join]; simp only []`, apply `List.length_flatMap_const` showing
+each body has length `(evalFrom db b).length` via `List.length_map`.
+
+**cross_join_cardinality_comm**: `|A × B| = |B × A|`.
+Two applications of `cross_join_cardinality` + `Nat.mul_comm`.
+
+**cross_join_assoc_cardinality**: `|(A × B) × C| = |A × (B × C)|`.
+Four applications of `cross_join_cardinality` (on nested joins) + `Nat.mul_assoc`.
+
+**inner_join_cardinality_le**: `|A ⋈ B| ≤ |A| * |B|`.
+After `rw [evalFrom_inner_join]; simp only []`, apply `List.length_flatMap_le` showing
+each filterMap body has length ≤ `(evalFrom db b).length` via `List.length_filterMap_le`.
+
+**left_join_cardinality_ge**: `|A ⟕ B| ≥ |A|`.
+After `rw [evalFrom_left_join]; simp only []`, apply `List.length_flatMap_ge_length` showing
+each body produces ≥ 1 row via `left_join_body_length_ge_one` (if empty → singleton, else non-empty).
+
+**right_join_cardinality_ge**: `|A ⟖ B| ≥ |B|`.
+Same structure as left, using `evalFrom_right_join` and `right_join_body_length_ge_one`.
+
+**inner_join_to_where**: `A ⋈[cond] B = (A × B) WHERE cond`.
+After rewriting both sides with `evalFrom_inner_join`/`evalFrom_cross_join` and distributing
+filter via `List.filter_flatMap`, reduce to per-element equality by `congr 1; funext lr`.
+Induction on right rows, then `generalize` the `evalExprWithDb` result and case-split on
+all `Value` constructors. For `some (.bool true)`, both sides produce `(lr ++ rr) :: tail`;
+for all others, both produce just `tail`. `simp` reduces the match and BEq in each case.
+
+### Helper lemmas added (5)
+
+All private, in `StatementAxioms.lean`:
+- `List.length_flatMap_const`: `∀ x ∈ l, (f x).length = n → (l.flatMap f).length = l.length * n`
+- `List.length_flatMap_le`: `∀ x ∈ l, (f x).length ≤ n → ... ≤ l.length * n`
+- `List.length_flatMap_ge_length`: `∀ x ∈ l, (f x).length ≥ 1 → ... ≥ l.length`
+- `left_join_body_length_ge_one`: left join body (if/match) always produces ≥ 1 row
+- `right_join_body_length_ge_one`: same for right join
+
+### Key proof techniques
+
+1. **`List.length_flatMap_*` helpers** factor out the inductive argument once, then each
+   cardinality theorem is a 3-line proof: rewrite + simp + apply helper + show per-element bound.
+2. **`Nat.add_mul` + `Nat.one_mul` + `Nat.add_comm`** replaces `ring` (unavailable without Mathlib)
+   for the step `n + rest.length * n = (rest.length + 1) * n`.
+3. **Generalize + case-split on `Value` constructors** for `inner_join_to_where`: avoids needing
+   to prove a rewrite lemma bridging `match v with | some (.bool true) => ...` and `v == some (.bool true)`.
+   After `generalize hv : evalExprWithDb ... = v; cases v`, each case is closed by `simp; exact ih`.
+
+### Verification
+
+- 229/229 tests pass (3 new `evalFrom_right_join` tests)
+- 100% axiom coverage (85/85)
+- Ratchet: 91 → 85 (7 proved - 1 infrastructure added = net 6 reduction)
