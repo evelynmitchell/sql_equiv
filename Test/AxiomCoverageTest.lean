@@ -1768,7 +1768,7 @@ def infrastructureAxiomTests : List TestResult :=
       [.exprItem .countStar (some "cnt")]
       (some (.table ⟨"users", none⟩))
       (some (.lit (.bool false))) [] none [] none none
-    testLengthEq "evalSelect_filter_all_false (aggregate WHERE FALSE = 1 row)"
+    testLengthEq "evalSelect_agg_where_false_not_empty (aggregate WHERE FALSE = 1 row)"
       (evalSelect testDb selAggFalse).length
       1
   ]
