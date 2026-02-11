@@ -1440,70 +1440,13 @@ Using the same operators avoids bridging boilerplate at every call site.
 
 ---
 
-## Batch 15: Phase 4 — Set Operation Axioms — 4 proved, 9 documented unsound
-
-**Branch**: `claude/prove-phase2-where-filter-axioms` | **PR**: TBD
-**Date**: 2026-02-11
-
-### Infrastructure axioms added
-
-| Axiom | Purpose |
-|-------|---------|
-| `evalQuery_simple` | Decomposes `evalQuery db (.simple sel)` to `evalSelect db sel` |
-| `evalQuery_compound` | Decomposes `evalQuery db (.compound left op right)` to list operations |
-
-### Dependencies added
-
-- `LawfulBEq SqlType` (derived via `ReflBEq` + `LawfulBEq`)
-- `LawfulBEq Value` (derived via `ReflBEq` + `LawfulBEq`)
-
-These are needed for `List.contains_iff_mem` which bridges `List.contains` to `∈`.
-
-### Axioms proved (4)
-
-| Axiom | Statement | Approach |
-|-------|-----------|----------|
-| `union_all_length` | `\|A UNION ALL B\| = \|A\| + \|B\|` | `evalQuery_compound` + `List.length_append` |
-| `except_self_empty` | `A EXCEPT A = []` | `List.filter_eq_nil_iff` + `List.contains_iff_mem` |
-| `intersect_empty_right` | `A INTERSECT empty = []` | `evalSelect_filter_all_false` for empty select |
-| `intersect_idempotent` | `A INTERSECT A = A` | `List.filter_eq_self` + `List.contains_iff_mem` |
-
-### Unsound axioms documented (9)
-
-The remaining 9 set operation axioms are **unsound** under our exact-list-equality
-semantics. `List.eraseDups` keeps first-occurrence order, and `List.filter` preserves
-left-side order, so commutativity/associativity/distributivity fail.
-
-| Axiom | Counterexample |
-|-------|----------------|
-| `union_comm` | `[r1]++[r2]` eraseDups = `[r1,r2]` vs `[r2,r1]` |
-| `union_all_comm` | `[r1]++[r2] ≠ [r2]++[r1]` |
-| `intersect_comm` | filter preserves left-side ordering |
-| `union_assoc` | eraseDups ordering differs |
-| `intersect_assoc` | filter ordering differs |
-| `union_idempotent` | `(a++a).eraseDups ≠ a` when a has dupes |
-| `union_empty_right` | `(a++[]).eraseDups ≠ a` when a has dupes |
-| `union_intersect_distrib` | ordering |
-| `intersect_union_distrib` | ordering |
-
-Each axiom now has an `⚠ UNSOUND` docstring warning with a counterexample.
-
-### Proof techniques
-
-- `simp only [evalQuery_compound, evalQuery_simple]` — decomposes compound queries
-- `List.filter_eq_nil_iff` + `List.filter_eq_self` — characterize filter results
-- `List.contains_iff_mem` (requires `LawfulBEq`) — bridges `contains` to `∈`
-- `evalSelect_filter_all_false` + `evalExprWithDb_lit` — proves empty select returns `[]`
-
----
-
-## Current Status Summary (2026-02-11, post-Batch 15)
+## Current Status Summary (2026-02-11, post-PR #116)
 
 ### Axiom/theorem counts
 
-- **104 axioms** remaining (across all .lean files in SqlEquiv/)
-- **282 theorems** proved (73.1%)
-- Axiom ratchet: 104 (in `tools/axiom_count_minimum.txt`)
+- **106 axioms** remaining (across all .lean files in SqlEquiv/)
+- **278 theorems** proved (72.4%)
+- Axiom ratchet: 106 (in `tools/axiom_count_minimum.txt`)
 
 ### All issues with proved axioms
 
