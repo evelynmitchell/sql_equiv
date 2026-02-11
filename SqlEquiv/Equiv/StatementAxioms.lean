@@ -249,46 +249,6 @@ private theorem right_join_body_length_ge_one (matchingRows : List Row) (leftHea
   | nil => simp; cases leftHead <;> simp
   | cons _ _ => simp
 
-/-- Bridge: compiled joint match ↔ source let+match for join filterMap (left) -/
-private theorem join_filterMap_eq (db : Database) (on_ : Option Expr) (lr : Row)
-    (rightRows : List Row) :
-    (rightRows.filterMap fun rr =>
-      match on_, lr, rr with
-      | none, _, _ => some (lr ++ rr)
-      | some cond, _, _ =>
-        match evalExprWithDb db (lr ++ rr) cond with
-        | some (Value.bool true) => some (lr ++ rr)
-        | _ => none) =
-    (rightRows.filterMap fun rr =>
-      let combined := lr ++ rr
-      match on_ with
-      | none => some combined
-      | some cond =>
-        match evalExprWithDb db combined cond with
-        | some (.bool true) => some combined
-        | _ => none) := by
-  congr 1; funext _; cases on_ <;> rfl
-
-/-- Bridge: compiled joint match ↔ source let+match for join filterMap (right) -/
-private theorem join_filterMap_eq_right (db : Database) (on_ : Option Expr) (rr : Row)
-    (leftRows : List Row) :
-    (leftRows.filterMap fun lr =>
-      match on_, lr, rr with
-      | none, _, _ => some (lr ++ rr)
-      | some cond, _, _ =>
-        match evalExprWithDb db (lr ++ rr) cond with
-        | some (Value.bool true) => some (lr ++ rr)
-        | _ => none) =
-    (leftRows.filterMap fun lr =>
-      let combined := lr ++ rr
-      match on_ with
-      | none => some combined
-      | some cond =>
-        match evalExprWithDb db combined cond with
-        | some (.bool true) => some combined
-        | _ => none) := by
-  congr 1; funext _; cases on_ <;> rfl
-
 /-- Helper: if f(a) has ≥ 1 element and all elements satisfy P, then ∃ b ∈ l.flatMap f, P b -/
 private theorem exists_mem_flatMap_of_length_ge_one {α β : Type} (f : α → List β)
     (l : List α) (a : α) (ha : a ∈ l) (P : β → Prop)
@@ -297,64 +257,6 @@ private theorem exists_mem_flatMap_of_length_ge_one {α β : Type} (f : α → L
   have hNE := List.ne_nil_of_length_pos (by omega : 0 < (f a).length)
   obtain ⟨b, hb⟩ := List.exists_mem_of_ne_nil _ hNE
   exact ⟨b, List.mem_flatMap.mpr ⟨a, ha, hb⟩, hP b hb⟩
-
-/-- Every element of the inner-join filterMap has the form lr ++ rr -/
-private theorem filterMap_join_mem_append (lr : Row) (rightRows : List Row)
-    (db : Database) (on_ : Option Expr)
-    (mr : Row)
-    (hmr : mr ∈ rightRows.filterMap fun rr =>
-      let combined := lr ++ rr
-      match on_ with
-      | none => some combined
-      | some cond =>
-        match evalExprWithDb db combined cond with
-        | some (.bool true) => some combined
-        | _ => none) :
-    ∃ rr, mr = lr ++ rr := by
-  rw [List.mem_filterMap] at hmr
-  obtain ⟨rr, _, hf⟩ := hmr
-  cases on_ with
-  | none => exact ⟨rr, by simp_all⟩
-  | some cond =>
-    simp only at hf
-    generalize hv : evalExprWithDb db (lr ++ rr) cond = v at hf
-    cases v with
-    | none => simp at hf
-    | some val =>
-      cases val with
-      | bool b => cases b <;> simp at hf; exact ⟨rr, hf.symm⟩
-      | int _ => simp at hf
-      | string _ => simp at hf
-      | null _ => simp at hf
-
-/-- Every element of the right-join filterMap has the form lr ++ rr -/
-private theorem filterMap_join_mem_append_right (rr : Row) (leftRows : List Row)
-    (db : Database) (on_ : Option Expr)
-    (mr : Row)
-    (hmr : mr ∈ leftRows.filterMap fun lr =>
-      let combined := lr ++ rr
-      match on_ with
-      | none => some combined
-      | some cond =>
-        match evalExprWithDb db combined cond with
-        | some (.bool true) => some combined
-        | _ => none) :
-    ∃ lr, mr = lr ++ rr := by
-  rw [List.mem_filterMap] at hmr
-  obtain ⟨lr, _, hf⟩ := hmr
-  cases on_ with
-  | none => exact ⟨lr, by simp_all⟩
-  | some cond =>
-    simp only at hf
-    generalize hv : evalExprWithDb db (lr ++ rr) cond = v at hf
-    cases v with
-    | none => simp at hf
-    | some val =>
-      cases val with
-      | bool b => cases b <;> simp at hf; exact ⟨lr, hf.symm⟩
-      | int _ => simp at hf
-      | string _ => simp at hf
-      | null _ => simp at hf
 
 /-- INNER JOIN with ON TRUE is equivalent to CROSS JOIN -/
 theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
