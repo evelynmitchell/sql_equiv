@@ -362,8 +362,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 107 axioms remaining (86 in Equiv/, 21 in infrastructure files), 275 theorems proved (72.0%).
-Axiom ratchet: 107 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 106 axioms remaining, 278 theorems proved (72.4%).
+Axiom ratchet: 106 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -372,7 +372,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
 | 1c | IN / BETWEEN / LIKE | 7 | ~4 | Easy-Medium |
 | 1d | String/Function | 8 | 0 (done) | -- |
-| 2 | Statement-level filter/WHERE | 0 | ~7 | Medium |
+| 2 | Statement-level filter/WHERE | 3 | ~4 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
@@ -381,9 +381,9 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 0 | 13 | N/A |
+| infra | Infrastructure (Semantics.lean) | 0 | 15 | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
-| | **Total** | **~91** | **~96** | |
+| | **Total** | **~92** | **~97** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
@@ -425,12 +425,12 @@ decision first (see "Unsound Axiom Strategy" below).
 
 | Order | Issue | Description | Axioms | Difficulty |
 |:-----:|-------|-------------|:------:|------------|
-| 15 | [#51](https://github.com/evelynmitchell/sql_equiv/issues/51) | `where_true_elim`, `where_false_empty` | 2 | Medium |
-| 16 | [#72](https://github.com/evelynmitchell/sql_equiv/issues/72) | Filter composition rules | 4 | Medium |
+| 15 | [#51](https://github.com/evelynmitchell/sql_equiv/issues/51) | `where_true_elim`, `where_false_empty` | 2 | **Proved** (PR #116) |
+| 16 | [#72](https://github.com/evelynmitchell/sql_equiv/issues/72) | Filter composition rules | 4 | 1 **proved** (PR #116: `filter_false_empty'`); 3 blocked (subquery double-qualification) |
 | 17 | [#82](https://github.com/evelynmitchell/sql_equiv/issues/82) | Aggregate properties | 4 | Medium |
-| 18 | [#79](https://github.com/evelynmitchell/sql_equiv/issues/79) | ORDER BY properties | 5 | Easy-Medium |
-| 19 | [#80](https://github.com/evelynmitchell/sql_equiv/issues/80) | LIMIT properties | 5 | Easy-Medium |
-| 20 | [#81](https://github.com/evelynmitchell/sql_equiv/issues/81) | OFFSET/pagination | 5 | Easy-Medium |
+| 18 | [#79](https://github.com/evelynmitchell/sql_equiv/issues/79) | ORDER BY properties | 5 | 3 **proved** (PR #115); 2 axioms |
+| 19 | [#80](https://github.com/evelynmitchell/sql_equiv/issues/80) | LIMIT properties | 5 | **Proved** (PR #115) |
+| 20 | [#81](https://github.com/evelynmitchell/sql_equiv/issues/81) | OFFSET/pagination | 5 | **Proved** (PR #115) |
 | 21 | [#63](https://github.com/evelynmitchell/sql_equiv/issues/63) | Set operation commutativity | 3 | Medium |
 | 22 | [#64](https://github.com/evelynmitchell/sql_equiv/issues/64) | Set operation assoc/distrib | 4 | Medium |
 | 23 | [#65](https://github.com/evelynmitchell/sql_equiv/issues/65) | Set operation edge cases | 5 | Medium |
@@ -487,6 +487,8 @@ bridges that let proofs access the evaluation semantics.
 | `evalCase_cons_false` | #61 CASE/WHEN | False condition → skip to rest |
 | `evalExprWithDb_func` | #62 String functions | Unfold function call to `evalFunc` |
 | `evalExprWithDb_between` | #59 BETWEEN | Unfold BETWEEN expression |
+| `evalSelect_where_congr` | #51 WHERE | Congruence: same filtering → same result |
+| `evalSelect_filter_all_false` | #51 WHERE | Always-false filter → empty result (no agg) |
 
 New infrastructure axioms should be added to this table as they are created.
 All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
