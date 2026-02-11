@@ -1878,6 +1878,50 @@ def infrastructureAxiomTests : List TestResult :=
     if leftResult == manualLeft
     then .pass "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
     else .fail "evalFrom_left_join (LEFT JOIN ON FALSE = NULL padding)"
+      s!"Results differ: {leftResult.length} vs {manualLeft.length} rows",
+
+    -- evalFrom_left_join: LEFT JOIN with real predicate (some matches, some NULL-padded)
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    -- users.id = orders.user_id — user 1 matches 2 orders, user 2 matches 1, user 3 matches 0
+    let cond := Expr.binOp .eq (qcol "users" "id") (qcol "orders" "user_id")
+    let leftResult := evalFrom testDb (.join tU .left tO (some cond))
+    let rightRows := evalFrom testDb tO
+    let manualLeft := (evalFrom testDb tU).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        match evalExprWithDb testDb combined cond with
+        | some (.bool true) => some combined
+        | _ => none
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+    if leftResult == manualLeft
+    then .pass "evalFrom_left_join (LEFT JOIN with matches and NULL padding)"
+    else .fail "evalFrom_left_join (LEFT JOIN with matches and NULL padding)"
+      s!"Results differ: {leftResult.length} vs {manualLeft.length} rows",
+
+    -- evalFrom_left_join: LEFT JOIN with on_ = none (all rows combine, no NULL padding)
+    let tU := FromClause.table ⟨"users", none⟩
+    let tO := FromClause.table ⟨"orders", none⟩
+    let leftResult := evalFrom testDb (.join tU .left tO none)
+    let rightRows := evalFrom testDb tO
+    let manualLeft := (evalFrom testDb tU).flatMap fun lr =>
+      let matchingRows := rightRows.filterMap fun rr =>
+        let combined := lr ++ rr
+        some combined
+      if matchingRows.isEmpty then
+        match rightRows.head? with
+        | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
+        | none => [lr]
+      else
+        matchingRows
+    if leftResult == manualLeft
+    then .pass "evalFrom_left_join (LEFT JOIN with no ON = cross)"
+    else .fail "evalFrom_left_join (LEFT JOIN with no ON = cross)"
       s!"Results differ: {leftResult.length} vs {manualLeft.length} rows"
   ]
 
