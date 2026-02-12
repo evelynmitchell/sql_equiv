@@ -51,7 +51,7 @@ def count_declarations():
     for lean_file in sorted(SQLEQUIV.rglob("*.lean")):
         file_axioms = 0
         file_theorems = 0
-        with open(lean_file) as f:
+        with open(lean_file, encoding="utf-8") as f:
             for line in f:
                 if re.match(r"^\s*(?:private\s+)?axiom\s", line):
                     file_axioms += 1
@@ -94,7 +94,7 @@ def generate_table(rows):
 
 def update_audit_tables(audit_path, per_file, total_axioms, total_theorems):
     """Regenerate the per-file tables in theorem_coverage_audit_plan.md."""
-    text = audit_path.read_text()
+    text = audit_path.read_text(encoding="utf-8")
     original = text
 
     # Build equiv rows
@@ -153,19 +153,19 @@ def update_audit_tables(audit_path, per_file, total_axioms, total_theorems):
     )
 
     if text != original:
-        audit_path.write_text(text)
+        audit_path.write_text(text, encoding="utf-8")
         return True
     return False
 
 
 def update_file(path, replacements):
     """Apply regex replacements to a file. Returns True if changed."""
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     original = text
     for pattern, repl in replacements:
         text = re.sub(pattern, repl, text)
     if text != original:
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
         return True
     return False
 
@@ -211,9 +211,9 @@ def main():
     # --- tools/axiom_count_minimum.txt (ratchet: only decrease) ---
     ratchet_path = ROOT / "tools" / "axiom_count_minimum.txt"
     if ratchet_path.exists():
-        old_ratchet = int(ratchet_path.read_text().strip())
+        old_ratchet = int(ratchet_path.read_text(encoding="utf-8").strip())
         if total < old_ratchet:
-            ratchet_path.write_text(f"{total}\n")
+            ratchet_path.write_text(f"{total}\n", encoding="utf-8")
             changed.append(str(ratchet_path.relative_to(ROOT)))
             print(f"  Ratchet decreased: {old_ratchet} -> {total}")
         elif total > old_ratchet:

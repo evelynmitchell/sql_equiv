@@ -57,7 +57,10 @@ def main() -> int:
             continue
         unused = check_file(f)
         if unused:
-            rel = str(f.relative_to(PROJECT_ROOT)) if f.is_relative_to(PROJECT_ROOT) else str(f)
+            try:
+                rel = str(f.relative_to(PROJECT_ROOT))
+            except ValueError:
+                rel = str(f)
             for lineno, name in unused:
                 print(f"  {rel}:{lineno}: unused private `{name}`")
             total_unused += len(unused)

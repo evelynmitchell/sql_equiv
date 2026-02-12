@@ -36,7 +36,7 @@ done
 
 if [ -n "$matched" ]; then
     printf "\n\033[1;33m⚠  Optimizer/evaluator files staged:\033[0m\n"
-    printf "$matched"
+    printf '%b' "$matched"
 
     # Run rewrite audit validator automatically
     printf "\n\033[1;36m   Running rewrite audit validator...\033[0m\n\n"
