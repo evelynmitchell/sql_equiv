@@ -2259,3 +2259,52 @@ These axioms were blocked on Issue #124 and are now provable via the new
 - 100% axiom coverage (85/85)
 - All 8 regressed axioms have runtime tests confirming SQL-correct behavior
 - LSpec De Morgan and associativity tests restricted to `BoolGroundExpr`
+
+---
+
+## Batch 22: IN-list Axioms Proved — 6 axioms → theorems
+
+**Branch**: `claude/prove-in-list-axioms` | **PR**: TBD
+**Date**: 2026-02-12
+
+### Motivation
+
+Batch 21 (PR #125) rewrote the `inList` evaluator to use `foldl` + `evalBinOp .or/.eq`
+semantics and unblocked 6 IN-list axioms for proof. This batch converts them all to theorems.
+
+### Private helpers added (5)
+
+| Helper | Purpose |
+|--------|---------|
+| `or_false_map_bool` | `OR(false, Option.map Value.bool o) = Option.map Value.bool o` |
+| `evalBinOp_or_false_left_eq` | `OR(false, EQ(l, r)) = EQ(l, r)` — identity for foldl initial accumulator |
+| `not_map_bool_is_map_not_bool` | `NOT(Option.map Value.bool o) = Option.map (fun b => !b) o` |
+| `not_eq_is_ne_val` | `NOT(EQ(l, r)) = NE(l, r)` — local copy (canonical version defined later in file) |
+| `eval_foldl_or_eq` | Bridges value-level foldl to expression-level foldl (induction on list) |
+| `not_foldl_or_eq_is_foldl_and_ne` | NOT of OR-eq foldl = AND-ne foldl (De Morgan + induction) |
+
+### Axioms proved (6)
+
+| Axiom → Theorem | Proof technique |
+|------------------|-----------------|
+| `in_singleton` | Unfold inList, reduce foldl on `[a]`, apply `evalBinOp_or_false_left_eq` |
+| `not_in_singleton` | Same + `not_eq_is_ne_val` |
+| `in_pair` | Unfold inList, reduce foldl on `[a, b]`, collapse inner OR(false, _) |
+| `not_in_pair` | Same + De Morgan (`evalUnaryOp_not_or`) + `not_eq_is_ne_val` |
+| `in_list_or_expansion` | `eval_foldl_or_eq` bridges foldl levels, `evalExprWithDb_lit` for base case |
+| `not_in_list_and_expansion` | `not_foldl_or_eq_is_foldl_and_ne` with `NOT(false) = true` base |
+
+### Dependencies on existing axioms
+
+- `evalExprWithDb_inList`, `evalExprWithDb_binOp`, `evalExprWithDb_lit` — infrastructure axioms
+- `evalUnaryOp_not_or` — De Morgan axiom (ValueLemmas.lean), used by `not_in_pair` and `not_foldl_or_eq_is_foldl_and_ne`
+
+### Net axiom count change
+
+- **6 axioms → theorems**: -6
+- **Net**: 85 → 79 axioms
+
+### Verification
+
+- 231/231 tests pass
+- 97.5% axiom coverage (77/79) — 2 uncovered: `evalUnaryOp_not_and`, `evalUnaryOp_not_or` (value-level De Morgan, known uncoverable at value level)
