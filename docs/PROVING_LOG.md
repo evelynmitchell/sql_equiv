@@ -2272,14 +2272,14 @@ These axioms were blocked on Issue #124 and are now provable via the new
 Batch 21 (PR #125) rewrote the `inList` evaluator to use `foldl` + `evalBinOp .or/.eq`
 semantics and unblocked 6 IN-list axioms for proof. This batch converts them all to theorems.
 
-### Private helpers added (6)
+### Private helpers (6, including 2 moved lemmas)
 
 | Helper | Purpose |
 |--------|---------|
 | `or_false_map_bool` | `OR(false, Option.map Value.bool o) = Option.map Value.bool o` |
 | `evalBinOp_or_false_left_eq` | `OR(false, EQ(l, r)) = EQ(l, r)` — identity for foldl initial accumulator |
-| `not_map_bool_is_map_not_bool` | `NOT(Option.map Value.bool o) = Option.map (fun b => !b) o` |
-| `not_eq_is_ne_val` | `NOT(EQ(l, r)) = NE(l, r)` — local copy (canonical version defined later in file) |
+| `not_map_bool_eq` | `NOT(Option.map Value.bool o) = Option.map (fun b => !b) o` (moved earlier in file) |
+| `evalUnaryOp_not_eq` | `NOT(EQ(l, r)) = NE(l, r)` (moved earlier in file) |
 | `eval_foldl_or_eq` | Bridges value-level foldl to expression-level foldl (induction on list) |
 | `not_foldl_or_eq_is_foldl_and_ne` | NOT of OR-eq foldl = AND-ne foldl (De Morgan + induction) |
 
@@ -2288,9 +2288,9 @@ semantics and unblocked 6 IN-list axioms for proof. This batch converts them all
 | Axiom → Theorem | Proof technique |
 |------------------|-----------------|
 | `in_singleton` | Unfold inList, reduce foldl on `[a]`, apply `evalBinOp_or_false_left_eq` |
-| `not_in_singleton` | Same + `not_eq_is_ne_val` |
+| `not_in_singleton` | Same + `evalUnaryOp_not_eq` |
 | `in_pair` | Unfold inList, reduce foldl on `[a, b]`, collapse inner OR(false, _) |
-| `not_in_pair` | Same + De Morgan (`evalUnaryOp_not_or`) + `not_eq_is_ne_val` |
+| `not_in_pair` | Same + De Morgan (`evalUnaryOp_not_or`) + `evalUnaryOp_not_eq` |
 | `in_list_or_expansion` | `eval_foldl_or_eq` bridges foldl levels, `evalExprWithDb_lit` for base case |
 | `not_in_list_and_expansion` | `not_foldl_or_eq_is_foldl_and_ne` with `NOT(false) = true` base |
 
