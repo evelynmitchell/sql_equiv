@@ -2264,7 +2264,7 @@ These axioms were blocked on Issue #124 and are now provable via the new
 
 ## Batch 22: IN-list Axioms Proved — 6 axioms → theorems
 
-**Branch**: `claude/prove-in-list-axioms` | **PR**: TBD
+**Branch**: `claude/prove-in-list-axioms` | **PR**: #126
 **Date**: 2026-02-12
 
 ### Motivation

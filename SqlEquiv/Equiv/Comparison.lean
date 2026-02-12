@@ -993,6 +993,30 @@ theorem expr_sub_zero (e : Expr) (h : e.isIntValued) :
   rw [Int.sub_zero]
 
 -- ============================================================================
+-- Value-level helpers for comparison negation (moved before IN-list section)
+-- ============================================================================
+
+-- NOT of a comparison result: NOT (bool b) = bool (!b), NOT none = none
+private theorem not_map_bool_eq (o : Option Bool) :
+    evalUnaryOp .not (o.map Value.bool) = o.map (fun b => Value.bool (!b)) := by
+  match o with
+  | some true => rfl
+  | some false => rfl
+  | none => rfl
+
+-- NOT(EQ(l, r)) = NE(l, r) at value level
+-- With Option 3 null semantics, null cases need explicit splits because
+-- NOT(null) = null = negated_comparison(null, _), both sides `some (.null none)`.
+private theorem evalUnaryOp_not_eq (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_bool_eq _)
+
+-- ============================================================================
 -- IN List Theorems
 -- ============================================================================
 
@@ -1031,21 +1055,6 @@ private theorem evalBinOp_or_false_left_eq (l r : Option Value) :
     | some w => cases v <;> cases w <;>
       first | rfl | (simp only [evalBinOp]; exact or_false_map_bool _)
 
--- Value-level helper: NOT(Option.map Value.bool o) = Option.map (fun b => Value.bool (!b)) o
-private theorem not_map_bool_is_map_not_bool (o : Option Bool) :
-    evalUnaryOp .not (o.map Value.bool) = o.map (fun b => Value.bool (!b)) := by
-  cases o with | none => rfl | some b => cases b <;> rfl
-
--- Value-level helper: NOT(EQ(l, r)) = NE(l, r) (local copy; the canonical version is below)
-private theorem not_eq_is_ne_val (l r : Option Value) :
-    evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
-  cases l with
-  | none => cases r with | none => rfl | some v => cases v <;> rfl
-  | some v => cases r with
-    | none => cases v <;> rfl
-    | some w => cases v <;> cases w <;>
-      first | rfl | (simp only [evalBinOp]; exact not_map_bool_is_map_not_bool _)
-
 -- Helper: foldl of evalBinOp matches foldl of Expr constructors
 private theorem eval_foldl_or_eq (db : Database) (row : Row) (e : Expr) (vals : List Expr) (acc_expr : Expr) :
     vals.foldl (fun a vi => evalBinOp .or a (evalBinOp .eq (evalExprWithDb db row e) (evalExprWithDb db row vi)))
@@ -1081,7 +1090,7 @@ private theorem not_foldl_or_eq_is_foldl_and_ne (db : Database) (row : Row) (e :
         (evalBinOp .ne (evalExprWithDb db row e) (evalExprWithDb db row v)) =
         evalExprWithDb db row (Expr.binOp .and acc_expr (Expr.binOp .ne e v)) := by
       rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
-    rw [h_acc, not_eq_is_ne_val, step]
+    rw [h_acc, evalUnaryOp_not_eq, step]
 
 /-- x IN (a) = (x = a) (singleton IN list). -/
 theorem in_singleton (e a : Expr) :
@@ -1100,7 +1109,7 @@ theorem not_in_singleton (e a : Expr) :
   rw [evalExprWithDb_inList, evalExprWithDb_binOp]
   simp [List.foldl]
   rw [evalBinOp_or_false_left_eq]
-  exact not_eq_is_ne_val _ _
+  exact evalUnaryOp_not_eq _ _
 
 /-- x IN (a, b) = (x = a OR x = b). -/
 theorem in_pair (e a b : Expr) :
@@ -1122,7 +1131,7 @@ theorem not_in_pair (e a b : Expr) :
   rw [evalExprWithDb_inList, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   simp [List.foldl]
   rw [evalBinOp_or_false_left_eq, evalUnaryOp_not_or]
-  congr 1 <;> exact not_eq_is_ne_val _ _
+  congr 1 <;> exact evalUnaryOp_not_eq _ _
 
 /-- IN list is equivalent to OR of equalities (general form) -/
 theorem in_list_or_expansion (e : Expr) (vals : List Expr) :
@@ -1546,14 +1555,7 @@ theorem ne_irreflexive (e : Expr) (h : e.evaluable) :
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, Value.eq]
 
--- Value-level helpers for comparison negation
--- NOT of a comparison result: NOT (bool b) = bool (!b), NOT none = none
-private theorem not_map_bool_eq (o : Option Bool) :
-    evalUnaryOp .not (o.map Value.bool) = o.map (fun b => Value.bool (!b)) := by
-  match o with
-  | some true => rfl
-  | some false => rfl
-  | none => rfl
+-- Value-level helpers for comparison negation (not_map_bool_eq moved to before IN-list section)
 
 private theorem not_map_bool_cancel (o : Option Bool) :
     evalUnaryOp .not (o.map (fun b => Value.bool (!b))) = o.map Value.bool := by
@@ -1598,17 +1600,7 @@ private theorem not_map_ordering_ne_lt (o : Option Ordering) :
   | some .gt => rfl
   | none => rfl
 
--- Value-level helpers for comparison negation (full Option Value)
--- With Option 3 null semantics, null cases need explicit splits because
--- NOT(null) = null = negated_comparison(null, _), both sides `some (.null none)`.
-private theorem evalUnaryOp_not_eq (l r : Option Value) :
-    evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
-  cases l with
-  | none => cases r with | none => rfl | some v => cases v <;> rfl
-  | some v => cases r with
-    | none => cases v <;> rfl
-    | some w => cases v <;> cases w <;>
-      first | rfl | (simp only [evalBinOp]; exact not_map_bool_eq _)
+-- evalUnaryOp_not_eq moved to before IN-list section
 
 private theorem evalUnaryOp_not_ne (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .ne l r) = evalBinOp .eq l r := by
