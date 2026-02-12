@@ -167,10 +167,10 @@ conflates "evaluation error" and "SQL NULL propagation" under the same `none`.
 
 | Issue | Axiom | Sound? | Problem |
 |-------|-------|--------|---------|
-| #58 | `in_empty_false` | **No** | `none ≠ some (.bool false)` when `e` evals to `none` |
-| #58 | `not_in_empty_true` | **No** | `none ≠ some (.bool true)` when `e` evals to `none` |
-| #58 | `in_singleton`, `not_in_singleton` | **No** | Requires `e` to produce `some` |
-| #58 | `in_pair`, `not_in_pair` | **No** | OR/AND short-circuit creates mismatch |
+| #58 | `in_empty_false` | **Proved** | PR #112 (was unsound, proved with infrastructure axiom) |
+| #58 | `not_in_empty_true` | **Proved** | PR #112 (was unsound, proved with infrastructure axiom) |
+| #58 | `in_singleton`, `not_in_singleton` | **Blocked #124** | `inList` evaluator uses `filterMap`/`any` (drops nulls/errors), OR chain propagates them |
+| #58 | `in_pair`, `not_in_pair` | **Blocked #124** | Same evaluator mismatch + missing OR/AND null rules |
 | #59 | `between_expansion` | **No** | AND short-circuit: `5 BETWEEN "x" AND 3` → `none` but RHS → `some (.bool false)` |
 | #59 | `not_between_expansion` | **No** | OR short-circuit, same class |
 | #60 | `like_match_all` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
@@ -1334,12 +1334,20 @@ for any string `s`, because `simpleLike` checks `pat == "%"` first (branch 1).
 
 `evalExprWithDb_inList` — unfolds `.inList` expression evaluation.
 
-### Soundness gap documented
+### Soundness gap documented → evaluator fix filed as #124
 
 The remaining IN axioms (`in_singleton`, `in_pair`, `in_list_or_expansion`, etc.)
 are unsound because `filterMap` in `evalExprWithDb` for IN lists handles evaluation
 errors differently from the OR/AND expansion. The expansion propagates `none` from
 individual comparisons, while `filterMap` silently drops them.
+
+**Resolution**: Filed [#124](https://github.com/evelynmitchell/sql_equiv/issues/124)
+to fix the root cause rather than adding heavy preconditions. Three sub-problems:
+(1) `evalBinOp .or/.and` missing SQL three-valued null rules (6 missing cases),
+(2) `inList` evaluator should use `foldl` over `evalBinOp .or/.eq` instead of
+`filterMap`/`any`, (3) `evalExprWithDb_inList` infrastructure axiom must match new
+definition. After #124, all 6 remaining IN-list axioms should be provable.
+Existing proofs `in_empty_false` and `not_in_empty_true` may need reproof.
 
 ---
 
@@ -1657,7 +1665,7 @@ than all 9 theorems combined.
 | #55 | 4 comparison flip | #85 |
 | #56 | `eq_reflexive`, `ne_irreflexive` | #92 |
 | #57 | 7 arithmetic identities | #93 |
-| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8) | #112 |
+| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8); 6 blocked on #124 | #112 |
 | #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109 |
 | #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
 | #61 | 5 CASE/WHEN | #85 |
@@ -1893,7 +1901,7 @@ grep for every occurrence of the old pattern across axioms *and* tests *and* doc
 | #55 | 4 comparison flip | #85 |
 | #56 | `eq_reflexive`, `ne_irreflexive` | #92 |
 | #57 | 7 arithmetic identities | #93 |
-| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8) | #112 |
+| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8); 6 blocked on #124 | #112 |
 | #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109 |
 | #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
 | #61 | 5 CASE/WHEN | #85 |
