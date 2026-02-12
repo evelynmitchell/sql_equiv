@@ -2125,3 +2125,49 @@ been a clean afternoon instead of a slog.
 - 229/229 tests pass
 - 100% axiom coverage (81/81)
 - Ratchet: 85 → 81 (4 axioms proved, 0 new infrastructure)
+
+---
+
+## Batch 20: Aggregate Property Axioms (#82) — 4 axioms → theorems
+
+**Branch**: `claude/prove-aggregate-axioms` | **PR**: #123
+**Date**: 2026-02-12
+
+### Axioms proved (4)
+
+| Axiom | Statement | Approach |
+|-------|-----------|----------|
+| `min_le_elem` | `ns.foldl min (ns.head!) ≤ n` for `n ∈ ns` | Match on `ns` to get `x :: xs`, apply `foldl_min_le_of_mem` |
+| `max_ge_elem` | `n ≤ ns.foldl max (ns.head!)` for `n ∈ ns` | Symmetric: match + `le_foldl_max_of_mem` |
+| `distinct_count_le` | `vs.eraseDups.length ≤ vs.length` | Strong induction on length; chain `eraseDups.length ≤ filter.length ≤ vs.length` |
+| `distinct_idempotent` | `vs.eraseDups.eraseDups = vs.eraseDups` | `nodup_implies_eraseDups_eq` applied to `nodup_eraseDups` from SetBagLemmas |
+
+### Private helpers (5)
+
+| Helper | Purpose |
+|--------|---------|
+| `foldl_min_le_init` | `l.foldl min init ≤ init` — induction, `Int.min_le_left` |
+| `foldl_min_le_of_mem` | `l.foldl min init ≤ n` for `n ∈ l` — cons case splits membership |
+| `init_le_foldl_max` | `init ≤ l.foldl max init` — symmetric to `foldl_min_le_init` |
+| `le_foldl_max_of_mem` | `n ≤ l.foldl max init` for `n ∈ l` — symmetric to `foldl_min_le_of_mem` |
+| `nodup_implies_eraseDups_eq` | `l.Nodup → l.eraseDups = l` — strong induction, `filter_eq_self` |
+
+### Key stdlib lemmas used
+
+- `Int.min_le_left`, `Int.min_le_right`, `Int.le_max_left`, `Int.le_max_right`
+- `List.eraseDups_cons`, `List.filter_eq_self`, `List.length_filter_le`
+- `List.nodup_cons`, `List.mem_cons`
+
+### Build notes
+
+One iteration needed. Fixes:
+- `List.not_mem_nil n` has type `False` in Lean 4.27.0 — used `nomatch h` instead of `absurd`
+- `Nat.add_le_add_left` expects `k + n ≤ k + m` but goal had `... + 1` — used `omega`
+- `bne_iff_ne`/`beq_iff_eq` unused by simp — switched to `Bool.not_eq_true'` + `beq_eq_false_iff_ne`
+
+### Verification
+
+- 229/229 tests pass
+- 100% axiom coverage (77/77)
+- No unused private declarations
+- Ratchet: 81 → 77 (4 axioms proved, 0 new infrastructure)
