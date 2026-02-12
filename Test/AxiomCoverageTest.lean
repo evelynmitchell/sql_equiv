@@ -1352,23 +1352,25 @@ def additionalLogicTests : List TestResult :=
     then .pass "evalBinOp_or_assoc"
     else .fail "evalBinOp_or_assoc" "OR not associative",
 
-    -- evalBinOp_and_or_distrib_left
-    let va := some (.bool true : Value)
-    let vb := some (.bool false : Value)
-    let vc := some (.bool true : Value)
-    if evalBinOp .and va (evalBinOp .or vb vc) ==
-       evalBinOp .or (evalBinOp .and va vb) (evalBinOp .and va vc)
-    then .pass "evalBinOp_and_or_distrib_left"
-    else .fail "evalBinOp_and_or_distrib_left" "AND-OR distributivity failed",
+    -- and_or_distrib_left: a AND (b OR c) ≃ₑ (a AND b) OR (a AND c)
+    testExprEquiv "and_or_distrib_left"
+      (.binOp .and eTrue (.binOp .or eFalse eTrue))
+      (.binOp .or (.binOp .and eTrue eFalse) (.binOp .and eTrue eTrue)) [],
 
-    -- evalBinOp_or_and_distrib_left
-    let va2 := some (.bool true : Value)
-    let vb2 := some (.bool false : Value)
-    let vc2 := some (.bool true : Value)
-    if evalBinOp .or va2 (evalBinOp .and vb2 vc2) ==
-       evalBinOp .and (evalBinOp .or va2 vb2) (evalBinOp .or va2 vc2)
-    then .pass "evalBinOp_or_and_distrib_left"
-    else .fail "evalBinOp_or_and_distrib_left" "OR-AND distributivity failed",
+    -- and_or_distrib_right: (a OR b) AND c ≃ₑ (a AND c) OR (b AND c)
+    testExprEquiv "and_or_distrib_right"
+      (.binOp .and (.binOp .or eTrue eFalse) eTrue)
+      (.binOp .or (.binOp .and eTrue eTrue) (.binOp .and eFalse eTrue)) [],
+
+    -- or_and_distrib_left: a OR (b AND c) ≃ₑ (a OR b) AND (a OR c)
+    testExprEquiv "or_and_distrib_left"
+      (.binOp .or eFalse (.binOp .and eTrue eFalse))
+      (.binOp .and (.binOp .or eFalse eTrue) (.binOp .or eFalse eFalse)) [],
+
+    -- or_and_distrib_right: (a AND b) OR c ≃ₑ (a OR c) AND (b OR c)
+    testExprEquiv "or_and_distrib_right"
+      (.binOp .or (.binOp .and eTrue eFalse) eTrue)
+      (.binOp .and (.binOp .or eTrue eTrue) (.binOp .or eFalse eTrue)) [],
 
     -- min_le_elem: MIN ≤ every element in the list
     let ns : List Int := [5, 3, 8, 1]
@@ -1565,14 +1567,7 @@ def semanticsUnfoldTests : List TestResult :=
     let ev := evalExprWithDb db row e
     let elo := evalExprWithDb db row lo
     let ehi := evalExprWithDb db row hi
-    let stepwise := match ev, elo, ehi with
-      | some v, some vlo, some vhi =>
-        match v.compare vlo, v.compare vhi with
-        | some .lt, _ => some (Value.bool false)
-        | _, some .gt => some (Value.bool false)
-        | some _, some _ => some (Value.bool true)
-        | _, _ => none
-      | _, _, _ => none
+    let stepwise := evalBinOp .and (evalBinOp .ge ev elo) (evalBinOp .le ev ehi)
     if direct == stepwise then .pass "evalExprWithDb_between (5 BETWEEN 1 AND 10)"
     else .fail "evalExprWithDb_between (5 BETWEEN 1 AND 10)" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}",
 
@@ -1587,13 +1582,10 @@ def semanticsUnfoldTests : List TestResult :=
     let e := Expr.lit (.int 2)
     let vals := [Expr.lit (.int 1), Expr.lit (.int 2), Expr.lit (.int 3)]
     let direct := evalExprWithDb db row (.inList e false vals)
-    let stepwise :=
-      match evalExprWithDb db row e with
-      | none => none
-      | some v =>
-        let hasMatch := vals.filterMap (evalExprWithDb db row) |>.any fun v' =>
-          v.eq v' == some true
-        some (Value.bool (if false then !hasMatch else hasMatch))
+    let ev := evalExprWithDb db row e
+    let stepwise := vals.foldl (fun acc vi =>
+      evalBinOp .or acc (evalBinOp .eq ev (evalExprWithDb db row vi))
+    ) (some (.bool false))
     if direct == stepwise then .pass "evalExprWithDb_inList (2 IN (1,2,3))"
     else .fail "evalExprWithDb_inList (2 IN (1,2,3))" s!"Direct={showOptVal direct}, Stepwise={showOptVal stepwise}"
   ]

@@ -101,11 +101,12 @@ open Test
 -- Additional #check coverage for all axioms (ensures axioms can't be deleted)
 -- ============================================================================
 
--- Value-level associativity/distributivity axioms
+-- Value-level associativity axioms
 #check @evalBinOp_and_assoc
 #check @evalBinOp_or_assoc
-#check @evalBinOp_and_or_distrib_left
-#check @evalBinOp_or_and_distrib_left
+-- Distributivity is now at expression level (axioms)
+#check @and_or_distrib_left
+#check @or_and_distrib_left
 
 -- Boolean algebra axioms
 #check @SqlEquiv.and_self

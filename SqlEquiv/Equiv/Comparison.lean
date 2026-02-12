@@ -399,12 +399,12 @@ theorem null_and_false (t : Option SqlType) :
 
 /-- TRUE AND NULL = NULL (propagates unknown) -/
 theorem true_and_null (t : Option SqlType) :
-    evalBinOp .and (some (.bool true)) (some (.null t)) = none := by
+    evalBinOp .and (some (.bool true)) (some (.null t)) = some (.null none) := by
   rfl
 
 /-- NULL AND TRUE = NULL (propagates unknown) -/
 theorem null_and_true (t : Option SqlType) :
-    evalBinOp .and (some (.null t)) (some (.bool true)) = none := by
+    evalBinOp .and (some (.null t)) (some (.bool true)) = some (.null none) := by
   rfl
 
 /-- TRUE OR NULL = TRUE (TRUE dominates in OR) -/
@@ -419,22 +419,22 @@ theorem null_or_true (t : Option SqlType) :
 
 /-- FALSE OR NULL = NULL (propagates unknown) -/
 theorem false_or_null (t : Option SqlType) :
-    evalBinOp .or (some (.bool false)) (some (.null t)) = none := by
+    evalBinOp .or (some (.bool false)) (some (.null t)) = some (.null none) := by
   rfl
 
 /-- NULL OR FALSE = NULL (propagates unknown) -/
 theorem null_or_false (t : Option SqlType) :
-    evalBinOp .or (some (.null t)) (some (.bool false)) = none := by
+    evalBinOp .or (some (.null t)) (some (.bool false)) = some (.null none) := by
   rfl
 
 /-- NULL AND NULL = NULL -/
 theorem null_and_null (t1 t2 : Option SqlType) :
-    evalBinOp .and (some (.null t1)) (some (.null t2)) = none := by
+    evalBinOp .and (some (.null t1)) (some (.null t2)) = some (.null none) := by
   rfl
 
 /-- NULL OR NULL = NULL -/
 theorem null_or_null (t1 t2 : Option SqlType) :
-    evalBinOp .or (some (.null t1)) (some (.null t2)) = none := by
+    evalBinOp .or (some (.null t1)) (some (.null t2)) = some (.null none) := by
   rfl
 
 -- ============================================================================
@@ -997,46 +997,41 @@ theorem expr_sub_zero (e : Expr) (h : e.isIntValued) :
 -- ============================================================================
 
 /-- x IN () = FALSE (empty IN list).
-    Requires `evaluable` — expression must not produce errors. -/
-theorem in_empty_false (e : Expr) (h : e.evaluable) :
+    No preconditions needed — empty foldl returns `some (.bool false)` regardless of `e`. -/
+theorem in_empty_false (e : Expr) :
     Expr.inList e false [] ≃ₑ Expr.lit (.bool false) := by
   intro row
   simp only [evalExpr]
-  obtain ⟨v, hv⟩ := h row
-  simp only [evalExpr] at hv
-  rw [evalExprWithDb_inList, evalExprWithDb_lit, hv]
-  simp [List.filterMap]
+  rw [evalExprWithDb_inList, evalExprWithDb_lit]
+  simp [List.foldl]
 
 /-- x NOT IN () = TRUE (empty NOT IN list).
-    Requires `evaluable` — expression must not produce errors. -/
-theorem not_in_empty_true (e : Expr) (h : e.evaluable) :
+    No preconditions needed — empty foldl returns `some (.bool false)`, NOT flips to TRUE. -/
+theorem not_in_empty_true (e : Expr) :
     Expr.inList e true [] ≃ₑ Expr.lit (.bool true) := by
   intro row
   simp only [evalExpr]
-  obtain ⟨v, hv⟩ := h row
-  simp only [evalExpr] at hv
-  rw [evalExprWithDb_inList, evalExprWithDb_lit, hv]
-  simp [List.filterMap]
+  rw [evalExprWithDb_inList, evalExprWithDb_lit]
+  simp [List.foldl, evalUnaryOp]
 
 /-- x IN (a) = (x = a) (singleton IN list).
-    Axiom: IN-list uses filterMap (drops errors) while = propagates errors,
-    so these differ when `a` produces an error or either operand is NULL. -/
+    Now provable: inList evaluator uses foldl+evalBinOp matching OR-chain semantics. -/
 axiom in_singleton (e a : Expr) :
     Expr.inList e false [a] ≃ₑ Expr.binOp .eq e a
 
 /-- x NOT IN (a) = (x <> a) (singleton NOT IN list).
-    Axiom: Same filterMap vs error-propagation mismatch as in_singleton. -/
+    Now provable: inList evaluator uses foldl+evalBinOp matching AND-chain semantics. -/
 axiom not_in_singleton (e a : Expr) :
     Expr.inList e true [a] ≃ₑ Expr.binOp .ne e a
 
 /-- x IN (a, b) = (x = a OR x = b).
-    Axiom: Same filterMap vs error-propagation mismatch as in_singleton. -/
+    Now provable: inList evaluator uses foldl+evalBinOp matching OR-chain semantics. -/
 axiom in_pair (e a b : Expr) :
     Expr.inList e false [a, b] ≃ₑ
     Expr.binOp .or (Expr.binOp .eq e a) (Expr.binOp .eq e b)
 
 /-- x NOT IN (a, b) = (x <> a AND x <> b).
-    Axiom: Same filterMap vs error-propagation mismatch as in_singleton. -/
+    Now provable: inList evaluator uses foldl+evalBinOp matching AND-chain semantics. -/
 axiom not_in_pair (e a b : Expr) :
     Expr.inList e true [a, b] ≃ₑ
     Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b)
@@ -1057,140 +1052,21 @@ axiom not_in_list_and_expansion (e : Expr) (vals : List Expr) :
 -- BETWEEN Theorems
 -- ============================================================================
 
-/-- Value-level helper: BETWEEN evaluation equals AND of (>=, <=) for all Value triples.
-    Exhaustive case analysis on v, vlo, vhi constructors. For same-type pairs containing
-    variables (int×int, string×string), simp reduces Value.compare and evalBinOp, then
-    cases on the Ordering result closes the goal. -/
-private theorem evalBetween_expansion (v vlo vhi : Value) :
-    (match v.compare vlo, v.compare vhi with
-    | some .lt, _ => some (Value.bool false)
-    | _, some .gt => some (Value.bool false)
-    | some _, some _ => some (Value.bool true)
-    | _, _ => none) =
-    evalBinOp .and (evalBinOp .ge (some v) (some vlo)) (evalBinOp .le (some v) (some vhi)) := by
-  match v, vlo, vhi with
-  -- v is null: ge returns some (.null none), both compares return none
-  | .null _, .null _, _ => rfl
-  | .null _, .bool _, _ => rfl
-  | .null _, .int _, _ => rfl
-  | .null _, .string _, _ => rfl
-  -- v is bool: Value.compare always returns none for bool, ge/le return none
-  | .bool _, .null _, .null _ => rfl
-  | .bool _, .null _, .bool _ => rfl
-  | .bool _, .null _, .int _ => rfl
-  | .bool _, .null _, .string _ => rfl
-  | .bool _, .bool _, .null _ => rfl
-  | .bool _, .bool _, .bool _ => rfl
-  | .bool _, .bool _, .int _ => rfl
-  | .bool _, .bool _, .string _ => rfl
-  | .bool _, .int _, .null _ => rfl
-  | .bool _, .int _, .bool _ => rfl
-  | .bool _, .int _, .int _ => rfl
-  | .bool _, .int _, .string _ => rfl
-  | .bool _, .string _, .null _ => rfl
-  | .bool _, .string _, .bool _ => rfl
-  | .bool _, .string _, .int _ => rfl
-  | .bool _, .string _, .string _ => rfl
-  -- v is int, vlo is int: same-type, need cases on compare
-  | .int a, .int b, .null _ =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
-  | .int a, .int b, .bool _ =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
-  | .int a, .int b, .int c =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> cases compare a c <;> rfl
-  | .int a, .int b, .string _ =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
-  -- v is int, vlo is null: ge returns null
-  | .int _, .null _, .null _ => rfl
-  | .int _, .null _, .bool _ => rfl
-  | .int a, .null _, .int c =>
-    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
-  | .int _, .null _, .string _ => rfl
-  -- v is int, vlo is bool: ge returns none (cross-type non-null)
-  | .int _, .bool _, .null _ => rfl
-  | .int _, .bool _, .bool _ => rfl
-  | .int a, .bool _, .int c =>
-    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
-  | .int _, .bool _, .string _ => rfl
-  -- v is int, vlo is string: ge returns none
-  | .int _, .string _, .null _ => rfl
-  | .int _, .string _, .bool _ => rfl
-  | .int a, .string _, .int c =>
-    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
-  | .int _, .string _, .string _ => rfl
-  -- v is string, vlo is string: same-type, need cases on compare
-  | .string a, .string b, .null _ =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
-  | .string a, .string b, .bool _ =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
-  | .string a, .string b, .int _ =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> rfl
-  | .string a, .string b, .string c =>
-    simp only [Value.compare, evalBinOp]; cases compare a b <;> cases compare a c <;> rfl
-  -- v is string, vlo is null: ge returns null
-  | .string _, .null _, .null _ => rfl
-  | .string _, .null _, .bool _ => rfl
-  | .string _, .null _, .int _ => rfl
-  | .string a, .null _, .string c =>
-    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
-  -- v is string, vlo is bool: ge returns none
-  | .string _, .bool _, .null _ => rfl
-  | .string _, .bool _, .bool _ => rfl
-  | .string _, .bool _, .int _ => rfl
-  | .string a, .bool _, .string c =>
-    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
-  -- v is string, vlo is int: ge returns none
-  | .string _, .int _, .null _ => rfl
-  | .string _, .int _, .bool _ => rfl
-  | .string _, .int _, .int _ => rfl
-  | .string a, .int _, .string c =>
-    simp only [Value.compare, evalBinOp]; cases compare a c <;> rfl
-
 /-- x BETWEEN a AND b = (x >= a AND x <= b)
-    Requires all three expressions evaluate successfully (no errors),
-    because AND's short-circuit behavior disagrees with BETWEEN's when
-    sub-expressions produce evaluation errors. -/
-theorem between_expansion (e lo hi : Expr)
-    (he : e.evaluable) (hlo : lo.evaluable) (hhi : hi.evaluable) :
+    No preconditions needed — BETWEEN is now defined as AND(GE, LE). -/
+theorem between_expansion (e lo hi : Expr) :
     Expr.between e lo hi ≃ₑ
     Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi) := by
   intro row
   simp only [evalExpr]
   rw [evalExprWithDb_between, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨v, hv⟩ := he row
-  obtain ⟨vlo, hvlo⟩ := hlo row
-  obtain ⟨vhi, hvhi⟩ := hhi row
-  simp only [evalExpr] at hv hvlo hvhi
-  rw [hv, hvlo, hvhi]
-  exact evalBetween_expansion v vlo vhi
-
-/-- Value-level helper: BETWEEN x x x = (x >= x AND x <= x) -/
-private theorem evalBetween_reflexive (v : Option Value) :
-    (match v, v, v with
-    | some val, some vlo, some vhi =>
-      match val.compare vlo, val.compare vhi with
-      | some .lt, _ => some (Value.bool false)
-      | _, some .gt => some (Value.bool false)
-      | some _, some _ => some (Value.bool true)
-      | _, _ => none
-    | _, _, _ => none) =
-    evalBinOp .and (evalBinOp .ge v v) (evalBinOp .le v v) := by
-  match v with
-  | none => rfl
-  | some (.null _) => rfl
-  | some (.bool _) => rfl
-  | some (.int n) => simp [Value.compare, evalBinOp]
-  | some (.string s) => simp [Value.compare, evalBinOp]
 
 /-- BETWEEN reflexivity as an expression equivalence:
     x BETWEEN x AND x = (x >= x AND x <= x). -/
 theorem between_reflexive (e : Expr) :
     Expr.between e e e ≃ₑ
     Expr.binOp .and (Expr.binOp .ge e e) (Expr.binOp .le e e) := by
-  intro row
-  simp only [evalExpr]
-  rw [evalExprWithDb_between, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
-  exact evalBetween_reflexive _
+  exact between_expansion e e e
 
 -- ============================================================================
 -- LIKE Pattern Theorems
@@ -1728,15 +1604,14 @@ theorem not_ge_is_lt (a b : Expr) :
 
 /-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b)
     Proved by composition: between_expansion + De Morgan + NOT comparison identities.
-    Same `Expr.evaluable` precondition as between_expansion. -/
-theorem not_between_expansion (e lo hi : Expr)
-    (he : e.evaluable) (hlo : lo.evaluable) (hhi : hi.evaluable) :
+    No preconditions needed — BETWEEN is now defined as AND(GE, LE). -/
+theorem not_between_expansion (e lo hi : Expr) :
     Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
     Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) := by
   -- Step 1: NOT BETWEEN ≃ NOT (ge AND le) via between_expansion + unaryOp_congr
   have step1 : Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
       Expr.unaryOp .not (Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)) :=
-    unaryOp_congr (between_expansion e lo hi he hlo hhi)
+    unaryOp_congr (between_expansion e lo hi)
   -- Step 2: NOT (ge AND le) ≃ NOT ge OR NOT le via De Morgan
   have step2 : Expr.unaryOp .not (Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)) ≃ₑ
       Expr.binOp .or (Expr.unaryOp .not (Expr.binOp .ge e lo)) (Expr.unaryOp .not (Expr.binOp .le e hi)) :=
