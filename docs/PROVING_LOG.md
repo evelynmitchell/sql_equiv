@@ -2199,7 +2199,7 @@ errors, while the OR/AND expansion (used in axiom RHS) propagated them. This mad
 
 | Change | Before | After |
 |--------|--------|-------|
-| AND/OR null propagation | No null handling beyond short-circuit | Broad `some (.null _), _ => some (.null _)` arms after short-circuit |
+| AND/OR null propagation | No null handling beyond short-circuit | Narrow `some (.null _), some _ => some (.null _)` arms after short-circuit (review: `_` → `some _` to avoid swallowing errors as NULL) |
 | `inList` evaluator | `filterMap`/`any` (drops nulls/errors) | `foldl` over `evalBinOp .or/.eq` (propagates nulls) |
 | BETWEEN | Direct `Value.compare` match (90-line proof) | `evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)` — consistent by construction |
 
@@ -2212,7 +2212,7 @@ errors, while the OR/AND expansion (used in axiom RHS) propagated them. This mad
 | `in_empty_false` | Reproved for new `foldl` semantics |
 | `not_in_empty_true` | Reproved for new `foldl` semantics |
 
-### Theorems regressed to axioms (4)
+### Theorems regressed to axioms (8)
 
 | Axiom | Reason |
 |-------|--------|
@@ -2220,12 +2220,17 @@ errors, while the OR/AND expansion (used in axiom RHS) propagated them. This mad
 | `evalBinOp_or_and_distrib_left` | Same pattern with OR |
 | `evalBinOp_and_or_distrib_right` | Same |
 | `evalBinOp_or_and_distrib_right` | Same |
+| `evalBinOp_and_assoc` | Value-level associativity false after `_` → `some _`: `AND(NULL, AND(INT, BOOL))` = none ≠ `AND(AND(NULL, INT), BOOL)` = NULL |
+| `evalBinOp_or_assoc` | Same pattern with OR |
+| `evalUnaryOp_not_and` | De Morgan false after `_` → `some _`: `NOT(AND(INT, NULL))` = NULL ≠ `OR(NOT INT, NOT NULL)` = none |
+| `evalUnaryOp_not_or` | Same pattern with OR |
 
-> **Design insight**: Expression-level distributivity is still correct (SQL operands
-> are always boolean), so the expression-level axioms remain sound. The value-level
-> theorems regressed because broad null propagation makes `AND(FALSE, error)` return
-> `FALSE` (short-circuit) while distributed form `OR(AND(FALSE,x), AND(FALSE,y))`
-> can return error if x or y errors. This is the expected SQL behavior.
+> **Design insight**: Expression-level distributivity, associativity, and De Morgan
+> are still correct (SQL operands are always boolean), so the expression-level axioms
+> remain sound. The value-level theorems regressed because narrowing null propagation
+> from `_` to `some _` means `none` (type error) inputs are no longer absorbed as NULL.
+> The 4 expression-level distributivity axioms now carry `isBoolValued` preconditions
+> (PR review feedback).
 
 ### Axioms unblocked (6)
 
@@ -2244,11 +2249,13 @@ These axioms were blocked on Issue #124 and are now provable via the new
 ### Net axiom count change
 
 - **4 distributivity theorems → axioms**: +4
+- **4 value-level theorems → axioms** (review: `_` → `some _` narrowing): +4
 - **0 new infrastructure axioms**: +0
-- **Net**: 77 → 81 axioms
+- **Net**: 77 → 85 axioms
 
 ### Verification
 
 - 231/231 tests pass
-- 100% axiom coverage (81/81)
-- All 4 regressed axioms have runtime tests confirming SQL-correct behavior
+- 100% axiom coverage (85/85)
+- All 8 regressed axioms have runtime tests confirming SQL-correct behavior
+- LSpec De Morgan and associativity tests restricted to `BoolGroundExpr`

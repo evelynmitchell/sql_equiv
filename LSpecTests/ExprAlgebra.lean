@@ -47,11 +47,13 @@ def associativityTests : TestSeq :=
 -- De Morgan's Laws
 -- ============================================================================
 
+-- De Morgan's laws only hold for boolean-valued inputs (after narrowing null
+-- propagation from `_` to `some _`, NOT(AND(NULL, INT)) ≠ OR(NOT NULL, NOT INT)).
 def deMorganTests : TestSeq :=
-  check "NOT (a AND b) = (NOT a) OR (NOT b)" (∀ a b : BoundedGroundExpr,
+  check "NOT (a AND b) = (NOT a) OR (NOT b)" (∀ a b : BoolGroundExpr,
     evalExpr [] (.unaryOp .not (.binOp .and a.expr b.expr)) ==
     evalExpr [] (.binOp .or (.unaryOp .not a.expr) (.unaryOp .not b.expr))) $
-  check "NOT (a OR b) = (NOT a) AND (NOT b)" (∀ a b : BoundedGroundExpr,
+  check "NOT (a OR b) = (NOT a) AND (NOT b)" (∀ a b : BoolGroundExpr,
     evalExpr [] (.unaryOp .not (.binOp .or a.expr b.expr)) ==
     evalExpr [] (.binOp .and (.unaryOp .not a.expr) (.unaryOp .not b.expr)))
 

@@ -95,20 +95,24 @@ theorem not_or (a b : Expr) :
 -- Counterexample: OR(NULL, AND(FALSE, error)) = NULL ≠ AND(OR(NULL,FALSE), OR(NULL,error)) = error
 -- Expression-level distributivity is correct in SQL (operands are always boolean).
 
-/-- AND distributes over OR for SQL expressions.
+/-- AND distributes over OR for boolean-valued SQL expressions.
     Axiom: value-level proof broke when adding null propagation arms to AND/OR
     (short-circuit + null propagation interact inconsistently for non-boolean operands).
-    Correct in SQL because AND/OR operands are always boolean. -/
-axiom and_or_distrib_left (a b c : Expr) :
+    Requires `isBoolValued` preconditions so downstream proofs can't rewrite ill-typed expressions. -/
+axiom and_or_distrib_left (a b c : Expr)
+    (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c)
 
-axiom and_or_distrib_right (a b c : Expr) :
+axiom and_or_distrib_right (a b c : Expr)
+    (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and (Expr.binOp .or a b) c ≃ₑ Expr.binOp .or (Expr.binOp .and a c) (Expr.binOp .and b c)
 
-axiom or_and_distrib_left (a b c : Expr) :
+axiom or_and_distrib_left (a b c : Expr)
+    (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or a (Expr.binOp .and b c) ≃ₑ Expr.binOp .and (Expr.binOp .or a b) (Expr.binOp .or a c)
 
-axiom or_and_distrib_right (a b c : Expr) :
+axiom or_and_distrib_right (a b c : Expr)
+    (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or (Expr.binOp .and a b) c ≃ₑ Expr.binOp .and (Expr.binOp .or a c) (Expr.binOp .or b c)
 
 -- Absorption Laws
@@ -367,15 +371,17 @@ theorem and_not_not (a b : Expr) :
 -- Reverse Distributivity (factoring)
 -- ============================================================================
 
-theorem or_and_factor_left (a b c : Expr) :
+theorem or_and_factor_left (a b c : Expr)
+    (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) ≃ₑ
     Expr.binOp .and a (Expr.binOp .or b c) := by
-  intro row; exact (and_or_distrib_left a b c row).symm
+  intro row; exact (and_or_distrib_left a b c ha hb hc row).symm
 
-theorem and_or_factor_left (a b c : Expr) :
+theorem and_or_factor_left (a b c : Expr)
+    (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and (Expr.binOp .or a b) (Expr.binOp .or a c) ≃ₑ
     Expr.binOp .or a (Expr.binOp .and b c) := by
-  intro row; exact (or_and_distrib_left a b c row).symm
+  intro row; exact (or_and_distrib_left a b c ha hb hc row).symm
 
 -- ============================================================================
 -- Congruence Theorems

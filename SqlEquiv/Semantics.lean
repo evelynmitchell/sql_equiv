@@ -165,15 +165,15 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   | .and, some (.bool a), some (.bool b) => some (.bool (a && b))
   | .and, some (.bool false), _ => some (.bool false)  -- FALSE AND anything = FALSE
   | .and, _, some (.bool false) => some (.bool false)
-  -- AND: null propagation (after short-circuit, any null operand produces null)
-  | .and, some (.null _), _ => some (.null none)
-  | .and, _, some (.null _) => some (.null none)
+  -- AND: null propagation (after short-circuit, null + value = null; none still propagates)
+  | .and, some (.null _), some _ => some (.null none)
+  | .and, some _, some (.null _) => some (.null none)
   | .or, some (.bool a), some (.bool b) => some (.bool (a || b))
   | .or, some (.bool true), _ => some (.bool true)      -- TRUE OR anything = TRUE
   | .or, _, some (.bool true) => some (.bool true)
-  -- OR: null propagation (after short-circuit, any null operand produces null)
-  | .or, some (.null _), _ => some (.null none)
-  | .or, _, some (.null _) => some (.null none)
+  -- OR: null propagation (after short-circuit, null + value = null; none still propagates)
+  | .or, some (.null _), some _ => some (.null none)
+  | .or, some _, some (.null _) => some (.null none)
   -- String: null propagation
   | .concat, some (.null _), some _ => some (.null none)
   | .concat, some _, some (.null _) => some (.null none)
