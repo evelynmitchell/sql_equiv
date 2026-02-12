@@ -9,7 +9,7 @@ then updates sentinel lines and per-file tables in:
   - tools/axiom_count_minimum.txt  (ratchet — only decreases)
 
 Run standalone or from the pre-commit hook.
-Exit code is always 0 (advisory, not blocking).
+Advisory, not blocking. Exit code 0 on success; non-zero on unexpected errors.
 """
 
 import re
