@@ -4,6 +4,7 @@
 import SqlEquiv.Equiv.Defs
 import SqlEquiv.Equiv.ValueLemmas
 import SqlEquiv.Equiv.Decidable
+import SqlEquiv.Equiv.SetBagLemmas
 
 namespace SqlEquiv
 
@@ -701,21 +702,120 @@ theorem min_singleton (n : Int) : [n].foldl min n = n := by
 theorem max_singleton (n : Int) : [n].foldl max n = n := by
   simp [List.foldl]
 
-/-- MIN is at most any element in the list (axiom) -/
-axiom min_le_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
-    ns.foldl min (ns.head!) ≤ n
+/-- foldl min is ≤ the initial value -/
+private theorem foldl_min_le_init (init : Int) (l : List Int) :
+    l.foldl min init ≤ init := by
+  induction l generalizing init with
+  | nil => exact Int.le_refl _
+  | cons x xs ih =>
+    simp only [List.foldl_cons]
+    exact Int.le_trans (ih _) (Int.min_le_left _ _)
 
-/-- MAX is at least any element in the list (axiom) -/
-axiom max_ge_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
-    n ≤ ns.foldl max (ns.head!)
+/-- foldl min is ≤ any member of the list -/
+private theorem foldl_min_le_of_mem (init : Int) (l : List Int) (n : Int) (h : n ∈ l) :
+    l.foldl min init ≤ n := by
+  induction l generalizing init with
+  | nil => nomatch h
+  | cons x xs ih =>
+    simp only [List.foldl_cons]
+    rcases List.mem_cons.mp h with rfl | hmem
+    · exact Int.le_trans (foldl_min_le_init _ _) (Int.min_le_right _ _)
+    · exact ih _ hmem
+
+/-- init ≤ foldl max -/
+private theorem init_le_foldl_max (init : Int) (l : List Int) :
+    init ≤ l.foldl max init := by
+  induction l generalizing init with
+  | nil => exact Int.le_refl _
+  | cons x xs ih =>
+    simp only [List.foldl_cons]
+    exact Int.le_trans (Int.le_max_left _ _) (ih _)
+
+/-- Any member of the list ≤ foldl max -/
+private theorem le_foldl_max_of_mem (init : Int) (l : List Int) (n : Int) (h : n ∈ l) :
+    n ≤ l.foldl max init := by
+  induction l generalizing init with
+  | nil => nomatch h
+  | cons x xs ih =>
+    simp only [List.foldl_cons]
+    rcases List.mem_cons.mp h with rfl | hmem
+    · exact Int.le_trans (Int.le_max_right _ _) (init_le_foldl_max _ _)
+    · exact ih _ hmem
+
+/-- MIN is at most any element in the list -/
+theorem min_le_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
+    ns.foldl min (ns.head!) ≤ n := by
+  match ns, h with
+  | [], h => nomatch h
+  | x :: xs, h => exact foldl_min_le_of_mem x (x :: xs) n h
+
+/-- MAX is at least any element in the list -/
+theorem max_ge_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
+    n ≤ ns.foldl max (ns.head!) := by
+  match ns, h with
+  | [], h => nomatch h
+  | x :: xs, h => exact le_foldl_max_of_mem x (x :: xs) n h
 
 /-- DISTINCT doesn't increase count -/
-axiom distinct_count_le (vs : List Value) :
-    vs.eraseDups.length ≤ vs.length
+theorem distinct_count_le (vs : List Value) :
+    vs.eraseDups.length ≤ vs.length := by
+  suffices ∀ (k : Nat) (l : List Value), l.length ≤ k → l.eraseDups.length ≤ l.length from
+    this vs.length vs (Nat.le_refl _)
+  intro k
+  induction k with
+  | zero =>
+    intro l hl
+    match l with
+    | [] => simp
+    | _ :: _ => simp at hl
+  | succ k ih =>
+    intro l hl
+    match l with
+    | [] => simp
+    | v :: vs =>
+      rw [List.eraseDups_cons, List.length_cons, List.length_cons]
+      have hfilt_len : (vs.filter (! · == v)).length ≤ k :=
+        Nat.le_trans (List.length_filter_le _ _) (by simp at hl; omega)
+      have h1 := ih _ hfilt_len
+      have h2 := List.length_filter_le (fun b => !(b == v)) vs
+      omega
+
+/-- A Nodup list is unchanged by eraseDups -/
+private theorem nodup_implies_eraseDups_eq (l : List Value) (h : l.Nodup) :
+    l.eraseDups = l := by
+  suffices ∀ (k : Nat) (l : List Value), l.length ≤ k → l.Nodup → l.eraseDups = l from
+    this l.length l (Nat.le_refl _) h
+  intro k
+  induction k with
+  | zero =>
+    intro l hl _
+    match l with
+    | [] => rfl
+    | _ :: _ => simp at hl
+  | succ k ih =>
+    intro l hl hnd
+    match l with
+    | [] => rfl
+    | a :: as =>
+      rw [List.eraseDups_cons]
+      have hnd' := List.nodup_cons.mp hnd
+      have ha_not_mem := hnd'.1
+      have has_nd := hnd'.2
+      -- Since a ∉ as, filter (! · == a) keeps all elements
+      have hfilter : as.filter (fun b => !(b == a)) = as := by
+        rw [List.filter_eq_self]
+        intro b hb
+        simp only [Bool.not_eq_true', beq_eq_false_iff_ne]
+        exact fun heq => ha_not_mem (heq ▸ hb)
+      rw [hfilter]
+      congr 1
+      have has_len : as.length ≤ k := by simp at hl; omega
+      exact ih as has_len has_nd
 
 /-- DISTINCT on already-distinct list is identity -/
-axiom distinct_idempotent (vs : List Value) :
-    vs.eraseDups.eraseDups = vs.eraseDups
+theorem distinct_idempotent (vs : List Value) :
+    vs.eraseDups.eraseDups = vs.eraseDups :=
+  nodup_implies_eraseDups_eq vs.eraseDups (nodup_eraseDups vs)
 
 /-- COUNT(DISTINCT x) ≤ COUNT(x) -/
 theorem count_distinct_le_count (vs : List Value) :
