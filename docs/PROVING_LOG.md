@@ -2308,3 +2308,27 @@ semantics and unblocked 6 IN-list axioms for proof. This batch converts them all
 
 - 231/231 tests pass
 - 97.5% axiom coverage (77/79) — 2 uncovered: `evalUnaryOp_not_and`, `evalUnaryOp_not_or` (value-level De Morgan, known uncoverable at value level)
+
+### Lessons learned
+
+1. **`dsimp only []` is the right tool for `let` + `if (decidable bool)` reduction.**
+   Infrastructure axioms produce `let ev := ...; let result := ...; if neg then X else Y`.
+   For concrete lists, `simp [List.foldl]` handles everything. For abstract lists,
+   `simp only [ite_false]` doesn't fire because the condition is `false = true` (a Prop,
+   not `False`). `dsimp only []` solves both: it inlines `let` and reduces `if false = true`
+   via the `Decidable` instance — both are definitional reductions.
+
+2. **Foldl induction needs explicit `have step` for accumulator bridging.**
+   The IH expects `eval (new_acc_expr)` but the goal has `evalBinOp .or (eval acc) (...)`.
+   Bridge with `have step : evalBinOp ... = eval (Expr.binOp ...) := by rw [evalExprWithDb_binOp, ...]`.
+   Then `rw [step]; exact ih _`.
+
+3. **`simp [evalBinOp]` doesn't see through `Option.map`.**
+   `evalBinOp .eq` on non-null values produces `(v.eq w).map Value.bool`. A subsequent
+   `evalBinOp .or (some (.bool false)) (Option.map ...)` can't reduce because simp doesn't
+   know the map result is `some (.bool _)`. Fix: small helpers that case-split on
+   `Option Bool` directly (e.g., `or_false_map_bool`).
+
+4. **Count `Expr.binOp` nodes to know how many `rw [evalExprWithDb_binOp]` calls are needed.**
+   `Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b)` = 3 nodes = 3 rewrites.
+   The 4th call fails with "pattern not found."
