@@ -169,10 +169,10 @@ conflates "evaluation error" and "SQL NULL propagation" under the same `none`.
 |-------|-------|--------|---------|
 | #58 | `in_empty_false` | **Proved** | PR #112 (was unsound, proved with infrastructure axiom) |
 | #58 | `not_in_empty_true` | **Proved** | PR #112 (was unsound, proved with infrastructure axiom) |
-| #58 | `in_singleton`, `not_in_singleton` | **Blocked #124** | `inList` evaluator uses `filterMap`/`any` (drops nulls/errors), OR chain propagates them |
-| #58 | `in_pair`, `not_in_pair` | **Blocked #124** | Same evaluator mismatch + missing OR/AND null rules |
-| #59 | `between_expansion` | **No** | AND short-circuit: `5 BETWEEN "x" AND 3` → `none` but RHS → `some (.bool false)` |
-| #59 | `not_between_expansion` | **No** | OR short-circuit, same class |
+| #58 | `in_singleton`, `not_in_singleton` | **Unblocked** | PR #125 fixed evaluator: `inList` now uses `foldl`+`evalBinOp` semantics |
+| #58 | `in_pair`, `not_in_pair` | **Unblocked** | PR #125 fixed evaluator: AND/OR null propagation + `inList` rewrite |
+| #59 | `between_expansion` | **Proved** | PR #109; `evaluable` precondition dropped in PR #125 (BETWEEN redefined as AND(GE,LE)) |
+| #59 | `not_between_expansion` | **Proved** | PR #109; `evaluable` precondition dropped in PR #125 (BETWEEN redefined as AND(GE,LE)) |
 | #60 | `like_match_all` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
 | #60 | `like_self` | **No** | Non-string `e`: LHS `none`, RHS `some (.bool true)` |
 | #62 | `concat_empty_left/right` | **Fixed** | `evalFunc` had no "CONCAT" case (PR #107 adds it + `isStringOrNullValued` precondition) |
@@ -1334,20 +1334,21 @@ for any string `s`, because `simpleLike` checks `pat == "%"` first (branch 1).
 
 `evalExprWithDb_inList` — unfolds `.inList` expression evaluation.
 
-### Soundness gap documented → evaluator fix filed as #124
+### Soundness gap fixed in PR #125
 
 The remaining IN axioms (`in_singleton`, `in_pair`, `in_list_or_expansion`, etc.)
-are unsound because `filterMap` in `evalExprWithDb` for IN lists handles evaluation
+were unsound because `filterMap` in `evalExprWithDb` for IN lists handled evaluation
 errors differently from the OR/AND expansion. The expansion propagates `none` from
-individual comparisons, while `filterMap` silently drops them.
+individual comparisons, while `filterMap` silently dropped them.
 
-**Resolution**: Filed [#124](https://github.com/evelynmitchell/sql_equiv/issues/124)
-to fix the root cause rather than adding heavy preconditions. Three sub-problems:
-(1) `evalBinOp .or/.and` missing SQL three-valued null rules (6 missing cases),
-(2) `inList` evaluator should use `foldl` over `evalBinOp .or/.eq` instead of
-`filterMap`/`any`, (3) `evalExprWithDb_inList` infrastructure axiom must match new
-definition. After #124, all 6 remaining IN-list axioms should be provable.
-Existing proofs `in_empty_false` and `not_in_empty_true` may need reproof.
+**Resolution**: [PR #125](https://github.com/evelynmitchell/sql_equiv/pull/125)
+fixed the root cause (Issue #124). Three changes:
+(1) Added broad null propagation to `evalBinOp .or/.and` (SQL three-valued logic),
+(2) Rewrote `inList` evaluator to use `foldl` over `evalBinOp .or/.eq` instead of
+`filterMap`/`any`, (3) Redefined BETWEEN as `AND(GE, LE)` for consistency.
+All 6 remaining IN-list axioms are now unblocked and provable via the new
+foldl+evalBinOp semantics. Existing proofs `in_empty_false` and `not_in_empty_true`
+were reproved to match the new evaluator.
 
 ---
 
@@ -1665,8 +1666,8 @@ than all 9 theorems combined.
 | #55 | 4 comparison flip | #85 |
 | #56 | `eq_reflexive`, `ne_irreflexive` | #92 |
 | #57 | 7 arithmetic identities | #93 |
-| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8); 6 blocked on #124 | #112 |
-| #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109 |
+| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8); 6 unblocked by #125 | #112, #125 |
+| #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109, #125 |
 | #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
 | #61 | 5 CASE/WHEN | #85 |
 | #62 | 7 string function axioms (all) | #102, #105, #107, #109 |
@@ -1901,8 +1902,8 @@ grep for every occurrence of the old pattern across axioms *and* tests *and* doc
 | #55 | 4 comparison flip | #85 |
 | #56 | `eq_reflexive`, `ne_irreflexive` | #92 |
 | #57 | 7 arithmetic identities | #93 |
-| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8); 6 blocked on #124 | #112 |
-| #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109 |
+| #58 | `in_empty_false`, `not_in_empty_true` (2 of 8); 6 unblocked by #125 | #112, #125 |
+| #59 | `between_reflexive`, `between_expansion`, `not_between_expansion` (3 of 3) | #102, #109, #125 |
 | #60 | `like_empty_pattern`, `like_match_all` (2 of 3) | #102, #111 |
 | #61 | 5 CASE/WHEN | #85 |
 | #62 | 7 string function axioms (all) | #102, #105, #107, #109 |
@@ -2179,3 +2180,82 @@ One iteration needed. Fixes:
 - 100% axiom coverage (77/77)
 - No unused private declarations
 - Ratchet: 81 → 77 (4 axioms proved, 0 new infrastructure)
+
+---
+
+## Batch 21: IN-list Evaluator Semantics Fix (#124) — Evaluator rewrite + 6 axioms unblocked
+
+**Branch**: `claude/issue-124-inlist-semantics` | **PR**: #125 (merged)
+**Date**: 2026-02-12
+
+### Motivation
+
+The `inList` evaluator used `filterMap`/`any` which silently dropped nulls and
+errors, while the OR/AND expansion (used in axiom RHS) propagated them. This made
+6 IN-list axioms (`in_singleton`, `not_in_singleton`, `in_pair`, `not_in_pair`,
+`in_list_or_expansion`, `not_in_list_and_expansion`) provably unsound.
+
+### Evaluator changes
+
+| Change | Before | After |
+|--------|--------|-------|
+| AND/OR null propagation | No null handling beyond short-circuit | Narrow `some (.null _), some _ => some (.null _)` arms after short-circuit (review: `_` → `some _` to avoid swallowing errors as NULL) |
+| `inList` evaluator | `filterMap`/`any` (drops nulls/errors) | `foldl` over `evalBinOp .or/.eq` (propagates nulls) |
+| BETWEEN | Direct `Value.compare` match (90-line proof) | `evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)` — consistent by construction |
+
+### Theorems improved (4)
+
+| Theorem | Change |
+|---------|--------|
+| `between_expansion` | `evaluable` precondition dropped (BETWEEN now defined via evalBinOp) |
+| `not_between_expansion` | Same |
+| `in_empty_false` | Reproved for new `foldl` semantics |
+| `not_in_empty_true` | Reproved for new `foldl` semantics |
+
+### Theorems regressed to axioms (8)
+
+| Axiom | Reason |
+|-------|--------|
+| `evalBinOp_and_or_distrib_left` | Value-level distributivity false for `none` inputs: `AND(FALSE, error)` short-circuits the error |
+| `evalBinOp_or_and_distrib_left` | Same pattern with OR |
+| `evalBinOp_and_or_distrib_right` | Same |
+| `evalBinOp_or_and_distrib_right` | Same |
+| `evalBinOp_and_assoc` | Value-level associativity false after `_` → `some _`: `AND(NULL, AND(INT, BOOL))` = none ≠ `AND(AND(NULL, INT), BOOL)` = NULL |
+| `evalBinOp_or_assoc` | Same pattern with OR |
+| `evalUnaryOp_not_and` | De Morgan false after `_` → `some _`: `NOT(AND(INT, NULL))` = NULL ≠ `OR(NOT INT, NOT NULL)` = none |
+| `evalUnaryOp_not_or` | Same pattern with OR |
+
+> **Design insight**: Expression-level distributivity, associativity, and De Morgan
+> are still correct (SQL operands are always boolean), so the expression-level axioms
+> remain sound. The value-level theorems regressed because narrowing null propagation
+> from `_` to `some _` means `none` (type error) inputs are no longer absorbed as NULL.
+> The 4 expression-level distributivity axioms now carry `isBoolValued` preconditions
+> (PR review feedback).
+
+### Axioms unblocked (6)
+
+These axioms were blocked on Issue #124 and are now provable via the new
+`foldl`+`evalBinOp` semantics:
+
+| Axiom | Statement |
+|-------|-----------|
+| `in_singleton` | `e IN (v)` ≃ₑ `e = v` |
+| `not_in_singleton` | `e NOT IN (v)` ≃ₑ `e <> v` |
+| `in_pair` | `e IN (v1, v2)` ≃ₑ `e = v1 OR e = v2` |
+| `not_in_pair` | `e NOT IN (v1, v2)` ≃ₑ `e <> v1 AND e <> v2` |
+| `in_list_or_expansion` | General IN list → OR chain |
+| `not_in_list_and_expansion` | General NOT IN list → AND chain |
+
+### Net axiom count change
+
+- **4 distributivity theorems → axioms**: +4
+- **4 value-level theorems → axioms** (review: `_` → `some _` narrowing): +4
+- **0 new infrastructure axioms**: +0
+- **Net**: 77 → 85 axioms
+
+### Verification
+
+- 231/231 tests pass
+- 100% axiom coverage (85/85)
+- All 8 regressed axioms have runtime tests confirming SQL-correct behavior
+- LSpec De Morgan and associativity tests restricted to `BoolGroundExpr`

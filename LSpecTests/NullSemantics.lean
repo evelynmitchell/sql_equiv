@@ -64,20 +64,20 @@ def threeValuedLogicTests : TestSeq :=
     evalBinOp .or (some (.bool true)) (some (.null t)) == some (.bool true)) $
   check "NULL OR TRUE = TRUE" (∀ t : Option SqlType,
     evalBinOp .or (some (.null t)) (some (.bool true)) == some (.bool true)) $
-  -- Non-dominating cases: AND/OR with NULL returns none (not a SQL NULL value)
-  check "TRUE AND NULL = none" (∀ t : Option SqlType,
-    evalBinOp .and (some (.bool true)) (some (.null t)) == none) $
-  check "NULL AND TRUE = none" (∀ t : Option SqlType,
-    evalBinOp .and (some (.null t)) (some (.bool true)) == none) $
-  check "FALSE OR NULL = none" (∀ t : Option SqlType,
-    evalBinOp .or (some (.bool false)) (some (.null t)) == none) $
-  check "NULL OR FALSE = none" (∀ t : Option SqlType,
-    evalBinOp .or (some (.null t)) (some (.bool false)) == none) $
-  -- NULL AND/OR NULL = none
-  check "NULL AND NULL = none" (∀ t1 t2 : Option SqlType,
-    evalBinOp .and (some (.null t1)) (some (.null t2)) == none) $
-  check "NULL OR NULL = none" (∀ t1 t2 : Option SqlType,
-    evalBinOp .or (some (.null t1)) (some (.null t2)) == none)
+  -- Non-dominating cases: AND/OR with NULL propagates NULL (SQL three-valued logic)
+  check "TRUE AND NULL = NULL" (∀ t : Option SqlType,
+    evalBinOp .and (some (.bool true)) (some (.null t)) == some (.null none)) $
+  check "NULL AND TRUE = NULL" (∀ t : Option SqlType,
+    evalBinOp .and (some (.null t)) (some (.bool true)) == some (.null none)) $
+  check "FALSE OR NULL = NULL" (∀ t : Option SqlType,
+    evalBinOp .or (some (.bool false)) (some (.null t)) == some (.null none)) $
+  check "NULL OR FALSE = NULL" (∀ t : Option SqlType,
+    evalBinOp .or (some (.null t)) (some (.bool false)) == some (.null none)) $
+  -- NULL AND/OR NULL = NULL
+  check "NULL AND NULL = NULL" (∀ t1 t2 : Option SqlType,
+    evalBinOp .and (some (.null t1)) (some (.null t2)) == some (.null none)) $
+  check "NULL OR NULL = NULL" (∀ t1 t2 : Option SqlType,
+    evalBinOp .or (some (.null t1)) (some (.null t2)) == some (.null none))
 
 -- ============================================================================
 -- IS NULL / IS NOT NULL

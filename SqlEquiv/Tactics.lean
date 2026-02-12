@@ -87,15 +87,15 @@ elab "sql_equiv" : tactic => do
       | exact and_not_not _ _))
   if ← tryTactic tryDeMorgan then return
 
-  -- Step 5: Try distributivity laws
+  -- Step 5: Try distributivity laws (require isBoolValued hypotheses)
   let tryDistrib : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact and_or_distrib_left _ _ _
-      | exact and_or_distrib_right _ _ _
-      | exact or_and_distrib_left _ _ _
-      | exact or_and_distrib_right _ _ _
-      | exact or_and_factor_left _ _ _
-      | exact and_or_factor_left _ _ _))
+      | exact and_or_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
+      | exact and_or_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
+      | exact or_and_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
+      | exact or_and_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
+      | exact or_and_factor_left _ _ _ (by assumption) (by assumption) (by assumption)
+      | exact and_or_factor_left _ _ _ (by assumption) (by assumption) (by assumption)))
   if ← tryTactic tryDistrib then return
 
   -- Step 6: Try absorption laws (require isBoolValued hypothesis)
@@ -235,12 +235,12 @@ macro_rules
             | exact not_or _ _
             | exact or_not_not _ _
             | exact and_not_not _ _
-            | exact and_or_distrib_left _ _ _
-            | exact and_or_distrib_right _ _ _
-            | exact or_and_distrib_left _ _ _
-            | exact or_and_distrib_right _ _ _
-            | exact or_and_factor_left _ _ _
-            | exact and_or_factor_left _ _ _
+            | exact and_or_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact and_or_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact or_and_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact or_and_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact or_and_factor_left _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact and_or_factor_left _ _ _ (by assumption) (by assumption) (by assumption)
             | exact and_absorb_or _ _ (by assumption) (by assumption)
             | exact or_absorb_and _ _ (by assumption) (by assumption)
             | exact and_true _ (by assumption)
@@ -286,12 +286,12 @@ elab "sql_rw_demorgan" : tactic => do
 
 elab "sql_rw_distrib" : tactic => do
   evalTactic (← `(tactic| first
-    | exact and_or_distrib_left _ _ _
-    | exact and_or_distrib_right _ _ _
-    | exact or_and_distrib_left _ _ _
-    | exact or_and_distrib_right _ _ _
-    | exact or_and_factor_left _ _ _
-    | exact and_or_factor_left _ _ _
+    | exact and_or_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
+    | exact and_or_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
+    | exact or_and_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
+    | exact or_and_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
+    | exact or_and_factor_left _ _ _ (by assumption) (by assumption) (by assumption)
+    | exact and_or_factor_left _ _ _ (by assumption) (by assumption) (by assumption)
     | fail "No distributivity rule applies"))
 
 elab "sql_rw_absorb" : tactic => do
@@ -469,9 +469,10 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
 example : Expr.unaryOp .not (Expr.binOp .and a b) ≃ₑ
           Expr.binOp .or (Expr.unaryOp .not a) (Expr.unaryOp .not b) := by sql_equiv
 
-/-- Example: Distributivity -/
-example : Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ
-          Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) := by sql_equiv
+/-- Example: Distributivity (requires isBoolValued) -/
+example (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
+    Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ
+    Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) := by sql_equiv
 
 /-- Example: Absorption (requires isBoolValued) -/
 example (ha : a.isBoolValued) (hb : b.isBoolValued) :

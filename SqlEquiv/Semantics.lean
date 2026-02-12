@@ -160,16 +160,20 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   | .ge, some (.null _), some _ => some (.null none)
   | .ge, some _, some (.null _) => some (.null none)
   | .ge, some a, some b => (a.compare b).map (fun o => Value.bool (o != .lt))
-  -- Boolean: SQL three-valued logic (short-circuit preserved)
-  -- AND/OR keep ORIGINAL semantics (no null propagation change) to preserve
-  -- distributivity laws. Option 3 null propagation applies only to
-  -- arithmetic, comparison, unary, and string operations.
+  -- Boolean: SQL three-valued logic
+  -- Short-circuit rules (FALSE dominates AND, TRUE dominates OR)
   | .and, some (.bool a), some (.bool b) => some (.bool (a && b))
   | .and, some (.bool false), _ => some (.bool false)  -- FALSE AND anything = FALSE
   | .and, _, some (.bool false) => some (.bool false)
+  -- AND: null propagation (after short-circuit, null + value = null; none still propagates)
+  | .and, some (.null _), some _ => some (.null none)
+  | .and, some _, some (.null _) => some (.null none)
   | .or, some (.bool a), some (.bool b) => some (.bool (a || b))
   | .or, some (.bool true), _ => some (.bool true)      -- TRUE OR anything = TRUE
   | .or, _, some (.bool true) => some (.bool true)
+  -- OR: null propagation (after short-circuit, null + value = null; none still propagates)
+  | .or, some (.null _), some _ => some (.null none)
+  | .or, some _, some (.null _) => some (.null none)
   -- String: null propagation
   | .concat, some (.null _), some _ => some (.null none)
   | .concat, some _, some (.null _) => some (.null none)
@@ -274,12 +278,11 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
     none
   | .case branches else_ => evalCase db row branches else_
   | .inList e neg vals =>
-    match evalExprWithDb db row e with
-    | none => none
-    | some v =>
-      let hasMatch := vals.filterMap (evalExprWithDb db row) |>.any fun v' =>
-        v.eq v' == some true
-      some (Value.bool (if neg then !hasMatch else hasMatch))
+    let ev := evalExprWithDb db row e
+    let result := vals.foldl (fun acc vi =>
+      evalBinOp .or acc (evalBinOp .eq ev (evalExprWithDb db row vi))
+    ) (some (.bool false))
+    if neg then evalUnaryOp .not result else result
   | .inSubquery e neg sel =>
     match evalExprWithDb db row e with
     | none => none
@@ -301,14 +304,10 @@ partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
     | some subRow => subRow.head?.map (·.2)
     | none => some (.null none)  -- Empty subquery returns NULL
   | .between e lo hi =>
-    match evalExprWithDb db row e, evalExprWithDb db row lo, evalExprWithDb db row hi with
-    | some v, some vlo, some vhi =>
-      match v.compare vlo, v.compare vhi with
-      | some .lt, _ => some (Value.bool false)
-      | _, some .gt => some (Value.bool false)
-      | some _, some _ => some (Value.bool true)
-      | _, _ => none
-    | _, _, _ => none
+    let ev := evalExprWithDb db row e
+    let evlo := evalExprWithDb db row lo
+    let evhi := evalExprWithDb db row hi
+    evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
   | .windowFn _fn _arg _spec =>
     -- Window functions need full partition context, return null for single-row evaluation
     none
@@ -822,24 +821,19 @@ axiom evalExprWithDb_func (db : Database) (row : Row) (name : String) (args : Li
 /-- Axiom: evalExprWithDb unfolds for BETWEEN -/
 axiom evalExprWithDb_between (db : Database) (row : Row) (e lo hi : Expr) :
   evalExprWithDb db row (Expr.between e lo hi) =
-  match evalExprWithDb db row e, evalExprWithDb db row lo, evalExprWithDb db row hi with
-  | some v, some vlo, some vhi =>
-    match v.compare vlo, v.compare vhi with
-    | some .lt, _ => some (Value.bool false)
-    | _, some .gt => some (Value.bool false)
-    | some _, some _ => some (Value.bool true)
-    | _, _ => none
-  | _, _, _ => none
+  let ev := evalExprWithDb db row e
+  let evlo := evalExprWithDb db row lo
+  let evhi := evalExprWithDb db row hi
+  evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
 
 /-- Axiom: evalExprWithDb unfolds for IN list -/
 axiom evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool) (vals : List Expr) :
   evalExprWithDb db row (Expr.inList e neg vals) =
-  match evalExprWithDb db row e with
-  | none => none
-  | some v =>
-    let hasMatch := vals.filterMap (evalExprWithDb db row) |>.any fun v' =>
-      v.eq v' == some true
-    some (Value.bool (if neg then !hasMatch else hasMatch))
+  let ev := evalExprWithDb db row e
+  let result := vals.foldl (fun acc vi =>
+    evalBinOp .or acc (evalBinOp .eq ev (evalExprWithDb db row vi))
+  ) (some (.bool false))
+  if neg then evalUnaryOp .not result else result
 
 -- ============================================================================
 -- Infrastructure axioms for evalSelect limit/offset decomposition
