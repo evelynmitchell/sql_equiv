@@ -746,12 +746,14 @@ private theorem le_foldl_max_of_mem (init : Int) (l : List Int) (n : Int) (h : n
 theorem min_le_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
     ns.foldl min (ns.head!) ≤ n := by
   match ns, h with
+  | [], h => nomatch h
   | x :: xs, h => exact foldl_min_le_of_mem x (x :: xs) n h
 
 /-- MAX is at least any element in the list -/
 theorem max_ge_elem (n : Int) (ns : List Int) (h : n ∈ ns) :
     n ≤ ns.foldl max (ns.head!) := by
   match ns, h with
+  | [], h => nomatch h
   | x :: xs, h => exact le_foldl_max_of_mem x (x :: xs) n h
 
 /-- DISTINCT doesn't increase count -/
@@ -775,7 +777,7 @@ theorem distinct_count_le (vs : List Value) :
       have hfilt_len : (vs.filter (! · == v)).length ≤ k :=
         Nat.le_trans (List.length_filter_le _ _) (by simp at hl; omega)
       have h1 := ih _ hfilt_len
-      have h2 := List.length_filter_le (fun b => !b == v) vs
+      have h2 := List.length_filter_le (fun b => !(b == v)) vs
       omega
 
 /-- A Nodup list is unchanged by eraseDups -/
@@ -800,7 +802,7 @@ private theorem nodup_implies_eraseDups_eq (l : List Value) (h : l.Nodup) :
       have ha_not_mem := hnd'.1
       have has_nd := hnd'.2
       -- Since a ∉ as, filter (! · == a) keeps all elements
-      have hfilter : as.filter (fun b => !b == a) = as := by
+      have hfilter : as.filter (fun b => !(b == a)) = as := by
         rw [List.filter_eq_self]
         intro b hb
         simp only [Bool.not_eq_true', beq_eq_false_iff_ne]
