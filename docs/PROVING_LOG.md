@@ -2272,7 +2272,7 @@ These axioms were blocked on Issue #124 and are now provable via the new
 Batch 21 (PR #125) rewrote the `inList` evaluator to use `foldl` + `evalBinOp .or/.eq`
 semantics and unblocked 6 IN-list axioms for proof. This batch converts them all to theorems.
 
-### Private helpers added (5)
+### Private helpers added (6)
 
 | Helper | Purpose |
 |--------|---------|
