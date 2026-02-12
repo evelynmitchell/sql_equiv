@@ -1991,3 +1991,137 @@ All private, in `StatementAxioms.lean`:
 - 100% axiom coverage (85/85)
 - Ratchet: 91 → 85 (7 proved - 1 infrastructure added = net 6 reduction)
 - **PR**: #121 (merged)
+
+---
+
+## Batch 19: Outer Join Preservation Axioms (#71) — 4 axioms → theorems
+
+**Branch**: `claude/prove-outer-join-preservation`
+
+### Soundness fix (1)
+
+- **`left_join_filter_null_is_inner`** was unsound as originally stated. Counterexample:
+  left table `[{a: 1}]`, right table `[{b: NULL}]`, `on_ = none`, `rightCol = "b"`.
+  Inner join: `[{a:1, b:NULL}]` (length 1). Left join filtered: `[]` (b IS NULL removed).
+  **0 ≠ 1**. Fixed by adding preconditions:
+  - `hNotInLeft`: `rightCol` does not appear in left table rows (qualified column from right table)
+  - `hRightNonNull`: `rightCol` exists and is non-null in every right table row
+
+### Axioms proved (4)
+
+**inner_subset_cross**: `|A ⋈[cond] B| ≤ |A × B|`.
+Direct from `inner_join_cardinality_le` + `cross_join_cardinality` + `omega`.
+
+**left_join_preserves_left**: every left row appears in the LEFT JOIN result.
+After `rw [evalFrom_left_join]`, use `exists_mem_flatMap_of_length_ge_one` to find a witness
+in the flatMap result, then `split at hjr` to case-split the if/match in the hypothesis.
+For the isEmpty=false case, inline `List.mem_filterMap` + `cases on_` + `generalize`/case-split
+on `evalExprWithDb` results.
+
+**right_join_preserves_right**: symmetric to left, using `evalFrom_right_join`.
+
+**left_join_filter_null_is_inner**: filtering LEFT JOIN NULLs gives INNER JOIN cardinality.
+After `rw [evalFrom_left_join, evalFrom_inner_join]; rw [List.filter_flatMap]`, apply
+`flatMap_length_eq_of_forall` to reduce to per-row equality. Three cases:
+- isEmpty=true, head?=some: null-padded row → filter removes it (pred false on nulls) → length 0 = 0
+- isEmpty=true, head?=none: lr alone → find? returns none → pred false → length 0 = 0
+- isEmpty=false: filterMap elements all pass pred (find?_append + hNotInLeft + hRightNonNull)
+
+### Helper lemmas added (3)
+
+- `flatMap_length_eq_of_forall`: flatMap length equality when per-element contributions match
+- `filter_pred_false_on_null_mapped`: filter pred is always false on null-mapped rows (by induction)
+- `exists_mem_flatMap_of_length_ge_one`: existential witness from flatMap when body has length ≥ 1
+
+### Key proof technique: bridging compiled predicate forms
+
+The lambda `fun (k, _) => k == rightCol` compiles to two different syntactic forms:
+- In hypotheses: `fun x => match x with | (k, snd) => k == rightCol`
+- In goal (after `rw [evalFrom_left_join]`): `fun x => x.fst == rightCol`
+
+These are definitionally equal but syntactically different. `rw` uses syntactic matching
+and fails to unify them. The fix: use `have` with explicit type ascription to bridge:
+```lean
+have hNotInLeft' : List.find? (fun (x : String × Value) => x.fst == rightCol) lr = none :=
+  hNotInLeft lr hlr
+```
+Since `have` only requires definitional equality between the ascribed type and the proof term's
+type, this creates a hypothesis in the goal's form. Then `rw [hNotInLeft']` matches syntactically.
+
+### Lessons learned
+
+1. **Compiled lambda form divergence is the #1 `rw` failure mode for join proofs.**
+   The same source-level lambda `fun (k, _) => k == rightCol` compiles to two different
+   syntactic forms depending on context:
+   - In hypotheses: `fun x => match x with | (k, snd) => k == rightCol`
+   - In goals (after `rw` with infrastructure axioms): `fun x => x.fst == rightCol`
+
+   They're definitionally equal, but `rw` uses syntactic matching, so it silently fails.
+   This is invisible at the source level — the forms look identical in the `.lean` file.
+   `trace_state` is the only reliable diagnostic.
+
+2. **`have` with type ascription is the universal bridge for definitional equality gaps.**
+   When a hypothesis has one compiled form and the goal needs another:
+   ```lean
+   have h' : List.find? (fun (x : String × Value) => x.fst == rightCol) lr = none :=
+     hOriginal lr hlr
+   ```
+   `have` only requires definitional equality between the ascribed type and the proof term's
+   type. Write the ascribed type in whatever form the *goal* needs. This pattern works for
+   any definitional-but-not-syntactic mismatch, not just lambda forms.
+
+3. **Always `trace_state` after the first `rw` with an infrastructure axiom.** The
+   normalization that `rw [evalFrom_left_join]` performs on lambdas is not predictable from
+   reading the source. One `trace_state` immediately reveals the form mismatch. Without it,
+   you can spend hours trying different `rw`/`simp` strategies that all fail for the same
+   invisible reason.
+
+4. **`congr 1` before `rw [List.filter_eq_self]` when the goal has `.length`.** The goal
+   `(filter p l).length = l.length` doesn't match `filter p l = l` (the `iff` in `filter_eq_self`).
+   `congr 1` strips the `.length` first.
+
+5. **`List.isEmpty_iff.mp` converts `isEmpty = true` to `l = []`.** Useful when the isEmpty
+   condition from `split` on `if isEmpty then ...` needs to be used as a list rewrite.
+
+6. **Meta-lesson: when `rw` silently fails, the problem is almost always a syntactic form
+   mismatch invisible at the source level.** `trace_state` is the diagnostic, `have` with
+   type ascription is the cure. Don't iterate on alternative `rw`/`simp` strategies — look
+   at the actual goal first.
+
+### Process retrospective
+
+**~70% of the time on `left_join_filter_null_is_inner` was wasted.** The root cause — compiled
+lambda form divergence between hypotheses and goal — was diagnosed late. Before that diagnosis,
+multiple approaches were tried and abandoned:
+- Bridge lemmas (`join_filterMap_eq`) that proved the forms propositionally equal but couldn't
+  be applied by `rw` or `simp only` (same syntactic matching problem, one level up)
+- `show ... from by` blocks with explicit types (type mismatch for the same reason)
+- `simp only` variants hoping `simp` would handle definitional equality (it doesn't for
+  rewrite rules — `simp only [h]` still needs syntactic matching on `h`'s LHS)
+- `conv` navigation attempts
+
+All failed for the same invisible reason. One `trace_state` after `rw [List.find?_append]`
+revealed the problem immediately:
+```
+goal:  fun x => x.fst == rightCol
+hyp:   fun x => match x with | (k, snd) => k == rightCol
+```
+
+The fix (`have` with type ascription) took ~10 minutes after that.
+
+**Takeaway: for join proofs involving `rw` with infrastructure axioms, the first tactic after
+the rewrite should be `trace_state`.** Treat the compiled form as unknown until observed.
+Reasoning about what Lean's elaborator *should* do is unreliable; looking at what it *actually
+did* is instant. The speculative reasoning wasn't just slow — it was actively harmful, because
+each plausible-sounding but wrong theory spawned another attempt that failed for the same
+undiagnosed cause.
+
+The other three theorems (`inner_subset_cross`, `left_join_preserves_left`,
+`right_join_preserves_right`) were straightforward by comparison. The whole batch could have
+been a clean afternoon instead of a slog.
+
+### Verification
+
+- 229/229 tests pass
+- 100% axiom coverage (81/81)
+- Ratchet: 85 → 81 (4 axioms proved, 0 new infrastructure)

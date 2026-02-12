@@ -13,10 +13,10 @@ Phase 1: Foundation (COMPLETE)
     PR 0: Shared Utilities ✓
     PR A: Expression Normalization ✓
 
-Phase 2: Core Optimizations (IN PROGRESS)
-    PR B: Predicate Pushdown (PR #7)
-    PR C: Join Reordering (PR #8)
-    Integration PR
+Phase 2: Core Optimizations (COMPLETE)
+    PR B: Predicate Pushdown ✓
+    PR C: Join Reordering ✓
+    Integration ✓
 
 Phase 3: Cost Model Enhancement
     Advanced Cost Estimation
@@ -52,25 +52,25 @@ Phase 6: Physical Optimization
 
 ---
 
-## Phase 2: Core Optimizations (IN PROGRESS)
+## Phase 2: Core Optimizations (COMPLETE)
 
 ### PR B: Predicate Pushdown
-**Status:** PR #7 open, under review
+**Status:** PR #7 closed; work integrated via separate commits into `PredicatePushdown.lean`
 **Spec:** [OPTIMIZER_REDESIGN_PLAN.md](./OPTIMIZER_REDESIGN_PLAN.md#pr-b-predicate-pushdown-medium-risk)
 
 Push WHERE predicates closer to data sources to reduce intermediate result sizes.
 
 ### PR C: Join Reordering
-**Status:** PR #8 open, under review
+**Status:** PR #8 merged (2026-02-02); implemented in `JoinReordering.lean`
 **Spec:** [OPTIMIZER_REDESIGN_PLAN.md](./OPTIMIZER_REDESIGN_PLAN.md#pr-c-join-reordering-higher-risk)
 
 Reorder INNER/CROSS joins using greedy cost-based selection.
 
-### Integration PR
-**Status:** Pending PR B & C merge
+### Integration
+**Status:** Complete — both modules integrated into `Optimizer.lean`
 **Spec:** [OPTIMIZER_REDESIGN_PLAN.md](./OPTIMIZER_REDESIGN_PLAN.md#integration-optimizeselectadvanced)
 
-Combine all optimizations into `optimizeSelectAdvanced`.
+All optimizations combined in `optimizeSelectAdvanced`.
 
 ---
 
@@ -176,14 +176,14 @@ Detect when query subexpressions can be satisfied by existing materialized views
             ▼                ▼                ▼
     ┌───────────────┐ ┌─────────────┐ ┌───────────────┐
     │ PR A: Normalize│ │ PR B: Push  │ │ PR C: Reorder │
-    │       ✓        │ │   down      │ │    joins      │
+    │       ✓        │ │   down ✓    │ │   joins ✓     │
     └───────────────┘ └──────┬──────┘ └───────┬───────┘
                              │                │
                              └───────┬────────┘
                                      │
                                      ▼
                          ┌───────────────────────┐
-                         │   Integration PR      │
+                         │   Integration ✓       │
                          └───────────┬───────────┘
                                      │
                     ┌────────────────┼────────────────┐
@@ -227,7 +227,7 @@ See [OPTIMIZER_VERIFICATION_PLAN.md](./OPTIMIZER_VERIFICATION_PLAN.md) for detai
 | Phase | Features | Est. Implementation | Est. Verification |
 |-------|----------|---------------------|-------------------|
 | 1 | Foundation | ✓ Complete | 2-3 days |
-| 2 | Core Optimizations | 2 weeks | 2 weeks |
+| 2 | Core Optimizations | ✓ Complete | 2 weeks |
 | 3 | Cost Model | 1 week | 1 week |
 | 4 | Advanced Transforms | 3 weeks | 3 weeks |
 | 5 | DP Optimizer | 1 week | 2 weeks |

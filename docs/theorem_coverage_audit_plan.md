@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **107 axioms** across 12 `.lean` files (86 in `Equiv/`, 21 in infrastructure)
-- **275 theorems** proved (72.0%) — includes `private theorem` declarations
-- Axiom ratchet: 107 (`tools/axiom_count_minimum.txt`)
+- **81 axioms** across 9 `.lean` files (52 in `Equiv/`, 29 in infrastructure)
+- **334 theorems** proved (80.5%)
+- Axiom ratchet: 81 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
@@ -31,27 +31,28 @@ Run with `--runtime` flag for full analysis. No build required.
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Comparison.lean` | 23 | 119 | Comparison, boolean, arithmetic equivalences |
-| `StatementAxioms.lean` | 57 | 18 | Statement-level axioms (joins, subqueries, set ops) |
-| `ExprAxioms.lean` | 3 | 42 | Expression-level axioms and theorems |
+| `Comparison.lean` | 22 | 160 | Comparison, boolean, arithmetic equivalences |
 | `Decidable.lean` | 3 | 2 | Decidable equivalence helpers |
-| `Defs.lean` | 0 | 12 | Core definitions (ExprEquiv, StmtEquiv) |
+| `Defs.lean` | 0 | 20 | Core definitions (ExprEquiv, StmtEquiv) |
+| `ExprAxioms.lean` | 1 | 44 | Expression-level axioms and theorems |
+| `SetBagLemmas.lean` | 0 | 6 | Set/bag equivalence lemmas |
+| `StatementAxioms.lean` | 26 | 63 | Statement-level axioms (joins, subqueries, set ops) |
 | `ValueLemmas.lean` | 0 | 27 | Value-level helper lemmas |
-| **Subtotal** | **86** | **220** | |
+| **Subtotal** | **52** | **322** | |
 
 ### Infrastructure Axioms
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Semantics.lean` | 13 | 0 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
-| `Optimizer.lean` | 3 | 6 | Optimizer correctness (pushdown, join reorder) |
 | `ExprNormalization.lean` | 2 | 0 | Normalization preserves semantics |
 | `JoinReordering.lean` | 2 | 1 | Join reorder forward/backward |
-| `PredicatePushdown.lean` | 1 | 0 | Predicate pushdown preserves semantics |
+| `Optimizer.lean` | 3 | 6 | Optimizer correctness (pushdown, join reorder) |
 | `OptimizerUtils.lean` | 0 | 5 | Optimizer utility lemmas |
-| **Subtotal** | **21** | **12** | |
+| `PredicatePushdown.lean` | 1 | 0 | Predicate pushdown preserves semantics |
+| `Semantics.lean` | 21 | 0 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
+| **Subtotal** | **29** | **12** | |
 
-### Grand Total: 107 axioms, 275 theorems (72.0% proved)
+### Grand Total: 81 axioms, 334 theorems (80.5% proved)
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)

@@ -249,6 +249,15 @@ private theorem right_join_body_length_ge_one (matchingRows : List Row) (leftHea
   | nil => simp; cases leftHead <;> simp
   | cons _ _ => simp
 
+/-- Helper: if f(a) has ≥ 1 element and all elements satisfy P, then ∃ b ∈ l.flatMap f, P b -/
+private theorem exists_mem_flatMap_of_length_ge_one {α β : Type} (f : α → List β)
+    (l : List α) (a : α) (ha : a ∈ l) (P : β → Prop)
+    (hLen : (f a).length ≥ 1) (hP : ∀ b ∈ f a, P b) :
+    ∃ b ∈ l.flatMap f, P b := by
+  have hNE := List.ne_nil_of_length_pos (by omega : 0 < (f a).length)
+  obtain ⟨b, hb⟩ := List.exists_mem_of_ne_nil _ hNE
+  exact ⟨b, List.mem_flatMap.mpr ⟨a, ha, hb⟩, hP b hb⟩
+
 /-- INNER JOIN with ON TRUE is equivalent to CROSS JOIN -/
 theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
     evalFrom db (.join a .inner b (some (.lit (.bool true)))) =
@@ -412,38 +421,208 @@ theorem inner_join_to_where (db : Database) (t1 t2 : TableRef) (cond : Expr) :
       | null _ => simp; exact ih
 
 /-- LEFT JOIN preserves all left rows: every left row appears in the result -/
-axiom left_join_preserves_left (db : Database) (a b : FromClause) (on_ : Option Expr) :
+theorem left_join_preserves_left (db : Database) (a b : FromClause) (on_ : Option Expr) :
     let leftRows := evalFrom db a
     let joinResult := evalFrom db (.join a .left b on_)
     ∀ lr ∈ leftRows, ∃ jr ∈ joinResult, ∀ (k : String) (v : Value),
-      (k, v) ∈ lr → (k, v) ∈ jr
+      (k, v) ∈ lr → (k, v) ∈ jr := by
+  simp only []
+  rw [evalFrom_left_join]; simp only []
+  intro lr hlr
+  apply exists_mem_flatMap_of_length_ge_one _ _ lr hlr
+  · -- body has length ≥ 1
+    exact left_join_body_length_ge_one _ _ lr
+  · -- every element of body preserves lr's columns
+    intro jr hjr k v hkv
+    -- hjr : jr ∈ (if matchingRows.isEmpty then ... else matchingRows)
+    -- Split the if-then-else in hjr
+    split at hjr
+    · -- isEmpty = true: null-padded branch
+      split at hjr
+      · -- head? = some rightRow: jr ∈ [lr ++ rightRow.map null]
+        simp at hjr; rw [hjr]; exact List.mem_append.mpr (.inl hkv)
+      · -- head? = none: jr ∈ [lr]
+        simp at hjr; rw [hjr]; exact hkv
+    · -- isEmpty = false: jr ∈ matchingRows (compiled filterMap)
+      -- Extract the source right row from filterMap membership
+      rw [List.mem_filterMap] at hjr
+      obtain ⟨rr, _, hf⟩ := hjr
+      -- Case split on_ to reduce the compiled match and extract jr = lr ++ rr
+      cases on_ with
+      | none => simp at hf; rw [← hf]; exact List.mem_append.mpr (.inl hkv)
+      | some cond =>
+        simp only at hf
+        generalize hv : evalExprWithDb db (lr ++ rr) cond = v at hf
+        cases v with
+        | none => simp at hf
+        | some val =>
+          cases val with
+          | bool b => cases b <;> simp at hf; rw [← hf]; exact List.mem_append.mpr (.inl hkv)
+          | int _ => simp at hf
+          | string _ => simp at hf
+          | null _ => simp at hf
 
 /-- RIGHT JOIN preserves all right rows: every right row appears in the result -/
-axiom right_join_preserves_right (db : Database) (a b : FromClause) (on_ : Option Expr) :
+theorem right_join_preserves_right (db : Database) (a b : FromClause) (on_ : Option Expr) :
     let rightRows := evalFrom db b
     let joinResult := evalFrom db (.join a .right b on_)
     ∀ rr ∈ rightRows, ∃ jr ∈ joinResult, ∀ (k : String) (v : Value),
-      (k, v) ∈ rr → (k, v) ∈ jr
+      (k, v) ∈ rr → (k, v) ∈ jr := by
+  simp only []
+  rw [evalFrom_right_join]; simp only []
+  intro rr hrr
+  apply exists_mem_flatMap_of_length_ge_one _ _ rr hrr
+  · -- body has length ≥ 1
+    exact right_join_body_length_ge_one _ _ rr
+  · -- every element of body preserves rr's columns
+    intro jr hjr k v hkv
+    split at hjr
+    · -- isEmpty = true: null-padded branch
+      split at hjr
+      · -- head? = some leftRow: jr ∈ [leftRow.map null ++ rr]
+        simp at hjr; rw [hjr]; exact List.mem_append.mpr (.inr hkv)
+      · -- head? = none: jr ∈ [rr]
+        simp at hjr; rw [hjr]; exact hkv
+    · -- isEmpty = false: jr ∈ matchingRows (compiled filterMap)
+      rw [List.mem_filterMap] at hjr
+      obtain ⟨lr, _, hf⟩ := hjr
+      cases on_ with
+      | none => simp at hf; rw [← hf]; exact List.mem_append.mpr (.inr hkv)
+      | some cond =>
+        simp only at hf
+        generalize hv : evalExprWithDb db (lr ++ rr) cond = v at hf
+        cases v with
+        | none => simp at hf
+        | some val =>
+          cases val with
+          | bool b => cases b <;> simp at hf; rw [← hf]; exact List.mem_append.mpr (.inr hkv)
+          | int _ => simp at hf
+          | string _ => simp at hf
+          | null _ => simp at hf
 
 /-- INNER JOIN is a subset of CROSS JOIN (when ON is given) -/
-axiom inner_subset_cross (db : Database) (a b : FromClause) (cond : Expr) :
+theorem inner_subset_cross (db : Database) (a b : FromClause) (cond : Expr) :
     let innerResult := evalFrom db (.join a .inner b (some cond))
     let crossResult := evalFrom db (.join a .cross b none)
-    innerResult.length ≤ crossResult.length
+    innerResult.length ≤ crossResult.length := by
+  simp only []
+  have h1 := inner_join_cardinality_le db a b (some cond)
+  have h2 := cross_join_cardinality db a b
+  simp only [] at h1 h2
+  omega
+
+/-- flatMap length equality when per-element contributions match -/
+private theorem flatMap_length_eq_of_forall {α β : Type} (l : List α) (f g : α → List β)
+    (h : ∀ x ∈ l, (f x).length = (g x).length) :
+    (l.flatMap f).length = (l.flatMap g).length := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.flatMap_cons, List.length_append]
+    rw [h a List.mem_cons_self]
+    rw [ih (fun x hx => h x (List.mem_cons_of_mem a hx))]
+
+/-- Filter predicate is false on null-mapped rows when find? returns none on the left part -/
+private theorem filter_pred_false_on_null_mapped (rightRow : Row) (col : String) :
+    (match (rightRow.map fun (k, _) => (k, Value.null none)).find?
+        (fun (k, _) => k == col) with
+    | some (_, v) => !isNullValue v
+    | none => false) = false := by
+  induction rightRow with
+  | nil => simp [List.find?]
+  | cons hd rest ih =>
+    simp only [List.map_cons, List.find?_cons]
+    cases hd.1 == col with
+    | true => simp [isNullValue]
+    | false => exact ih
 
 /-- Converting LEFT JOIN to INNER JOIN by filtering out NULLs:
     If we filter the result of LEFT JOIN to exclude rows where right columns are NULL,
-    we get the same result as INNER JOIN -/
-axiom left_join_filter_null_is_inner (db : Database) (a b : FromClause) (on_ : Option Expr)
-    (rightCol : String) :
+    the resulting list has the same length as the INNER JOIN result.
+
+    Preconditions:
+    - rightCol does not appear in left table rows (qualified column from right table)
+    - rightCol exists and is non-null in every right table row -/
+theorem left_join_filter_null_is_inner (db : Database) (a b : FromClause) (on_ : Option Expr)
+    (rightCol : String)
+    (hNotInLeft : ∀ lr ∈ evalFrom db a,
+      lr.find? (fun (k, _) => k == rightCol) = none)
+    (hRightNonNull : ∀ rr ∈ evalFrom db b,
+      (match rr.find? (fun (k, _) => k == rightCol) with
+      | some (_, v) => !isNullValue v
+      | none => false) = true) :
     let leftResult := evalFrom db (.join a .left b on_)
     let innerResult := evalFrom db (.join a .inner b on_)
     let filtered := leftResult.filter fun row =>
       match row.find? (fun (k, _) => k == rightCol) with
       | some (_, v) => !isNullValue v
       | none => false
-    -- The filtered left join has same length as inner join
-    filtered.length = innerResult.length
+    filtered.length = innerResult.length := by
+  simp only []
+  rw [evalFrom_left_join, evalFrom_inner_join]; simp only []
+  rw [List.filter_flatMap]
+  apply flatMap_length_eq_of_forall
+  intro lr hlr
+  -- Bridge hNotInLeft to the .fst form used in the goal after rw [evalFrom_left_join].
+  -- The theorem's `fun (k, _) => k == rightCol` compiles to two different forms:
+  --   hypothesis: `fun x => match x with | (k, snd) => k == rightCol`
+  --   goal (after rw): `fun x => x.fst == rightCol`
+  -- These are definitionally equal, so `have` with type ascription bridges them.
+  have hNotInLeft' : List.find? (fun (x : String × Value) => x.fst == rightCol) lr = none :=
+    hNotInLeft lr hlr
+  split
+  · -- isEmpty = true: inner join filterMap is empty
+    rename_i hIsEmpty
+    have hInnerEmpty := List.isEmpty_iff.mp hIsEmpty
+    split
+    · -- head? = some rightRow: left body = [lr ++ rightRow.map null]
+      rename_i rightRow _
+      simp only [List.filter_cons, List.filter_nil]
+      rw [List.find?_append, hNotInLeft', Option.none_or]
+      -- Bridge filter_pred_false_on_null_mapped to goal's .fst form
+      have hNullFalse : (match (List.map (fun (x : String × Value) => (x.fst, Value.null none))
+          rightRow).find? (fun (x : String × Value) => x.fst == rightCol) with
+        | some (_, v) => !isNullValue (some v) | none => false) = false :=
+        filter_pred_false_on_null_mapped rightRow rightCol
+      rw [hNullFalse, hInnerEmpty]; simp
+    · -- head? = none: left body = [lr]
+      simp only [List.filter_cons, List.filter_nil]
+      have hpred : (match List.find? (fun (x : String × Value) => x.fst == rightCol) lr with
+        | some (_, v) => !isNullValue (some v) | none => false) = false := by rw [hNotInLeft']
+      rw [hpred, hInnerEmpty]; simp
+  · -- isEmpty = false: left body = filterMap (same as inner)
+    -- Show filter preserves all elements (all matched rows have non-null rightCol)
+    congr 1
+    rw [List.filter_eq_self]
+    intro mr hmr
+    rw [List.mem_filterMap] at hmr
+    obtain ⟨rr, hrr, hf⟩ := hmr
+    -- Bridge hRightNonNull to goal's .fst form
+    have hRightNonNull' : (match List.find? (fun (x : String × Value) => x.fst == rightCol)
+        rr with | some (_, v) => !isNullValue (some v) | none => false) = true :=
+      hRightNonNull rr hrr
+    cases on_ with
+    | none =>
+      simp at hf; rw [← hf]
+      rw [List.find?_append, hNotInLeft', Option.none_or]
+      exact hRightNonNull'
+    | some cond =>
+      simp only at hf
+      generalize hv : evalExprWithDb db (lr ++ rr) cond = v at hf
+      cases v with
+      | none => simp at hf
+      | some val =>
+        cases val with
+        | bool b =>
+          cases b with
+          | true =>
+            simp at hf; rw [← hf]
+            rw [List.find?_append, hNotInLeft', Option.none_or]
+            exact hRightNonNull'
+          | false => simp at hf
+        | int _ => simp at hf
+        | string _ => simp at hf
+        | null _ => simp at hf
 
 -- ============================================================================
 -- Subquery Theorems
