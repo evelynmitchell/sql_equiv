@@ -40,7 +40,7 @@ if [ -n "$matched" ]; then
 
     # Run rewrite audit validator automatically
     printf "\n\033[1;36m   Running rewrite audit validator...\033[0m\n\n"
-    if python3 tools/rewrite_audit_validator.py; then
+    if uv run python tools/rewrite_audit_validator.py; then
         printf "\n\033[1;32m   ✓ All rewrite arms annotated.\033[0m\n\n"
     else
         printf "\n\033[1;31m   ✗ Rewrite audit failed — fix unannotated arms before committing.\033[0m\n"
@@ -53,7 +53,7 @@ fi
 lean_staged=$(echo "$staged" | grep '^SqlEquiv/.*\.lean$' || true)
 if [ -n "$lean_staged" ]; then
     printf "\033[1;36m   Checking for unused private declarations...\033[0m\n"
-    if python3 tools/unused_private_checker.py $lean_staged; then
+    if uv run python tools/unused_private_checker.py $lean_staged; then
         printf "\033[1;32m   ✓ No unused private declarations.\033[0m\n\n"
     else
         printf "\n\033[1;31m   ✗ Unused private declarations found — remove them before committing.\033[0m\n"
@@ -65,7 +65,7 @@ fi
 # --- Auto-update axiom/theorem counts in docs ---
 if [ -n "$lean_staged" ]; then
     printf "\033[1;36m   Updating doc axiom/theorem counts...\033[0m\n"
-    if python3 tools/update_doc_counts.py; then
+    if uv run python tools/update_doc_counts.py; then
         # Stage any doc files that were modified
         for doc in docs/PROVING_AXIOMS_PLAN.md docs/theorem_coverage_audit_plan.md tools/axiom_count_minimum.txt; do
             if git diff --name-only -- "$doc" | grep -q .; then
