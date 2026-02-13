@@ -2885,3 +2885,44 @@ Branch 2 was the hardest: needed `generalize` to abstract `(b :: bs).dropLast` b
 ### Net axiom count change
 
 - **1 axiom → theorem**: 54 → 53
+
+## Batch 29: Prove 4 EXISTS axioms (53 → 49)
+
+### Goal
+
+Prove the 4 simplest subquery axioms: `exists_empty_false`, `not_exists_empty_true`, `exists_nonempty_true`, `not_exists_nonempty_false`. These state that `EXISTS` on an empty subquery is `FALSE` (and vice versa for non-empty), with `NOT EXISTS` returning the opposite.
+
+### Approach
+
+**Created `evalExprCore_exists` unfolding theorem.** The `.exists` case in `evalExprCore` (SemanticsCore.lean:74-77) evaluates the subquery, checks `isEmpty`, and wraps the boolean. The unfolding theorem follows the same pattern as `evalExprCore_unaryOp` — a single `simp [evalExprCore]` suffices.
+
+**Created `evalExprWithDb_exists` bridge theorem.** Follows the standard bridge pattern: `simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_exists ..`
+
+**All 4 axiom proofs follow the same 2-step pattern:**
+1. `rw [evalExprWithDb_exists]` — unfolds to `let subResult := ...; let hasExists := !subResult.isEmpty; some (Value.bool (if neg then !hasExists else hasExists))`
+2. `simp [h]` — for the empty cases, `h : evalSelectWithContext db row sel = []` directly reduces `[].isEmpty` to `true`
+
+For the non-empty cases (`length > 0`), an intermediate `have` proves `isEmpty = false`:
+```lean
+have hne : (evalSelectWithContext db row sel).isEmpty = false := by
+  cases hlist : evalSelectWithContext db row sel with
+  | nil => simp [hlist] at h
+  | cons _ _ => rfl
+```
+Then `simp [hne]` closes the goal.
+
+### Key insight
+
+The `cases` tactic on `evalSelectWithContext db row sel` requires naming the equation (`cases hlist : ...`) so that the hypothesis `h : length > 0` gets rewritten in the `nil` branch (where `simp [hlist] at h` produces a contradiction). Without the equation name, `h` retains the original form and the `nil` case has unsolved goal `[].isEmpty = false`.
+
+### Files modified
+
+- `SqlEquiv/SemanticsCore.lean` — added `evalExprCore_exists` theorem
+- `SqlEquiv/Semantics.lean` — added `evalExprWithDb_exists` bridge theorem
+- `SqlEquiv/Equiv/StatementAxioms.lean` — converted 4 axioms to theorems
+- `tools/axiom_count_minimum.txt` — 53 → 49
+- `docs/PROVING_LOG.md` — this entry
+
+### Net axiom count change
+
+- **4 axioms → theorems**: 53 → 49

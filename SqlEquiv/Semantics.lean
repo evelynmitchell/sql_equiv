@@ -594,6 +594,14 @@ theorem evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : E
   evalExprWithDb db row (Expr.unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_unaryOp ..
 
+/-- evalExprWithDb unfolds for EXISTS expressions -/
+theorem evalExprWithDb_exists (db : Database) (row : Row) (neg : Bool) (sel : SelectStmt) :
+    evalExprWithDb db row (Expr.exists neg sel) =
+    (let subResult := evalSelectWithContext db row sel
+     let hasExists := !subResult.isEmpty
+     some (Value.bool (if neg then !hasExists else hasExists))) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_exists ..
+
 /-- evalExprWithDb unfolds for case expressions -/
 theorem evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_ := by
