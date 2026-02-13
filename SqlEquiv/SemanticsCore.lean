@@ -236,6 +236,14 @@ theorem evalExprCore_inList (db : Database) (row : Row)
      if neg then evalUnaryOp .not result else result) := by
   simp [evalExprCore]
 
+theorem evalExprCore_exists (db : Database) (row : Row)
+    (sqe : Database → Row → SelectStmt → Table) (neg : Bool) (sel : SelectStmt) :
+    evalExprCore db row sqe (.exists neg sel) =
+    (let subResult := sqe db row sel
+     let hasExists := !subResult.isEmpty
+     some (Value.bool (if neg then !hasExists else hasExists))) := by
+  simp [evalExprCore]
+
 -- ============================================================================
 -- Equational Theorems for evalExprCore CASE expression
 -- ============================================================================

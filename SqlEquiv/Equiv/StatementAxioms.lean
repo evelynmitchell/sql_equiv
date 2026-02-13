@@ -629,24 +629,38 @@ theorem left_join_filter_null_is_inner (db : Database) (a b : FromClause) (on_ :
 -- ============================================================================
 
 /-- EXISTS on empty subquery is FALSE -/
-axiom exists_empty_false (db : Database) (row : Row) (sel : SelectStmt)
+theorem exists_empty_false (db : Database) (row : Row) (sel : SelectStmt)
     (h : evalSelectWithContext db row sel = []) :
-    evalExprWithDb db row (Expr.exists false sel) = some (.bool false)
+    evalExprWithDb db row (Expr.exists false sel) = some (.bool false) := by
+  rw [evalExprWithDb_exists]; simp [h]
 
 /-- NOT EXISTS on empty subquery is TRUE -/
-axiom not_exists_empty_true (db : Database) (row : Row) (sel : SelectStmt)
+theorem not_exists_empty_true (db : Database) (row : Row) (sel : SelectStmt)
     (h : evalSelectWithContext db row sel = []) :
-    evalExprWithDb db row (Expr.exists true sel) = some (.bool true)
+    evalExprWithDb db row (Expr.exists true sel) = some (.bool true) := by
+  rw [evalExprWithDb_exists]; simp [h]
 
 /-- EXISTS on non-empty subquery is TRUE -/
-axiom exists_nonempty_true (db : Database) (row : Row) (sel : SelectStmt)
+theorem exists_nonempty_true (db : Database) (row : Row) (sel : SelectStmt)
     (h : (evalSelectWithContext db row sel).length > 0) :
-    evalExprWithDb db row (Expr.exists false sel) = some (.bool true)
+    evalExprWithDb db row (Expr.exists false sel) = some (.bool true) := by
+  rw [evalExprWithDb_exists]
+  have hne : (evalSelectWithContext db row sel).isEmpty = false := by
+    cases hlist : evalSelectWithContext db row sel with
+    | nil => simp [hlist] at h
+    | cons _ _ => rfl
+  simp [hne]
 
 /-- NOT EXISTS on non-empty subquery is FALSE -/
-axiom not_exists_nonempty_false (db : Database) (row : Row) (sel : SelectStmt)
+theorem not_exists_nonempty_false (db : Database) (row : Row) (sel : SelectStmt)
     (h : (evalSelectWithContext db row sel).length > 0) :
-    evalExprWithDb db row (Expr.exists true sel) = some (.bool false)
+    evalExprWithDb db row (Expr.exists true sel) = some (.bool false) := by
+  rw [evalExprWithDb_exists]
+  have hne : (evalSelectWithContext db row sel).isEmpty = false := by
+    cases hlist : evalSelectWithContext db row sel with
+    | nil => simp [hlist] at h
+    | cons _ _ => rfl
+  simp [hne]
 
 /-- Double negation: NOT NOT EXISTS = EXISTS -/
 axiom not_not_exists (sel : SelectStmt) :
