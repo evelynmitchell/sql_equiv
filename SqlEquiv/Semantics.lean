@@ -662,57 +662,6 @@ theorem evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_inList ..
 
 -- ============================================================================
--- Infrastructure axioms for evalSelect limit/offset decomposition
--- ============================================================================
-
-/-- Infrastructure: evalSelect decomposes limit/offset into drop/take on the base result.
-    This captures steps 8 (OFFSET) and 9 (LIMIT) of the evaluation pipeline (lines 765-772). -/
-axiom evalSelect_limit_offset (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-  evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
-    let base := evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none)
-    let offsetRows := match offset with | some n => base.drop n | none => base
-    match limit with | some n => offsetRows.take n | none => offsetRows
-
-/-- Infrastructure: ORDER BY preserves row count (mergeSort preserves length).
-    Changing the ORDER BY clause does not change the number of result rows. -/
-axiom evalSelect_orderBy_length (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat) :
-  (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
-  (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length
-
-/-- Infrastructure: WHERE clause only affects filtering; if two WHERE clauses
-    produce the same filtering behavior for every row, evalSelect produces the same result.
-    Sound because: WHERE only affects `filteredRows` via `List.filter`, and all downstream
-    steps (projection, DISTINCT, ORDER BY, LIMIT/OFFSET) are pure functions of `filteredRows`. -/
-axiom evalSelect_where_congr (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (w1 w2 : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-  (∀ row : Row,
-    (match w1 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true) =
-    (match w2 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true)) →
-  evalSelect db (SelectStmt.mk distinct items from_ w1 groupBy having orderBy limit offset) =
-  evalSelect db (SelectStmt.mk distinct items from_ w2 groupBy having orderBy limit offset)
-
-/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates.
-    Sound because: `List.filter` with an always-false predicate returns `[]`, and without
-    aggregates the empty filteredRows propagates to `[]` through all downstream steps
-    (projection on `[]` = `[]`, DISTINCT/ORDER BY/LIMIT of `[]` = `[]`).
-    GROUP BY on empty rows also produces `[]` (no groups). -/
-axiom evalSelect_filter_all_false (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (cond : Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-  selectHasAggregate items = false →
-  (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
-  evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = []
-
--- ============================================================================
 -- Infrastructure axioms for evalFrom join decomposition
 -- ============================================================================
 
@@ -890,6 +839,77 @@ end
 /-- Bridge: evalQuery equals evalQueryCore instantiated with evalSelect, evalQuery, evalRecursiveCTE -/
 axiom evalQuery_eq_evalQueryCore (db : Database) (q : Query) :
   evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q
+
+/-- Bridge: evalSelect equals evalSelectCore instantiated with all partial def callbacks -/
+axiom evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
+  evalSelect db sel = evalSelectCore db [] evalFrom evalExprWithDb
+    (fun db row item => evalSelectItem db row item)
+    (fun db groupRows sampleRow item => evalSelectItemWithAgg db groupRows sampleRow item)
+    (fun db groupRows sampleRow cond => evalExprWithAgg db groupRows sampleRow cond)
+    (fun db r1 r2 items => compareByOrderItems db r1 r2 items)
+    (fun db row partition sorted idx e => evalExprWithWindow db row partition sorted idx e)
+    (fun items => selectHasWindowFn items)
+    (fun items => selectHasAggregate items)
+    sel
+
+-- ============================================================================
+-- Infrastructure theorems for evalSelect (proved via evalSelectCore bridge)
+-- ============================================================================
+
+/-- Infrastructure: evalSelect decomposes limit/offset into drop/take on the base result.
+    This captures steps 8 (OFFSET) and 9 (LIMIT) of the evaluation pipeline.
+    Proved via evalSelectCore bridge. -/
+theorem evalSelect_limit_offset (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
+    let base := evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none)
+    let offsetRows := match offset with | some n => base.drop n | none => base
+    match limit with | some n => offsetRows.take n | none => offsetRows := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  exact evalSelectCore_limit_offset _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+/-- Infrastructure: ORDER BY preserves row count (mergeSort preserves length).
+    Changing the ORDER BY clause does not change the number of result rows.
+    Proved via evalSelectCore bridge. -/
+theorem evalSelect_orderBy_length (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat) :
+  (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
+  (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  exact evalSelectCore_orderBy_length _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+/-- Infrastructure: WHERE clause only affects filtering; if two WHERE clauses
+    produce the same filtering behavior for every row, evalSelect produces the same result.
+    Proved via evalSelectCore bridge. -/
+theorem evalSelect_where_congr (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (w1 w2 : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  (∀ row : Row,
+    (match w1 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true) =
+    (match w2 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true)) →
+  evalSelect db (SelectStmt.mk distinct items from_ w1 groupBy having orderBy limit offset) =
+  evalSelect db (SelectStmt.mk distinct items from_ w2 groupBy having orderBy limit offset) := by
+  intro hCongr
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  exact evalSelectCore_where_congr _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hCongr
+
+/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates.
+    Proved via evalSelectCore bridge. -/
+theorem evalSelect_filter_all_false (db : Database)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (cond : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  selectHasAggregate items = false →
+  (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
+  evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
+  intro hNoAgg hAllFalse
+  rw [evalSelect_eq_evalSelectCore]
+  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hAllFalse
 
 /-- Infrastructure: evalQuery on a simple SELECT decomposes to evalSelect.
     Proved via evalQueryCore bridge. -/
