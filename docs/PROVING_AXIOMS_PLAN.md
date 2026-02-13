@@ -162,7 +162,7 @@ with case analysis on the evaluated sub-expressions.
 **LIKE (3 axioms) — 2 proved, 1 remaining:**
 - `like_empty_pattern` — proved (PR #86, restored in PR #102)
 - `like_match_all` — **PROVED** (PR #111) with `isStringOrNull` precondition
-- `like_self` — axiom (needs `simpleLike_self_eq` string lemma)
+- `like_self` — **PROVED** (PR #134) via `simpleLike` refactoring to list ops
 
 **Estimated complexity:** Easy-Medium.
 
@@ -383,7 +383,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 |-------|-------------|--------|-----------|------------|
 | 1 | Value/Boolean properties | 22 | 0 (done) | -- |
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
-| 1c | IN / BETWEEN / LIKE | 13 | 1 (`like_self`) | Easy-Medium |
+| 1c | IN / BETWEEN / LIKE | 13 | 0 (done) | -- |
 | 1d | String/Function | 8 | 0 (done) | -- |
 | 2 | Statement-level filter/WHERE | 3 | ~4 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
@@ -431,7 +431,7 @@ decision first (see "Unsound Axiom Strategy" below).
 |:-----:|-------|-------------|:------:|--------|
 | 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 8 | 8 **proved** (PR #112: empty cases; PR #126: singleton, pair, general expansion) |
 | 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 3 **proved** (PR #102: `between_reflexive`; PR #109: `between_expansion`, `not_between_expansion`) |
-| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 2 **proved** (PR #102: `like_empty_pattern`; PR #111: `like_match_all`); `like_self` axiom |
+| 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 3 **proved** (PR #102: `like_empty_pattern`; PR #111: `like_match_all`; PR #134: `like_self`) |
 | 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 8 | 8 **proved** (PR #102: `length_empty`; PR #105: `upper/lower_idempotent`, `upper_lower_upper`, `lower_upper_lower`; PR #107: `concat_empty_left/right`; PR #109: `length_concat`) |
 
 ### Wave 3 -- Statement-level, no join dependency (can parallel with Wave 2)
