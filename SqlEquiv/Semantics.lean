@@ -4,232 +4,10 @@
   Defines what SQL statements *mean* using a relational algebra model.
   This enables formal equivalence proofs.
 -/
-import SqlEquiv.Ast
+import SqlEquiv.SemanticsBase
+import SqlEquiv.SemanticsCore
 
 namespace SqlEquiv
-
--- ============================================================================
--- Core Types
--- ============================================================================
-
-/-- A row is a mapping from column names to values -/
-abbrev Row := List (String × Value)
-
-/-- A table is a list of rows (bag semantics for now) -/
-abbrev Table := List Row
-
-/-- A database maps table names to tables -/
-abbrev Database := String → Table
-
--- ============================================================================
--- Helper Functions
--- ============================================================================
-
-/-- Check if string contains substring (simple implementation) -/
-def stringContains (haystack needle : String) : Bool :=
-  let h := haystack.toList
-  let n := needle.toList
-  if n.isEmpty then true
-  else go h n
-where
-  go : List Char → List Char → Bool
-  | [], _ => false
-  | h :: hs, needle =>
-    if needle.isPrefixOf (h :: hs) then true
-    else go hs needle
-
-/-- Enumerate a list with indices -/
-def listEnumerate {α : Type} (xs : List α) : List (Nat × α) :=
-  go 0 xs
-where
-  go (i : Nat) : List α → List (Nat × α)
-  | [] => []
-  | x :: xs => (i, x) :: go (i + 1) xs
-
--- ============================================================================
--- Row Operations
--- ============================================================================
-
-/-- Get value from row by column name -/
-def Row.get (row : Row) (col : String) : Option Value :=
-  row.lookup col
-
-/-- Get value from row by qualified column name -/
-def Row.getQualified (row : Row) (table : Option String) (col : String) : Option Value :=
-  match table with
-  | some t => row.lookup s!"{t}.{col}"
-  | none =>
-    -- Try unqualified first, then any qualified match
-    match row.lookup col with
-    | some v => some v
-    | none =>
-      match row.find? (fun (k, _) => k.endsWith s!".{col}") with
-      | some (_, v) => some v
-      | none => none
-
--- ============================================================================
--- Value Operations
--- ============================================================================
-
-/-- Compare two values for equality -/
-def Value.eq : Value → Value → Option Bool
-  | .null _, _ => none  -- NULL = anything is NULL
-  | _, .null _ => none
-  | .int a, .int b => some (a == b)
-  | .string a, .string b => some (a == b)
-  | .bool a, .bool b => some (a == b)
-  | _, _ => none  -- type mismatch
-
-/-- Compare two values for ordering -/
-def Value.compare : Value → Value → Option Ordering
-  | .null _, _ => none
-  | _, .null _ => none
-  | .int a, .int b => some (Ord.compare a b)
-  | .string a, .string b => some (Ord.compare a b)
-  | _, _ => none
-
-/-- Convert value to boolean for WHERE clauses -/
-def Value.toBool : Value → Option Bool
-  | .bool b => some b
-  | .null _ => none
-  | .int n => some (n != 0)
-  | _ => none
-
--- ============================================================================
--- Expression Evaluation Helper Functions (standalone)
--- ============================================================================
-
-/-- Simplified LIKE pattern matching -/
-def simpleLike (s pat : String) : Bool :=
-  let patChars := pat.toList
-  if pat == "%" then true
-  else if pat.startsWith "%" && pat.endsWith "%" then
-    let inner := patChars.drop 1 |>.dropLast |> String.ofList
-    stringContains s inner
-  else if pat.startsWith "%" then
-    let suffix := patChars.drop 1 |> String.ofList
-    s.endsWith suffix
-  else if pat.endsWith "%" then
-    let patPrefix := patChars.dropLast |> String.ofList
-    s.startsWith patPrefix
-  else
-    s == pat
-
-/-- Evaluate binary operator.
-    NULL SEMANTICS (Option 3): When either operand is a SQL NULL (`some (.null _)`),
-    arithmetic/comparison/string ops return `some (.null none)` instead of `none`.
-    This separates "SQL NULL propagation" from "evaluation error" (which remains `none`).
-    AND/OR keep SQL three-valued logic short-circuit rules.
-    Note: We use `some _` (not bare `_`) so that `none` (errors) still propagate as `none`. -/
-def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
-  match op, l, r with
-  -- Arithmetic: null propagation
-  | .add, some (.null _), some _ => some (.null none)
-  | .add, some _, some (.null _) => some (.null none)
-  | .add, some (.int a), some (.int b) => some (.int (a + b))
-  | .sub, some (.null _), some _ => some (.null none)
-  | .sub, some _, some (.null _) => some (.null none)
-  | .sub, some (.int a), some (.int b) => some (.int (a - b))
-  | .mul, some (.null _), some _ => some (.null none)
-  | .mul, some _, some (.null _) => some (.null none)
-  | .mul, some (.int a), some (.int b) => some (.int (a * b))
-  | .div, some (.null _), some _ => some (.null none)
-  | .div, some _, some (.null _) => some (.null none)
-  | .div, some (.int a), some (.int b) =>
-    if b == 0 then none else some (.int (a / b))
-  | .mod, some (.null _), some _ => some (.null none)
-  | .mod, some _, some (.null _) => some (.null none)
-  | .mod, some (.int a), some (.int b) =>
-    if b == 0 then none else some (.int (a % b))
-  -- Comparison: null propagation (NULL = anything → NULL)
-  | .eq, some (.null _), some _ => some (.null none)
-  | .eq, some _, some (.null _) => some (.null none)
-  | .eq, some a, some b => (a.eq b).map Value.bool
-  | .ne, some (.null _), some _ => some (.null none)
-  | .ne, some _, some (.null _) => some (.null none)
-  | .ne, some a, some b => (a.eq b).map (fun b => Value.bool (!b))
-  | .lt, some (.null _), some _ => some (.null none)
-  | .lt, some _, some (.null _) => some (.null none)
-  | .lt, some a, some b => (a.compare b).map (fun o => Value.bool (o == .lt))
-  | .le, some (.null _), some _ => some (.null none)
-  | .le, some _, some (.null _) => some (.null none)
-  | .le, some a, some b => (a.compare b).map (fun o => Value.bool (o != .gt))
-  | .gt, some (.null _), some _ => some (.null none)
-  | .gt, some _, some (.null _) => some (.null none)
-  | .gt, some a, some b => (a.compare b).map (fun o => Value.bool (o == .gt))
-  | .ge, some (.null _), some _ => some (.null none)
-  | .ge, some _, some (.null _) => some (.null none)
-  | .ge, some a, some b => (a.compare b).map (fun o => Value.bool (o != .lt))
-  -- Boolean: SQL three-valued logic
-  -- Short-circuit rules (FALSE dominates AND, TRUE dominates OR)
-  | .and, some (.bool a), some (.bool b) => some (.bool (a && b))
-  | .and, some (.bool false), _ => some (.bool false)  -- FALSE AND anything = FALSE
-  | .and, _, some (.bool false) => some (.bool false)
-  -- AND: null propagation (after short-circuit, null + value = null; none still propagates)
-  | .and, some (.null _), some _ => some (.null none)
-  | .and, some _, some (.null _) => some (.null none)
-  | .or, some (.bool a), some (.bool b) => some (.bool (a || b))
-  | .or, some (.bool true), _ => some (.bool true)      -- TRUE OR anything = TRUE
-  | .or, _, some (.bool true) => some (.bool true)
-  -- OR: null propagation (after short-circuit, null + value = null; none still propagates)
-  | .or, some (.null _), some _ => some (.null none)
-  | .or, some _, some (.null _) => some (.null none)
-  -- String: null propagation
-  | .concat, some (.null _), some _ => some (.null none)
-  | .concat, some _, some (.null _) => some (.null none)
-  | .concat, some (.string a), some (.string b) => some (.string (a ++ b))
-  | .like, some (.null _), some _ => some (.null none)
-  | .like, some _, some (.null _) => some (.null none)
-  | .like, some (.string s), some (.string pat) =>
-    some (.bool (simpleLike s pat))
-  -- Everything else is a genuine error (type mismatch, missing value)
-  | _, _, _ => none
-
-/-- Check if Option Value is NULL (none or some null) -/
-def isNullValue : Option Value → Bool
-  | none => true
-  | some (.null _) => true
-  | _ => false
-
-/-- Evaluate unary operator.
-    NULL SEMANTICS (Option 3): NOT/NEG on null returns `some (.null none)` instead of `none`. -/
-def evalUnaryOp (op : UnaryOp) (e : Option Value) : Option Value :=
-  match op, e with
-  | .not, some (.bool b) => some (.bool (!b))
-  | .not, some (.null _) => some (.null none)  -- NOT NULL = NULL
-  | .neg, some (.int n) => some (.int (-n))
-  | .neg, some (.null _) => some (.null none)  -- -NULL = NULL
-  | .isNull, v => some (.bool (isNullValue v))
-  | .isNotNull, v => some (.bool (!isNullValue v))
-  | _, _ => none
-
-/-- Evaluate scalar function -/
-def evalFunc (name : String) (args : List (Option Value)) : Option Value :=
-  match name.toUpper, args with
-  | "COALESCE", vals =>
-    vals.find? (fun v => !isNullValue v) |>.join
-  | "NULLIF", [some a, some b] =>
-    if a.eq b == some true then some (.null none) else some a
-  | "ABS", [some (.int n)] => some (.int n.natAbs)
-  | "LENGTH", [some (.string s)] => some (.int s.length)
-  | "UPPER", [some (.string s)] => some (.string s.toUpper)
-  | "LOWER", [some (.string s)] => some (.string s.toLower)
-  | "CONCAT", [some (.null t), some _] => some (.null t)
-  | "CONCAT", [some _, some (.null t)] => some (.null t)
-  | "CONCAT", [some (.string a), some (.string b)] => some (.string (a ++ b))
-  | _, _ => none
-
-/-- Get column name from expression for output -/
-def exprToName : Expr → String
-  | .col c => c.column
-  | .func name _ => name
-  | .agg .count _ _ => "count"
-  | .agg .sum _ _ => "sum"
-  | .agg .avg _ _ => "avg"
-  | .agg .min _ _ => "min"
-  | .agg .max _ _ => "max"
-  | .countStar => "count"
-  | _ => "expr"
 
 -- ============================================================================
 -- Aggregate Detection and Evaluation
@@ -777,63 +555,91 @@ def evalExpr (row : Row) : Expr → Option Value :=
   evalExprWithDb (fun _ => []) row
 
 -- ============================================================================
--- Axioms for partial evaluation (needed for equivalence proofs)
+-- Bridge axioms: connect partial defs to non-partial core functions
 -- ============================================================================
 
-/-- Axiom: evalExprWithDb unfolds for literals -/
-axiom evalExprWithDb_lit (db : Database) (row : Row) (v : Value) :
-  evalExprWithDb db row (Expr.lit v) = some v
+/-- Bridge: evalExprWithDb equals evalExprCore instantiated with evalSelectWithContext -/
+axiom evalExprWithDb_eq_evalExprCore (db : Database) (row : Row) (e : Expr) :
+  evalExprWithDb db row e = evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e
 
-/-- Axiom: evalExprWithDb unfolds for binOp -/
-axiom evalExprWithDb_binOp (db : Database) (row : Row) (op : BinOp) (l r : Expr) :
-  evalExprWithDb db row (Expr.binOp op l r) = evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r)
+/-- Bridge: evalCase equals evalCaseHelper instantiated with evalExprCore/evalSelectWithContext -/
+axiom evalCase_eq_evalCaseHelper (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
+  evalCase db row branches else_ =
+    let sqe := fun db' row' sel => evalSelectWithContext db' row' sel
+    let elseVal := match else_ with
+      | some e => evalExprCore db row sqe e
+      | none => some (.null none)
+    evalCaseHelper (evalExprCore db row sqe) elseVal branches
 
-/-- Axiom: evalExprWithDb unfolds for unaryOp -/
-axiom evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : Expr) :
-  evalExprWithDb db row (Expr.unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e)
+/-- Bridge: evalFrom equals evalFromCore instantiated with evalExprWithDb and evalSelect -/
+axiom evalFrom_eq_evalFromCore (db : Database) (fc : FromClause) :
+  evalFrom db fc = evalFromCore db evalExprWithDb evalSelect fc
 
-/-- Axiom: evalExprWithDb unfolds for case expressions -/
+-- ============================================================================
+-- Theorems: expression evaluation unfolding (proved via bridge axioms)
+-- ============================================================================
+
+/-- evalExprWithDb unfolds for literals -/
+theorem evalExprWithDb_lit (db : Database) (row : Row) (v : Value) :
+  evalExprWithDb db row (Expr.lit v) = some v := by
+  rw [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_lit ..
+
+/-- evalExprWithDb unfolds for binOp -/
+theorem evalExprWithDb_binOp (db : Database) (row : Row) (op : BinOp) (l r : Expr) :
+  evalExprWithDb db row (Expr.binOp op l r) = evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_binOp ..
+
+/-- evalExprWithDb unfolds for unaryOp -/
+theorem evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : Expr) :
+  evalExprWithDb db row (Expr.unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_unaryOp ..
+
+/-- evalExprWithDb unfolds for case expressions -/
 axiom evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_
 
-/-- Axiom: evalCase unfolds for empty branches with else -/
+/-- evalCase unfolds for empty branches with else -/
 axiom evalCase_nil_some (db : Database) (row : Row) (e : Expr) :
   evalCase db row [] (some e) = evalExprWithDb db row e
 
-/-- Axiom: evalCase unfolds for empty branches with no else -/
+/-- evalCase unfolds for empty branches with no else -/
 axiom evalCase_nil_none (db : Database) (row : Row) :
   evalCase db row [] none = some (.null none)
 
-/-- Axiom: evalCase unfolds for cons branches when condition is true -/
+/-- evalCase unfolds for cons branches when condition is true -/
 axiom evalCase_cons_true (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row cond = some (.bool true) →
   evalCase db row ((cond, result) :: rest) else_ = evalExprWithDb db row result
 
-/-- Axiom: evalCase unfolds for cons branches when condition is false -/
+/-- evalCase unfolds for cons branches when condition is false -/
 axiom evalCase_cons_false (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row cond = some (.bool false) →
   evalCase db row ((cond, result) :: rest) else_ = evalCase db row rest else_
 
-/-- Axiom: evalExprWithDb unfolds for function calls -/
-axiom evalExprWithDb_func (db : Database) (row : Row) (name : String) (args : List Expr) :
-  evalExprWithDb db row (Expr.func name args) = evalFunc name (args.map (evalExprWithDb db row))
+/-- evalExprWithDb unfolds for function calls -/
+theorem evalExprWithDb_func (db : Database) (row : Row) (name : String) (args : List Expr) :
+  evalExprWithDb db row (Expr.func name args) = evalFunc name (args.map (evalExprWithDb db row)) := by
+  rw [evalExprWithDb_eq_evalExprCore, evalExprCore_func]
+  exact congrArg (evalFunc name) (List.map_congr_left fun e _ => (evalExprWithDb_eq_evalExprCore db row e).symm)
 
-/-- Axiom: evalExprWithDb unfolds for BETWEEN -/
-axiom evalExprWithDb_between (db : Database) (row : Row) (e lo hi : Expr) :
+/-- evalExprWithDb unfolds for BETWEEN -/
+theorem evalExprWithDb_between (db : Database) (row : Row) (e lo hi : Expr) :
   evalExprWithDb db row (Expr.between e lo hi) =
   let ev := evalExprWithDb db row e
   let evlo := evalExprWithDb db row lo
   let evhi := evalExprWithDb db row hi
-  evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
+  evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_between ..
 
-/-- Axiom: evalExprWithDb unfolds for IN list -/
-axiom evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool) (vals : List Expr) :
+/-- evalExprWithDb unfolds for IN list -/
+theorem evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool) (vals : List Expr) :
   evalExprWithDb db row (Expr.inList e neg vals) =
   let ev := evalExprWithDb db row e
   let result := vals.foldl (fun acc vi =>
     evalBinOp .or acc (evalBinOp .eq ev (evalExprWithDb db row vi))
   ) (some (.bool false))
-  if neg then evalUnaryOp .not result else result
+  if neg then evalUnaryOp .not result else result := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_inList ..
 
 -- ============================================================================
 -- Infrastructure axioms for evalSelect limit/offset decomposition
@@ -890,17 +696,17 @@ axiom evalSelect_filter_all_false (db : Database)
 -- Infrastructure axioms for evalFrom join decomposition
 -- ============================================================================
 
-/-- Infrastructure: evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows.
-    Corresponds to the `.cross` case of `evalFrom` on `.join`. -/
-axiom evalFrom_cross_join (db : Database) (left right : FromClause) :
+/-- evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows. -/
+theorem evalFrom_cross_join (db : Database) (left right : FromClause) :
     evalFrom db (.join left .cross right none) =
     let rightRows := evalFrom db right
     (evalFrom db left).flatMap fun lr =>
-      rightRows.map fun rr => lr ++ rr
+      rightRows.map fun rr => lr ++ rr := by
+  simp only [evalFrom_eq_evalFromCore]
+  exact evalFromCore_cross_join ..
 
-/-- Infrastructure: evalFrom decomposes INNER JOIN into flatMap/filterMap on left/right rows.
-    Corresponds to the `.inner` case of `evalFrom` on `.join`. -/
-axiom evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
+/-- evalFrom decomposes INNER JOIN into flatMap/filterMap on left/right rows. -/
+theorem evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
     evalFrom db (.join left .inner right on_) =
     let rightRows := evalFrom db right
     (evalFrom db left).flatMap fun lr =>
@@ -911,11 +717,12 @@ axiom evalFrom_inner_join (db : Database) (left right : FromClause) (on_ : Optio
         | some cond =>
           match evalExprWithDb db combined cond with
           | some (.bool true) => some combined
-          | _ => none
+          | _ => none := by
+  simp only [evalFrom_eq_evalFromCore]
+  exact evalFromCore_inner_join ..
 
-/-- Infrastructure: evalFrom decomposes LEFT JOIN into flatMap with NULL-padding fallback.
-    Corresponds to the `.left` case of `evalFrom` on `.join`. -/
-axiom evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
+/-- evalFrom decomposes LEFT JOIN into flatMap with NULL-padding fallback. -/
+theorem evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
     evalFrom db (.join left .left right on_) =
     let rightRows := evalFrom db right
     (evalFrom db left).flatMap fun lr =>
@@ -932,11 +739,12 @@ axiom evalFrom_left_join (db : Database) (left right : FromClause) (on_ : Option
         | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
         | none => [lr]
       else
-        matchingRows
+        matchingRows := by
+  simp only [evalFrom_eq_evalFromCore]
+  exact evalFromCore_left_join ..
 
-/-- Infrastructure: evalFrom decomposes RIGHT JOIN into flatMap with NULL-padding fallback.
-    Corresponds to the `.right` case of `evalFrom` on `.join`. -/
-axiom evalFrom_right_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
+/-- evalFrom decomposes RIGHT JOIN into flatMap with NULL-padding fallback. -/
+theorem evalFrom_right_join (db : Database) (left right : FromClause) (on_ : Option Expr) :
     evalFrom db (.join left .right right on_) =
     let leftRows := evalFrom db left
     (evalFrom db right).flatMap fun rr =>
@@ -953,7 +761,9 @@ axiom evalFrom_right_join (db : Database) (left right : FromClause) (on_ : Optio
         | some leftRow => [leftRow.map (fun (k, _) => (k, .null none)) ++ rr]
         | none => [rr]
       else
-        matchingRows
+        matchingRows := by
+  simp only [evalFrom_eq_evalFromCore]
+  exact evalFromCore_right_join ..
 
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Evaluation
