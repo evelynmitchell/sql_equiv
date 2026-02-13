@@ -2589,3 +2589,86 @@ theorem evalExprWithDb_lit ... := by
 4. **WFR `decreasing_by` needs explicit Prod decomposition.** `omega` sees
    `sizeOf pair.fst` as an opaque term. `obtain ⟨a, b⟩ := pair` exposes the
    structure, and `simp [Prod.mk.sizeOf_spec]` establishes the size equation.
+
+---
+
+## Batch 25: Eliminate 5 CASE Axioms (63 → 58)
+
+**Branch**: `claude/prove-case-axioms`
+
+### Goal
+
+Convert the 5 CASE expression axioms in `Semantics.lean` from `axiom` to `theorem`,
+using the bridge axioms established in Batch 24 and new equational lemmas in
+`SemanticsCore.lean`.
+
+### Approach
+
+The CASE branch of `evalExprCore` uses a `List.foldl` with a `(Bool × Option Value)`
+accumulator, while `evalCaseHelper` uses direct structural recursion. To bridge them:
+
+1. **`case_foldl_found_invariant`**: Once the accumulator reaches `(true, v)`, foldl
+   preserves it. Proof by induction on the list.
+
+2. **`case_foldl_eq_evalCaseHelper`**: The foldl-based CASE equals `evalCaseHelper`.
+   Proof by induction on branches, case-splitting on `f hd.fst` (all 6 Value
+   constructor × Bool cases). The `true` case uses the invariant; all others use IH.
+
+3. **`evalExprCore_case`**: Uses `rw [evalExprCore.eq_def]` to unfold the WFR
+   definition (since `simp [evalExprCore]` couldn't apply for the `.case` branch),
+   then bridges with `case_foldl_eq_evalCaseHelper`.
+
+4. Three trivial `evalCaseHelper` equational theorems (`_nil`, `_cons_true`,
+   `_cons_false`) proved by `simp [evalCaseHelper, h]`.
+
+### Key technical discovery
+
+**`simp [evalExprCore]` can't apply the equational theorem for complex branches.**
+For simple branches like `.lit`, `simp [evalExprCore]` works because it generates
+`evalExprCore.eq_def`, applies the rewrite, and reduces the match on a concrete
+constructor in one step. For `.case`, the match _doesn't reduce_ — the compiled
+decision tree is opaque to `simp`. Solution: use `rw [evalExprCore.eq_def]` directly,
+which applies the rewrite without trying to reduce, then chain with separate lemmas.
+
+**`if false = true then X else Y` doesn't reduce by `dsimp only []`.**
+In Lean 4, `if b then` (where `b : Bool`) compiles to `if b = true then`, so
+`if (false, none).fst then` becomes `if false = true then`. `dsimp only []` reduces
+`.fst` but not the `if` because reducing `false = true` to `False` requires the
+`Decidable` instance for `@Eq Bool`. Full `simp` handles this; `dsimp only []` does not.
+
+### Axioms converted to theorems (5)
+
+| Axiom | Proof technique |
+|-------|----------------|
+| `evalExprWithDb_case` | `Eq.trans` chain: bridge → `evalExprCore_case` → `← evalCase_eq_evalCaseHelper` |
+| `evalCase_nil_some` | `rw [evalCase_eq_evalCaseHelper]; simp [evalCaseHelper]` + bridge `.symm` |
+| `evalCase_nil_none` | `rw [evalCase_eq_evalCaseHelper]; simp [evalCaseHelper]` |
+| `evalCase_cons_true` | Rewrite hypothesis via bridge, `simp [evalCaseHelper, hcore]` + bridge `.symm` |
+| `evalCase_cons_false` | `simp only [evalCase_eq_evalCaseHelper]; simp [evalCaseHelper, hcore]` |
+
+### New helpers added to SemanticsCore.lean (6)
+
+| Helper | Purpose |
+|--------|---------|
+| `case_foldl_found_invariant` (private) | Foldl preserves `(true, v)` accumulator |
+| `case_foldl_eq_evalCaseHelper` (private) | Foldl-based CASE = `evalCaseHelper` |
+| `evalExprCore_case` | Unfold `evalExprCore` for `.case` to `evalCaseHelper` |
+| `evalCaseHelper_nil` | `evalCaseHelper f elseVal [] = elseVal` |
+| `evalCaseHelper_cons_true` | `f cond = true → evalCaseHelper ... = f result` |
+| `evalCaseHelper_cons_false` | `f cond = false → evalCaseHelper ... = recurse` |
+
+### Remaining infrastructure axioms (9)
+
+- 3 bridge axioms (inherent to the approach)
+- 4 evalSelect axioms (`_limit_offset`, `_orderBy_length`, `_where_congr`, `_filter_all_false`)
+- 2 evalQuery axioms (`_simple`, `_compound`)
+
+### Net axiom count change
+
+- **5 axioms → theorems**: 63 → 58
+
+### Verification
+
+- 230/230 tests pass
+- Ratchet check: 58 >= 58
+- No unused private declarations
