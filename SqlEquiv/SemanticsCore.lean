@@ -385,4 +385,63 @@ theorem evalFromCore_right_join (db : Database)
         matchingRows := by
   simp [evalFromCore]
 
+-- ============================================================================
+-- Non-Partial Core Query Evaluator
+-- ============================================================================
+
+/-- Non-partial query evaluator, parameterized by evaluation callbacks.
+    Not recursive — delegates to parameters for recursive calls. -/
+def evalQueryCore (db : Database)
+    (selectEval : Database → SelectStmt → Table)
+    (queryEval : Database → Query → Table)
+    (cteEval : Database → String → Query → Table) : Query → Table
+  | .simple sel => selectEval db sel
+  | .compound left op right =>
+    let leftResult := queryEval db left
+    let rightResult := queryEval db right
+    match op with
+    | .union => (leftResult ++ rightResult).eraseDups
+    | .unionAll => leftResult ++ rightResult
+    | .intersect => leftResult.filter fun row => rightResult.contains row
+    | .exceptOp => leftResult.filter fun row => !rightResult.contains row
+  | .withCTE ctes query =>
+    let dbWithCtes := ctes.foldl (fun db' cte =>
+      fun name =>
+        if name == cte.name then
+          if cte.isRecursive then
+            cteEval db' cte.name cte.query
+          else
+            queryEval db' cte.query
+        else
+          db' name
+    ) db
+    queryEval dbWithCtes query
+
+-- ============================================================================
+-- Equational Theorems for evalQueryCore
+-- ============================================================================
+
+theorem evalQueryCore_simple (db : Database)
+    (selectEval : Database → SelectStmt → Table)
+    (queryEval : Database → Query → Table)
+    (cteEval : Database → String → Query → Table)
+    (sel : SelectStmt) :
+    evalQueryCore db selectEval queryEval cteEval (.simple sel) = selectEval db sel := by
+  rfl
+
+theorem evalQueryCore_compound (db : Database)
+    (selectEval : Database → SelectStmt → Table)
+    (queryEval : Database → Query → Table)
+    (cteEval : Database → String → Query → Table)
+    (left right : Query) (op : SetOp) :
+    evalQueryCore db selectEval queryEval cteEval (.compound left op right) =
+    let l := queryEval db left
+    let r := queryEval db right
+    match op with
+    | .union => (l ++ r).eraseDups
+    | .unionAll => l ++ r
+    | .intersect => l.filter fun row => r.contains row
+    | .exceptOp => l.filter fun row => !r.contains row := by
+  rfl
+
 end SqlEquiv

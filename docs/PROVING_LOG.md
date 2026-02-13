@@ -2672,3 +2672,64 @@ In Lean 4, `if b then` (where `b : Bool`) compiles to `if b = true then`, so
 - 230/230 tests pass
 - Ratchet check: 58 >= 58
 - No unused private declarations
+
+---
+
+## Batch 26: Eliminate 2 evalQuery Axioms (58 → 57)
+
+**Branch**: `claude/eliminate-evalquery-axioms`
+
+### Goal
+
+Convert the 2 `evalQuery` infrastructure axioms (`evalQuery_simple`, `evalQuery_compound`)
+from `axiom` to `theorem`, using a new `evalQueryCore` non-partial mirror function.
+
+### Approach
+
+Same 3-file split pattern as Batch 24-25: create a non-partial `evalQueryCore` in
+`SemanticsCore.lean` parameterized by evaluation callbacks, add 1 bridge axiom in
+`Semantics.lean`, and convert the 2 axioms to theorems via `Eq.trans`.
+
+`evalQueryCore` is not recursive — it delegates recursive calls to its `queryEval`,
+`selectEval`, and `cteEval` parameters. This means no `termination_by` is needed and
+both equational theorems (`_simple`, `_compound`) close by `rfl`.
+
+### Key technical discovery
+
+**`rw` fails when the LHS symbol appears in the RHS arguments.** The bridge axiom
+`evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q` has
+`evalQuery` on both sides. `rw [evalQuery_eq_evalQueryCore]` produces the error
+"The pattern to be substituted is a metavariable" because Lean can't determine which
+occurrences to rewrite. Fix: use `Eq.trans` instead of `rw`:
+```lean
+theorem evalQuery_simple ... :=
+  (evalQuery_eq_evalQueryCore db (.simple sel)).trans (evalQueryCore_simple ..)
+```
+
+**Bridge axiom placement matters.** The axiom must appear AFTER the `mutual`/`end` block
+that defines `evalQuery` and `evalRecursiveCTE`. Placing it before (with the other bridge
+axioms) caused Lean to auto-bind the partial defs as implicit parameters.
+
+### Axioms converted to theorems (2)
+
+| Axiom | Proof technique |
+|-------|----------------|
+| `evalQuery_simple` | `Eq.trans`: bridge → `evalQueryCore_simple` |
+| `evalQuery_compound` | `Eq.trans`: bridge → `evalQueryCore_compound` |
+
+### New helpers added to SemanticsCore.lean (3)
+
+| Helper | Purpose |
+|--------|---------|
+| `evalQueryCore` | Non-partial query evaluator parameterized by callbacks |
+| `evalQueryCore_simple` | `.simple sel` reduces to `selectEval db sel` (by `rfl`) |
+| `evalQueryCore_compound` | `.compound` reduces to set operation (by `rfl`) |
+
+### Remaining infrastructure axioms (8)
+
+- 4 bridge axioms (3 existing + 1 new `evalQuery_eq_evalQueryCore`)
+- 4 evalSelect axioms (`_limit_offset`, `_orderBy_length`, `_where_congr`, `_filter_all_false`)
+
+### Net axiom count change
+
+- **2 axioms → theorems, +1 bridge axiom**: 58 → 57
