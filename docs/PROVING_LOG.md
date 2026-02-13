@@ -2823,3 +2823,65 @@ requiring `simp` to handle the full 90-line function body.
 ### Net axiom count change
 
 - **4 axioms → theorems, +1 bridge axiom**: 57 → 54
+
+---
+
+## Batch 28: Prove `like_self` (54 → 53)
+
+### Goal
+
+Prove that `e LIKE e` evaluates to TRUE for non-null string expressions and NULL for NULL expressions. The core challenge is proving `simpleLike s s = true` for all strings `s`, which requires reasoning through all 5 branches of the `simpleLike` function.
+
+### Approach
+
+**Refactored `simpleLike` to use list operations.** The original `simpleLike` used `String.startsWith`/`String.endsWith` for guards and body, which go through `Slice.startsWith` → `Internal.memcmpSlice` (a native/opaque C++ operation). These cannot be unfolded in Lean proofs.
+
+The refactored version replaces:
+- `pat.startsWith "%"` → `pc.head? == some '%'` (where `pc = pat.toList`)
+- `pat.endsWith "%"` → `pc.getLast? == some '%'`
+- `s.endsWith suffix` → `(pc.drop 1).isSuffixOf sc`
+- `s.startsWith prefix` → `pc.dropLast.isPrefixOf sc`
+
+This makes all branches provable at the `List Char` level without needing to reason about byte-level string operations.
+
+### Key helper lemmas
+
+1. **`isPrefixOf_append`**: `l.isPrefixOf (l ++ suffix) = true` — by induction on `l`, using `BEq.refl` for `Char`.
+
+2. **`dropLast_isPrefixOf`**: `l.dropLast.isPrefixOf l = true` — uses `isPrefixOf_append` + `List.dropLast_concat_getLast`.
+
+3. **`stringContains_go_of_prefix_at`**: If `needle.isPrefixOf suffix = true`, then `stringContains.go (pfx ++ suffix) needle = true` — by induction on `pfx`. Each step either matches at the current position or advances.
+
+### Branch-by-branch proof of `simpleLike_self`
+
+| Branch | Guard | Proof strategy |
+|--------|-------|---------------|
+| 1 | `s == "%"` | `simp` (literal reduction) |
+| 2 | head=`%` ∧ last=`%` | Decompose `rest = inner ++ ['%']` via `getLast?`; use `stringContains_go_of_prefix_at ['%']` |
+| 3 | head=`%`, last≠`%` | `isSuffixOf` → `reverse.isPrefixOf reverse`; `isPrefixOf_append rest.reverse ['%']` |
+| 4 | head≠`%`, last=`%` | `dropLast_isPrefixOf (c :: rest)` |
+| 5 | neither | `beq_self_eq_true s` |
+
+Branch 2 was the hardest: needed `generalize` to abstract `(b :: bs).dropLast` before `rw` to avoid rewriting both occurrences. Also required case-splitting on `rest.dropLast.isEmpty` for the `stringContains` empty-needle fast path.
+
+### Files modified
+
+- `SqlEquiv/SemanticsBase.lean` — refactored `simpleLike` to use list operations
+- `SqlEquiv/Equiv/Comparison.lean` — added helper lemmas, converted axiom to theorem, updated `simpleLike_empty` proof
+- `tools/axiom_count_minimum.txt` — 54 → 53
+- `docs/PROVING_LOG.md` — this entry
+
+### Lessons learned
+
+1. **When an opaque native function blocks proofs, refactor to use provable equivalents.**
+   `String.startsWith`/`String.endsWith` go through `memcmpSlice` which is kernel-opaque. Replacing them with `List.head?`/`List.getLast?`/`List.isPrefixOf`/`List.isSuffixOf` makes the same computation provable. The runtime behavior is identical for valid UTF-8 strings.
+
+2. **`generalize` before `rw` when a subexpression appears in both positions.**
+   `rw [hrest_decomp]` replaces ALL occurrences of `b :: bs`, including inside `(b :: bs).dropLast`. Using `generalize h_inner : (b :: bs).dropLast = inner` first protects the second occurrence.
+
+3. **`cases` on Bool values substitutes into the goal but leaves `if (false = true)` conditions.**
+   `simp only [ite_false]` doesn't reduce `if (false = true)` because the condition is `false = true` (a Prop), not `False`. Full `simp` handles this via `Bool.false_eq_true` + `ite` reduction.
+
+### Net axiom count change
+
+- **1 axiom → theorem**: 54 → 53

@@ -100,19 +100,20 @@ def Value.toBool : Value → Option Bool
 -- Expression Evaluation Helper Functions (standalone)
 -- ============================================================================
 
-/-- Simplified LIKE pattern matching -/
+/-- Simplified LIKE pattern matching.
+    Uses List Char operations for guards and body so that properties
+    (e.g., `simpleLike s s = true`) are provable without unfolding
+    opaque String.startsWith / String.endsWith (which go through memcmpSlice). -/
 def simpleLike (s pat : String) : Bool :=
-  let patChars := pat.toList
+  let sc := s.toList
+  let pc := pat.toList
   if pat == "%" then true
-  else if pat.startsWith "%" && pat.endsWith "%" then
-    let inner := patChars.drop 1 |>.dropLast |> String.ofList
-    stringContains s inner
-  else if pat.startsWith "%" then
-    let suffix := patChars.drop 1 |> String.ofList
-    s.endsWith suffix
-  else if pat.endsWith "%" then
-    let patPrefix := patChars.dropLast |> String.ofList
-    s.startsWith patPrefix
+  else if pc.head? == some '%' && pc.getLast? == some '%' then
+    stringContains s (String.ofList (pc.drop 1 |>.dropLast))
+  else if pc.head? == some '%' then
+    (pc.drop 1).isSuffixOf sc
+  else if pc.getLast? == some '%' then
+    pc.dropLast.isPrefixOf sc
   else
     s == pat
 
