@@ -1,4 +1,4 @@
-ple# Theorem Coverage Audit Plan
+# Theorem Coverage Audit Plan
 
 ## Status
 - Branch: `master` (current)
