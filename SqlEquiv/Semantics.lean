@@ -595,26 +595,46 @@ theorem evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : E
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_unaryOp ..
 
 /-- evalExprWithDb unfolds for case expressions -/
-axiom evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
-  evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_
+theorem evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
+  evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_ := by
+  have h1 := evalExprWithDb_eq_evalExprCore db row (Expr.case branches else_)
+  have h2 := evalExprCore_case db row (fun db' row' sel => evalSelectWithContext db' row' sel) branches else_
+  have h3 := (evalCase_eq_evalCaseHelper db row branches else_).symm
+  exact h1.trans (h2.trans h3)
 
 /-- evalCase unfolds for empty branches with else -/
-axiom evalCase_nil_some (db : Database) (row : Row) (e : Expr) :
-  evalCase db row [] (some e) = evalExprWithDb db row e
+theorem evalCase_nil_some (db : Database) (row : Row) (e : Expr) :
+  evalCase db row [] (some e) = evalExprWithDb db row e := by
+  rw [evalCase_eq_evalCaseHelper]
+  simp [evalCaseHelper]
+  exact (evalExprWithDb_eq_evalExprCore db row e).symm
 
 /-- evalCase unfolds for empty branches with no else -/
-axiom evalCase_nil_none (db : Database) (row : Row) :
-  evalCase db row [] none = some (.null none)
+theorem evalCase_nil_none (db : Database) (row : Row) :
+  evalCase db row [] none = some (.null none) := by
+  rw [evalCase_eq_evalCaseHelper]
+  simp [evalCaseHelper]
 
 /-- evalCase unfolds for cons branches when condition is true -/
-axiom evalCase_cons_true (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
+theorem evalCase_cons_true (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row cond = some (.bool true) →
-  evalCase db row ((cond, result) :: rest) else_ = evalExprWithDb db row result
+  evalCase db row ((cond, result) :: rest) else_ = evalExprWithDb db row result := by
+  intro h
+  have hcore : evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) cond = some (.bool true) := by
+    rwa [← evalExprWithDb_eq_evalExprCore]
+  rw [evalCase_eq_evalCaseHelper]
+  simp [evalCaseHelper, hcore]
+  exact (evalExprWithDb_eq_evalExprCore db row result).symm
 
 /-- evalCase unfolds for cons branches when condition is false -/
-axiom evalCase_cons_false (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
+theorem evalCase_cons_false (db : Database) (row : Row) (cond result : Expr) (rest : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row cond = some (.bool false) →
-  evalCase db row ((cond, result) :: rest) else_ = evalCase db row rest else_
+  evalCase db row ((cond, result) :: rest) else_ = evalCase db row rest else_ := by
+  intro h
+  have hcore : evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) cond = some (.bool false) := by
+    rwa [← evalExprWithDb_eq_evalExprCore]
+  simp only [evalCase_eq_evalCaseHelper]
+  simp [evalCaseHelper, hcore]
 
 /-- evalExprWithDb unfolds for function calls -/
 theorem evalExprWithDb_func (db : Database) (row : Row) (name : String) (args : List Expr) :

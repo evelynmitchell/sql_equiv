@@ -237,6 +237,78 @@ theorem evalExprCore_inList (db : Database) (row : Row)
   simp [evalExprCore]
 
 -- ============================================================================
+-- Equational Theorems for evalExprCore CASE expression
+-- ============================================================================
+
+/-- Once the accumulator reaches (true, v), foldl preserves it. -/
+private theorem case_foldl_found_invariant (f : Expr → Option Value)
+    (v : Option Value) (branches : List (Expr × Expr)) :
+    branches.foldl (fun (found : Bool × Option Value) (pair : Expr × Expr) =>
+      if found.1 then found
+      else match f pair.1 with
+        | some (.bool true) => (true, f pair.2)
+        | _ => (false, none)) (true, v) = (true, v) := by
+  induction branches with
+  | nil => rfl
+  | cons _ _ ih => simp [List.foldl]; exact ih
+
+/-- The foldl-based CASE in evalExprCore equals evalCaseHelper. -/
+private theorem case_foldl_eq_evalCaseHelper (f : Expr → Option Value)
+    (elseVal : Option Value) (branches : List (Expr × Expr)) :
+    (let result := branches.foldl (fun (found : Bool × Option Value) (pair : Expr × Expr) =>
+      if found.1 then found
+      else match f pair.1 with
+        | some (.bool true) => (true, f pair.2)
+        | _ => (false, none)) (false, none)
+     if result.1 then result.2 else elseVal) = evalCaseHelper f elseVal branches := by
+  induction branches with
+  | nil => simp [List.foldl, evalCaseHelper]
+  | cons hd tl ih =>
+    simp only [List.foldl, evalCaseHelper]
+    generalize hc : f hd.fst = c
+    cases c with
+    | none => simp; exact ih
+    | some v =>
+      cases v with
+      | bool b =>
+        cases b with
+        | true => simp [case_foldl_found_invariant]
+        | false => simp; exact ih
+      | int _ => simp; exact ih
+      | string _ => simp; exact ih
+      | null _ => simp; exact ih
+
+/-- evalExprCore unfolds for CASE expressions to evalCaseHelper. -/
+theorem evalExprCore_case (db : Database) (row : Row)
+    (sqe : Database → Row → SelectStmt → Table) (branches : List (Expr × Expr)) (else_ : Option Expr) :
+    evalExprCore db row sqe (.case branches else_) =
+    (let elseVal := match else_ with
+      | some e => evalExprCore db row sqe e
+      | none => some (.null none)
+     evalCaseHelper (evalExprCore db row sqe) elseVal branches) := by
+  rw [evalExprCore.eq_def]
+  exact case_foldl_eq_evalCaseHelper ..
+
+/-- evalCaseHelper unfolds for empty branches. -/
+theorem evalCaseHelper_nil (f : Expr → Option Value) (elseVal : Option Value) :
+    evalCaseHelper f elseVal [] = elseVal := by
+  simp [evalCaseHelper]
+
+/-- evalCaseHelper unfolds for cons when condition is true. -/
+theorem evalCaseHelper_cons_true (f : Expr → Option Value) (elseVal : Option Value)
+    (cond result : Expr) (rest : List (Expr × Expr))
+    (h : f cond = some (.bool true)) :
+    evalCaseHelper f elseVal ((cond, result) :: rest) = f result := by
+  simp [evalCaseHelper, h]
+
+/-- evalCaseHelper unfolds for cons when condition is false. -/
+theorem evalCaseHelper_cons_false (f : Expr → Option Value) (elseVal : Option Value)
+    (cond result : Expr) (rest : List (Expr × Expr))
+    (h : f cond = some (.bool false)) :
+    evalCaseHelper f elseVal ((cond, result) :: rest) = evalCaseHelper f elseVal rest := by
+  simp [evalCaseHelper, h]
+
+-- ============================================================================
 -- Equational Theorems for evalFromCore
 -- ============================================================================
 

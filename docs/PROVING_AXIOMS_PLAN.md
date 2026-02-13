@@ -375,8 +375,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 63 axioms remaining (41 in Equiv/, 22 in infrastructure files), 379 theorems proved (85.7%).
-Axiom ratchet: 63 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 58 axioms remaining (41 in Equiv/, 17 in infrastructure files), 390 theorems proved (87.1%).
+Axiom ratchet: 58 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -394,7 +394,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 10 | 12 (3 bridge + 5 CASE + 4 evalSelect) | N/A |
+| infra | Infrastructure (Semantics.lean) | 15 | 9 (3 bridge + 4 evalSelect + 2 evalQuery) | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
 | | **Total** | **~102** | **~87** | |
 
@@ -498,7 +498,8 @@ Split `Semantics.lean` into 3 files to work around `partial def` opacity:
 
 **10 axioms converted to theorems** by proving equivalence through bridge axioms
 to the non-partial core evaluators. **3 bridge axioms added** connecting
-`partial def` functions to their non-partial mirrors.
+`partial def` functions to their non-partial mirrors. **5 more CASE axioms
+converted** in PR #131 via foldl-evalCaseHelper equivalence (63 → 58).
 
 ### Current status
 
@@ -517,11 +518,11 @@ to the non-partial core evaluators. **3 bridge axioms added** connecting
 | `evalFrom_inner_join` | **theorem** (PR #130) | Unfold inner join evaluation |
 | `evalFrom_left_join` | **theorem** (PR #130) | Unfold left join evaluation |
 | `evalFrom_right_join` | **theorem** (PR #130) | Unfold right join evaluation |
-| `evalExprWithDb_case` | axiom | Unfold CASE expression to `evalCase` |
-| `evalCase_nil_some` | axiom | Empty branches with ELSE |
-| `evalCase_nil_none` | axiom | Empty branches, no ELSE → NULL |
-| `evalCase_cons_true` | axiom | True condition → return result |
-| `evalCase_cons_false` | axiom | False condition → skip to rest |
+| `evalExprWithDb_case` | **theorem** (PR #131) | Unfold CASE expression to `evalCase` |
+| `evalCase_nil_some` | **theorem** (PR #131) | Empty branches with ELSE |
+| `evalCase_nil_none` | **theorem** (PR #131) | Empty branches, no ELSE → NULL |
+| `evalCase_cons_true` | **theorem** (PR #131) | True condition → return result |
+| `evalCase_cons_false` | **theorem** (PR #131) | False condition → skip to rest |
 | `evalSelect_limit_offset` | axiom | Decompose evalSelect into take/drop |
 | `evalSelect_orderBy_length` | axiom | ORDER BY preserves length |
 | `evalSelect_where_congr` | axiom | Congruence: same filtering → same result |
@@ -747,7 +748,7 @@ counts would catch this automatically.
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
 2. ~~**NULL handling:** Three-valued logic adds complexity - start with two-valued subset?~~ **Resolved** — Option 3 null semantics adopted (PR #92).
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
-4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Partially resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. Remaining `partial def` limitations: CASE axioms (5), evalSelect axioms (4), evalQuery axioms (2), plus 3 bridge axioms.
+4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Partially resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus 3 bridge axioms. CASE axioms (5) proved in PR #131.
 5. ~~**Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion.~~ **Partially resolved** — Option 3 fixes `none` vs `some (.null _)` conflation. The `/audit` tool (PR #99) now catches unsound optimizer rewrites. Remaining unsound axioms are documented in PROVING_LOG.md.
 
 ---
