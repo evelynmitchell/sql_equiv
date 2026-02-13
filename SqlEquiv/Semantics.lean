@@ -887,19 +887,19 @@ partial def evalQuery (db : Database) : Query → Table
     evalQuery dbWithCtes query
 end
 
+/-- Bridge: evalQuery equals evalQueryCore instantiated with evalSelect, evalQuery, evalRecursiveCTE -/
+axiom evalQuery_eq_evalQueryCore (db : Database) (q : Query) :
+  evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q
+
 /-- Infrastructure: evalQuery on a simple SELECT decomposes to evalSelect.
-    Sound because: `evalQuery` pattern-matches `.simple sel` to `evalSelect db sel`.
-    Note: Must be axiom (not theorem) because `evalQuery` is `partial def` —
-    Lean does not unfold partial definitions, so `rfl` fails. -/
-axiom evalQuery_simple (db : Database) (sel : SelectStmt) :
-    evalQuery db (.simple sel) = evalSelect db sel
+    Proved via evalQueryCore bridge. -/
+theorem evalQuery_simple (db : Database) (sel : SelectStmt) :
+    evalQuery db (.simple sel) = evalSelect db sel :=
+  (evalQuery_eq_evalQueryCore db (.simple sel)).trans (evalQueryCore_simple ..)
 
 /-- Infrastructure: evalQuery on a compound query decomposes into the set operation.
-    Sound because: `evalQuery` pattern-matches `.compound left op right` and applies
-    the corresponding list operation (append+eraseDups, append, filter+contains, filter+!contains).
-    Note: Must be axiom (not theorem) because `evalQuery` is `partial def` —
-    Lean does not unfold partial definitions, so `rfl` fails. -/
-axiom evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
+    Proved via evalQueryCore bridge. -/
+theorem evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     evalQuery db (.compound left op right) =
     let l : Table := evalQuery db left
     let r : Table := evalQuery db right
@@ -907,7 +907,8 @@ axiom evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     | .union => (l ++ r).eraseDups
     | .unionAll => l ++ r
     | .intersect => l.filter (r.contains ·)
-    | .exceptOp => l.filter (!r.contains ·)
+    | .exceptOp => l.filter (!r.contains ·) :=
+  (evalQuery_eq_evalQueryCore db (.compound left op right)).trans (evalQueryCore_compound ..)
 
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table
