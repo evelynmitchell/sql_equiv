@@ -303,12 +303,14 @@ row merging is commutative/associative (modulo column ordering).
 
 ---
 
-### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms)
+### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms, 4 proved)
 
 **Goal:** Prove subquery evaluation properties.
 
-**Simple/empty (6 -- easy):** `exists_empty_false`, `not_exists_empty_true`,
-  `exists_nonempty_true`, `not_exists_nonempty_false`, `not_not_exists`,
+**Simple/empty (6 -- easy, 4 proved):** `exists_empty_false` (**PROVED**, PR #135),
+  `not_exists_empty_true` (**PROVED**, PR #135),
+  `exists_nonempty_true` (**PROVED**, PR #135),
+  `not_exists_nonempty_false` (**PROVED**, PR #135), `not_not_exists`,
   `scalar_subquery_empty_null`
 
 **Subquery WHERE (2 -- easy):** `subquery_where_true`, `subquery_where_false`
@@ -390,13 +392,13 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 0 | ~21 | Medium-Hard |
-| 7 | Subquery / EXISTS / IN | 0 | ~17 | Medium-Hard |
+| 7 | Subquery / EXISTS / IN | 4 | ~13 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
 | infra | Infrastructure (Semantics.lean) | 21 | 5 (5 bridge axioms — irreducible) | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
-| | **Total** | **~102** | **~87** | |
+| | **Total** | **~106** | **~83** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
@@ -465,7 +467,7 @@ decision first (see "Unsound Axiom Strategy" below).
 | 29 | [#66](https://github.com/evelynmitchell/sql_equiv/issues/66) | `join_comm`, `join_comm_full` | 2 | Hard |
 | 30 | [#68](https://github.com/evelynmitchell/sql_equiv/issues/68) | `join_assoc` (**hardest axiom**) | 1 | Hard |
 | 31 | [#71](https://github.com/evelynmitchell/sql_equiv/issues/71) | Outer join preservation | 4 | Hard |
-| 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | Medium |
+| 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | 4 **proved** (PR #135: `exists_empty_false`, `not_exists_empty_true`, `exists_nonempty_true`, `not_exists_nonempty_false`); 1 axiom (`not_not_exists`) |
 | 33 | [#76](https://github.com/evelynmitchell/sql_equiv/issues/76) | IN subquery rules | 5 | Medium |
 | 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 8 | Medium-Hard |
 | 35 | [#77](https://github.com/evelynmitchell/sql_equiv/issues/77) | Subquery unnesting (IN->JOIN) | 4 | Hard |
@@ -524,6 +526,7 @@ eliminated. Only 5 bridge axioms remain — these are inherently needed because
 | `evalFrom_inner_join` | **theorem** (PR #130) | Unfold inner join evaluation |
 | `evalFrom_left_join` | **theorem** (PR #130) | Unfold left join evaluation |
 | `evalFrom_right_join` | **theorem** (PR #130) | Unfold right join evaluation |
+| `evalExprWithDb_exists` | **theorem** (PR #135) | Unfold EXISTS expression |
 | `evalExprWithDb_case` | **theorem** (PR #131) | Unfold CASE expression to `evalCase` |
 | `evalCase_nil_some` | **theorem** (PR #131) | Empty branches with ELSE |
 | `evalCase_nil_none` | **theorem** (PR #131) | Empty branches, no ELSE → NULL |
