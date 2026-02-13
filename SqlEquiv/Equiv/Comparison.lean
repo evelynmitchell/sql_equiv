@@ -993,6 +993,30 @@ theorem expr_sub_zero (e : Expr) (h : e.isIntValued) :
   rw [Int.sub_zero]
 
 -- ============================================================================
+-- Value-level helpers for comparison negation (moved before IN-list section)
+-- ============================================================================
+
+-- NOT of a comparison result: NOT (bool b) = bool (!b), NOT none = none
+private theorem not_map_bool_eq (o : Option Bool) :
+    evalUnaryOp .not (o.map Value.bool) = o.map (fun b => Value.bool (!b)) := by
+  match o with
+  | some true => rfl
+  | some false => rfl
+  | none => rfl
+
+-- NOT(EQ(l, r)) = NE(l, r) at value level
+-- With Option 3 null semantics, null cases need explicit splits because
+-- NOT(null) = null = negated_comparison(null, _), both sides `some (.null none)`.
+private theorem evalUnaryOp_not_eq (l r : Option Value) :
+    evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact not_map_bool_eq _)
+
+-- ============================================================================
 -- IN List Theorems
 -- ============================================================================
 
@@ -1014,39 +1038,125 @@ theorem not_in_empty_true (e : Expr) :
   rw [evalExprWithDb_inList, evalExprWithDb_lit]
   simp [List.foldl, evalUnaryOp]
 
-/-- x IN (a) = (x = a) (singleton IN list).
-    Now provable: inList evaluator uses foldl+evalBinOp matching OR-chain semantics. -/
-axiom in_singleton (e a : Expr) :
-    Expr.inList e false [a] ≃ₑ Expr.binOp .eq e a
+-- Value-level helper: OR(false, Option.map Value.bool o) = Option.map Value.bool o
+private theorem or_false_map_bool (o : Option Bool) :
+    evalBinOp .or (some (.bool false)) (o.map Value.bool) = o.map Value.bool := by
+  cases o with | none => rfl | some b => cases b <;> rfl
 
-/-- x NOT IN (a) = (x <> a) (singleton NOT IN list).
-    Now provable: inList evaluator uses foldl+evalBinOp matching AND-chain semantics. -/
-axiom not_in_singleton (e a : Expr) :
-    Expr.inList e true [a] ≃ₑ Expr.binOp .ne e a
+-- Helper: OR(false, evalBinOp .eq l r) = evalBinOp .eq l r
+-- Works because evalBinOp .eq produces some (.bool _), some (.null none), or none,
+-- all of which are identity under OR(false, _).
+private theorem evalBinOp_or_false_left_eq (l r : Option Value) :
+    evalBinOp .or (some (.bool false)) (evalBinOp .eq l r) = evalBinOp .eq l r := by
+  cases l with
+  | none => cases r with | none => rfl | some v => cases v <;> rfl
+  | some v => cases r with
+    | none => cases v <;> rfl
+    | some w => cases v <;> cases w <;>
+      first | rfl | (simp only [evalBinOp]; exact or_false_map_bool _)
 
-/-- x IN (a, b) = (x = a OR x = b).
-    Now provable: inList evaluator uses foldl+evalBinOp matching OR-chain semantics. -/
-axiom in_pair (e a b : Expr) :
+-- Helper: foldl of evalBinOp matches foldl of Expr constructors
+private theorem eval_foldl_or_eq (db : Database) (row : Row) (e : Expr) (vals : List Expr) (acc_expr : Expr) :
+    vals.foldl (fun a vi => evalBinOp .or a (evalBinOp .eq (evalExprWithDb db row e) (evalExprWithDb db row vi)))
+               (evalExprWithDb db row acc_expr) =
+    evalExprWithDb db row (vals.foldl (fun a v => Expr.binOp .or a (Expr.binOp .eq e v)) acc_expr) := by
+  induction vals generalizing acc_expr with
+  | nil => simp [List.foldl]
+  | cons v vs ih =>
+    simp only [List.foldl]
+    have step : evalBinOp .or (evalExprWithDb db row acc_expr)
+        (evalBinOp .eq (evalExprWithDb db row e) (evalExprWithDb db row v)) =
+        evalExprWithDb db row (Expr.binOp .or acc_expr (Expr.binOp .eq e v)) := by
+      rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+    rw [step]
+    exact ih _
+
+-- Helper: NOT of foldl OR-eq chain = foldl AND-ne chain (uses De Morgan + NOT(eq) = ne)
+private theorem not_foldl_or_eq_is_foldl_and_ne (db : Database) (row : Row) (e : Expr)
+    (vals : List Expr) (acc_val : Option Value) (acc_expr : Expr)
+    (h_acc : evalUnaryOp .not acc_val = evalExprWithDb db row acc_expr) :
+    evalUnaryOp .not (vals.foldl (fun a vi =>
+      evalBinOp .or a (evalBinOp .eq (evalExprWithDb db row e) (evalExprWithDb db row vi)))
+      acc_val) =
+    evalExprWithDb db row (vals.foldl (fun a v =>
+      Expr.binOp .and a (Expr.binOp .ne e v)) acc_expr) := by
+  induction vals generalizing acc_val acc_expr with
+  | nil => simp [List.foldl]; exact h_acc
+  | cons v vs ih =>
+    simp only [List.foldl]
+    apply ih
+    rw [evalUnaryOp_not_or]
+    have step : evalBinOp .and (evalExprWithDb db row acc_expr)
+        (evalBinOp .ne (evalExprWithDb db row e) (evalExprWithDb db row v)) =
+        evalExprWithDb db row (Expr.binOp .and acc_expr (Expr.binOp .ne e v)) := by
+      rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
+    rw [h_acc, evalUnaryOp_not_eq, step]
+
+/-- x IN (a) = (x = a) (singleton IN list). -/
+theorem in_singleton (e a : Expr) :
+    Expr.inList e false [a] ≃ₑ Expr.binOp .eq e a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_inList, evalExprWithDb_binOp]
+  simp [List.foldl]
+  exact evalBinOp_or_false_left_eq _ _
+
+/-- x NOT IN (a) = (x <> a) (singleton NOT IN list). -/
+theorem not_in_singleton (e a : Expr) :
+    Expr.inList e true [a] ≃ₑ Expr.binOp .ne e a := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_inList, evalExprWithDb_binOp]
+  simp [List.foldl]
+  rw [evalBinOp_or_false_left_eq]
+  exact evalUnaryOp_not_eq _ _
+
+/-- x IN (a, b) = (x = a OR x = b). -/
+theorem in_pair (e a b : Expr) :
     Expr.inList e false [a, b] ≃ₑ
-    Expr.binOp .or (Expr.binOp .eq e a) (Expr.binOp .eq e b)
+    Expr.binOp .or (Expr.binOp .eq e a) (Expr.binOp .eq e b) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_inList, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  simp [List.foldl]
+  congr 1
+  exact evalBinOp_or_false_left_eq _ _
 
-/-- x NOT IN (a, b) = (x <> a AND x <> b).
-    Now provable: inList evaluator uses foldl+evalBinOp matching AND-chain semantics. -/
-axiom not_in_pair (e a b : Expr) :
+/-- x NOT IN (a, b) = (x <> a AND x <> b). -/
+theorem not_in_pair (e a b : Expr) :
     Expr.inList e true [a, b] ≃ₑ
-    Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b)
+    Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_inList, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  simp [List.foldl]
+  rw [evalBinOp_or_false_left_eq, evalUnaryOp_not_or]
+  congr 1 <;> exact evalUnaryOp_not_eq _ _
 
 /-- IN list is equivalent to OR of equalities (general form) -/
-axiom in_list_or_expansion (e : Expr) (vals : List Expr) :
+theorem in_list_or_expansion (e : Expr) (vals : List Expr) :
     Expr.inList e false vals ≃ₑ
     vals.foldl (fun acc v => Expr.binOp .or acc (Expr.binOp .eq e v))
-               (Expr.lit (.bool false))
+               (Expr.lit (.bool false)) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_inList]
+  dsimp only []
+  have h := eval_foldl_or_eq (fun _ => []) row e vals (Expr.lit (.bool false))
+  rw [evalExprWithDb_lit] at h
+  exact h
 
 /-- NOT IN list is equivalent to AND of inequalities (general form) -/
-axiom not_in_list_and_expansion (e : Expr) (vals : List Expr) :
+theorem not_in_list_and_expansion (e : Expr) (vals : List Expr) :
     Expr.inList e true vals ≃ₑ
     vals.foldl (fun acc v => Expr.binOp .and acc (Expr.binOp .ne e v))
-               (Expr.lit (.bool true))
+               (Expr.lit (.bool true)) := by
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_inList]
+  dsimp only []
+  exact not_foldl_or_eq_is_foldl_and_ne _ _ _ _ _ (Expr.lit (.bool true))
+    (by rw [evalExprWithDb_lit]; rfl)
 
 -- ============================================================================
 -- BETWEEN Theorems
@@ -1445,14 +1555,7 @@ theorem ne_irreflexive (e : Expr) (h : e.evaluable) :
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, Value.eq]
 
--- Value-level helpers for comparison negation
--- NOT of a comparison result: NOT (bool b) = bool (!b), NOT none = none
-private theorem not_map_bool_eq (o : Option Bool) :
-    evalUnaryOp .not (o.map Value.bool) = o.map (fun b => Value.bool (!b)) := by
-  match o with
-  | some true => rfl
-  | some false => rfl
-  | none => rfl
+-- Value-level helpers for comparison negation (not_map_bool_eq moved to before IN-list section)
 
 private theorem not_map_bool_cancel (o : Option Bool) :
     evalUnaryOp .not (o.map (fun b => Value.bool (!b))) = o.map Value.bool := by
@@ -1497,17 +1600,7 @@ private theorem not_map_ordering_ne_lt (o : Option Ordering) :
   | some .gt => rfl
   | none => rfl
 
--- Value-level helpers for comparison negation (full Option Value)
--- With Option 3 null semantics, null cases need explicit splits because
--- NOT(null) = null = negated_comparison(null, _), both sides `some (.null none)`.
-private theorem evalUnaryOp_not_eq (l r : Option Value) :
-    evalUnaryOp .not (evalBinOp .eq l r) = evalBinOp .ne l r := by
-  cases l with
-  | none => cases r with | none => rfl | some v => cases v <;> rfl
-  | some v => cases r with
-    | none => cases v <;> rfl
-    | some w => cases v <;> cases w <;>
-      first | rfl | (simp only [evalBinOp]; exact not_map_bool_eq _)
+-- evalUnaryOp_not_eq moved to before IN-list section
 
 private theorem evalUnaryOp_not_ne (l r : Option Value) :
     evalUnaryOp .not (evalBinOp .ne l r) = evalBinOp .eq l r := by

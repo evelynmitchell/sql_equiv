@@ -147,19 +147,12 @@ with case analysis on the evaluated sub-expressions.
 
 **Goal:** Prove expression-level axioms involving IN lists, BETWEEN, and LIKE.
 
-**IN/NOT IN (8 axioms) — 2 proved, 6 unblocked by [PR #125](https://github.com/evelynmitchell/sql_equiv/pull/125):**
+**IN/NOT IN (8 axioms) — ALL PROVED:**
 - `in_empty_false` — **PROVED** (PR #112, reproved in PR #125; `evaluable` precondition dropped)
 - `not_in_empty_true` — **PROVED** (PR #112, reproved in PR #125; `evaluable` precondition dropped)
-- `in_singleton`, `not_in_singleton` -- single-element expansion (unblocked by PR #125)
-- `in_pair`, `not_in_pair` -- two-element expansion (unblocked by PR #125)
-- `in_list_or_expansion`, `not_in_list_and_expansion` -- general list induction (unblocked by PR #125)
-
-> **Note**: The 6 remaining axioms were blocked by a semantic mismatch between the old
-> `inList` evaluator (`filterMap`/`any`, dropped errors/nulls) and `evalBinOp .eq`/`.or`
-> (propagates them). PR #125 fixed the root cause by: (1) adding broad null propagation to
-> AND/OR, (2) rewriting `inList` to use `foldl` over `evalBinOp .or/.eq`, and (3) redefining
-> BETWEEN as `AND(GE, LE)`. All 6 are now provable via the new foldl+evalBinOp semantics
-> without heavy preconditions.
+- `in_singleton`, `not_in_singleton` — **PROVED** (PR #126) via foldl+evalBinOp semantics
+- `in_pair`, `not_in_pair` — **PROVED** (PR #126) via foldl+evalBinOp + De Morgan
+- `in_list_or_expansion`, `not_in_list_and_expansion` — **PROVED** (PR #126) via foldl induction
 
 **BETWEEN (3 axioms) — ALL PROVED:**
 - `between_reflexive` — proved (PR #86, restored in PR #102)
@@ -382,15 +375,15 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 85 axioms remaining (56 in Equiv/, 29 in infrastructure files), 331 theorems proved (79.6%).
-Axiom ratchet: 85 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 79 axioms remaining (50 in Equiv/, 29 in infrastructure files), 341 theorems proved (81.2%).
+Axiom ratchet: 79 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
 |-------|-------------|--------|-----------|------------|
 | 1 | Value/Boolean properties | 22 | 0 (done) | -- |
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
-| 1c | IN / BETWEEN / LIKE | 7 | ~4 | Easy-Medium |
+| 1c | IN / BETWEEN / LIKE | 13 | 1 (`like_self`) | Easy-Medium |
 | 1d | String/Function | 8 | 0 (done) | -- |
 | 2 | Statement-level filter/WHERE | 3 | ~4 | Medium |
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
@@ -436,7 +429,7 @@ decision first (see "Unsound Axiom Strategy" below).
 
 | Order | Issue | Description | Axioms | Status |
 |:-----:|-------|-------------|:------:|--------|
-| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 8 | 2 **proved** (PR #112, reproved in #125); 6 unblocked ([PR #125](https://github.com/evelynmitchell/sql_equiv/pull/125) fixed evaluator) |
+| 11 | [#58](https://github.com/evelynmitchell/sql_equiv/issues/58) | IN list expansion | 8 | 8 **proved** (PR #112: empty cases; PR #126: singleton, pair, general expansion) |
 | 12 | [#59](https://github.com/evelynmitchell/sql_equiv/issues/59) | BETWEEN expansion | 3 | 3 **proved** (PR #102: `between_reflexive`; PR #109: `between_expansion`, `not_between_expansion`) |
 | 13 | [#60](https://github.com/evelynmitchell/sql_equiv/issues/60) | LIKE pattern rules | 3 | 2 **proved** (PR #102: `like_empty_pattern`; PR #111: `like_match_all`); `like_self` axiom |
 | 14 | [#62](https://github.com/evelynmitchell/sql_equiv/issues/62) | String function properties | 8 | 8 **proved** (PR #102: `length_empty`; PR #105: `upper/lower_idempotent`, `upper_lower_upper`, `lower_upper_lower`; PR #107: `concat_empty_left/right`; PR #109: `length_concat`) |
@@ -653,7 +646,7 @@ optimizer (at runtime) and the axioms (in proofs).
 - **Wave 1 #57** (arithmetic identities): proved (PR #93) with `isIntValued`
 - **Waves 1-2 type-mismatch axioms** (#46-50, #60): need `isBoolValued`
   or `evaluable` preconditions; provable now with Option 3 semantics
-- **#58 IN-list expansion** (6 remaining): evaluator fixed by [PR #125](https://github.com/evelynmitchell/sql_equiv/pull/125); axioms now provable via foldl+evalBinOp semantics
+- **#58 IN-list expansion**: all 8 proved (PR #112 + PR #126). Evaluator fixed by PR #125; proofs via foldl+evalBinOp semantics
 - **Waves 3+**: unaffected by this design decision
 
 ---
