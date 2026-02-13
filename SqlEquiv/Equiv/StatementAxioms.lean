@@ -765,13 +765,14 @@ axiom in_singleton_subquery (db : Database) (row : Row) (e : Expr) (sel : Select
     evalExprWithDb db row (Expr.inSubquery e false sel) =
     evalExprWithDb db row (Expr.binOp .eq e (Expr.lit v))
 
-/-- Correlated subquery with outer reference evaluates with outer row context -/
-axiom correlated_subquery_uses_context (db : Database) (outerRow : Row)
-    (sel : SelectStmt) (outerCol : String) (outerVal : Value)
-    (h : (outerCol, outerVal) ∈ outerRow) :
-    -- The subquery can access outerCol from the outer row
-    -- subResult is computed with outerRow available for column resolution
-    True  -- This is a semantic property, not a computational one
+-- Commented out: asserts `True`, no dependents, inflates axiom count
+-- /-- Correlated subquery with outer reference evaluates with outer row context -/
+-- axiom correlated_subquery_uses_context (db : Database) (outerRow : Row)
+--     (sel : SelectStmt) (outerCol : String) (outerVal : Value)
+--     (h : (outerCol, outerVal) ∈ outerRow) :
+--     -- The subquery can access outerCol from the outer row
+--     -- subResult is computed with outerRow available for column resolution
+--     True  -- This is a semantic property, not a computational one
 
 -- ============================================================================
 -- Subquery Unnesting Theorems
