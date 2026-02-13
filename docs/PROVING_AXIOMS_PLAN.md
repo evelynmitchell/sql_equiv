@@ -394,7 +394,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 15 | 9 (3 bridge + 4 evalSelect + 2 evalQuery) | N/A |
+| infra | Infrastructure (Semantics.lean) | 21 | 5 (5 bridge axioms — irreducible) | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
 | | **Total** | **~102** | **~87** | |
 
@@ -500,6 +500,12 @@ Split `Semantics.lean` into 3 files to work around `partial def` opacity:
 to the non-partial core evaluators. **3 bridge axioms added** connecting
 `partial def` functions to their non-partial mirrors. **5 more CASE axioms
 converted** in PR #131 via foldl-evalCaseHelper equivalence (63 → 58).
+**2 evalQuery axioms converted** in PR #132 via evalQueryCore bridge (58 → 57).
+**4 evalSelect axioms converted** in PR #133 via evalSelectCore bridge (57 → 54).
+
+All infrastructure axioms that described equational properties have been
+eliminated. Only 5 bridge axioms remain — these are inherently needed because
+`partial def` = `opaque` in Lean 4's kernel.
 
 ### Current status
 
@@ -523,12 +529,14 @@ converted** in PR #131 via foldl-evalCaseHelper equivalence (63 → 58).
 | `evalCase_nil_none` | **theorem** (PR #131) | Empty branches, no ELSE → NULL |
 | `evalCase_cons_true` | **theorem** (PR #131) | True condition → return result |
 | `evalCase_cons_false` | **theorem** (PR #131) | False condition → skip to rest |
-| `evalSelect_limit_offset` | axiom | Decompose evalSelect into take/drop |
-| `evalSelect_orderBy_length` | axiom | ORDER BY preserves length |
-| `evalSelect_where_congr` | axiom | Congruence: same filtering → same result |
-| `evalSelect_filter_all_false` | axiom | Always-false filter → empty result (no agg) |
-| `evalQuery_simple` | axiom | Decompose simple query evaluation |
-| `evalQuery_compound` | axiom | Decompose compound query evaluation |
+| `evalQuery_eq_evalQueryCore` | **bridge axiom** (PR #132) | Connect partial `evalQuery` to non-partial `evalQueryCore` |
+| `evalSelect_eq_evalSelectCore` | **bridge axiom** (PR #133) | Connect partial `evalSelect` to non-partial `evalSelectCore` |
+| `evalSelect_limit_offset` | **theorem** (PR #133) | Decompose evalSelect into take/drop |
+| `evalSelect_orderBy_length` | **theorem** (PR #133) | ORDER BY preserves length |
+| `evalSelect_where_congr` | **theorem** (PR #133) | Congruence: same filtering → same result |
+| `evalSelect_filter_all_false` | **theorem** (PR #133) | Always-false filter → empty result (no agg) |
+| `evalQuery_simple` | **theorem** (PR #132) | Decompose simple query evaluation |
+| `evalQuery_compound` | **theorem** (PR #132) | Decompose compound query evaluation |
 
 All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
 

@@ -2794,6 +2794,34 @@ requiring `simp` to handle the full 90-line function body.
 - 4 bridge axioms (3 existing + 1 new `evalSelect_eq_evalSelectCore`)
 - 1 `evalQuery` bridge axiom (`evalQuery_eq_evalQueryCore`)
 
+### Lessons learned
+
+1. **Decompose large functions for proof tractability.** `evalSelectWithContext` is ~100 lines.
+   `simp [evalSelectCore]` on the full function body timed out. Factoring into 3 composable
+   helpers (`applyOrderByLimitOffset` ~10 lines, `evalSelectProjectDistinct` ~50 lines,
+   `evalSelectAfterFilter` = composition) made each theorem target a small helper. The
+   composition `evalSelectCore_eq_afterFilter` proves by `rfl` since all helpers are `def`.
+   General principle: when a function is too big for `simp`, don't fight it — decompose.
+
+2. **Declaration ordering catches you every time.** Initially left the 4 theorems at their
+   original location (before the mutual block ends) but the bridge axiom is defined after
+   the mutual `end`. Lean can't use something before it's defined. Had to move all 4 theorems
+   to after the bridge. Same constraint documented in Batch 26 about bridge placement.
+
+3. **Count parameters mechanically.** `evalSelectCore_orderBy_length` has 21 parameters
+   (two `orderBy` args) but I wrote 20 underscores in `exact ... _ _ _ ...`. The build error
+   was clear but avoidable. Count the signature, don't eyeball it.
+
+4. **Pre-commit hooks earn their keep.** `orderByLimitOffset_length_eq` was an exploration
+   artifact superseded by `applyOrderByLimitOffset_length_eq`. The unused-private check
+   caught it before commit. Validates the memory principle: "after finishing proofs, grep
+   for every private helper to confirm it's used."
+
+5. **The 3-file split pattern is now fully mature.** Batches 24-27 have applied it to
+   `evalExprCore`, `evalFromCore`, `evalCaseHelper`, `evalQueryCore`, and `evalSelectCore`.
+   The recipe is mechanical: copy the function body, parameterize partial def calls as
+   callbacks, add bridge axiom after `end`, prove theorems via `rw [bridge]; exact core_thm`.
+
 ### Net axiom count change
 
 - **4 axioms → theorems, +1 bridge axiom**: 57 → 54
