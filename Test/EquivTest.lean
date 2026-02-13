@@ -283,7 +283,7 @@ open Test
 #check @subquery_where_true
 #check @subquery_where_false
 #check @in_singleton_subquery
-#check @correlated_subquery_uses_context
+-- #check @correlated_subquery_uses_context  -- commented out: axiom removed (asserts True)
 
 -- Aggregate axioms
 #check @min_le_elem

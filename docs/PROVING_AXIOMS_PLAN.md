@@ -316,9 +316,9 @@ row merging is commutative/associative (modulo column ordering).
 **Equivalences (4 -- medium):** `exists_as_count_gt_zero`,
   `not_exists_as_count_eq_zero`, `subquery_limit_one`, `scalar_subquery_is_first`
 
-**Advanced (5 -- hard):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
+**Advanced (4 -- hard):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
   `uncorrelated_subquery_independent`, `in_singleton_subquery`,
-  `correlated_subquery_uses_context`, `exists_monotonic`
+  `exists_monotonic`
 
 **Unnesting (4 -- hard):** `in_subquery_unnest_to_join`,
   `not_in_subquery_unnest_to_antijoin`, `in_subquery_implies_join_match`,
@@ -375,8 +375,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 71 axioms remaining (42 in Equiv/, 29 in infrastructure files), 359 theorems proved (83.5%).
-Axiom ratchet: 71 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 70 axioms remaining (41 in Equiv/, 29 in infrastructure files), 359 theorems proved (83.7%).
+Axiom ratchet: 70 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |

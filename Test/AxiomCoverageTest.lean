@@ -1124,18 +1124,7 @@ def subqueryTests : List TestResult :=
     if inResult == some (.bool true) then .pass "in_singleton_subquery"
     else .fail "in_singleton_subquery" s!"Expected TRUE, got {showOptVal inResult}",
 
-    -- correlated_subquery_uses_context: verify correlated subquery result changes with outer row
-    -- Subquery: SELECT * FROM orders WHERE user_id = <outer>.id
-    let correlatedSel := SelectStmt.mk false [.star none]
-      (some (.table ⟨"orders", none⟩))
-      (some (.binOp .eq (col "user_id") (col "id")))
-      [] none [] none none
-    let r1 := evalSelectWithContext testDb [("id", .int 1)] correlatedSel
-    let r2 := evalSelectWithContext testDb [("id", .int 999)] correlatedSel
-    -- User 1 has orders, user 999 does not — results should differ
-    if r1.length > 0 && r2.length == 0 then .pass "correlated_subquery_uses_context"
-    else .fail "correlated_subquery_uses_context"
-      s!"Expected different results: user1={r1.length} rows, user999={r2.length} rows",
+    -- correlated_subquery_uses_context: commented out (axiom asserts True, no dependents)
 
     -- exists_monotonic: if sel1 ⊆ sel2 and EXISTS sel1 = TRUE, then EXISTS sel2 = TRUE
     -- Subset: orders WHERE amount > 100 (1 row: amount=200)

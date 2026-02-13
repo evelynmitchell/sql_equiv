@@ -2332,3 +2332,116 @@ semantics and unblocked 6 IN-list axioms for proof. This batch converts them all
 4. **Count `Expr.binOp` nodes to know how many `rw [evalExprWithDb_binOp]` calls are needed.**
    `Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b)` = 3 nodes = 3 rewrites.
    The 4th call fails with "pattern not found."
+
+---
+
+## Batch 23: Reprove 8 Regressed Boolean Axioms (PR #125 Fallout) — 8 axioms → theorems
+
+**Branch**: `claude/reprove-boolean-axioms` | **PR**: #128 (merged)
+
+### Context
+
+PR #125 narrowed AND/OR null propagation from `(some (.null _), _)` to
+`(some (.null _), some _)`. This made 8 axioms unsound for unconstrained
+`Option Value` inputs (counterexample: `AND(NULL, AND(INT, BOOL))` gives
+different results depending on associativity grouping). All 8 were reverted
+to axioms. This batch reproves them with Bool/`isBoolValued` restrictions.
+
+### Axioms proved
+
+**Value-level (ValueLemmas.lean) — 4 axioms → Bool-restricted theorems:**
+- `evalBinOp_and_assoc (a b c : Bool)` — `cases a <;> cases b <;> cases c <;> rfl`
+- `evalBinOp_or_assoc (a b c : Bool)` — same
+- `evalUnaryOp_not_and (a b : Bool)` — `cases a <;> cases b <;> rfl`
+- `evalUnaryOp_not_or (a b : Bool)` — same
+
+**Expression-level (ExprAxioms.lean) — 4 distributivity axioms → theorems:**
+- `and_or_distrib_left` — extract Bool witnesses via `isBoolValued`, call value-level helper
+- `and_or_distrib_right` — same pattern
+- `or_and_distrib_left` — same pattern
+- `or_and_distrib_right` — same pattern
+
+### New helpers
+
+**BoolOrNullOrNone (BNN) predicate and De Morgan helpers:**
+
+The key challenge was Comparison.lean cascade sites where the old value-level
+De Morgan axioms were used on non-boolean values (results of `evalBinOp .eq`,
+`.ge`, `.le`). These aren't `isBoolValued` (can produce null), but they're also
+not int/string (which break De Morgan). The solution: a middle-ground predicate.
+
+```lean
+def isBoolOrNullOrNone (v : Option Value) : Prop :=
+  (∃ b, v = some (.bool b)) ∨ (∃ t, v = some (.null t)) ∨ v = none
+```
+
+Helpers added to ValueLemmas.lean:
+- `evalUnaryOp_not_or_bnn` / `evalUnaryOp_not_and_bnn` — BNN De Morgan
+- `evalBinOp_eq_isBoolOrNullOrNone` — eq always produces BNN
+- `evalBinOp_ge_isBoolOrNullOrNone` / `evalBinOp_le_isBoolOrNullOrNone`
+- `evalBinOp_or_preserves_bnn` — OR of BNN inputs is BNN
+- 4 Bool-restricted distributivity helpers (`evalBinOp_and_or_distrib`, etc.)
+
+### Cascade fixes (Comparison.lean)
+
+1. **`not_foldl_or_eq_is_foldl_and_ne`**: Added `h_acc_type : isBoolOrNullOrNone acc_val`
+   parameter. Induction step uses `evalUnaryOp_not_or_bnn` with BNN invariant threaded
+   via `evalBinOp_or_preserves_bnn`. Used `refine ih _ _ ?_ h_inv` to place invariant
+   in correct argument position.
+
+2. **`not_in_pair`**: Replaced `evalUnaryOp_not_or` with `evalUnaryOp_not_or_bnn`,
+   proving both args are BNN via `evalBinOp_eq_isBoolOrNullOrNone`.
+
+3. **`not_between_expansion`**: Rewrote from 3-step expression-level chain to direct
+   value-level proof using `evalUnaryOp_not_and_bnn` with `evalBinOp_ge/le_isBoolOrNullOrNone`.
+
+### Tactic updates (Tactics.lean)
+
+- `sql_equiv`, `sql_equiv!`, `sql_rw_demorgan`: Added `(by assumption)` for new
+  `isBoolValued` args on assoc/De Morgan calls
+- Updated 2 example proofs (De Morgan, associativity) to include `isBoolValued` hypotheses
+
+### Expression-level signature changes
+
+6 theorems gained `isBoolValued` preconditions (were already theorems, not axioms):
+- `and_assoc`, `or_assoc`: `(ha hb hc : _.isBoolValued)`
+- `not_and`, `not_or`: `(ha hb : _.isBoolValued)`
+- `or_not_not`, `and_not_not`: `(ha hb : _.isBoolValued)`
+
+These use the standard pattern: extract Bool witnesses, rewrite, call value-level lemma.
+
+### Net axiom count change
+
+- **8 axioms → theorems**: -8
+- **Net**: 79 → 71 axioms
+
+### Verification
+
+- 231/231 tests pass
+- Ratchet check: 71 >= 71
+- Rewrite audit: all arms annotated
+- No unused private declarations
+
+### Lessons learned
+
+1. **BNN is a useful middle ground between `isBoolValued` and unconstrained `Option Value`.**
+   Comparison operators (eq, ge, le) produce bool/null/none but never int/string.
+   Full `isBoolValued` is too strong (excludes null), unconstrained is unsound.
+   BNN lets De Morgan work in contexts where `isBoolValued` doesn't apply.
+
+2. **BNN proofs need explicit 9-case splits, not `all_goals`.**
+   `rcases hl; rcases hr; simp; all_goals (cases bl <;> rfl)` fails because `bl`
+   only exists in `hl=bool` branches. Use nested `rcases` with `·` focus bullets.
+
+3. **`private def` blocks cross-file use.** `isBoolOrNullOrNone` started as `private`
+   but was needed in Comparison.lean. Don't mark predicates `private` if they're part
+   of a proof interface.
+
+4. **`refine` beats `apply` for induction invariants.** `apply ih _ h_inv` puts `h_inv`
+   in the wrong position. `refine ih _ _ ?_ h_inv` explicitly places the hole for the
+   proof obligation and the invariant in the correct slots.
+
+5. **`dsimp only []` + `simp only [ite_true]` for `if true = true then ...`.**
+   `evalExprWithDb_inList` with `neg = true` produces `if true = true then NOT(result)
+   else result`. `dsimp only []` reduces the `let` bindings but not the `if`. Need
+   `simp only [ite_true]` to finish.
