@@ -5,7 +5,7 @@
 //           or: dot -Tsvg axiom_dependencies.dot -o axiom_dependencies.svg
 //           or: dot -Tpdf axiom_dependencies.dot -o axiom_dependencies.pdf
 //
-// 169 axioms across 7 files, organized by category.
+// 167 axioms/theorems across 7 files, organized by category.
 // Edges represent "A depends on B" (arrow from dependent to dependency).
 
 digraph axiom_dependencies {
@@ -310,9 +310,9 @@ digraph axiom_dependencies {
 
         order_by_preserves_count [label="order_preserves_count"];
         order_by_empty_identity  [label="order_empty_identity"];
-        order_by_idempotent      [label="order_idempotent"];
+
         order_by_last_wins       [label="order_last_wins"];
-        order_by_reverse         [label="order_reverse²"];
+
         limit_zero_empty         [label="limit_zero → ∅"];
         limit_upper_bound        [label="limit_upper_bound"];
         limit_none_all_rows      [label="limit_none → all"];
@@ -494,7 +494,6 @@ digraph axiom_dependencies {
     pagination_identity     -> offset_zero_identity;
     pagination_identity     -> limit_none_all_rows;
     consecutive_pages       -> limit_offset_compose;
-    order_limit_deterministic -> order_by_idempotent;
     order_limit_deterministic -> limit_upper_bound;
 
     // --- Ground expression depends on semantics ---
