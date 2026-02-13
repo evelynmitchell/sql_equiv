@@ -71,20 +71,20 @@ elab "sql_equiv" : tactic => do
       | exact eq_comm _ _))
   if ← tryTactic tryComm then return
 
-  -- Step 3: Try associativity lemmas
+  -- Step 3: Try associativity lemmas (require isBoolValued)
   let tryAssoc : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact and_assoc _ _ _
-      | exact or_assoc _ _ _))
+      | exact and_assoc _ _ _ (by assumption) (by assumption) (by assumption)
+      | exact or_assoc _ _ _ (by assumption) (by assumption) (by assumption)))
   if ← tryTactic tryAssoc then return
 
-  -- Step 4: Try De Morgan's laws
+  -- Step 4: Try De Morgan's laws (require isBoolValued)
   let tryDeMorgan : TacticM Unit := do
     evalTactic (← `(tactic| first
-      | exact not_and _ _
-      | exact not_or _ _
-      | exact or_not_not _ _
-      | exact and_not_not _ _))
+      | exact not_and _ _ (by assumption) (by assumption)
+      | exact not_or _ _ (by assumption) (by assumption)
+      | exact or_not_not _ _ (by assumption) (by assumption)
+      | exact and_not_not _ _ (by assumption) (by assumption)))
   if ← tryTactic tryDeMorgan then return
 
   -- Step 5: Try distributivity laws (require isBoolValued hypotheses)
@@ -229,12 +229,12 @@ macro_rules
             | exact mul_comm _ _
             | exact not_not _ (by assumption)
             | exact eq_comm _ _
-            | exact and_assoc _ _ _
-            | exact or_assoc _ _ _
-            | exact not_and _ _
-            | exact not_or _ _
-            | exact or_not_not _ _
-            | exact and_not_not _ _
+            | exact and_assoc _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact or_assoc _ _ _ (by assumption) (by assumption) (by assumption)
+            | exact not_and _ _ (by assumption) (by assumption)
+            | exact not_or _ _ (by assumption) (by assumption)
+            | exact or_not_not _ _ (by assumption) (by assumption)
+            | exact and_not_not _ _ (by assumption) (by assumption)
             | exact and_or_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
             | exact and_or_distrib_right _ _ _ (by assumption) (by assumption) (by assumption)
             | exact or_and_distrib_left _ _ _ (by assumption) (by assumption) (by assumption)
@@ -275,13 +275,13 @@ syntax "sql_rw" ("[" ident,* "]")? : tactic
 /-- Helper for applying specific rewrite rules -/
 elab "sql_rw_demorgan" : tactic => do
   evalTactic (← `(tactic| first
-    | exact not_and _ _
-    | exact not_or _ _
-    | exact or_not_not _ _
-    | exact and_not_not _ _
+    | exact not_and _ _ (by assumption) (by assumption)
+    | exact not_or _ _ (by assumption) (by assumption)
+    | exact or_not_not _ _ (by assumption) (by assumption)
+    | exact and_not_not _ _ (by assumption) (by assumption)
     | apply expr_equiv_trans; first
-      | exact not_and _ _
-      | exact not_or _ _
+      | exact not_and _ _ (by assumption) (by assumption)
+      | exact not_or _ _ (by assumption) (by assumption)
     | fail "No De Morgan rule applies"))
 
 elab "sql_rw_distrib" : tactic => do
@@ -465,9 +465,10 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
   · exact h1
   · exact h2
 
-/-- Example: De Morgan's law -/
-example : Expr.unaryOp .not (Expr.binOp .and a b) ≃ₑ
-          Expr.binOp .or (Expr.unaryOp .not a) (Expr.unaryOp .not b) := by sql_equiv
+/-- Example: De Morgan's law (requires isBoolValued) -/
+example (ha : a.isBoolValued) (hb : b.isBoolValued) :
+    Expr.unaryOp .not (Expr.binOp .and a b) ≃ₑ
+    Expr.binOp .or (Expr.unaryOp .not a) (Expr.unaryOp .not b) := by sql_equiv
 
 /-- Example: Distributivity (requires isBoolValued) -/
 example (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
@@ -517,9 +518,10 @@ example (h : a ≃ₑ b) : Expr.unaryOp .not a ≃ₑ Expr.unaryOp .not b := by
   exact h
 
 /-- Example: chaining equivalences using exprCalc2/exprCalc3 directly -/
-example : Expr.binOp .and (Expr.binOp .and a b) c ≃ₑ
-          Expr.binOp .and a (Expr.binOp .and b c) := by
-  exact and_assoc a b c
+example (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
+    Expr.binOp .and (Expr.binOp .and a b) c ≃ₑ
+    Expr.binOp .and a (Expr.binOp .and b c) := by
+  exact and_assoc a b c ha hb hc
 
 /-- Example: Multi-step chaining using exprCalc2 -/
 example : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by
