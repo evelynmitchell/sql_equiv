@@ -2733,3 +2733,93 @@ axioms) caused Lean to auto-bind the partial defs as implicit parameters.
 ### Net axiom count change
 
 - **2 axioms → theorems, +1 bridge axiom**: 58 → 57
+
+---
+
+## Batch 27: Eliminate 4 evalSelect Axioms (57 → 54)
+
+**Branch**: `claude/eliminate-evalquery-axioms`
+
+### Goal
+
+Convert the 4 remaining `evalSelect` infrastructure axioms to theorems, using a new
+`evalSelectCore` non-partial mirror function in `SemanticsCore.lean`.
+
+### Approach
+
+Same 3-file split pattern as Batches 24-26. Created `evalSelectCore` (non-partial mirror
+of `evalSelectWithContext`) parameterized by 9 callbacks for all partial def dependencies.
+Added 1 bridge axiom `evalSelect_eq_evalSelectCore` in Semantics.lean, then proved all 4
+axioms via `rw [evalSelect_eq_evalSelectCore] ; exact evalSelectCore_*`.
+
+**Key architectural insight**: factored the ~90-line `evalSelectCore` into 3 composable helpers:
+- `applyOrderByLimitOffset` — ORDER BY + OFFSET + LIMIT pipeline (~10 lines)
+- `evalSelectProjectDistinct` — GROUP BY + HAVING + projection + DISTINCT (~50 lines)
+- `evalSelectAfterFilter` — composition of the above two
+
+This decomposition made each theorem provable with small, targeted helper lemmas rather than
+requiring `simp` to handle the full 90-line function body.
+
+**`selectHasAggregate` parameterization**: Unlike `selectHasWindowFn` (which is `partial def`),
+`selectHasAggregate` is a regular `def`. However, it's defined in `Semantics.lean` (depends on
+`partial def hasAggregate`), so it's not importable in `SemanticsCore.lean`. Solution: add
+`hasAgg : List SelectItem → Bool` as an additional callback parameter.
+
+### Axioms converted to theorems (4)
+
+| Axiom | Proof technique |
+|-------|----------------|
+| `evalSelect_limit_offset` | `rw` bridge × 2 → `evalSelectCore_limit_offset` |
+| `evalSelect_orderBy_length` | `rw` bridge × 2 → `evalSelectCore_orderBy_length` |
+| `evalSelect_where_congr` | `rw` bridge × 2 → `evalSelectCore_where_congr` |
+| `evalSelect_filter_all_false` | `rw` bridge × 1 → `evalSelectCore_filter_all_false` |
+
+### New helpers added to SemanticsCore.lean
+
+| Helper | Purpose |
+|--------|---------|
+| `evalSelectCore` | Non-partial SELECT evaluator parameterized by 9 callbacks |
+| `applyOrderByLimitOffset` | ORDER BY + OFFSET + LIMIT pipeline |
+| `evalSelectProjectDistinct` | GROUP BY + HAVING + projection + DISTINCT |
+| `evalSelectAfterFilter` | Composition of the above two |
+| `applyOrderByLimitOffset_length_eq` | Changing sort comparator preserves length |
+| `applyOrderByLimitOffset_nil` | Pipeline on `[]` returns `[]` |
+| `evalSelectProjectDistinct_nil` | Projection on `[]` returns `[]` (no aggregates) |
+| `evalSelectCore_eq_afterFilter` | `evalSelectCore = evalSelectAfterFilter ∘ filter` (by `rfl`) |
+| `List.filter_eq_nil_of_false` | Always-false filter predicate returns `[]` |
+
+### Remaining infrastructure axioms (5 bridge axioms total)
+
+- 5 bridge axioms total: 4 existing (`evalExprWithDb_eq_evalExprCore`, `evalCase_eq_evalCaseHelper`, `evalFrom_eq_evalFromCore`, `evalQuery_eq_evalQueryCore`) + 1 new (`evalSelect_eq_evalSelectCore`)
+
+### Lessons learned
+
+1. **Decompose large functions for proof tractability.** `evalSelectWithContext` is ~100 lines.
+   `simp [evalSelectCore]` on the full function body timed out. Factoring into 3 composable
+   helpers (`applyOrderByLimitOffset` ~10 lines, `evalSelectProjectDistinct` ~50 lines,
+   `evalSelectAfterFilter` = composition) made each theorem target a small helper. The
+   composition `evalSelectCore_eq_afterFilter` proves by `rfl` since all helpers are `def`.
+   General principle: when a function is too big for `simp`, don't fight it — decompose.
+
+2. **Declaration ordering catches you every time.** Initially left the 4 theorems at their
+   original location (before the mutual block ends) but the bridge axiom is defined after
+   the mutual `end`. Lean can't use something before it's defined. Had to move all 4 theorems
+   to after the bridge. Same constraint documented in Batch 26 about bridge placement.
+
+3. **Count parameters mechanically.** `evalSelectCore_orderBy_length` has 21 parameters
+   (two `orderBy` args) but I wrote 20 underscores in `exact ... _ _ _ ...`. The build error
+   was clear but avoidable. Count the signature, don't eyeball it.
+
+4. **Pre-commit hooks earn their keep.** `orderByLimitOffset_length_eq` was an exploration
+   artifact superseded by `applyOrderByLimitOffset_length_eq`. The unused-private check
+   caught it before commit. Validates the memory principle: "after finishing proofs, grep
+   for every private helper to confirm it's used."
+
+5. **The 3-file split pattern is now fully mature.** Batches 24-27 have applied it to
+   `evalExprCore`, `evalFromCore`, `evalCaseHelper`, `evalQueryCore`, and `evalSelectCore`.
+   The recipe is mechanical: copy the function body, parameterize partial def calls as
+   callbacks, add bridge axiom after `end`, prove theorems via `rw [bridge]; exact core_thm`.
+
+### Net axiom count change
+
+- **4 axioms → theorems, +1 bridge axiom**: 57 → 54

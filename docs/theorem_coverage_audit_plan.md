@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **57 axioms** across 9 `.lean` files (41 in `Equiv/`, 16 in infrastructure)
-- **394 theorems** proved (87.4%)
-- Axiom ratchet: 57 (`tools/axiom_count_minimum.txt`)
+- **54 axioms** across 9 `.lean` files (41 in `Equiv/`, 13 in infrastructure)
+- **407 theorems** proved (88.3%)
+- Axiom ratchet: 54 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
@@ -49,11 +49,11 @@ Run with `--runtime` flag for full analysis. No build required.
 | `Optimizer.lean` | 3 | 6 | Optimizer correctness (pushdown, join reorder) |
 | `OptimizerUtils.lean` | 0 | 5 | Optimizer utility lemmas |
 | `PredicatePushdown.lean` | 1 | 0 | Predicate pushdown preserves semantics |
-| `Semantics.lean` | 8 | 17 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
-| `SemanticsCore.lean` | 0 | 18 |  |
-| **Subtotal** | **16** | **47** | |
+| `Semantics.lean` | 5 | 21 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
+| `SemanticsCore.lean` | 0 | 27 |  |
+| **Subtotal** | **13** | **60** | |
 
-### Grand Total: 57 axioms, 394 theorems (87.4% proved)
+### Grand Total: 54 axioms, 407 theorems (88.3% proved)
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)

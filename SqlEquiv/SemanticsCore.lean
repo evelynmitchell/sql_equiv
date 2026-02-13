@@ -444,4 +444,446 @@ theorem evalQueryCore_compound (db : Database)
     | .exceptOp => l.filter fun row => !r.contains row := by
   rfl
 
+-- ============================================================================
+-- Non-Partial Core SELECT Evaluator
+-- ============================================================================
+
+/-- Non-partial SELECT evaluator, parameterized by evaluation callbacks.
+    Mirrors evalSelectWithContext (Semantics.lean) exactly, with partial def
+    calls replaced by parameters. Not recursive — delegates to parameters
+    for recursive calls. -/
+def evalSelectCore (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (sel : SelectStmt) : Table :=
+  -- 1. FROM clause
+  let baseRows : Table := match sel.fromClause with
+    | some f => fromEval db f
+    | none => [[]]
+
+  -- Merge outer row context into each base row for correlated subqueries
+  let baseRowsWithContext : Table := baseRows.map fun row => outerRow ++ row
+
+  -- 2. WHERE clause
+  let filteredRows : Table := match sel.whereClause with
+    | some cond =>
+      baseRowsWithContext.filter fun row =>
+        exprEval db row cond == some (Value.bool true)
+    | none => baseRowsWithContext
+
+  -- 3. GROUP BY and 4. HAVING and 5. SELECT (projection)
+  let projectedRows : Table :=
+    if !sel.groupBy.isEmpty then
+      -- GROUP BY present: partition rows and evaluate aggregates per group
+      -- Inline groupRowsByKey logic: rows.foldl addToGroups []
+      let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
+          List (List (Option Value) × Table) :=
+        let key := sel.groupBy.map (exprEval db row)
+        match groups.find? (fun (k, _) => k == key) with
+        | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+        | none => groups ++ [(key, [row])]
+      let groups := filteredRows.foldl addToGroups []
+      let groupResults := groups.filterMap fun (_key, groupRows) =>
+        match groupRows.head? with
+        | none => none
+        | some sampleRow =>
+          let passesHaving := match sel.having with
+            | none => true
+            | some cond =>
+              exprWithAggEval db groupRows sampleRow cond == some (Value.bool true)
+          if passesHaving then
+            some (sel.items.flatMap (selectItemWithAggEval db groupRows sampleRow))
+          else
+            none
+      groupResults
+    else if hasAgg sel.items then
+      let sampleRow := filteredRows.head?.getD []
+      let passesHaving := match sel.having with
+        | none => true
+        | some cond =>
+          exprWithAggEval db filteredRows sampleRow cond == some (Value.bool true)
+      if passesHaving then
+        [sel.items.flatMap (selectItemWithAggEval db filteredRows sampleRow)]
+      else
+        []
+    else if hasWindowFn sel.items then
+      let havingRows := match sel.having with
+        | some cond =>
+          filteredRows.filter fun row =>
+            exprEval db row cond == some (Value.bool true)
+        | none => filteredRows
+      let partition := havingRows
+      let sortedPartition := havingRows
+      ((List.range havingRows.length).zip havingRows).map fun (idx, row) =>
+        sel.items.flatMap fun item =>
+          match item with
+          | .star none => row
+          | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+          | .exprItem e alias =>
+            match exprWithWindowEval db row partition sortedPartition idx e with
+            | some v => [(alias.getD (exprToName e), v)]
+            | none => [(alias.getD (exprToName e), .null none)]
+    else
+      let havingRows := match sel.having with
+        | some cond =>
+          filteredRows.filter fun row =>
+            exprEval db row cond == some (Value.bool true)
+        | none => filteredRows
+      havingRows.map fun row => sel.items.flatMap (selectItemEval db row)
+
+  -- 6. DISTINCT
+  let distinctRows : Table := if sel.distinct then
+    projectedRows.eraseDups
+  else
+    projectedRows
+
+  -- 7. ORDER BY
+  let orderedRows : Table := if sel.orderBy.isEmpty then distinctRows else
+    distinctRows.mergeSort fun r1 r2 =>
+      compareEval db r1 r2 sel.orderBy
+
+  -- 8. OFFSET and LIMIT
+  let offsetRows : Table := match sel.offsetVal with
+    | some n => orderedRows.drop n
+    | none => orderedRows
+  let limitRows : Table := match sel.limitVal with
+    | some n => offsetRows.take n
+    | none => offsetRows
+
+  limitRows
+
+-- ============================================================================
+-- Equational Theorems for evalSelectCore
+-- ============================================================================
+
+/-- Steps 7-9 of the evaluation pipeline: ORDER BY + OFFSET + LIMIT.
+    Factored out as a small function for length proofs. -/
+private def applyOrderByLimitOffset
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (rows : Table) : Table :=
+  let orderedRows : Table := if orderBy.isEmpty then rows else
+    rows.mergeSort fun r1 r2 =>
+      compareEval db r1 r2 orderBy
+  let offsetRows : Table := match offset with
+    | some n => orderedRows.drop n
+    | none => orderedRows
+  match limit with | some n => offsetRows.take n | none => offsetRows
+
+/-- Changing the ORDER BY clause doesn't change the length of the pipeline output. -/
+private theorem applyOrderByLimitOffset_length_eq
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (orderBy1 orderBy2 : List OrderByItem)
+    (limit offset : Option Nat) (rows : Table) :
+    (applyOrderByLimitOffset compareEval db orderBy1 limit offset rows).length =
+    (applyOrderByLimitOffset compareEval db orderBy2 limit offset rows).length := by
+  simp only [applyOrderByLimitOffset]
+  -- Case split limit/offset first (they're still in scope), then split the if-then-else
+  cases limit <;> cases offset <;>
+    simp only [] <;>  -- normalize
+    (split <;> split <;> simp [List.length_mergeSort, List.length_take, List.length_drop])
+
+/-- ORDER BY + OFFSET + LIMIT on empty list produces empty list. -/
+private theorem applyOrderByLimitOffset_nil
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    applyOrderByLimitOffset compareEval db orderBy limit offset [] = [] := by
+  simp only [applyOrderByLimitOffset, List.mergeSort_nil]
+  cases limit <;> cases offset <;> simp
+
+/-- Steps 3-6 of the evaluation pipeline (after WHERE, before ORDER BY):
+    GROUP BY, HAVING, projection, DISTINCT. -/
+private def evalSelectProjectDistinct (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr)
+    (filteredRows : Table) : Table :=
+  let projectedRows : Table :=
+    if !groupBy.isEmpty then
+      let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
+          List (List (Option Value) × Table) :=
+        let key := groupBy.map (exprEval db row)
+        match groups.find? (fun (k, _) => k == key) with
+        | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+        | none => groups ++ [(key, [row])]
+      let groups := filteredRows.foldl addToGroups []
+      let groupResults := groups.filterMap fun (_key, groupRows) =>
+        match groupRows.head? with
+        | none => none
+        | some sampleRow =>
+          let passesHaving := match having with
+            | none => true
+            | some cond =>
+              exprWithAggEval db groupRows sampleRow cond == some (Value.bool true)
+          if passesHaving then
+            some (items.flatMap (selectItemWithAggEval db groupRows sampleRow))
+          else
+            none
+      groupResults
+    else if hasAgg items then
+      let sampleRow := filteredRows.head?.getD []
+      let passesHaving := match having with
+        | none => true
+        | some cond =>
+          exprWithAggEval db filteredRows sampleRow cond == some (Value.bool true)
+      if passesHaving then
+        [items.flatMap (selectItemWithAggEval db filteredRows sampleRow)]
+      else
+        []
+    else if hasWindowFn items then
+      let havingRows := match having with
+        | some cond =>
+          filteredRows.filter fun row =>
+            exprEval db row cond == some (Value.bool true)
+        | none => filteredRows
+      let partition := havingRows
+      let sortedPartition := havingRows
+      ((List.range havingRows.length).zip havingRows).map fun (idx, row) =>
+        items.flatMap fun item =>
+          match item with
+          | .star none => row
+          | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+          | .exprItem e alias =>
+            match exprWithWindowEval db row partition sortedPartition idx e with
+            | some v => [(alias.getD (exprToName e), v)]
+            | none => [(alias.getD (exprToName e), .null none)]
+    else
+      let havingRows := match having with
+        | some cond =>
+          filteredRows.filter fun row =>
+            exprEval db row cond == some (Value.bool true)
+        | none => filteredRows
+      havingRows.map fun row => items.flatMap (selectItemEval db row)
+  if distinct then projectedRows.eraseDups else projectedRows
+
+/-- Steps 3-9 of the evaluation pipeline (after WHERE filtering).
+    Takes filteredRows as input and applies GROUP BY, HAVING, projection,
+    DISTINCT, ORDER BY, OFFSET, and LIMIT. Factored as composition of
+    evalSelectProjectDistinct + applyOrderByLimitOffset. -/
+private def evalSelectAfterFilter (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (filteredRows : Table) : Table :=
+  applyOrderByLimitOffset compareEval db orderBy limit offset
+    (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
+      groupBy having filteredRows)
+
+/-- evalSelectProjectDistinct on empty input produces empty output
+    when there are no aggregates. -/
+private theorem evalSelectProjectDistinct_nil (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr)
+    (hNoAgg : hasAgg items = false) :
+    evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
+      groupBy having [] = [] := by
+  simp only [evalSelectProjectDistinct, List.foldl, List.filterMap_nil,
+    hNoAgg, List.head?_nil, Option.getD]
+  cases having <;> simp [List.map_nil, List.eraseDups_nil]
+
+/-- evalSelectCore decomposes into base rows + filter + afterFilter -/
+private theorem evalSelectCore_eq_afterFilter (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
+    let baseRows := match from_ with | some f => fromEval db f | none => [[]]
+    let baseRowsWithContext := baseRows.map fun row => outerRow ++ row
+    let filteredRows := match where_ with
+      | some cond => baseRowsWithContext.filter fun row =>
+          exprEval db row cond == some (Value.bool true)
+      | none => baseRowsWithContext
+    evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      distinct items groupBy having orderBy limit offset filteredRows := by
+  rfl
+
+/-- Infrastructure: evalSelectCore decomposes limit/offset into drop/take on the base result. -/
+theorem evalSelectCore_limit_offset (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
+    let base := evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none)
+    let offsetRows := match offset with | some n => base.drop n | none => base
+    match limit with | some n => offsetRows.take n | none => offsetRows := by
+  simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter, applyOrderByLimitOffset]
+
+
+/-- Infrastructure: ORDER BY preserves row count (mergeSort preserves length). -/
+theorem evalSelectCore_orderBy_length (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat) :
+    (evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
+    (evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length := by
+  simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter]
+  -- Both sides have the same evalSelectProjectDistinct result. Only orderBy differs.
+  exact applyOrderByLimitOffset_length_eq _ _ _ _ _ _ _
+
+/-- Infrastructure: WHERE clause only affects filtering; equivalent WHERE clauses produce identical results. -/
+theorem evalSelectCore_where_congr (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (w1 w2 : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    (∀ row : Row,
+      (match w1 with | some c => exprEval db row c == some (Value.bool true) | none => true) =
+      (match w2 with | some c => exprEval db row c == some (Value.bool true) | none => true)) →
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ w1 groupBy having orderBy limit offset) =
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ w2 groupBy having orderBy limit offset) := by
+  intro hCongr
+  simp only [evalSelectCore_eq_afterFilter]
+  -- Suffices to show the filteredRows are the same
+  congr 1
+  -- Goal: (match w1 with ...) = (match w2 with ...)
+  cases w1 with
+  | none =>
+    cases w2 with
+    | none => rfl
+    | some c2 =>
+      -- h says: ∀ row, true = (exprEval db row c2 == some (Value.bool true))
+      -- So the filter keeps everything (same as identity)
+      simp only []
+      have : ∀ row, (exprEval db row c2 == some (Value.bool true)) = true := by
+        intro row; exact (hCongr row).symm
+      rw [List.filter_eq_self.mpr]
+      intro x _; exact this x
+  | some c1 =>
+    cases w2 with
+    | some c2 =>
+      -- Both are filters with different predicates that agree on all rows
+      simp only []
+      congr 1; funext row; exact hCongr row
+    | none =>
+      -- h says: ∀ row, (exprEval db row c1 == some (Value.bool true)) = true
+      -- So the filter keeps everything (same as identity)
+      simp only []
+      have : ∀ row, (exprEval db row c1 == some (Value.bool true)) = true := by
+        intro row; exact hCongr row
+      rw [List.filter_eq_self.mpr]
+      intro x _; exact this x
+
+/-- Helper: List.filter with always-false predicate returns [] -/
+private theorem filter_eq_nil_of_false {α : Type} (l : List α) (p : α → Bool)
+    (h : ∀ x, p x = false) : l.filter p = [] := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [List.filter, h x, ih]
+
+/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates. -/
+theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (cond : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    hasAgg items = false →
+    (∀ row : Row, (exprEval db row cond == some (Value.bool true)) = false) →
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
+  intro hNoAgg hAllFalse
+  -- Unfold evalSelectCore directly (it's a regular def)
+  show evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
+    exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+    distinct items groupBy having orderBy limit offset
+    (List.filter (fun row => exprEval db row cond == some (Value.bool true))
+      (List.map (fun row => outerRow ++ row)
+        (match from_ with | some f => fromEval db f | none => [[]]))) = []
+  -- filteredRows = [] because all rows are rejected
+  rw [filter_eq_nil_of_false _ _ hAllFalse]
+  -- evalSelectAfterFilter ... [] = applyOrderByLimitOffset ... (evalSelectProjectDistinct ... [])
+  simp only [evalSelectAfterFilter]
+  -- evalSelectProjectDistinct ... [] = [] (no aggregates)
+  rw [evalSelectProjectDistinct_nil _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg]
+  -- applyOrderByLimitOffset ... [] = []
+  exact applyOrderByLimitOffset_nil _ _ _ _ _
+
 end SqlEquiv
