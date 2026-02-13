@@ -375,8 +375,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 70 axioms remaining (41 in Equiv/, 29 in infrastructure files), 359 theorems proved (83.7%).
-Axiom ratchet: 70 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 63 axioms remaining (41 in Equiv/, 22 in infrastructure files), 379 theorems proved (85.7%).
+Axiom ratchet: 63 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -394,9 +394,9 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 0 | 15 | N/A |
+| infra | Infrastructure (Semantics.lean) | 10 | 12 (3 bridge + 5 CASE + 4 evalSelect) | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
-| | **Total** | **~92** | **~97** | |
+| | **Total** | **~102** | **~87** | |
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
@@ -488,22 +488,47 @@ When proving equivalence axioms in `Equiv.lean`, we often need to "unfold"
 unfolding equations. These are not SQL equivalences themselves — they are
 bridges that let proofs access the evaluation semantics.
 
-| Axiom | Added for | Purpose |
-|-------|-----------|---------|
-| `evalExprWithDb_lit` | (pre-existing) | Unfold literal evaluation |
-| `evalExprWithDb_binOp` | (pre-existing) | Unfold binary op evaluation |
-| `evalExprWithDb_unaryOp` | (pre-existing) | Unfold unary op evaluation |
-| `evalExprWithDb_case` | #61 CASE/WHEN | Unfold CASE expression to `evalCase` |
-| `evalCase_nil_some` | #61 CASE/WHEN | Empty branches with ELSE |
-| `evalCase_nil_none` | #61 CASE/WHEN | Empty branches, no ELSE → NULL |
-| `evalCase_cons_true` | #61 CASE/WHEN | True condition → return result |
-| `evalCase_cons_false` | #61 CASE/WHEN | False condition → skip to rest |
-| `evalExprWithDb_func` | #62 String functions | Unfold function call to `evalFunc` |
-| `evalExprWithDb_between` | #59 BETWEEN | Unfold BETWEEN expression |
-| `evalSelect_where_congr` | #51 WHERE | Congruence: same filtering → same result |
-| `evalSelect_filter_all_false` | #51 WHERE | Always-false filter → empty result (no agg) |
+### PR #130: Non-partial core evaluators (70 → 63 axioms)
 
-New infrastructure axioms should be added to this table as they are created.
+Split `Semantics.lean` into 3 files to work around `partial def` opacity:
+- `SemanticsBase.lean` — type aliases, helpers, operator evaluators
+- `SemanticsCore.lean` — non-partial `evalExprCore`/`evalFromCore` with WFR
+  termination proofs and equational theorems proved via `simp [evalExprCore]`
+- `Semantics.lean` — partial mutual block + bridge axioms + infrastructure theorems
+
+**10 axioms converted to theorems** by proving equivalence through bridge axioms
+to the non-partial core evaluators. **3 bridge axioms added** connecting
+`partial def` functions to their non-partial mirrors.
+
+### Current status
+
+| Name | Status | Purpose |
+|------|--------|---------|
+| `evalExprWithDb_eq_evalExprCore` | **bridge axiom** (PR #130) | Connect partial `evalExprWithDb` to non-partial `evalExprCore` |
+| `evalCase_eq_evalCaseHelper` | **bridge axiom** (PR #130) | Connect partial `evalCase` to non-partial `evalCaseHelper` |
+| `evalFrom_eq_evalFromCore` | **bridge axiom** (PR #130) | Connect partial `evalFrom` to non-partial `evalFromCore` |
+| `evalExprWithDb_lit` | **theorem** (PR #130) | Unfold literal evaluation |
+| `evalExprWithDb_binOp` | **theorem** (PR #130) | Unfold binary op evaluation |
+| `evalExprWithDb_unaryOp` | **theorem** (PR #130) | Unfold unary op evaluation |
+| `evalExprWithDb_func` | **theorem** (PR #130) | Unfold function call to `evalFunc` |
+| `evalExprWithDb_between` | **theorem** (PR #130) | Unfold BETWEEN expression |
+| `evalExprWithDb_inList` | **theorem** (PR #130) | Unfold IN list evaluation |
+| `evalFrom_cross_join` | **theorem** (PR #130) | Unfold cross join evaluation |
+| `evalFrom_inner_join` | **theorem** (PR #130) | Unfold inner join evaluation |
+| `evalFrom_left_join` | **theorem** (PR #130) | Unfold left join evaluation |
+| `evalFrom_right_join` | **theorem** (PR #130) | Unfold right join evaluation |
+| `evalExprWithDb_case` | axiom | Unfold CASE expression to `evalCase` |
+| `evalCase_nil_some` | axiom | Empty branches with ELSE |
+| `evalCase_nil_none` | axiom | Empty branches, no ELSE → NULL |
+| `evalCase_cons_true` | axiom | True condition → return result |
+| `evalCase_cons_false` | axiom | False condition → skip to rest |
+| `evalSelect_limit_offset` | axiom | Decompose evalSelect into take/drop |
+| `evalSelect_orderBy_length` | axiom | ORDER BY preserves length |
+| `evalSelect_where_congr` | axiom | Congruence: same filtering → same result |
+| `evalSelect_filter_all_false` | axiom | Always-false filter → empty result (no agg) |
+| `evalQuery_simple` | axiom | Decompose simple query evaluation |
+| `evalQuery_compound` | axiom | Decompose compound query evaluation |
+
 All infrastructure axioms have runtime tests in `Test/AxiomCoverageTest.lean`.
 
 ---
@@ -722,7 +747,7 @@ counts would catch this automatically.
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
 2. ~~**NULL handling:** Three-valued logic adds complexity - start with two-valued subset?~~ **Resolved** — Option 3 null semantics adopted (PR #92).
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
-4. **Termination:** Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent` (see Batch 4 in PROVING_LOG.md).
+4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Partially resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. Remaining `partial def` limitations: CASE axioms (5), evalSelect axioms (4), evalQuery axioms (2), plus 3 bridge axioms.
 5. ~~**Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion.~~ **Partially resolved** — Option 3 fixes `none` vs `some (.null _)` conflation. The `/audit` tool (PR #99) now catches unsound optimizer rewrites. Remaining unsound axioms are documented in PROVING_LOG.md.
 
 ---
