@@ -1231,9 +1231,7 @@ theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
 private theorem simpleLike_empty (s : String) : simpleLike s "" = (s == "") := by
   unfold simpleLike
   have h1 : ("" == "%") = false := by native_decide
-  have h2 : "".startsWith "%" = false := by native_decide
-  have h3 : "".endsWith "%" = false := by native_decide
-  simp [h1, h2, h3]
+  simp [h1]
 
 /-- Value-level: LIKE '' behaves the same as = '' for all Option Value -/
 private theorem evalBinOp_like_empty_eq_eq (v : Option Value) :
@@ -1256,15 +1254,145 @@ theorem like_empty_pattern (e : Expr) :
   simp only [evalExprWithDb_lit]
   exact evalBinOp_like_empty_eq_eq _
 
+/-- A list is always a prefix of itself concatenated with anything -/
+private theorem isPrefixOf_append (l suffix : List Char) :
+    l.isPrefixOf (l ++ suffix) = true := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+    simp only [List.cons_append, List.isPrefixOf_cons₂, BEq.refl, Bool.true_and, ih]
+
+/-- dropLast is a prefix of the original list -/
+private theorem dropLast_isPrefixOf (l : List Char) (h : l ≠ []) :
+    l.dropLast.isPrefixOf l = true := by
+  have htmp := isPrefixOf_append l.dropLast [l.getLast h]
+  rwa [List.dropLast_concat_getLast h] at htmp
+
+/-- stringContains.go finds needle when it appears as a prefix at some offset -/
+private theorem stringContains_go_of_prefix_at
+    (pfx : List Char) {suffix needle : List Char}
+    (hp : needle.isPrefixOf suffix = true) (hne : suffix ≠ []) :
+    stringContains.go (pfx ++ suffix) needle = true := by
+  induction pfx with
+  | nil =>
+    simp only [List.nil_append]
+    cases suffix with
+    | nil => exact absurd rfl hne
+    | cons s ss => simp only [stringContains.go, hp, ite_true]
+  | cons a as ih =>
+    simp only [List.cons_append, stringContains.go]
+    split
+    · rfl
+    · exact ih
+
+/-- simpleLike s s = true for all strings -/
+private theorem simpleLike_self (s : String) : simpleLike s s = true := by
+  unfold simpleLike
+  by_cases h1 : s = "%"
+  · subst h1; simp
+  · have h1' : (s == "%") = false := beq_eq_false_iff_ne.mpr h1
+    simp only [h1']
+    cases hsc : s.toList with
+    | nil =>
+      -- Empty string: all guards false, branch 5
+      simp
+    | cons c rest =>
+      -- s.toList = c :: rest
+      cases hc_eq : (c == '%' : Bool) with
+      | false =>
+        -- Head is not '%': branches 2 and 3 impossible
+        have h2 : ((c :: rest).head? == some '%') = false := by
+          simp [List.head?, hc_eq]
+        simp only [h2, Bool.false_and]
+        cases hl : ((c :: rest).getLast? == some '%' : Bool) with
+        | false =>
+          -- Branch 5: exact match — all guards are false
+          simp
+        | true =>
+          -- Branch 4: ends with % but doesn't start with %
+          simp only [ite_true]
+          exact dropLast_isPrefixOf (c :: rest) (List.cons_ne_nil c rest)
+      | true =>
+        -- Head is '%': c = '%'
+        have hc : c = '%' := by rwa [beq_iff_eq] at hc_eq
+        subst hc
+        have h2 : (('%' :: rest).head? == some '%') = true := by simp [List.head?]
+        simp only [h2, Bool.true_and]
+        cases hl : (('%' :: rest).getLast? == some '%' : Bool) with
+        | false =>
+          -- Branch 3: starts with % but doesn't end with %
+          simp only [ite_true, List.drop]
+          -- Goal: rest.isSuffixOf ('%' :: rest) = true
+          simp only [List.isSuffixOf, List.reverse_cons]
+          exact isPrefixOf_append rest.reverse ['%']
+        | true =>
+          -- Branch 2: starts AND ends with %
+          simp only [ite_true, List.drop]
+          -- Goal: stringContains s (String.ofList rest.dropLast) = true
+          -- Unfold stringContains
+          simp only [stringContains, String.toList_ofList, hsc]
+          -- If rest.dropLast is empty, trivially true
+          cases hinner_empty : rest.dropLast.isEmpty with
+          | true => simp
+          | false =>
+            simp
+            -- rest ≠ [] (otherwise s = "%", contradicting h1)
+            have hrest_ne : rest ≠ [] := by
+              intro heq
+              exact h1 (String.toList_injective (by rw [hsc, heq]; native_decide))
+            -- rest has at least 2 elements (since rest.dropLast is non-empty)
+            obtain ⟨b, bs, rfl⟩ : ∃ b bs, rest = b :: bs := by
+              cases rest with
+              | nil => exact absurd rfl hrest_ne
+              | cons b bs => exact ⟨b, bs, rfl⟩
+            -- rest.getLast? = some '%' (from hl and getLast?_cons_cons)
+            have hlast : (b :: bs).getLast? = some '%' := by
+              have := beq_iff_eq.mp hl
+              rwa [List.getLast?_cons_cons] at this
+            -- (b :: bs).getLast = '%'
+            have hlast_val : (b :: bs).getLast (List.cons_ne_nil b bs) = '%' := by
+              have h_eq := List.getLast?_eq_some_getLast (List.cons_ne_nil b bs)
+              rw [h_eq] at hlast
+              exact Option.some.inj hlast
+            -- Abstract rest.dropLast to avoid rw touching both occurrences
+            generalize h_inner : (b :: bs).dropLast = inner
+            have hrest_decomp : b :: bs = inner ++ ['%'] := by
+              rw [← h_inner, ← hlast_val]
+              exact (List.dropLast_concat_getLast (List.cons_ne_nil b bs)).symm
+            rw [hrest_decomp]
+            -- Goal: stringContains.go ('%' :: inner ++ ['%']) inner = true
+            exact stringContains_go_of_prefix_at ['%']
+              (isPrefixOf_append inner ['%'])
+              (by simp)
+
 /-- For string-typed expressions, x LIKE x evaluates to TRUE for non-null strings
     and to NULL when x is NULL.
-    Requires `isStringOrNull` — expression must evaluate to string or null.
-    Axiom: proving simpleLike s s = true requires non-trivial string library lemmas
-    for branches 2-4 (startsWith/endsWith/stringContains on substrings). -/
-axiom like_self (e : Expr) (h : e.isStringOrNull) :
+    Requires `isStringOrNull` — expression must evaluate to string or null. -/
+theorem like_self (e : Expr) (h : e.isStringOrNull) :
     Expr.binOp .like e e ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
-              (some (Expr.lit (.bool true)))
+              (some (Expr.lit (.bool true))) := by
+  intro row
+  simp only [evalExpr]
+  have hrow := h row
+  simp only [evalExpr] at hrow
+  rw [evalExprWithDb_binOp]
+  rw [evalExprWithDb_case]
+  rcases hrow with ⟨s, hs⟩ | ⟨n, hn⟩
+  · -- String case: e evaluates to some (.string s)
+    rw [hs]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+        some (.bool false) := by
+      rw [evalExprWithDb_unaryOp, hs]; rfl
+    rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
+    simp [evalBinOp, simpleLike_self]
+  · -- Null case: e evaluates to some (.null n)
+    rw [hn]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+        some (.bool true) := by
+      rw [evalExprWithDb_unaryOp, hn]; rfl
+    rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
+    rfl
 
 -- ============================================================================
 -- String Function Theorems
