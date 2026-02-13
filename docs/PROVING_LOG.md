@@ -2748,7 +2748,7 @@ Convert the 4 remaining `evalSelect` infrastructure axioms to theorems, using a 
 ### Approach
 
 Same 3-file split pattern as Batches 24-26. Created `evalSelectCore` (non-partial mirror
-of `evalSelectWithContext`) parameterized by 11 callbacks for all partial def dependencies.
+of `evalSelectWithContext`) parameterized by 9 callbacks for all partial def dependencies.
 Added 1 bridge axiom `evalSelect_eq_evalSelectCore` in Semantics.lean, then proved all 4
 axioms via `rw [evalSelect_eq_evalSelectCore] ; exact evalSelectCore_*`.
 
@@ -2778,7 +2778,7 @@ requiring `simp` to handle the full 90-line function body.
 
 | Helper | Purpose |
 |--------|---------|
-| `evalSelectCore` | Non-partial SELECT evaluator parameterized by 11 callbacks |
+| `evalSelectCore` | Non-partial SELECT evaluator parameterized by 9 callbacks |
 | `applyOrderByLimitOffset` | ORDER BY + OFFSET + LIMIT pipeline |
 | `evalSelectProjectDistinct` | GROUP BY + HAVING + projection + DISTINCT |
 | `evalSelectAfterFilter` | Composition of the above two |
@@ -2786,13 +2786,11 @@ requiring `simp` to handle the full 90-line function body.
 | `applyOrderByLimitOffset_nil` | Pipeline on `[]` returns `[]` |
 | `evalSelectProjectDistinct_nil` | Projection on `[]` returns `[]` (no aggregates) |
 | `evalSelectCore_eq_afterFilter` | `evalSelectCore = evalSelectAfterFilter ∘ filter` (by `rfl`) |
-| `orderByLimitOffset_length_eq` | Generic mergeSort + take/drop length preservation |
 | `List.filter_eq_nil_of_false` | Always-false filter predicate returns `[]` |
 
-### Remaining infrastructure axioms (5)
+### Remaining infrastructure axioms (5 bridge axioms total)
 
-- 4 bridge axioms (3 existing + 1 new `evalSelect_eq_evalSelectCore`)
-- 1 `evalQuery` bridge axiom (`evalQuery_eq_evalQueryCore`)
+- 5 bridge axioms total: 4 existing (`evalExprWithDb_eq_evalExprCore`, `evalCase_eq_evalCaseHelper`, `evalFrom_eq_evalFromCore`, `evalQuery_eq_evalQueryCore`) + 1 new (`evalSelect_eq_evalSelectCore`)
 
 ### Lessons learned
 
