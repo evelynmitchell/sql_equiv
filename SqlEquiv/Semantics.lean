@@ -868,7 +868,7 @@ theorem evalSelect_limit_offset (db : Database)
     let offsetRows := match offset with | some n => base.drop n | none => base
     match limit with | some n => offsetRows.take n | none => offsetRows := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  exact evalSelectCore_limit_offset _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  exact evalSelectCore_limit_offset ..
 
 /-- Infrastructure: ORDER BY preserves row count (mergeSort preserves length).
     Changing the ORDER BY clause does not change the number of result rows.
@@ -880,7 +880,7 @@ theorem evalSelect_orderBy_length (db : Database)
   (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
   (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  exact evalSelectCore_orderBy_length _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  exact evalSelectCore_orderBy_length ..
 
 /-- Infrastructure: WHERE clause only affects filtering; if two WHERE clauses
     produce the same filtering behavior for every row, evalSelect produces the same result.

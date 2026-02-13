@@ -577,7 +577,7 @@ private def applyOrderByLimitOffset
     | none => orderedRows
   match limit with | some n => offsetRows.take n | none => offsetRows
 
-/-- Changing the ORDER BY comparator doesn't change the length of the pipeline output. -/
+/-- Changing the ORDER BY clause doesn't change the length of the pipeline output. -/
 private theorem applyOrderByLimitOffset_length_eq
     (compareEval : Database → Row → Row → List OrderByItem → Bool)
     (db : Database) (orderBy1 orderBy2 : List OrderByItem)
@@ -844,7 +844,7 @@ theorem evalSelectCore_where_congr (db : Database) (outerRow : Row)
       intro x _; exact this x
 
 /-- Helper: List.filter with always-false predicate returns [] -/
-private theorem List.filter_eq_nil_of_false {α : Type} (l : List α) (p : α → Bool)
+private theorem filter_eq_nil_of_false {α : Type} (l : List α) (p : α → Bool)
     (h : ∀ x, p x = false) : l.filter p = [] := by
   induction l with
   | nil => rfl
@@ -878,7 +878,7 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
       (List.map (fun row => outerRow ++ row)
         (match from_ with | some f => fromEval db f | none => [[]]))) = []
   -- filteredRows = [] because all rows are rejected
-  rw [List.filter_eq_nil_of_false _ _ hAllFalse]
+  rw [filter_eq_nil_of_false _ _ hAllFalse]
   -- evalSelectAfterFilter ... [] = applyOrderByLimitOffset ... (evalSelectProjectDistinct ... [])
   simp only [evalSelectAfterFilter]
   -- evalSelectProjectDistinct ... [] = [] (no aggregates)
