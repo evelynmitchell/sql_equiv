@@ -290,24 +290,24 @@ theorem evalBinOp_or_false_left (b : Bool) :
   cases b <;> rfl
 
 -- ============================================================================
--- Associativity (axioms — see note below)
+-- Associativity (Bool-restricted)
 -- ============================================================================
 
--- After narrowing AND/OR null propagation from `(some (.null _), _)` to
--- `(some (.null _), some _)`, value-level associativity is no longer true for
--- all Option Value inputs. Counterexample for AND:
---   AND(NULL, AND(INT, BOOL)) — inner gives none (type error),
---   outer AND(NULL, none) now correctly returns none.
---   But AND(AND(NULL, INT), BOOL) = AND(NULL, BOOL) = NULL ≠ none.
--- True for well-typed (boolean) inputs.
+-- Value-level associativity is only true for boolean inputs. Counterexample:
+--   AND(NULL, AND(INT, BOOL)) = AND(NULL, none) = none
+--   AND(AND(NULL, INT), BOOL) = AND(NULL, BOOL) = NULL ≠ none
 
-/-- AND is associative at the value level -/
-axiom evalBinOp_and_assoc (x y z : Option Value) :
-    evalBinOp .and (evalBinOp .and x y) z = evalBinOp .and x (evalBinOp .and y z)
+/-- AND is associative at the value level for boolean inputs -/
+theorem evalBinOp_and_assoc (a b c : Bool) :
+    evalBinOp .and (evalBinOp .and (some (.bool a)) (some (.bool b))) (some (.bool c)) =
+    evalBinOp .and (some (.bool a)) (evalBinOp .and (some (.bool b)) (some (.bool c))) := by
+  cases a <;> cases b <;> cases c <;> rfl
 
-/-- OR is associative at the value level -/
-axiom evalBinOp_or_assoc (x y z : Option Value) :
-    evalBinOp .or (evalBinOp .or x y) z = evalBinOp .or x (evalBinOp .or y z)
+/-- OR is associative at the value level for boolean inputs -/
+theorem evalBinOp_or_assoc (a b c : Bool) :
+    evalBinOp .or (evalBinOp .or (some (.bool a)) (some (.bool b))) (some (.bool c)) =
+    evalBinOp .or (some (.bool a)) (evalBinOp .or (some (.bool b)) (some (.bool c))) := by
+  cases a <;> cases b <;> cases c <;> rfl
 
 -- ============================================================================
 -- Absorption Laws (proven — Bool-restricted inputs)
@@ -326,23 +326,170 @@ theorem evalBinOp_or_absorb_and (a b : Bool) :
   cases a <;> cases b <;> rfl
 
 -- ============================================================================
--- De Morgan's Laws (axioms — see note below)
+-- De Morgan's Laws (Bool-restricted)
 -- ============================================================================
 
--- After narrowing null propagation, De Morgan's laws also fail at the value level.
--- Counterexample for NOT_AND: l = some (.int n), r = some (.null t)
---   LHS: NOT(AND(int, null)) = NOT(NULL) = NULL  [null prop catches `some _`]
---   RHS: OR(NOT int, NOT null) = OR(none, NULL) = none  [none propagates, not absorbed]
--- True for well-typed (boolean) inputs.
+-- Value-level De Morgan fails for non-boolean inputs. Counterexample:
+--   NOT(AND(int, null)) = NOT(NULL) = NULL
+--   OR(NOT int, NOT null) = OR(none, NULL) = none ≠ NULL
 
-/-- De Morgan's law: NOT (a AND b) = (NOT a) OR (NOT b) at value level -/
-axiom evalUnaryOp_not_and (l r : Option Value) :
-    evalUnaryOp .not (evalBinOp .and l r) =
-    evalBinOp .or (evalUnaryOp .not l) (evalUnaryOp .not r)
+/-- De Morgan's law: NOT (a AND b) = (NOT a) OR (NOT b) for boolean inputs -/
+theorem evalUnaryOp_not_and (a b : Bool) :
+    evalUnaryOp .not (evalBinOp .and (some (.bool a)) (some (.bool b))) =
+    evalBinOp .or (evalUnaryOp .not (some (.bool a))) (evalUnaryOp .not (some (.bool b))) := by
+  cases a <;> cases b <;> rfl
 
-/-- De Morgan's law: NOT (a OR b) = (NOT a) AND (NOT b) at value level -/
-axiom evalUnaryOp_not_or (l r : Option Value) :
+/-- De Morgan's law: NOT (a OR b) = (NOT a) AND (NOT b) for boolean inputs -/
+theorem evalUnaryOp_not_or (a b : Bool) :
+    evalUnaryOp .not (evalBinOp .or (some (.bool a)) (some (.bool b))) =
+    evalBinOp .and (evalUnaryOp .not (some (.bool a))) (evalUnaryOp .not (some (.bool b))) := by
+  cases a <;> cases b <;> rfl
+
+-- ============================================================================
+-- BoolOrNullOrNone De Morgan Helpers (for Comparison.lean)
+-- ============================================================================
+
+/-- A value is bool, null, or none (excludes int/string which break De Morgan) -/
+def isBoolOrNullOrNone (v : Option Value) : Prop :=
+  (∃ b, v = some (.bool b)) ∨ (∃ t, v = some (.null t)) ∨ v = none
+
+/-- De Morgan NOT OR for BoolOrNullOrNone inputs -/
+theorem evalUnaryOp_not_or_bnn (l r : Option Value)
+    (hl : isBoolOrNullOrNone l) (hr : isBoolOrNullOrNone r) :
     evalUnaryOp .not (evalBinOp .or l r) =
-    evalBinOp .and (evalUnaryOp .not l) (evalUnaryOp .not r)
+    evalBinOp .and (evalUnaryOp .not l) (evalUnaryOp .not r) := by
+  rcases hl with ⟨bl, rfl⟩ | ⟨tl, rfl⟩ | rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases bl <;> cases br <;> rfl
+    · cases bl <;> rfl
+    · cases bl <;> rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases br <;> rfl
+    · rfl
+    · rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases br <;> rfl
+    · rfl
+    · rfl
+
+/-- De Morgan NOT AND for BoolOrNullOrNone inputs -/
+theorem evalUnaryOp_not_and_bnn (l r : Option Value)
+    (hl : isBoolOrNullOrNone l) (hr : isBoolOrNullOrNone r) :
+    evalUnaryOp .not (evalBinOp .and l r) =
+    evalBinOp .or (evalUnaryOp .not l) (evalUnaryOp .not r) := by
+  rcases hl with ⟨bl, rfl⟩ | ⟨tl, rfl⟩ | rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases bl <;> cases br <;> rfl
+    · cases bl <;> rfl
+    · cases bl <;> rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases br <;> rfl
+    · rfl
+    · rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases br <;> rfl
+    · rfl
+    · rfl
+
+/-- evalBinOp .eq always produces BoolOrNullOrNone -/
+theorem evalBinOp_eq_isBoolOrNullOrNone (l r : Option Value) :
+    isBoolOrNullOrNone (evalBinOp .eq l r) := by
+  unfold isBoolOrNullOrNone
+  cases l with
+  | none => cases r with | none => exact Or.inr (Or.inr rfl) | some v => cases v <;> exact Or.inr (Or.inr rfl)
+  | some v => cases r with
+    | none => cases v <;> exact Or.inr (Or.inr rfl)
+    | some w =>
+      cases v <;> cases w <;> simp [evalBinOp, Value.eq]
+      all_goals first
+        | exact Or.inr (Or.inl ⟨_, rfl⟩)
+        | (unfold Value.eq; split <;> first | exact Or.inl ⟨_, rfl⟩ | exact Or.inr (Or.inr rfl))
+
+/-- evalBinOp .ge always produces BoolOrNullOrNone -/
+theorem evalBinOp_ge_isBoolOrNullOrNone (l r : Option Value) :
+    isBoolOrNullOrNone (evalBinOp .ge l r) := by
+  unfold isBoolOrNullOrNone
+  cases l with
+  | none => cases r with | none => exact Or.inr (Or.inr rfl) | some v => cases v <;> exact Or.inr (Or.inr rfl)
+  | some v => cases r with
+    | none => cases v <;> exact Or.inr (Or.inr rfl)
+    | some w =>
+      cases v <;> cases w <;> simp [evalBinOp, Value.compare]
+      all_goals first
+        | exact Or.inr (Or.inl ⟨_, rfl⟩)
+        | (unfold Value.compare; split <;> first | exact Or.inl ⟨_, rfl⟩ | exact Or.inr (Or.inr rfl))
+
+/-- evalBinOp .le always produces BoolOrNullOrNone -/
+theorem evalBinOp_le_isBoolOrNullOrNone (l r : Option Value) :
+    isBoolOrNullOrNone (evalBinOp .le l r) := by
+  unfold isBoolOrNullOrNone
+  cases l with
+  | none => cases r with | none => exact Or.inr (Or.inr rfl) | some v => cases v <;> exact Or.inr (Or.inr rfl)
+  | some v => cases r with
+    | none => cases v <;> exact Or.inr (Or.inr rfl)
+    | some w =>
+      cases v <;> cases w <;> simp [evalBinOp, Value.compare]
+      all_goals first
+        | exact Or.inr (Or.inl ⟨_, rfl⟩)
+        | (unfold Value.compare; split <;> first | exact Or.inl ⟨_, rfl⟩ | exact Or.inr (Or.inr rfl))
+
+/-- evalBinOp .or preserves BoolOrNullOrNone -/
+theorem evalBinOp_or_preserves_bnn (l r : Option Value)
+    (hl : isBoolOrNullOrNone l) (hr : isBoolOrNullOrNone r) :
+    isBoolOrNullOrNone (evalBinOp .or l r) := by
+  unfold isBoolOrNullOrNone
+  rcases hl with ⟨bl, rfl⟩ | ⟨tl, rfl⟩ | rfl
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · exact Or.inl ⟨bl || br, rfl⟩
+    · cases bl
+      · exact Or.inr (Or.inl ⟨none, rfl⟩)
+      · exact Or.inl ⟨true, rfl⟩
+    · cases bl
+      · exact Or.inr (Or.inr rfl)
+      · exact Or.inl ⟨true, rfl⟩
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases br
+      · exact Or.inr (Or.inl ⟨none, rfl⟩)
+      · exact Or.inl ⟨true, rfl⟩
+    · exact Or.inr (Or.inl ⟨none, rfl⟩)
+    · exact Or.inr (Or.inr rfl)
+  · rcases hr with ⟨br, rfl⟩ | ⟨tr, rfl⟩ | rfl
+    · cases br
+      · exact Or.inr (Or.inr rfl)
+      · exact Or.inl ⟨true, rfl⟩
+    · exact Or.inr (Or.inr rfl)
+    · exact Or.inr (Or.inr rfl)
+
+-- ============================================================================
+-- Distributivity (Bool-restricted, for Session 2)
+-- ============================================================================
+
+/-- AND distributes over OR (left) for boolean inputs -/
+theorem evalBinOp_and_or_distrib (a b c : Bool) :
+    evalBinOp .and (some (.bool a)) (evalBinOp .or (some (.bool b)) (some (.bool c))) =
+    evalBinOp .or (evalBinOp .and (some (.bool a)) (some (.bool b)))
+                  (evalBinOp .and (some (.bool a)) (some (.bool c))) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- AND distributes over OR (right) for boolean inputs -/
+theorem evalBinOp_and_or_distrib_right (a b c : Bool) :
+    evalBinOp .and (evalBinOp .or (some (.bool a)) (some (.bool b))) (some (.bool c)) =
+    evalBinOp .or (evalBinOp .and (some (.bool a)) (some (.bool c)))
+                  (evalBinOp .and (some (.bool b)) (some (.bool c))) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- OR distributes over AND (left) for boolean inputs -/
+theorem evalBinOp_or_and_distrib (a b c : Bool) :
+    evalBinOp .or (some (.bool a)) (evalBinOp .and (some (.bool b)) (some (.bool c))) =
+    evalBinOp .and (evalBinOp .or (some (.bool a)) (some (.bool b)))
+                   (evalBinOp .or (some (.bool a)) (some (.bool c))) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- OR distributes over AND (right) for boolean inputs -/
+theorem evalBinOp_or_and_distrib_right (a b c : Bool) :
+    evalBinOp .or (evalBinOp .and (some (.bool a)) (some (.bool b))) (some (.bool c)) =
+    evalBinOp .and (evalBinOp .or (some (.bool a)) (some (.bool c)))
+                   (evalBinOp .or (some (.bool b)) (some (.bool c))) := by
+  cases a <;> cases b <;> cases c <;> rfl
 
 end SqlEquiv

@@ -1071,10 +1071,11 @@ private theorem eval_foldl_or_eq (db : Database) (row : Row) (e : Expr) (vals : 
     rw [step]
     exact ih _
 
--- Helper: NOT of foldl OR-eq chain = foldl AND-ne chain (uses De Morgan + NOT(eq) = ne)
+-- Helper: NOT of foldl OR-eq chain = foldl AND-ne chain (uses BNN De Morgan + NOT(eq) = ne)
 private theorem not_foldl_or_eq_is_foldl_and_ne (db : Database) (row : Row) (e : Expr)
     (vals : List Expr) (acc_val : Option Value) (acc_expr : Expr)
-    (h_acc : evalUnaryOp .not acc_val = evalExprWithDb db row acc_expr) :
+    (h_acc : evalUnaryOp .not acc_val = evalExprWithDb db row acc_expr)
+    (h_acc_type : isBoolOrNullOrNone acc_val) :
     evalUnaryOp .not (vals.foldl (fun a vi =>
       evalBinOp .or a (evalBinOp .eq (evalExprWithDb db row e) (evalExprWithDb db row vi)))
       acc_val) =
@@ -1084,8 +1085,10 @@ private theorem not_foldl_or_eq_is_foldl_and_ne (db : Database) (row : Row) (e :
   | nil => simp [List.foldl]; exact h_acc
   | cons v vs ih =>
     simp only [List.foldl]
-    apply ih
-    rw [evalUnaryOp_not_or]
+    have h_eq_bnn := evalBinOp_eq_isBoolOrNullOrNone
+      (evalExprWithDb db row e) (evalExprWithDb db row v)
+    refine ih _ _ ?_ (evalBinOp_or_preserves_bnn _ _ h_acc_type h_eq_bnn)
+    rw [evalUnaryOp_not_or_bnn _ _ h_acc_type h_eq_bnn]
     have step : evalBinOp .and (evalExprWithDb db row acc_expr)
         (evalBinOp .ne (evalExprWithDb db row e) (evalExprWithDb db row v)) =
         evalExprWithDb db row (Expr.binOp .and acc_expr (Expr.binOp .ne e v)) := by
@@ -1130,7 +1133,9 @@ theorem not_in_pair (e a b : Expr) :
   simp only [evalExpr]
   rw [evalExprWithDb_inList, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   simp [List.foldl]
-  rw [evalBinOp_or_false_left_eq, evalUnaryOp_not_or]
+  rw [evalBinOp_or_false_left_eq]
+  rw [evalUnaryOp_not_or_bnn _ _
+    (evalBinOp_eq_isBoolOrNullOrNone _ _) (evalBinOp_eq_isBoolOrNullOrNone _ _)]
   congr 1 <;> exact evalUnaryOp_not_eq _ _
 
 /-- IN list is equivalent to OR of equalities (general form) -/
@@ -1155,8 +1160,10 @@ theorem not_in_list_and_expansion (e : Expr) (vals : List Expr) :
   simp only [evalExpr]
   rw [evalExprWithDb_inList]
   dsimp only []
+  simp only [ite_true]
   exact not_foldl_or_eq_is_foldl_and_ne _ _ _ _ _ (Expr.lit (.bool true))
     (by rw [evalExprWithDb_lit]; rfl)
+    (show isBoolOrNullOrNone (some (.bool false)) from Or.inl ⟨false, rfl⟩)
 
 -- ============================================================================
 -- BETWEEN Theorems
@@ -1696,25 +1703,21 @@ theorem not_ge_is_lt (a b : Expr) :
   exact evalUnaryOp_not_ge _ _
 
 /-- NOT BETWEEN expansion: x NOT BETWEEN a AND b = (x < a OR x > b)
-    Proved by composition: between_expansion + De Morgan + NOT comparison identities.
+    Proved via value-level BNN De Morgan + NOT comparison identities.
     No preconditions needed — BETWEEN is now defined as AND(GE, LE). -/
 theorem not_between_expansion (e lo hi : Expr) :
     Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
     Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) := by
-  -- Step 1: NOT BETWEEN ≃ NOT (ge AND le) via between_expansion + unaryOp_congr
-  have step1 : Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
-      Expr.unaryOp .not (Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)) :=
-    unaryOp_congr (between_expansion e lo hi)
-  -- Step 2: NOT (ge AND le) ≃ NOT ge OR NOT le via De Morgan
-  have step2 : Expr.unaryOp .not (Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi)) ≃ₑ
-      Expr.binOp .or (Expr.unaryOp .not (Expr.binOp .ge e lo)) (Expr.unaryOp .not (Expr.binOp .le e hi)) :=
-    not_and _ _
-  -- Step 3: NOT ge ≃ lt and NOT le ≃ gt
-  have step3 : Expr.binOp .or (Expr.unaryOp .not (Expr.binOp .ge e lo)) (Expr.unaryOp .not (Expr.binOp .le e hi)) ≃ₑ
-      Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) :=
-    binOp_congr (not_ge_is_lt e lo) (not_le_is_gt e hi)
-  -- Chain: step1 → step2 → step3
-  exact expr_equiv_trans (expr_equiv_trans step1 step2) step3
+  intro row
+  simp only [evalExpr]
+  rw [evalExprWithDb_unaryOp, evalExprWithDb_between,
+      evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
+  -- Goal: NOT(AND(GE ev evlo, LE ev evhi)) = OR(LT ev evlo, GT ev evhi)
+  rw [evalUnaryOp_not_and_bnn _ _
+    (evalBinOp_ge_isBoolOrNullOrNone _ _) (evalBinOp_le_isBoolOrNullOrNone _ _)]
+  congr 1
+  · exact evalUnaryOp_not_ge _ _
+  · exact evalUnaryOp_not_le _ _
 
 -- Ordering swap helper: (compare a b == .lt) = (compare b a == .gt), etc.
 -- Use Std.OrientedCmp to get compare swap for free
