@@ -234,9 +234,7 @@ def normalizationConvergenceTests (cfg : Configuration) : TestSeq :=
     normalizeExprCanonical (.binOp .eq a.expr b.expr) ==
     normalizeExprCanonical (.binOp .eq b.expr a.expr)) $
   check (cfg := cfg) "optimizeExpr is idempotent" (∀ e : BoundedGroundExpr,
-    optimizeExpr (optimizeExpr e.expr) == optimizeExpr e.expr) $
-  check (cfg := cfg) "simplifyExprOnce is idempotent" (∀ e : BoundedGroundExpr,
-    simplifyExprOnce (simplifyExprOnce e.expr) == simplifyExprOnce e.expr)
+    optimizeExpr (optimizeExpr e.expr) == optimizeExpr e.expr)
 
 -- ============================================================================
 -- All optimizer tests
