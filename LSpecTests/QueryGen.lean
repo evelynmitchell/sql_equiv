@@ -104,9 +104,10 @@ private partial def genProjection (schema : Array ColMeta) : Gen (List SelectIte
     for cm in schema do
       let pick ← Gen.chooseAny Bool
       if pick then
-        selected := selected ++ [SelectItem.exprItem (.col ⟨some cm.qualifier, cm.name⟩) (some cm.name)]
+        selected := SelectItem.exprItem (.col ⟨some cm.qualifier, cm.name⟩) (some cm.name) :: selected
+    let result := selected.reverse
     -- Fallback to * if nothing was selected
-    pure (if selected.isEmpty then [.star none] else selected)
+    pure (if result.isEmpty then [.star none] else result)
 
 -- ============================================================================
 -- Full query generator
@@ -171,7 +172,7 @@ private def randomQueryColPreserved (q : RandomQuery) : Bool :=
   match orig.head?, opt.head? with
   | some origRow, some optRow => origRow.map (·.1) == optRow.map (·.1)
   | none, none => true  -- both empty, column names trivially equal
-  | _, _ => true  -- one empty = optimizer might have eliminated rows, column check N/A
+  | _, _ => false  -- mismatch in emptiness indicates a semantics bug
 
 -- ============================================================================
 -- Anti-vacuity

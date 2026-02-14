@@ -140,7 +140,7 @@ private def uniformTests : TestSeq :=
     (evalSelect uniformDb (mkWhereAge .gt 25)).length == 5) $
   test "uniform: DISTINCT preserves semantics" (edgeCaseOptOk uniformDb (mkDistinctWhere 25)) $
   test "uniform: DISTINCT reduces to 1 row" (
-    (evalSelect uniformDb (mkDistinctWhere 25)).length ≤ 1) $
+    (evalSelect uniformDb (mkDistinctWhere 25)).length == 1) $
   test "uniform: INNER JOIN preserves semantics" (edgeCaseOptOk uniformDb (mkJoinQuery .inner 25))
 
 -- ============================================================================

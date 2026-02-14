@@ -45,27 +45,35 @@ private def sqliteSetupSql : String :=
 /-- Run SQL against sqlite3 and return raw stdout. -/
 private def runSqliteRaw (querySql : String) : IO (Except String String) := do
   let fullSql := sqliteSetupSql ++ querySql ++ ";\n"
-  let tmpPath := "/tmp/sql_equiv_diff_test.sql"
+  let tmpPath := s!"/tmp/sql_equiv_diff_{← IO.monoMsNow}.sql"
   IO.FS.writeFile tmpPath fullSql
-  let result ← IO.Process.output {
-    cmd := "bash"
-    args := #["-c", s!"sqlite3 :memory: -header -separator '|' -nullvalue 'NULL' < {tmpPath}"]
-  }
-  if result.exitCode != 0 then return .error s!"sqlite3 error: {result.stderr}"
-  return .ok result.stdout
+  try
+    let result ← IO.Process.output {
+      cmd := "bash"
+      args := #["-c", s!"sqlite3 :memory: -header -separator '|' -nullvalue 'NULL' < {tmpPath}"]
+    }
+    if result.exitCode != 0 then return .error s!"sqlite3 error: {result.stderr}"
+    return .ok result.stdout
+  finally
+    IO.FS.removeFile tmpPath |>.catchExceptions fun _ => pure ()
 
 -- ============================================================================
 -- Output parsing
 -- ============================================================================
 
-/-- Parse a single value from SQLite text output. -/
+/-- Parse a single value from SQLite text output.
+    Note: integer-like strings (e.g., a product code "123") will be parsed as
+    integers. This is acceptable because our test data uses distinct string
+    values that are never purely numeric. -/
 private def parseValue (s : String) : Value :=
   if s == "NULL" then .null none
   else match s.toInt? with
     | some n => .int n
     | none => .string s
 
-/-- Parse sqlite3 pipe-separated output into Table. -/
+/-- Parse sqlite3 pipe-separated output into Table.
+    Note: pipe characters within values would break parsing. Our test data
+    contains no pipe characters, so this is safe for the current test suite. -/
 private def parseSqliteOutput (output : String) : Table :=
   let lines := output.splitOn "\n" |>.filter (· ≠ "")
   match lines with

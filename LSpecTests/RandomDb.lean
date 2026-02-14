@@ -26,6 +26,7 @@ namespace RandomDb
 structure RandomDb where
   users : Table
   orders : Table
+  products : Table
   deriving Repr
 
 /-- Convert to Database function. -/
@@ -33,6 +34,7 @@ def RandomDb.toDb (rdb : RandomDb) : Database := fun name =>
   match name with
   | "users" => rdb.users
   | "orders" => rdb.orders
+  | "products" => rdb.products
   | _ => []
 
 -- ============================================================================
@@ -41,7 +43,7 @@ def RandomDb.toDb (rdb : RandomDb) : Database := fun name =>
 
 private def names : Array String := #["Alice", "Bob", "Carol", "Dave", "Eve", "Fay", "Gus", "Hank"]
 private def departments : Array String := #["Engineering", "Sales", "Marketing", "HR", "Finance"]
-private def products : Array String := #["Widget", "Gadget", "Gizmo", "Doohickey", "Thingamajig"]
+private def productNames : Array String := #["Widget", "Gadget", "Gizmo", "Doohickey", "Thingamajig"]
 
 /-- Generate a random user row with the given id. -/
 private partial def genUsersRow (id : Nat) : Gen Row := do
@@ -53,10 +55,16 @@ private partial def genUsersRow (id : Nat) : Gen Row := do
 /-- Generate a random order row with the given id and user_id. -/
 private partial def genOrdersRow (id userId : Nat) : Gen Row := do
   let amount ← Gen.choose Int 10 500
-  let product ← Gen.elements products
+  let product ← Gen.elements productNames
   pure [("id", .int id), ("user_id", .int userId), ("amount", .int amount), ("product", .string product)]
 
-/-- Generate a RandomDb with 1–8 users and 0–6 orders (valid foreign keys). -/
+/-- Generate a random product row with the given id. -/
+private partial def genProductsRow (id : Nat) : Gen Row := do
+  let name ← Gen.elements productNames
+  let price ← Gen.choose Int 10 300
+  pure [("id", .int id), ("name", .string name), ("price", .int price)]
+
+/-- Generate a RandomDb with 1–8 users, 0–6 orders, and 1–5 products (valid foreign keys). -/
 private partial def genRandomDb : Gen RandomDb := do
   let numUsers ← Gen.choose Nat 1 8
   let users ← (List.range numUsers).mapM fun i => genUsersRow (i + 1)
@@ -64,20 +72,35 @@ private partial def genRandomDb : Gen RandomDb := do
   let orders ← (List.range numOrders).mapM fun i => do
     let uid ← Gen.choose Nat 1 numUsers
     genOrdersRow (i + 1) uid
-  pure ⟨users, orders⟩
+  let numProducts ← Gen.choose Nat 1 5
+  let prods ← (List.range numProducts).mapM fun i => genProductsRow (i + 1)
+  pure ⟨users, orders, prods⟩
 
 -- ============================================================================
 -- SampleableExt and Shrinkable instances
 -- ============================================================================
 
+/-- Extract the integer value of a named field from a row, if present. -/
+private def getIntField (row : Row) (field : String) : Option Int :=
+  row.find? (·.1 == field) |>.bind fun (_, v) =>
+    match v with | .int n => some n | _ => none
+
 instance : Shrinkable RandomDb where
   shrink rdb :=
-    -- Remove one user row at a time
+    -- Remove one user row at a time (also remove orders referencing that user)
     (List.range rdb.users.length).map (fun i =>
-      ⟨rdb.users.take i ++ rdb.users.drop (i + 1), rdb.orders⟩) ++
+      let removedUser := rdb.users[i]!
+      let removedId := getIntField removedUser "id"
+      let remainingUsers := rdb.users.take i ++ rdb.users.drop (i + 1)
+      let remainingOrders := rdb.orders.filter fun row =>
+        getIntField row "user_id" != removedId
+      ⟨remainingUsers, remainingOrders, rdb.products⟩) ++
     -- Remove one order row at a time
     (List.range rdb.orders.length).map (fun i =>
-      ⟨rdb.users, rdb.orders.take i ++ rdb.orders.drop (i + 1)⟩)
+      ⟨rdb.users, rdb.orders.take i ++ rdb.orders.drop (i + 1), rdb.products⟩) ++
+    -- Remove one product row at a time
+    (List.range rdb.products.length).map (fun i =>
+      ⟨rdb.users, rdb.orders, rdb.products.take i ++ rdb.products.drop (i + 1)⟩)
 
 instance : SampleableExt RandomDb :=
   SampleableExt.mkSelfContained genRandomDb
