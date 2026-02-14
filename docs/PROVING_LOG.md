@@ -3169,3 +3169,80 @@ theorem cross_join_assoc ... := by
 ### Net axiom count change
 
 - **2 axioms → theorems**: 35 → 33
+
+---
+
+## Batch 34: WHERE Axioms — filter_and, filter_commute, filter_idempotent, predicate_pushdown (#147)
+
+**Branch**: `claude/unblock-where-axioms` | **PR**: #147
+
+### Problem
+
+Four WHERE axioms were blocked:
+- `filter_and`, `filter_commute`, `filter_idempotent` — blocked by `evalFrom .subquery` double-qualifying column names (`inner.users.id` instead of `users.id`)
+- `predicate_pushdown` — blocked by using `evalExpr` (no db context) instead of `evalExprWithDb db`
+
+### Evaluator fixes
+
+**Fix 1: `evalFrom .subquery` pass-through.** Changed `evalFrom db (.subquery sel alias)` from re-qualifying every column with the alias prefix to simply returning `evalSelect db sel` unchanged. The subquery alias becomes purely syntactic at evaluation time. This was a 2-line change in each of `SemanticsCore.lean` and `Semantics.lean`.
+
+**Fix 2: `predicate_pushdown` signature.** Changed `evalExpr row q` to `evalExprWithDb db row q` in the axiom statement, enabling subquery support in filter predicates.
+
+### Infrastructure added
+
+| Lemma | File | Purpose |
+|-------|------|---------|
+| `evalBinOp_and_true_iff` | SemanticsBase | AND returns `some (.bool true)` iff both operands do |
+| `list_filter_and_eq` (made public) | SemanticsCore | `l.filter (f && g) = (l.filter f).filter g` |
+| `evalSelectCore_star_where_eq_filter` | SemanticsCore | SELECT * WHERE p = filter of base rows |
+| `evalSelectCore_filter_and/commute/idempotent` | SemanticsCore | Core filter algebra, parameterized by evaluator callbacks |
+| `evalSelectItem_star` (bridge axiom) | Semantics | `evalSelectItem db row (.star none) = row` |
+| `evalSelect_star_where_eq_filter` | Semantics | Bridge to evalSelect level |
+| `evalSelect_filter_and/commute/idempotent` | Semantics | Bridge for subquery-wrapping axioms |
+| `evalSelect_predicate_pushdown` | Semantics | Bridge for external List.filter axiom |
+| `evalExprWithDb_and_true_iff` | Semantics | AND distributes over `== some true` |
+
+### Proof technique
+
+All 4 axioms reduce to the same pattern:
+
+1. **Decompose** both sides using `evalSelect_star_where_eq_filter`, which rewrites `SELECT * FROM t WHERE p` into `(baseRows.map ([] ++ ·)).filter p_pred`
+2. **Simplify** the `([] ++ ·)` map: `simp only [List.nil_append, List.map_id']` reduces it to just `baseRows.filter p_pred`
+3. **Apply filter algebra**: `list_filter_and_eq` relates sequential filters to conjunction, `list_filter_comm` swaps filter order
+4. **Close with AND-true-iff**: `evalExprWithDb_and_true_iff` shows `(evalExprWithDb db row (.binOp .and p q) == some true) = ((evalExprWithDb db row p == some true) && (evalExprWithDb db row q == some true))`
+
+Example (`filter_and` at core level):
+```lean
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  simp only [h_subquery]
+  rw [evalSelectCore_star_where_eq_filter ...]
+  simp only [List.nil_append, List.map_id']
+  rw [← list_filter_and_eq]
+  congr 1; funext row; exact (h_and row).symm
+```
+
+### Key observations
+
+1. **evalFrom .subquery pass-through was safe.** All 227 existing tests passed immediately after the fix. The re-qualification was unnecessary because `evalSelect` already qualifies columns through `evalFrom` on the inner FROM clause.
+
+2. **`evalBinOp_and_true_iff` required exhaustive case splits.** `simp [evalBinOp]` couldn't reduce the large 50-arm match. The proof uses nested `cases` on `Option Value` constructors with `rfl` for each combination (~55 lines). For `some (.bool b)` cases, the inner Bool also needs splitting.
+
+3. **`evalSelectItem_star` had to be a bridge axiom.** `evalSelectItem` is `partial def` (opaque to the kernel), so even the trivial fact that `evalSelectItem db row (.star none) = row` can't be proved by `rfl`. This added 1 axiom while removing 4 (net: 33 → 30).
+
+4. **`private` lemmas block cross-file reuse.** `list_filter_and_eq` was private in SemanticsCore.lean but needed in Semantics.lean for `predicate_pushdown`. Had to make it public. Recurring pattern — same issue with `isBoolOrNullOrNone` in a prior PR.
+
+5. **The plan was high quality and paid off.** The detailed plan correctly identified both root causes and their fixes. Implementation was ~90% plan execution with minimal surprises. Reinforces the memory principle: planning quality correlates with review quality.
+
+### Files modified
+
+- `SqlEquiv/SemanticsBase.lean` — `evalBinOp_and_true_iff`
+- `SqlEquiv/SemanticsCore.lean` — evaluator fix + core infrastructure
+- `SqlEquiv/Semantics.lean` — evaluator fix + bridge theorems + 1 bridge axiom
+- `SqlEquiv/Equiv/Comparison.lean` — 4 axioms → theorems
+- `LSpecTests/QueryHelpers.lean` — fix `mkSubqueryWhere` column ref
+- `tools/axiom_count_minimum.txt` — 33 → 30
+
+### Net axiom count change
+
+- **4 axioms → theorems, 1 bridge axiom added**: 33 → 30

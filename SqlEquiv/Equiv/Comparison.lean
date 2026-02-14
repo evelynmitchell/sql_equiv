@@ -125,19 +125,18 @@ theorem project_star_identity (db : Database) (from_ : FromClause)
 -- ============================================================================
 
 /-- Filter combination: consecutive WHERE clauses can be combined with AND.
-    Blocked by evalFrom .subquery double-qualification bug: the subquery wrapping causes
-    columns like `t.col` to become `inner.t.col`, so the outer WHERE clause can't find them. -/
-axiom filter_and (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+    Proved: evalFrom .subquery pass-through fix eliminates double-qualification. -/
+theorem filter_and (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
       (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
       (some q) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset)
+    evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) :=
+  evalSelect_filter_and db items from_ p q groupBy having orderBy limit offset
 
-/-- Filter order doesn't matter: (WHERE p) WHERE q ≃ (WHERE q) WHERE p.
-    Blocked by evalFrom .subquery double-qualification bug (same as filter_and). -/
-axiom filter_commute (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- Filter order doesn't matter: (WHERE p) WHERE q ≃ (WHERE q) WHERE p. -/
+theorem filter_commute (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
@@ -145,17 +144,18 @@ axiom filter_commute (db : Database) (items : List SelectItem) (from_ : Option F
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items
       (some (.subquery (.mk false [.star none] from_ (some q) [] none [] none none) "inner"))
-      (some p) groupBy having orderBy limit offset)
+      (some p) groupBy having orderBy limit offset) :=
+  evalSelect_filter_commute db items from_ p q groupBy having orderBy limit offset
 
-/-- Idempotence of filter: WHERE p WHERE p ≃ WHERE p.
-    Blocked by evalFrom .subquery double-qualification bug (same as filter_and). -/
-axiom filter_idempotent (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- Idempotence of filter: WHERE p WHERE p ≃ WHERE p. -/
+theorem filter_idempotent (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (p : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
       (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
       (some p) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset)
+    evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) :=
+  evalSelect_filter_idempotent db items from_ p groupBy having orderBy limit offset
 
 /-- TRUE filter elimination: WHERE TRUE ≃ no WHERE.
     Theorem: follows from where_true_elim. -/
@@ -910,13 +910,12 @@ theorem filter_comm (rows : Table) (p q : Row → Bool) :
 /-- Predicate pushdown: filtering after select = select with combined WHERE
     This captures: SELECT * FROM (SELECT * FROM t WHERE p) WHERE q
                  = SELECT * FROM t WHERE (p AND q)
-    Blocked: The external filter uses `evalExpr` (no db context) while `evalSelect`
-    internally uses `evalExprWithDb db`. These differ when `q` contains subqueries.
-    Could be proved with a `q.hasNoSubquery` precondition. -/
-axiom predicate_pushdown (db : Database) (t : String) (p q : Expr) :
+    Uses evalExprWithDb (with database context) for the external filter. -/
+theorem predicate_pushdown (db : Database) (t : String) (p q : Expr) :
     let inner := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some p) [] none [] none none
     let outer := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some (.binOp .and p q)) [] none [] none none
-    (evalSelect db inner).filter (fun row => evalExpr row q == some (.bool true)) = evalSelect db outer
+    (evalSelect db inner).filter (fun row => evalExprWithDb db row q == some (.bool true)) = evalSelect db outer :=
+  evalSelect_predicate_pushdown db t p q
 
 -- ============================================================================
 -- Arithmetic Expression Theorems

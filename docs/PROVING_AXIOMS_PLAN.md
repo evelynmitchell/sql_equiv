@@ -182,7 +182,7 @@ with case analysis on the evaluated sub-expressions.
 
 ---
 
-### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms) -- PARTIALLY COMPLETED
+### Phase 2: Statement-Level Filter/WHERE Axioms (~7 axioms) -- COMPLETED
 
 **Goal:** Prove axioms about WHERE clause behavior at the `evalSelect`/`evalStmt` level.
 
@@ -190,23 +190,27 @@ with case analysis on the evaluated sub-expressions.
 - `where_true_elim` -- WHERE TRUE is identity — **PROVED** (via `evalSelect_where_congr`)
 - `where_false_empty` -- WHERE FALSE produces empty result — **PROVED** (with `h_no_agg` precondition, via `evalSelect_filter_all_false`)
 - `filter_false_empty'` -- variant of WHERE FALSE — **PROVED** (delegates to `where_false_empty`)
-- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q — **BLOCKED** (evalFrom .subquery double-qualification bug)
-- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p — **BLOCKED** (same)
-- `filter_idempotent` -- WHERE p then WHERE p = WHERE p — **BLOCKED** (same)
-- `predicate_pushdown` -- WHERE pushdown for single table — **BLOCKED** (evalExpr vs evalExprWithDb gap)
+- `filter_and` -- WHERE (p AND q) = WHERE p then WHERE q — **PROVED** (PR #147, via `evalSelect_filter_and`)
+- `filter_commute` -- WHERE p then WHERE q = WHERE q then WHERE p — **PROVED** (PR #147, via `evalSelect_filter_commute`)
+- `filter_idempotent` -- WHERE p then WHERE p = WHERE p — **PROVED** (PR #147, via `evalSelect_filter_idempotent`)
+- `predicate_pushdown` -- WHERE pushdown for single table — **PROVED** (PR #147, via `evalSelect_predicate_pushdown`)
 
 **Infrastructure axioms added:**
 - `evalSelect_where_congr` — if two WHERE clauses produce the same filtering, evalSelect produces the same result
 - `evalSelect_filter_all_false` — WHERE that rejects all rows produces empty result (when no aggregates)
+- `evalBinOp_and_true_iff` — AND returns `some (.bool true)` iff both operands do (PR #147)
+- `evalSelect_star_where_eq_filter` — decomposes `SELECT * WHERE p` into `List.filter` on base rows (PR #147)
+- `evalSelect_filter_and/commute/idempotent` — filter algebra bridges at evalSelect level (PR #147)
+- `evalSelect_predicate_pushdown` — external `List.filter` = combined WHERE (PR #147)
 
 **Soundness fixes:**
 - `where_false_empty` and `filter_false_empty'` were unsound for aggregate queries (e.g., `SELECT COUNT(*) ... WHERE FALSE` produces 1 row, not 0). Added `h_no_agg : selectHasAggregate items = false` precondition.
 
-**Blocked axioms:**
-- `filter_and`, `filter_commute`, `filter_idempotent`: blocked by evalFrom .subquery double-qualification bug — subquery wrapping causes columns like `t.col` to become `inner.t.col`, so the outer WHERE can't find them.
-- `predicate_pushdown`: blocked by `evalExpr` vs `evalExprWithDb` gap — the external filter uses `evalExpr` (no db context) while `evalSelect` internally uses `evalExprWithDb db`. Could be proved with a `q.hasNoSubquery` precondition.
+**Evaluator fixes (PR #147):**
+- `evalFrom .subquery` changed from re-qualifying column names to pass-through. This eliminated the double-qualification bug (`inner.t.col` → just `t.col`).
+- `predicate_pushdown` axiom changed from `evalExpr row q` to `evalExprWithDb db row q`, enabling subquery support in filter predicates.
 
-**Approach used:** Infrastructure axioms capturing evalSelect's WHERE clause behavior, then theorem proofs using those axioms.
+**Proof technique:** All 4 WHERE axioms reduce to list filter algebra. `evalSelect_star_where_eq_filter` decomposes `SELECT * WHERE p` into `(baseRows.map ([] ++ ·)).filter p_pred`. After `simp only [List.nil_append, List.map_id']` cleans up the map, `list_filter_and_eq` + `evalBinOp_and_true_iff` close the goals.
 
 ---
 
@@ -386,8 +390,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 33 axioms remaining (19 in Equiv/, 14 in infrastructure files), 439 theorems proved (93.0%).
-Axiom ratchet: 33 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 30 axioms remaining (15 in Equiv/, 15 in infrastructure files), 462 theorems proved (93.9%).
+Axiom ratchet: 30 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -543,6 +547,7 @@ eliminated. Only 5 bridge axioms remain — these are inherently needed because
 | `evalCase_cons_false` | **theorem** (PR #131) | False condition → skip to rest |
 | `evalQuery_eq_evalQueryCore` | **bridge axiom** (PR #132) | Connect partial `evalQuery` to non-partial `evalQueryCore` |
 | `evalSelect_eq_evalSelectCore` | **bridge axiom** (PR #133) | Connect partial `evalSelect` to non-partial `evalSelectCore` |
+| `evalSelectItem_star` | **bridge axiom** (PR #147) | `evalSelectItem db row (.star none) = row` — partial def can't reduce |
 | `evalSelect_limit_offset` | **theorem** (PR #133) | Decompose evalSelect into take/drop |
 | `evalSelect_orderBy_length` | **theorem** (PR #133) | ORDER BY preserves length |
 | `evalSelect_where_congr` | **theorem** (PR #133) | Congruence: same filtering → same result |
@@ -699,45 +704,19 @@ optimizer (at runtime) and the axioms (in proofs).
 
 ## Known Evaluator Limitations
 
-### Double-qualification of column names in subquery wrapping
+### Double-qualification of column names in subquery wrapping — RESOLVED (PR #147)
 
-The `evalFrom` function qualifies column names at each level of nesting:
-- `.table ⟨"users", some "u"⟩` produces columns like `u.id`, `u.age`
-- `.subquery sel "filtered_a"` takes the output of `evalSelect` and prefixes
-  every column with `filtered_a.`, producing `filtered_a.u.id`, `filtered_a.u.age`
+**Original problem:** `evalFrom .subquery sel alias` re-qualified column names,
+producing `filtered_a.u.id` instead of preserving `u.id`.
 
-This double-qualification breaks the `filter_join_left` and `filter_join_right`
-axioms at the evaluator level. These axioms rewrite:
-```
-SELECT * FROM (A JOIN B ON cond) WHERE filter
-```
-into:
-```
-SELECT * FROM (SELECT * FROM A WHERE filter) AS filtered_a JOIN B ON cond
-```
+**Fix (PR #147):** Changed `evalFrom .subquery` to pass through inner SELECT
+results without any column re-qualification. The subquery alias is now purely
+syntactic at evaluation time. This unblocked `filter_and`, `filter_commute`,
+`filter_idempotent`, and `predicate_pushdown`.
 
-After the rewrite, the join condition still references `u.id` (the original
-alias), but the subquery-wrapped columns are now named `filtered_a.u.id`.
-The `getQualified` lookup for `u.id` fails because no column has that exact
-name — the evaluator does not strip or flatten nested qualifiers.
-
-**Impact on testing:** The axiom coverage tests for `filter_join_left` and
-`filter_join_right` work around this by testing the semantic property directly
-via `evalFrom` (filter-then-join vs join-then-filter) rather than comparing
-`evalSelect` on both sides of the axiom's rewrite.
-
-**Impact on proving:** When proving these axioms (Phase 6), the proof will need
-to account for column renaming through subquery boundaries. Options:
-1. Fix `evalFrom`'s `.subquery` case to strip existing qualifiers before
-   re-qualifying (so `u.id` becomes `filtered_a.id`, not `filtered_a.u.id`)
-2. Make `getQualified` aware of nested qualifiers (match on suffix)
-
-3. Redefine the axioms to use `evalFrom`-level filter pushdown (avoiding
-   `evalSelect` subquery wrapping entirely)
-
-Option 1 is likely the cleanest fix — `evalSelect` already projects columns
-via `SelectItem`, so the subquery output should have unqualified column names
-that then get a single qualifier from the outer `evalFrom`.
+**Impact on `filter_join_left`/`filter_join_right`:** These axioms may also
+benefit from the pass-through fix. The subquery wrapping no longer changes
+column names, so join conditions should find their columns correctly.
 
 ---
 
