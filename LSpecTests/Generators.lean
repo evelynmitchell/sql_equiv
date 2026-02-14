@@ -198,3 +198,49 @@ private partial def genBoolGroundExpr (depth : Nat) : Gen Expr := do
 
 instance : SampleableExt BoolGroundExpr :=
   SampleableExt.mkSelfContained (BoolGroundExpr.mk <$> genBoolGroundExpr 2)
+
+-- ============================================================================
+-- Column-aware expression generator
+-- ============================================================================
+
+/-- Fixed test row for column-aware property tests. -/
+def testRow : Row := [("x", .int 1), ("y", .int 2), ("z", .bool true)]
+
+/-- Ground expression that may reference columns from a fixed 3-column schema. -/
+structure ColumnGroundExpr where
+  expr : Expr
+  deriving Repr
+
+instance : Shrinkable ColumnGroundExpr where
+  shrink cge := match cge.expr with
+    | .binOp _ l r => [⟨l⟩, ⟨r⟩]
+    | .unaryOp _ e => [⟨e⟩]
+    | _ => []
+
+private partial def genColumnExpr (depth : Nat) : Gen Expr :=
+  if depth == 0 then
+    Gen.frequency #[
+      (3, genLitExpr),
+      (1, pure (.col ⟨none, "x"⟩)),
+      (1, pure (.col ⟨none, "y"⟩)),
+      (1, pure (.col ⟨none, "z"⟩))
+    ] genLitExpr
+  else Gen.frequency #[
+    (3, genLitExpr),
+    (2, do
+      let idx ← Gen.choose Nat 0 2
+      let col := ["x", "y", "z"].getD idx "x"
+      pure (.col ⟨none, col⟩)),
+    (2, do
+      let op ← Gen.elements #[BinOp.and, .or, .add, .sub, .eq, .lt]
+      let l ← genColumnExpr (depth - 1)
+      let r ← genColumnExpr (depth - 1)
+      pure (.binOp op l r)),
+    (1, do
+      let op ← Gen.elements #[UnaryOp.not, .neg, .isNull]
+      let e ← genColumnExpr (depth - 1)
+      pure (.unaryOp op e))
+  ] genLitExpr
+
+instance : SampleableExt ColumnGroundExpr :=
+  SampleableExt.mkSelfContained (ColumnGroundExpr.mk <$> genColumnExpr 2)
