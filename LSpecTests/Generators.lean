@@ -203,9 +203,6 @@ instance : SampleableExt BoolGroundExpr :=
 -- Column-aware expression generator
 -- ============================================================================
 
-/-- Fixed test row for column-aware property tests. -/
-def testRow : Row := [("x", .int 1), ("y", .int 2), ("z", .bool true)]
-
 /-- Ground expression that may reference columns from a fixed 3-column schema. -/
 structure ColumnGroundExpr where
   expr : Expr
