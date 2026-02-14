@@ -43,8 +43,8 @@ Level 3: Filter/Projection Axioms
 Level 2: Join Algebra Axioms
 ├── join_comm_full
 ├── join_assoc
-├── cross_join_comm
-└── cross_join_assoc
+├── cross_join_comm ✓ (PR #140)
+└── cross_join_assoc ✓ (PR #140)
          ↓ depends on
 Level 1: Boolean/Expression Axioms
 ├── evalBinOp_and_assoc
@@ -288,8 +288,8 @@ and empty-table behavior.
   `cross_join_assoc_cardinality`, `inner_join_cardinality_le`,
   `left_join_cardinality_ge`, `right_join_cardinality_ge`
 
-**Semantics (5 -- hard):** `join_comm`, `join_comm_full`, `cross_join_comm`,
-  `join_assoc`, `cross_join_assoc`
+**Semantics (5 -- hard):** `join_comm`, `join_comm_full`, ~~`cross_join_comm`~~ ✓ PR #140,
+  `join_assoc`, ~~`cross_join_assoc`~~ ✓ PR #140
 
 **Advanced (5 -- hard):** `inner_join_to_where`, `left_join_preserves_left`,
   `right_join_preserves_right`, `inner_subset_cross`,
@@ -386,8 +386,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 35 axioms remaining (21 in Equiv/, 6 bridge in Semantics.lean, 8 in optimizer/normalization/pushdown/join files), 442 theorems proved (92.7%).
-Axiom ratchet: 35 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 33 axioms remaining (19 in Equiv/, 14 in infrastructure files), 439 theorems proved (93.0%).
+Axiom ratchet: 33 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -400,7 +400,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 3 | Aggregate/Distinct | 0 | ~4 | Medium |
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
-| 6 | Join axioms | 0 | ~21 | Medium-Hard |
+| 6 | Join axioms | 2 | ~19 | Medium-Hard |
 | 7 | Subquery / EXISTS / IN | 16 | ~1 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
@@ -472,7 +472,7 @@ decision first (see "Unsound Axiom Strategy" below).
 |:-----:|-------|-------------|:------:|------------|
 | 26 | [#70](https://github.com/evelynmitchell/sql_equiv/issues/70) | Join edge cases (empty, TRUE/FALSE) | 7 | Medium |
 | 27 | [#69](https://github.com/evelynmitchell/sql_equiv/issues/69) | Join cardinality bounds | 7 | Medium |
-| 28 | [#67](https://github.com/evelynmitchell/sql_equiv/issues/67) | `cross_join_comm`, `cross_join_assoc` | 2 | Medium-Hard |
+| 28 | [#67](https://github.com/evelynmitchell/sql_equiv/issues/67) | `cross_join_comm`, `cross_join_assoc` | 2 | **Proved** (PR #140) |
 | 29 | [#66](https://github.com/evelynmitchell/sql_equiv/issues/66) | `join_comm`, `join_comm_full` | 2 | Hard |
 | 30 | [#68](https://github.com/evelynmitchell/sql_equiv/issues/68) | `join_assoc` (**hardest axiom**) | 1 | Hard |
 | 31 | [#71](https://github.com/evelynmitchell/sql_equiv/issues/71) | Outer join preservation | 4 | Hard |

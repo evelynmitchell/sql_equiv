@@ -3118,3 +3118,54 @@ cases hsel : evalSelectWithContext (fun _ => []) row sel with
 ### Net axiom count change
 
 - **5 axioms → theorems**: 40 → 35
+
+---
+
+## Batch 33: Cross Join Axioms (PR #140)
+
+**Date:** 2026-02-14
+**Axiom count:** 35 → 33 (2 axioms → theorems)
+
+### Axioms proved
+
+| Axiom | Difficulty | Proof technique |
+|-------|-----------|----------------|
+| `cross_join_assoc` | Easy | `evalFrom_cross_join` ×4, `List.map_eq_flatMap` + `List.flatMap_assoc` + `List.append_assoc` |
+| `cross_join_comm` | Easy | Membership decomposition via `List.mem_flatMap`/`List.mem_map`, witness `rr ++ lr`, `Or.comm` |
+
+### Proof details
+
+**`cross_join_assoc`**: The cleanest join proof so far. Cross join has no filter condition, so `evalFrom_cross_join` decomposes directly to `flatMap`/`map` without any `filterMap` or `match on_`. The proof converts `map` to `flatMap` via `List.map_eq_flatMap`, applies `List.flatMap_assoc` to restructure the nesting, then closes each element with `List.append_assoc` for row concatenation associativity. The `simp only []` after `rw [evalFrom_cross_join]` is needed to inline the `let rightRows := ...` binding.
+
+```lean
+theorem cross_join_assoc ... := by
+  rw [evalFrom_cross_join, evalFrom_cross_join, evalFrom_cross_join, evalFrom_cross_join]
+  simp only []
+  simp only [List.map_eq_flatMap]
+  simp only [List.flatMap_assoc]
+  congr 1; funext lr; congr 1; funext rr
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
+  congr 1; funext cr
+  exact congrArg (· :: []) (List.append_assoc lr rr cr)
+```
+
+**`cross_join_comm`**: Membership-based proof. Decompose `row ∈ flatMap (fun lr => map (lr ++ ·) rightRows)` into witnesses `lr` and `rr` using `List.mem_flatMap` and `List.mem_map`. Construct the commuted witness `rr ++ lr` and prove membership in the swapped cross join. Close with `List.mem_append` + `Or.comm` for pair membership equivalence.
+
+### Key observations
+
+1. **Cross join is the simplest join type for proofs.** No `filterMap`, no `match on_`, no `let combined`. Just `flatMap`/`map`. This makes standard list monad lemmas directly applicable.
+
+2. **No custom helper lemmas needed.** Everything came from Lean 4's core library: `List.flatMap_assoc`, `List.map_eq_flatMap`, `List.mem_flatMap`, `List.mem_map`, `List.mem_append`, `List.append_assoc`.
+
+3. **`simp only []` after `rw [evalFrom_cross_join]` is essential.** The theorem introduces `let rightRows := evalFrom db right`, which blocks subsequent `simp` calls from matching the flatMap/map structure. `simp only []` inlines it.
+
+### Files modified
+
+- `SqlEquiv/Equiv/Comparison.lean` — 2 axioms → theorems
+- `tools/axiom_count_minimum.txt` — 35 → 33
+- `docs/PROVING_AXIOMS_PLAN.md` — updated Phase 6 status, Wave 5 entry
+- `docs/PROVING_LOG.md` — this entry
+
+### Net axiom count change
+
+- **2 axioms → theorems**: 35 → 33

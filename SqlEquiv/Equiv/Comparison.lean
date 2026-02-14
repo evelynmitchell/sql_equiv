@@ -57,17 +57,38 @@ axiom join_comm_full (db : Database) (a b : FromClause) (cond : Expr) :
     evalFrom db (.join b .inner a (some cond))
 
 /-- Cross join associativity.
-    Axiom: Cartesian product is associative. -/
-axiom cross_join_assoc (db : Database) (a b c : FromClause) :
+    Theorem: Cartesian product is associative. -/
+theorem cross_join_assoc (db : Database) (a b c : FromClause) :
     evalFrom db (.join (.join a .cross b none) .cross c none) =
-    evalFrom db (.join a .cross (.join b .cross c none) none)
+    evalFrom db (.join a .cross (.join b .cross c none) none) := by
+  rw [evalFrom_cross_join, evalFrom_cross_join, evalFrom_cross_join, evalFrom_cross_join]
+  simp only []
+  simp only [List.map_eq_flatMap]
+  simp only [List.flatMap_assoc]
+  congr 1; funext lr; congr 1; funext rr
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil]
+  congr 1; funext cr
+  exact congrArg (· :: []) (List.append_assoc lr rr cr)
 
 /-- Cross join commutativity (row set equality).
-    Axiom: Cartesian product is commutative up to column ordering. -/
-axiom cross_join_comm (db : Database) (a b : FromClause) :
+    Theorem: Cartesian product is commutative up to column ordering. -/
+theorem cross_join_comm (db : Database) (a b : FromClause) :
     ∀ row ∈ evalFrom db (.join a .cross b none),
     ∃ row' ∈ evalFrom db (.join b .cross a none),
-    (∀ p, p ∈ row ↔ p ∈ row')
+    (∀ p, p ∈ row ↔ p ∈ row') := by
+  intro row hrow
+  rw [evalFrom_cross_join] at hrow
+  simp only [] at hrow
+  simp only [List.mem_flatMap, List.mem_map] at hrow
+  obtain ⟨lr, hlr, rr, hrr, hrw⟩ := hrow
+  subst hrw
+  refine ⟨rr ++ lr, ?_, ?_⟩
+  · rw [evalFrom_cross_join]; simp only []
+    simp only [List.mem_flatMap, List.mem_map]
+    exact ⟨rr, hrr, lr, hlr, rfl⟩
+  · intro p
+    simp only [List.mem_append]
+    exact Or.comm
 
 -- ============================================================================
 -- Projection Pushdown Theorems
