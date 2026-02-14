@@ -1,11 +1,13 @@
 // Axiom Dependency Graph for sql_equiv
-// Generated 2026-02-04
+// Updated 2026-02-13
 //
 // Render with:  dot -Tpng axiom_dependencies.dot -o axiom_dependencies.png
 //           or: dot -Tsvg axiom_dependencies.dot -o axiom_dependencies.svg
 //           or: dot -Tpdf axiom_dependencies.dot -o axiom_dependencies.pdf
 //
-// 167 axioms/theorems across 7 files, organized by category.
+// Covers all public axioms and theorems representing SQL equivalence properties.
+// Excludes: private helpers, SemanticsCore mirrors, equivalence relation scaffolding,
+// SetBagLemmas internals, value-level lemmas already covered by expression-level nodes.
 // Edges represent "A depends on B" (arrow from dependent to dependency).
 
 digraph axiom_dependencies {
@@ -31,6 +33,58 @@ digraph axiom_dependencies {
         evalExprWithDb_lit      [label="evalExprWithDb_lit\nlit v → some v"];
         evalExprWithDb_binOp    [label="evalExprWithDb_binOp\nbinOp unfold"];
         evalExprWithDb_unaryOp  [label="evalExprWithDb_unaryOp\nunaryOp unfold"];
+        evalExprWithDb_exists   [label="evalExprWithDb_exists\nEXISTS unfold"];
+        evalExprWithDb_case     [label="evalExprWithDb_case\nCASE unfold"];
+        evalExprWithDb_func     [label="evalExprWithDb_func\nfunc unfold"];
+        evalExprWithDb_between  [label="evalExprWithDb_between\nBETWEEN unfold"];
+        evalExprWithDb_inList   [label="evalExprWithDb_inList\nIN list unfold"];
+    }
+
+    subgraph cluster_semantics_case {
+        label="Semantics.lean\n(CASE Evaluation)";
+        style=filled; fillcolor="#e8f4e8"; color="#4a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        evalCase_nil_some   [label="evalCase_nil_some\n[] + ELSE → ELSE"];
+        evalCase_nil_none   [label="evalCase_nil_none\n[] + no ELSE → NULL"];
+        evalCase_cons_true  [label="evalCase_cons_true\nWHEN TRUE → result"];
+        evalCase_cons_false [label="evalCase_cons_false\nWHEN FALSE → next"];
+    }
+
+    subgraph cluster_semantics_from {
+        label="Semantics.lean\n(FROM Evaluation)";
+        style=filled; fillcolor="#e8f4e8"; color="#4a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        evalFrom_cross_join [label="evalFrom_cross_join\nCROSS JOIN unfold"];
+        evalFrom_inner_join [label="evalFrom_inner_join\nINNER JOIN unfold"];
+        evalFrom_left_join  [label="evalFrom_left_join\nLEFT JOIN unfold"];
+        evalFrom_right_join [label="evalFrom_right_join\nRIGHT JOIN unfold"];
+    }
+
+    subgraph cluster_semantics_select {
+        label="Semantics.lean\n(SELECT/Query Evaluation)";
+        style=filled; fillcolor="#e8f4e8"; color="#4a8c4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        evalSelect_limit_offset     [label="evalSelect_limit_offset\nLIMIT/OFFSET decompose"];
+        evalSelect_orderBy_length   [label="evalSelect_orderBy_length\nORDER BY preserves |rows|"];
+        evalSelect_where_congr      [label="evalSelect_where_congr\nWHERE congr"];
+        evalSelect_filter_all_false [label="evalSelect_filter_all_false\nWHERE FALSE → ∅"];
+        evalQuery_simple            [label="evalQuery_simple\nsimple query unfold"];
+        evalQuery_compound          [label="evalQuery_compound\ncompound query unfold"];
+    }
+
+    subgraph cluster_semantics_bridge {
+        label="Semantics.lean\n(Bridge Axioms)";
+        style=filled; fillcolor="#d8eed8"; color="#3a7c3a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        evalExprWithDb_eq_evalExprCore [label="evalExprWithDb =\nevalExprCore"];
+        evalCase_eq_evalCaseHelper     [label="evalCase =\nevalCaseHelper"];
+        evalFrom_eq_evalFromCore       [label="evalFrom =\nevalFromCore"];
+        evalQuery_eq_evalQueryCore     [label="evalQuery =\nevalQueryCore"];
+        evalSelect_eq_evalSelectCore   [label="evalSelect =\nevalSelectCore"];
     }
 
     subgraph cluster_optimizer_utils {
@@ -43,31 +97,61 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_boolean {
-        label="Equiv.lean — Boolean Algebra";
+        label="ExprAxioms / ValueLemmas — Boolean Algebra";
         style=filled; fillcolor="#e8eef4"; color="#4a6a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
         evalBinOp_and_assoc [label="evalBinOp_and_assoc\nAND associativity"];
         evalBinOp_or_assoc  [label="evalBinOp_or_assoc\nOR associativity"];
 
+        and_comm             [label="and_comm\na ∧ b ≡ b ∧ a"];
+        or_comm              [label="or_comm\na ∨ b ≡ b ∨ a"];
         not_not              [label="not_not\n¬¬a ≡ a"];
         and_true             [label="and_true\na ∧ TRUE ≡ a"];
+        true_and             [label="true_and\nTRUE ∧ a ≡ a"];
         or_false             [label="or_false\na ∨ FALSE ≡ a"];
+        false_or             [label="false_or\nFALSE ∨ a ≡ a"];
+        and_false            [label="and_false\na ∧ FALSE ≡ FALSE"];
+        false_and            [label="false_and\nFALSE ∧ a ≡ FALSE"];
+        or_true              [label="or_true\na ∨ TRUE ≡ TRUE"];
+        true_or              [label="true_or\nTRUE ∨ a ≡ TRUE"];
         and_self             [label="and_self\na ∧ a ≡ a"];
         or_self              [label="or_self\na ∨ a ≡ a"];
         and_not_self         [label="and_not_self\na ∧ ¬a ≡ FALSE"];
         or_not_self          [label="or_not_self\na ∨ ¬a ≡ TRUE"];
+        not_self_and         [label="not_self_and\n¬a ∧ a ≡ FALSE"];
+        not_self_or          [label="not_self_or\n¬a ∨ a ≡ TRUE"];
         and_absorb_or        [label="and_absorb_or\na ∧ (a∨b) ≡ a"];
         or_absorb_and        [label="or_absorb_and\na ∨ (a∧b) ≡ a"];
-        evalBinOp_and_or_distrib_left [label="and_or_distrib\na∧(b∨c) ≡ (a∧b)∨(a∧c)"];
-        evalBinOp_or_and_distrib_left [label="or_and_distrib\na∨(b∧c) ≡ (a∨b)∧(a∨c)"];
+        not_and              [label="not_and\n¬(a∧b) ≡ ¬a∨¬b"];
+        not_or               [label="not_or\n¬(a∨b) ≡ ¬a∧¬b"];
+        evalBinOp_and_or_distrib_left [label="and_or_distrib_left\na∧(b∨c) ≡ (a∧b)∨(a∧c)"];
+        evalBinOp_or_and_distrib_left [label="or_and_distrib_left\na∨(b∧c) ≡ (a∨b)∧(a∨c)"];
+        and_or_distrib_right [label="and_or_distrib_right\n(a∨b)∧c ≡ (a∧c)∨(b∧c)"];
+        or_and_distrib_right [label="or_and_distrib_right\n(a∧b)∨c ≡ (a∨c)∧(b∨c)"];
+        or_and_factor_left   [label="or_and_factor_left\n(a∧b)∨(a∧c) ≡ a∧(b∨c)"];
+        and_or_factor_left   [label="and_or_factor_left\n(a∨b)∧(a∨c) ≡ a∨(b∧c)"];
+    }
+
+    subgraph cluster_boolean_congr {
+        label="ExprAxioms — Congruence";
+        style=filled; fillcolor="#e8eef4"; color="#4a6a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        binOp_congr       [label="binOp_congr\nf(a,b)≡f(a',b')"];
+        unaryOp_congr     [label="unaryOp_congr\nf(a)≡f(a')"];
+        binOp_congr_left  [label="binOp_congr_left\nf(a,b)≡f(a',b)"];
+        binOp_congr_right [label="binOp_congr_right\nf(a,b)≡f(a,b')"];
+        expr_equiv_subst  [label="expr_equiv_subst\nsubstitution"];
     }
 
     subgraph cluster_arithmetic {
-        label="Equiv.lean — Arithmetic";
+        label="Comparison.lean — Arithmetic";
         style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
         fontsize=11; fontname="Helvetica-Bold";
 
+        add_comm      [label="add_comm\na + b ≡ b + a"];
+        mul_comm      [label="mul_comm\na × b ≡ b × a"];
         expr_add_zero [label="expr_add_zero\ne + 0 ≡ e"];
         expr_zero_add [label="expr_zero_add\n0 + e ≡ e"];
         expr_mul_one  [label="expr_mul_one\ne × 1 ≡ e"];
@@ -78,12 +162,13 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_comparison {
-        label="Equiv.lean — Comparison Operators";
+        label="Comparison.lean — Comparison Operators";
         style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
         fontsize=11; fontname="Helvetica-Bold";
 
         eq_reflexive    [label="eq_reflexive\ne = e → TRUE"];
         ne_irreflexive  [label="ne_irreflexive\ne ≠ e → FALSE"];
+        eq_comm         [label="eq_comm\na = b ≡ b = a"];
         not_eq_is_ne    [label="not_eq_is_ne\n¬(a=b) ≡ a≠b"];
         not_ne_is_eq    [label="not_ne_is_eq\n¬(a≠b) ≡ a=b"];
         not_lt_is_ge    [label="not_lt_is_ge\n¬(a<b) ≡ a≥b"];
@@ -96,8 +181,86 @@ digraph axiom_dependencies {
         ge_flip         [label="ge_flip\na≥b ≡ b≤a"];
     }
 
+    subgraph cluster_null {
+        label="Comparison.lean — NULL Propagation";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        null_add_left   [label="null_add_left\nNULL + e → NULL"];
+        null_add_right  [label="null_add_right\ne + NULL → NULL"];
+        null_sub_left   [label="null_sub_left\nNULL − e → NULL"];
+        null_sub_right  [label="null_sub_right\ne − NULL → NULL"];
+        null_mul_left   [label="null_mul_left\nNULL × e → NULL"];
+        null_mul_right  [label="null_mul_right\ne × NULL → NULL"];
+        null_div_left   [label="null_div_left\nNULL / e → NULL"];
+        null_div_right  [label="null_div_right\ne / NULL → NULL"];
+        null_eq_left    [label="null_eq_left\nNULL = e → NULL"];
+        null_eq_right   [label="null_eq_right\ne = NULL → NULL"];
+        null_ne_left    [label="null_ne_left\nNULL ≠ e → NULL"];
+        null_ne_right   [label="null_ne_right\ne ≠ NULL → NULL"];
+        null_lt_left    [label="null_lt_left\nNULL < e → NULL"];
+        null_lt_right   [label="null_lt_right\ne < NULL → NULL"];
+        false_and_null  [label="false_and_null\nFALSE ∧ NULL → FALSE"];
+        null_and_false  [label="null_and_false\nNULL ∧ FALSE → FALSE"];
+        true_and_null   [label="true_and_null\nTRUE ∧ NULL → NULL"];
+        null_and_true   [label="null_and_true\nNULL ∧ TRUE → NULL"];
+        true_or_null    [label="true_or_null\nTRUE ∨ NULL → TRUE"];
+        null_or_true    [label="null_or_true\nNULL ∨ TRUE → TRUE"];
+        false_or_null   [label="false_or_null\nFALSE ∨ NULL → NULL"];
+        null_or_false   [label="null_or_false\nNULL ∨ FALSE → NULL"];
+        null_and_null   [label="null_and_null\nNULL ∧ NULL → NULL"];
+        null_or_null    [label="null_or_null\nNULL ∨ NULL → NULL"];
+    }
+
+    subgraph cluster_is_null {
+        label="Comparison.lean — IS NULL / IS NOT NULL";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        is_null_on_null     [label="is_null_on_null\nIS NULL(NULL) → TRUE"];
+        is_null_on_int      [label="is_null_on_int\nIS NULL(int) → FALSE"];
+        is_null_on_string   [label="is_null_on_string\nIS NULL(str) → FALSE"];
+        is_null_on_bool     [label="is_null_on_bool\nIS NULL(bool) → FALSE"];
+        is_not_null_on_null [label="is_not_null_on_null\nIS NOT NULL(NULL) → FALSE"];
+        is_not_null_on_int  [label="is_not_null_on_int\nIS NOT NULL(int) → TRUE"];
+        is_not_null_on_string [label="is_not_null_on_string\nIS NOT NULL(str) → TRUE"];
+        is_not_null_on_bool [label="is_not_null_on_bool\nIS NOT NULL(bool) → TRUE"];
+        is_null_is_not_null_complement [label="is_null_is_not_null_complement\nIS NULL ≡ ¬IS NOT NULL"];
+    }
+
+    subgraph cluster_trilean {
+        label="Comparison.lean — Trilean Logic";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        trilean_not_not      [label="trilean_not_not\n¬¬v ≡ v"];
+        trilean_and_comm     [label="trilean_and_comm\nv∧w ≡ w∧v"];
+        trilean_or_comm      [label="trilean_or_comm\nv∨w ≡ w∨v"];
+        trilean_and_true     [label="trilean_and_true\nv ∧ TRUE ≡ v"];
+        trilean_or_false     [label="trilean_or_false\nv ∨ FALSE ≡ v"];
+        trilean_and_false    [label="trilean_and_false\nv ∧ FALSE ≡ FALSE"];
+        trilean_or_true      [label="trilean_or_true\nv ∨ TRUE ≡ TRUE"];
+        trilean_de_morgan_and [label="trilean_de_morgan_and\n¬(v∧w) ≡ ¬v∨¬w"];
+        trilean_de_morgan_or  [label="trilean_de_morgan_or\n¬(v∨w) ≡ ¬v∧¬w"];
+    }
+
+    subgraph cluster_coalesce {
+        label="Comparison.lean — COALESCE / NULLIF";
+        style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        coalesce_null_left_nonnull [label="coalesce_null_left\nCOALESCE(NULL, v) → v"];
+        coalesce_int_left    [label="coalesce_int_left\nCOALESCE(int, ...) → int"];
+        coalesce_string_left [label="coalesce_string_left\nCOALESCE(str, ...) → str"];
+        coalesce_bool_left   [label="coalesce_bool_left\nCOALESCE(bool, ...) → bool"];
+        coalesce_single_null [label="coalesce_single_null\nCOALESCE(NULL) → NULL"];
+        coalesce_empty       [label="coalesce_empty\nCOALESCE() → NULL"];
+        nullif_same_int      [label="nullif_same_int\nNULLIF(n, n) → NULL"];
+        nullif_diff_int      [label="nullif_diff_int\nNULLIF(n, m) → n"];
+    }
+
     subgraph cluster_string {
-        label="Equiv.lean — String Operations";
+        label="Comparison.lean — String Operations";
         style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -106,6 +269,7 @@ digraph axiom_dependencies {
         like_self          [label="like_self\ns LIKE s → TRUE"];
         concat_empty_left  [label="concat_empty_left\n'' ‖ s ≡ s"];
         concat_empty_right [label="concat_empty_right\ns ‖ '' ≡ s"];
+        length_concat      [label="length_concat\nLEN(a‖b) = LEN(a)+LEN(b)"];
         upper_idempotent   [label="upper_idempotent\nUPPER²"];
         lower_idempotent   [label="lower_idempotent\nLOWER²"];
         upper_lower_upper  [label="upper_lower_upper\nU(L(U)) ≡ U"];
@@ -114,18 +278,27 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_aggregates {
-        label="Equiv.lean — Aggregates & DISTINCT";
+        label="Comparison.lean — Aggregates & DISTINCT";
         style=filled; fillcolor="#f4f0e8"; color="#8c7a4a";
         fontsize=11; fontname="Helvetica-Bold";
 
-        min_le_elem        [label="min_le_elem\nMIN ≤ each"];
-        max_ge_elem        [label="max_ge_elem\nMAX ≥ each"];
-        distinct_count_le  [label="distinct_count_le\n|DISTINCT| ≤ |vals|"];
+        count_star_nonneg   [label="count_star_nonneg\nCOUNT(*) ≥ 0"];
+        count_star_empty    [label="count_star_empty\nCOUNT(*) [] = 0"];
+        count_star_singleton [label="count_star_singleton\nCOUNT(*) [r] = 1"];
+        count_after_filter_le [label="count_after_filter_le\n|filter| ≤ |all|"];
+        count_distinct_le_count [label="count_distinct_le_count\n|DISTINCT| ≤ |COUNT|"];
+        sum_empty           [label="sum_empty\nSUM([]) = 0"];
+        sum_singleton       [label="sum_singleton\nSUM([n]) = n"];
+        min_le_elem         [label="min_le_elem\nMIN ≤ each"];
+        max_ge_elem         [label="max_ge_elem\nMAX ≥ each"];
+        min_singleton       [label="min_singleton\nMIN([n]) = n"];
+        max_singleton       [label="max_singleton\nMAX([n]) = n"];
+        distinct_count_le   [label="distinct_count_le\n|DISTINCT| ≤ |vals|"];
         distinct_idempotent [label="distinct_idempotent\nDISTINCT²"];
     }
 
     subgraph cluster_in_between {
-        label="Equiv.lean — IN / BETWEEN";
+        label="Comparison.lean — IN / BETWEEN";
         style=filled; fillcolor="#f0e8f4"; color="#6a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -156,16 +329,17 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_equiv_norm {
-        label="Equiv.lean — Normalization";
+        label="Decidable.lean — Normalization";
         style=filled; fillcolor="#f4e8e8"; color="#8c4a4a";
         fontsize=11; fontname="Helvetica-Bold";
 
         normalizeExpr_equiv          [label="normalizeExpr_equiv\nold normalize equiv"];
         syntacticEquiv_implies_equiv [label="syntacticEquiv_implies_equiv\nsyntactic ⇒ semantic"];
+        decideExprEquiv_sound        [label="decideExprEquiv_sound\nexpr equiv checker sound"];
     }
 
     subgraph cluster_ground {
-        label="Equiv.lean — Ground Expressions";
+        label="Decidable.lean — Ground Expressions";
         style=filled; fillcolor="#f4e8e8"; color="#8c4a4a";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -178,7 +352,7 @@ digraph axiom_dependencies {
     // ========================================================================
 
     subgraph cluster_where {
-        label="Equiv.lean — WHERE Optimization";
+        label="ExprAxioms / Comparison — WHERE Optimization";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -188,10 +362,12 @@ digraph axiom_dependencies {
         filter_commute     [label="filter_commute\nfilters commute"];
         filter_idempotent  [label="filter_idempotent\nfilter idempotent"];
         filter_false_empty_prime [label="filter_false_empty'\nWHERE FALSE variant"];
+        filter_and_eq_filter_filter [label="filter_and_eq_filter_filter\nAND filter = composed"];
+        filter_comm        [label="filter_comm\nfilter order commutes"];
     }
 
     subgraph cluster_case {
-        label="Equiv.lean — CASE Expressions";
+        label="Comparison.lean — CASE Expressions";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -202,8 +378,19 @@ digraph axiom_dependencies {
         case_empty_no_else      [label="case_empty_no_else\nCASE → NULL"];
     }
 
+    subgraph cluster_project {
+        label="Comparison.lean — Projection";
+        style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        project_join          [label="project_join\nπ over ⋈"];
+        project_star_identity [label="project_star_identity\nSELECT * = identity"];
+        filter_project_commute [label="filter_project_commute\nσ and π commute"];
+        filter_true_elim_prime [label="filter_true_elim'\nfilter TRUE variant"];
+    }
+
     subgraph cluster_join_basic {
-        label="Equiv.lean — Join Algebra";
+        label="ExprAxioms / Comparison — Join Algebra";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -215,7 +402,7 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_join_type {
-        label="Equiv.lean — Join Type Conversions";
+        label="StatementAxioms.lean — Join Type Conversions";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -226,7 +413,7 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_join_card {
-        label="Equiv.lean — Join Cardinality";
+        label="StatementAxioms.lean — Join Cardinality";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -238,7 +425,7 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_join_empty {
-        label="Equiv.lean — Join Emptiness";
+        label="StatementAxioms.lean — Join Emptiness";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -250,7 +437,7 @@ digraph axiom_dependencies {
     }
 
     subgraph cluster_join_outer {
-        label="Equiv.lean — Outer Join Semantics";
+        label="StatementAxioms.lean — Outer Join Semantics";
         style=filled; fillcolor="#e8e0f4"; color="#5a4a8c";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -265,7 +452,7 @@ digraph axiom_dependencies {
     // ========================================================================
 
     subgraph cluster_filter_join {
-        label="Equiv.lean — Predicate Pushdown (Join)";
+        label="Comparison.lean — Predicate Pushdown (Join)";
         style=filled; fillcolor="#f4e0e0"; color="#8c4a5a";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -273,6 +460,7 @@ digraph axiom_dependencies {
         filter_join_right   [label="filter_join_right\npush filter to right"];
         filter_pushdown_table [label="filter_pushdown_table\npush filter into scan"];
         predicate_pushdown  [label="predicate_pushdown\ngeneral pushdown"];
+        push_filter_project_through_join [label="push_filter_project_through_join\nπσ through ⋈"];
     }
 
     // ========================================================================
@@ -280,7 +468,7 @@ digraph axiom_dependencies {
     // ========================================================================
 
     subgraph cluster_set_ops {
-        label="Equiv.lean — Set Operations";
+        label="StatementAxioms.lean — Set Operations";
         style=filled; fillcolor="#f0f4e8"; color="#6a8c4a";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -304,15 +492,12 @@ digraph axiom_dependencies {
     // ========================================================================
 
     subgraph cluster_pagination {
-        label="Equiv.lean — ORDER BY / LIMIT / OFFSET";
+        label="StatementAxioms.lean — ORDER BY / LIMIT / OFFSET";
         style=filled; fillcolor="#f0f4e8"; color="#6a8c4a";
         fontsize=11; fontname="Helvetica-Bold";
 
         order_by_preserves_count [label="order_preserves_count"];
-        order_by_empty_identity  [label="order_empty_identity"];
-
-        order_by_last_wins       [label="order_last_wins"];
-
+        order_by_length_invariant [label="order_length_invariant\ndiff ORDER = same |rows|"];
         limit_zero_empty         [label="limit_zero → ∅"];
         limit_upper_bound        [label="limit_upper_bound"];
         limit_none_all_rows      [label="limit_none → all"];
@@ -335,7 +520,7 @@ digraph axiom_dependencies {
     // ========================================================================
 
     subgraph cluster_subquery {
-        label="Equiv.lean — Subquery Operations";
+        label="StatementAxioms.lean — Subquery Operations";
         style=filled; fillcolor="#f4e8f0"; color="#8c4a6a";
         fontsize=11; fontname="Helvetica-Bold";
 
@@ -358,7 +543,6 @@ digraph axiom_dependencies {
         subquery_where_true       [label="subq WHERE TRUE"];
         subquery_where_false      [label="subq WHERE FALSE"];
         in_singleton_subquery     [label="IN singleton subq"];
-        correlated_subquery_uses_context [label="corr subq uses outer"];
         in_subquery_unnest_to_join  [label="IN subq → JOIN"];
         not_in_subquery_unnest_to_antijoin [label="NOT IN → ANTI JOIN"];
         in_subquery_implies_join_match [label="IN subq ⇒ JOIN match"];
@@ -379,6 +563,19 @@ digraph axiom_dependencies {
         optimize_equiv           [label="optimize_equiv\noptimize stmt ≃ s"];
     }
 
+    subgraph cluster_optimizer_local {
+        label="Optimizer.lean\n(Local Correctness)";
+        style=filled; fillcolor="#ffe0e0"; color="#cc3333";
+        fontsize=11; fontname="Helvetica-Bold";
+
+        where_true_elim_correct    [label="where_true_elim_correct"];
+        where_false_preserves_equiv [label="where_false_preserves_equiv"];
+        double_neg_elim_correct    [label="double_neg_elim_correct"];
+        constant_fold_correct      [label="constant_fold_correct"];
+        and_false_correct          [label="and_false_correct"];
+        or_true_correct            [label="or_true_correct"];
+    }
+
     subgraph cluster_join_reorder {
         label="JoinReordering.lean";
         style=filled; fillcolor="#ffe0e0"; color="#cc3333";
@@ -386,6 +583,7 @@ digraph axiom_dependencies {
 
         join_reorder_preserves_forward  [label="join_reorder_forward\nreorder preserves →"];
         join_reorder_preserves_backward [label="join_reorder_backward\nreorder preserves ←"];
+        join_reorder_preserves_semantics [label="join_reorder_semantics\nreorder equiv"];
     }
 
     subgraph cluster_pred_pushdown {
@@ -414,6 +612,10 @@ digraph axiom_dependencies {
     normalizeExpr_equiv -> evalExprWithDb_binOp;
     normalizeExpr_equiv -> evalExprWithDb_unaryOp;
 
+    // --- Decidable depends on normalization ---
+    decideExprEquiv_sound -> normalizeExpr_equiv;
+    decideExprEquiv_sound -> syntacticEquiv_implies_equiv;
+
     // --- Boolean simplification chains ---
     // Distribution laws depend on associativity
     evalBinOp_and_or_distrib_left -> evalBinOp_and_assoc;
@@ -421,9 +623,23 @@ digraph axiom_dependencies {
     evalBinOp_or_and_distrib_left -> evalBinOp_and_assoc;
     evalBinOp_or_and_distrib_left -> evalBinOp_or_assoc;
 
+    // Right distribution depends on left + commutativity
+    and_or_distrib_right -> evalBinOp_and_or_distrib_left;
+    and_or_distrib_right -> and_comm;
+    or_and_distrib_right -> evalBinOp_or_and_distrib_left;
+    or_and_distrib_right -> or_comm;
+
+    // Factoring laws are inverses of distribution
+    or_and_factor_left -> evalBinOp_and_or_distrib_left;
+    and_or_factor_left -> evalBinOp_or_and_distrib_left;
+
     // Absorption laws depend on distribution
     and_absorb_or -> evalBinOp_and_or_distrib_left;
     or_absorb_and -> evalBinOp_or_and_distrib_left;
+
+    // De Morgan's laws
+    not_and -> not_not;
+    not_or  -> not_not;
 
     // --- WHERE optimization depends on boolean ---
     where_true_elim  -> and_true;
@@ -440,6 +656,8 @@ digraph axiom_dependencies {
     filter_join_right -> join_comm;
     filter_join_right -> join_assoc;
     filter_pushdown_table -> filter_and;
+    push_filter_project_through_join -> filter_join_left;
+    push_filter_project_through_join -> filter_project_commute;
 
     // --- General predicate pushdown depends on filter-join axioms ---
     predicate_pushdown -> filter_join_left;
@@ -508,6 +726,13 @@ digraph axiom_dependencies {
     optimizeExpr_equiv -> and_true;
     optimizeExpr_equiv -> or_false;
 
+    // --- Optimizer local correctness ---
+    where_true_elim_correct    -> where_true_elim;
+    where_false_preserves_equiv -> where_false_empty;
+    double_neg_elim_correct    -> not_not;
+    and_false_correct          -> and_false;
+    or_true_correct            -> or_true;
+
     optimizeSelectStmt_equiv -> optimizeExpr_equiv;
     optimizeSelectStmt_equiv -> predicate_pushdown;
     optimizeSelectStmt_equiv -> filter_and;
@@ -523,12 +748,22 @@ digraph axiom_dependencies {
     join_reorder_preserves_backward -> join_assoc;
     join_reorder_preserves_backward -> cross_join_comm;
     join_reorder_preserves_backward -> cross_join_assoc;
+    join_reorder_preserves_semantics -> join_reorder_preserves_forward;
+    join_reorder_preserves_semantics -> join_reorder_preserves_backward;
 
     // --- Predicate pushdown (file) depends on filter axioms ---
     pushdown_preserves_semantics -> filter_join_left;
     pushdown_preserves_semantics -> filter_join_right;
     pushdown_preserves_semantics -> filter_pushdown_table;
     pushdown_preserves_semantics -> filter_and;
+
+    // --- IS NULL complement ---
+    is_null_is_not_null_complement -> is_null_on_null;
+    is_null_is_not_null_complement -> is_not_null_on_null;
+
+    // --- Aggregate dependencies ---
+    count_distinct_le_count -> distinct_count_le;
+    count_after_filter_le   -> count_star_nonneg;
 
     // ========================================================================
     // LEGEND
@@ -546,7 +781,7 @@ digraph axiom_dependencies {
         legend_l3a [label="Level 3: Filter Pushdown\n/ Subqueries", fillcolor="#f4e0e0", shape=box];
         legend_l3b [label="Level 3: Set Ops /\nPagination", fillcolor="#f0f4e8", shape=box];
         legend_l4 [label="Level 4: Optimizer\n(top-level)", fillcolor="#ffe0e0", shape=box];
-        legend_indep [label="Independent\n(leaf axioms)", fillcolor="#f4f0e8", shape=box];
+        legend_indep [label="Independent\n(leaf theorems)", fillcolor="#f4f0e8", shape=box];
 
         legend_l0 -> legend_l1 -> legend_l2 -> legend_l3a [style=invis];
         legend_l3a -> legend_l3b -> legend_l4 -> legend_indep [style=invis];
