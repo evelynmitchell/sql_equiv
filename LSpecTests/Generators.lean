@@ -10,8 +10,13 @@ import SqlEquiv
 open LSpec SlimCheck
 open SqlEquiv
 
-/-- SlimCheck configuration: 1000 samples per property (10× the default 100). -/
-def slimCfg : Configuration := { numInst := 1000 }
+/-- Default sample count per property (10× SlimCheck's default 100).
+    Override at runtime via the `LSPEC_SAMPLES` environment variable. -/
+def defaultNumSamples : Nat := 1000
+
+/-- Build a SlimCheck configuration with the given sample count. -/
+def mkSlimCfg (numSamples : Nat := defaultNumSamples) : Configuration :=
+  { numInst := numSamples }
 
 -- ============================================================================
 -- Simple enum generators

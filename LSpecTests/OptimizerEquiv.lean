@@ -18,18 +18,18 @@ namespace OptimizerEquiv
 -- optimizeExpr preserves semantics
 -- ============================================================================
 
-def optimizeExprTests : TestSeq :=
-  check (cfg := slimCfg) "optimizeExpr preserves semantics" (∀ e : BoundedGroundExpr,
+def optimizeExprTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "optimizeExpr preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (optimizeExpr e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
 -- normalizeExprCanonical preserves semantics and is idempotent
 -- ============================================================================
 
-def normalizeTests : TestSeq :=
-  check (cfg := slimCfg) "normalizeExprCanonical preserves semantics" (∀ e : BoundedGroundExpr,
+def normalizeTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "normalizeExprCanonical preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (normalizeExprCanonical e.expr) == evalExpr [] e.expr) $
-  check (cfg := slimCfg) "normalizeExprCanonical is idempotent" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "normalizeExprCanonical is idempotent" (∀ e : BoundedGroundExpr,
     normalizeExprCanonical (normalizeExprCanonical e.expr) ==
     normalizeExprCanonical e.expr)
 
@@ -196,30 +196,30 @@ def arithmeticSoundnessTests : TestSeq :=
 -- Individual optimizer passes
 -- ============================================================================
 
-def optimizerPassTests : TestSeq :=
-  check (cfg := slimCfg) "applyIdentityLaws preserves semantics" (∀ e : BoundedGroundExpr,
+def optimizerPassTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "applyIdentityLaws preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyIdentityLaws e.expr) == evalExpr [] e.expr) $
-  check (cfg := slimCfg) "eliminateDoubleNegation preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "eliminateDoubleNegation preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (eliminateDoubleNegation e.expr) == evalExpr [] e.expr) $
-  check (cfg := slimCfg) "applyIdempotentLaws preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "applyIdempotentLaws preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyIdempotentLaws e.expr) == evalExpr [] e.expr) $
-  check (cfg := slimCfg) "applyComplementLaws preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "applyComplementLaws preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyComplementLaws e.expr) == evalExpr [] e.expr) $
-  check (cfg := slimCfg) "simplifyArithmetic preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "simplifyArithmetic preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (simplifyArithmetic e.expr) == evalExpr [] e.expr) $
-  check (cfg := slimCfg) "applyDeMorgan preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "applyDeMorgan preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyDeMorgan e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
 -- All optimizer tests
 -- ============================================================================
 
-def allTests : TestSeq :=
-  group "optimizeExpr" optimizeExprTests $
-  group "normalizeExprCanonical" normalizeTests $
+def allTests (cfg : Configuration) : TestSeq :=
+  group "optimizeExpr" (optimizeExprTests cfg) $
+  group "normalizeExprCanonical" (normalizeTests cfg) $
   group "Identity Law Regression" identityLawRegressionTests $
   group "Bool Guard Regression" boolGuardRegressionTests $
   group "Arithmetic Soundness" arithmeticSoundnessTests $
-  group "Individual Passes" optimizerPassTests
+  group "Individual Passes" (optimizerPassTests cfg)
 
 end OptimizerEquiv

@@ -3,6 +3,7 @@
 ## Current State (after 100→1000 sample bump)
 - **76 property checks** across 3 suites (ExprAlgebra, NullSemantics, OptimizerEquiv)
 - **1000 samples** per check (76,000 total) — previously 100 samples (7,600 total)
+- Sample count configurable via `LSPEC_SAMPLES` env var (e.g., `LSPEC_SAMPLES=100` for CI)
 - Coverage limited to: expression algebra identities, NULL propagation, and 8 optimizer passes
 
 ## Coverage Gaps (prioritized)
