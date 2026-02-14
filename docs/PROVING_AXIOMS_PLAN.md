@@ -303,7 +303,7 @@ row merging is commutative/associative (modulo column ordering).
 
 ---
 
-### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms, 11 proved)
+### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms, 16 proved)
 
 **Goal:** Prove subquery evaluation properties.
 
@@ -317,12 +317,19 @@ row merging is commutative/associative (modulo column ordering).
 **Subquery WHERE (2 -- easy, 2 proved):** `subquery_where_true` (**PROVED**, PR #138),
   `subquery_where_false` (**PROVED**, PR #138 — added `selectHasAggregate` precondition)
 
-**Equivalences (4 -- medium, 2 proved):** `exists_as_count_gt_zero` (**PROVED**, PR #137),
-  `not_exists_as_count_eq_zero` (**PROVED**, PR #137), `subquery_limit_one`, `scalar_subquery_is_first`
+**Equivalences (4 -- medium, 4 proved):** `exists_as_count_gt_zero` (**PROVED**, PR #137),
+  `not_exists_as_count_eq_zero` (**PROVED**, PR #137),
+  `subquery_limit_one` (**PROVED**, PR #139),
+  `scalar_subquery_is_first` (**PROVED**, PR #139)
 
-**Advanced (4 -- hard, 1 proved, 1 removed):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
-  ~~`uncorrelated_subquery_independent`~~ (**REMOVED** as unsound, PR #137), `in_singleton_subquery`,
+**Advanced (4 -- hard, 3 proved, 1 removed):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
+  ~~`uncorrelated_subquery_independent`~~ (**REMOVED** as unsound, PR #137),
+  `in_singleton_subquery` (**PROVED**, PR #139 — added type compatibility precondition),
   `exists_monotonic` (**PROVED**, PR #137)
+
+**IN empty subquery (2 -- medium, 2 proved):**
+  `in_empty_subquery_false` (**PROVED**, PR #139 — fixed unsound EXISTS→NOT EXISTS condition, added `evalExpr row e ≠ none` precondition),
+  `not_in_empty_subquery_true` (**PROVED**, PR #139 — same precondition pattern)
 
 **Unnesting (4 -- hard):** `in_subquery_unnest_to_join`,
   `not_in_subquery_unnest_to_antijoin`, `in_subquery_implies_join_match`,
@@ -379,7 +386,7 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 35 axioms remaining (21 in Equiv/, 14 in infrastructure files), 437 theorems proved (92.6%).
+**Current totals**: 35 axioms remaining (21 in Equiv/, 6 bridge in Semantics.lean, 8 in optimizer/normalization/pushdown/join files), 442 theorems proved (92.7%).
 Axiom ratchet: 35 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
@@ -394,7 +401,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 0 | ~21 | Medium-Hard |
-| 7 | Subquery / EXISTS / IN | 11 | ~6 | Medium-Hard |
+| 7 | Subquery / EXISTS / IN | 16 | ~1 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
@@ -470,8 +477,8 @@ decision first (see "Unsound Axiom Strategy" below).
 | 30 | [#68](https://github.com/evelynmitchell/sql_equiv/issues/68) | `join_assoc` (**hardest axiom**) | 1 | Hard |
 | 31 | [#71](https://github.com/evelynmitchell/sql_equiv/issues/71) | Outer join preservation | 4 | Hard |
 | 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | **All 5 proved** (PR #135: 4; PR #137: `not_not_exists`) |
-| 33 | [#76](https://github.com/evelynmitchell/sql_equiv/issues/76) | IN subquery rules | 5 | Medium |
-| 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 7 | Medium-Hard (1 removed: `uncorrelated_subquery_independent` unsound, PR #137; `exists_as_count_gt_zero`, `not_exists_as_count_eq_zero`, `exists_monotonic` proved PR #137) |
+| 33 | [#76](https://github.com/evelynmitchell/sql_equiv/issues/76) | IN subquery rules | 5 | 3 **proved** (PR #139: `in_empty_subquery_false` fixed+proved, `not_in_empty_subquery_true`, `in_singleton_subquery`); 2 remaining (`in_subquery_as_exists`, `not_in_subquery_as_not_exists` — blocked by column qualification) |
+| 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 7 | Medium-Hard (1 removed: `uncorrelated_subquery_independent` unsound, PR #137; `exists_as_count_gt_zero`, `not_exists_as_count_eq_zero`, `exists_monotonic` proved PR #137; `scalar_subquery_is_first`, `subquery_limit_one` proved PR #139) |
 | 35 | [#77](https://github.com/evelynmitchell/sql_equiv/issues/77) | Subquery unnesting (IN->JOIN) | 4 | Hard |
 
 ### Wave 6 -- Filter pushdown + optimizer (final target)
