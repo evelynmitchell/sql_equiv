@@ -610,6 +610,20 @@ theorem evalExprWithDb_subquery (db : Database) (row : Row) (sel : SelectStmt) :
      | none => some (.null none)) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_subquery ..
 
+/-- evalExprWithDb unfolds for IN subquery expressions -/
+theorem evalExprWithDb_inSubquery (db : Database) (row : Row) (e : Expr) (neg : Bool) (sel : SelectStmt) :
+    evalExprWithDb db row (.inSubquery e neg sel) =
+    (match evalExprWithDb db row e with
+     | none => none
+     | some v =>
+       let subResult := evalSelectWithContext db row sel
+       let hasMatch := subResult.any fun subRow =>
+         match subRow.head? with
+         | some (_, subVal) => v.eq subVal == some true
+         | none => false
+       some (Value.bool (if neg then !hasMatch else hasMatch))) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_inSubquery ..
+
 /-- evalExprWithDb unfolds for case expressions -/
 theorem evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_ := by
@@ -970,6 +984,19 @@ theorem evalSelectWithContext_filter_all_false (db : Database) (outerRow : Row)
   intro hNoAgg hAllFalse
   rw [evalSelectWithContext_eq_evalSelectCore]
   exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hAllFalse
+
+/-- Infrastructure: evalSelectWithContext decomposes limit/offset into drop/take on the base result.
+    Proved via evalSelectCore bridge. -/
+theorem evalSelectWithContext_limit_offset (db : Database) (outerRow : Row)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
+    let base := evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ where_ groupBy having orderBy none none)
+    let offsetRows := match offset with | some n => base.drop n | none => base
+    match limit with | some n => offsetRows.take n | none => offsetRows := by
+  rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
+  exact evalSelectCore_limit_offset ..
 
 /-- Infrastructure: evalQuery on a simple SELECT decomposes to evalSelect.
     Proved via evalQueryCore bridge. -/
