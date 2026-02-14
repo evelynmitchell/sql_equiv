@@ -18,6 +18,7 @@ import LSpecTests.ConstantFolding
 import LSpecTests.FlattenRoundtrip
 import LSpecTests.ExprOrdering
 import LSpecTests.PredicatePushdown
+import LSpecTests.QueryOptimizer
 
 open LSpec SlimCheck
 
@@ -34,5 +35,6 @@ def main : IO UInt32 := do
     ("Constant Folding", [ConstantFolding.allTests cfg]),
     ("Flatten Roundtrip", [FlattenRoundtrip.allTests cfg]),
     ("Expression Ordering", [ExprOrdering.allTests cfg]),
-    ("Predicate Pushdown", [PredicatePushdown.allTests cfg])
+    ("Predicate Pushdown", [PredicatePushdown.allTests cfg]),
+    ("Query Optimizer", [QueryOptimizer.allTests cfg])
   ]) []
