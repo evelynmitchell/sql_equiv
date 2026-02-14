@@ -10,9 +10,9 @@ import SqlEquiv
 open LSpec SlimCheck
 open SqlEquiv
 
-/-- Default sample count per property (10× SlimCheck's default 100).
+/-- Default sample count per property (100× SlimCheck's default 100).
     Override at runtime via the `LSPEC_SAMPLES` environment variable. -/
-def defaultNumSamples : Nat := 1000
+def defaultNumSamples : Nat := 10000
 
 /-- Build a SlimCheck configuration with the given sample count. -/
 def mkSlimCfg (numSamples : Nat := defaultNumSamples) : Configuration :=

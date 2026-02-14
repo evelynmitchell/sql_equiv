@@ -26,8 +26,10 @@ def optimizeExprTests (cfg : Configuration) : TestSeq :=
 -- normalizeExprCanonical preserves semantics and is idempotent
 -- ============================================================================
 
+-- Normalization reorders AND/OR chains, which only preserves semantics for
+-- boolean-valued inputs (AND/OR associativity fails for non-bool operands).
 def normalizeTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "normalizeExprCanonical preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := cfg) "normalizeExprCanonical preserves semantics (bool)" (∀ e : BoolGroundExpr,
     evalExpr [] (normalizeExprCanonical e.expr) == evalExpr [] e.expr) $
   check (cfg := cfg) "normalizeExprCanonical is idempotent" (∀ e : BoundedGroundExpr,
     normalizeExprCanonical (normalizeExprCanonical e.expr) ==
@@ -207,7 +209,8 @@ def optimizerPassTests (cfg : Configuration) : TestSeq :=
     evalExpr [] (applyComplementLaws e.expr) == evalExpr [] e.expr) $
   check (cfg := cfg) "simplifyArithmetic preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (simplifyArithmetic e.expr) == evalExpr [] e.expr) $
-  check (cfg := cfg) "applyDeMorgan preserves semantics" (∀ e : BoundedGroundExpr,
+  -- De Morgan only preserves semantics for boolean-valued inputs
+  check (cfg := cfg) "applyDeMorgan preserves semantics (bool)" (∀ e : BoolGroundExpr,
     evalExpr [] (applyDeMorgan e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
