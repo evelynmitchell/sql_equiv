@@ -115,6 +115,52 @@ def coalesceTests (cfg : Configuration) : TestSeq :=
     evalFunc "COALESCE" [some (.null none), some (.int n)] == some (.int n))
 
 -- ============================================================================
+-- Scalar function tests (evalFunc)
+-- ============================================================================
+
+def nullifTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "NULLIF(n, n) = NULL" (∀ n : Int,
+    evalFunc "NULLIF" [some (.int n), some (.int n)] == some (.null none)) $
+  check (cfg := cfg) "NULLIF(n, n+1) = n" (∀ n : Int,
+    evalFunc "NULLIF" [some (.int n), some (.int (n + 1))] == some (.int n)) $
+  check (cfg := cfg) "NULLIF(true, false) = true" (
+    evalFunc "NULLIF" [some (.bool true), some (.bool false)] == some (.bool true)) $
+  check (cfg := cfg) "NULLIF(true, true) = NULL" (
+    evalFunc "NULLIF" [some (.bool true), some (.bool true)] == some (.null none))
+
+private def absResultNonNeg (n : Int) : Bool :=
+  match evalFunc "ABS" [some (.int n)] with
+  | some (.int m) => decide (m >= 0)
+  | _ => false
+
+def absTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "ABS(n) >= 0" (∀ n : Int, absResultNonNeg n) $
+  check (cfg := cfg) "ABS(-n) = ABS(n)" (∀ n : Int,
+    evalFunc "ABS" [some (.int (-n))] == evalFunc "ABS" [some (.int n)])
+
+def stringFuncTests : TestSeq :=
+  test "LENGTH(hello) = 5" (
+    evalFunc "LENGTH" [some (.string "hello")] == some (.int 5)) $
+  test "LENGTH empty = 0" (
+    evalFunc "LENGTH" [some (.string "")] == some (.int 0)) $
+  test "UPPER(hello) = HELLO" (
+    evalFunc "UPPER" [some (.string "hello")] == some (.string "HELLO")) $
+  test "LOWER(HELLO) = hello" (
+    evalFunc "LOWER" [some (.string "HELLO")] == some (.string "hello")) $
+  test "UPPER(LOWER(s)) = UPPER(s)" (
+    evalFunc "UPPER" [evalFunc "LOWER" [some (.string "Hello")]] ==
+    evalFunc "UPPER" [some (.string "Hello")]) $
+  test "LOWER(UPPER(s)) = LOWER(s)" (
+    evalFunc "LOWER" [evalFunc "UPPER" [some (.string "Hello")]] ==
+    evalFunc "LOWER" [some (.string "Hello")]) $
+  test "CONCAT(s, empty) = s" (
+    evalFunc "CONCAT" [some (.string "hello"), some (.string "")] ==
+    some (.string "hello")) $
+  test "CONCAT(empty, s) = s" (
+    evalFunc "CONCAT" [some (.string ""), some (.string "world")] ==
+    some (.string "world"))
+
+-- ============================================================================
 -- All NULL semantics tests
 -- ============================================================================
 
@@ -123,6 +169,9 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "Comparison NULL Propagation" (nullComparisonTests cfg) $
   group "Three-Valued Logic" (threeValuedLogicTests cfg) $
   group "IS NULL / IS NOT NULL" (isNullTests cfg) $
-  group "COALESCE" (coalesceTests cfg)
+  group "COALESCE" (coalesceTests cfg) $
+  group "NULLIF" (nullifTests cfg) $
+  group "ABS" (absTests cfg) $
+  group "String Functions" stringFuncTests
 
 end NullSemantics

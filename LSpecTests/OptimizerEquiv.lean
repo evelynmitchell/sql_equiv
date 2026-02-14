@@ -211,6 +211,31 @@ def optimizerPassTests (cfg : Configuration) : TestSeq :=
     evalExpr [] (applyDeMorgan e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
+-- Normalization convergence: commutative normal forms
+-- ============================================================================
+
+def normalizationConvergenceTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "normalize(a AND b) = normalize(b AND a)" (∀ a b : BoolGroundExpr,
+    normalizeExprCanonical (.binOp .and a.expr b.expr) ==
+    normalizeExprCanonical (.binOp .and b.expr a.expr)) $
+  check (cfg := cfg) "normalize(a OR b) = normalize(b OR a)" (∀ a b : BoolGroundExpr,
+    normalizeExprCanonical (.binOp .or a.expr b.expr) ==
+    normalizeExprCanonical (.binOp .or b.expr a.expr)) $
+  check (cfg := cfg) "normalize(a + b) = normalize(b + a)" (∀ a b : IntGroundExpr,
+    normalizeExprCanonical (.binOp .add a.expr b.expr) ==
+    normalizeExprCanonical (.binOp .add b.expr a.expr)) $
+  check (cfg := cfg) "normalize(a * b) = normalize(b * a)" (∀ a b : IntGroundExpr,
+    normalizeExprCanonical (.binOp .mul a.expr b.expr) ==
+    normalizeExprCanonical (.binOp .mul b.expr a.expr)) $
+  check (cfg := cfg) "normalize(a = b) = normalize(b = a)" (∀ a b : BoundedGroundExpr,
+    normalizeExprCanonical (.binOp .eq a.expr b.expr) ==
+    normalizeExprCanonical (.binOp .eq b.expr a.expr)) $
+  check (cfg := cfg) "optimizeExpr is idempotent" (∀ e : BoundedGroundExpr,
+    optimizeExpr (optimizeExpr e.expr) == optimizeExpr e.expr) $
+  check (cfg := cfg) "simplifyExprOnce is idempotent" (∀ e : BoundedGroundExpr,
+    simplifyExprOnce (simplifyExprOnce e.expr) == simplifyExprOnce e.expr)
+
+-- ============================================================================
 -- All optimizer tests
 -- ============================================================================
 
@@ -220,6 +245,7 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "Identity Law Regression" identityLawRegressionTests $
   group "Bool Guard Regression" boolGuardRegressionTests $
   group "Arithmetic Soundness" arithmeticSoundnessTests $
-  group "Individual Passes" (optimizerPassTests cfg)
+  group "Individual Passes" (optimizerPassTests cfg) $
+  group "Normalization Convergence" (normalizationConvergenceTests cfg)
 
 end OptimizerEquiv

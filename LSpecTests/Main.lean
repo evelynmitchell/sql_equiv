@@ -14,6 +14,10 @@ import LSpecTests.Generators
 import LSpecTests.ExprAlgebra
 import LSpecTests.NullSemantics
 import LSpecTests.OptimizerEquiv
+import LSpecTests.ConstantFolding
+import LSpecTests.FlattenRoundtrip
+import LSpecTests.ExprOrdering
+import LSpecTests.PredicatePushdown
 
 open LSpec SlimCheck
 
@@ -26,5 +30,9 @@ def main : IO UInt32 := do
   lspecIO (.ofList [
     ("Expression Algebra", [ExprAlgebra.allTests cfg]),
     ("NULL Semantics", [NullSemantics.allTests cfg]),
-    ("Optimizer Equivalence", [OptimizerEquiv.allTests cfg])
+    ("Optimizer Equivalence", [OptimizerEquiv.allTests cfg]),
+    ("Constant Folding", [ConstantFolding.allTests cfg]),
+    ("Flatten Roundtrip", [FlattenRoundtrip.allTests cfg]),
+    ("Expression Ordering", [ExprOrdering.allTests cfg]),
+    ("Predicate Pushdown", [PredicatePushdown.allTests cfg])
   ]) []
