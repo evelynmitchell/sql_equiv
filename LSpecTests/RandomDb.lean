@@ -101,9 +101,11 @@ instance : Shrinkable RandomDb where
     -- Remove one order row at a time
     (List.range rdb.orders.length).map (fun i =>
       ⟨rdb.users, rdb.orders.take i ++ rdb.orders.drop (i + 1), rdb.products⟩) ++
-    -- Remove one product row at a time
-    (List.range rdb.products.length).map (fun i =>
-      ⟨rdb.users, rdb.orders, rdb.products.take i ++ rdb.products.drop (i + 1)⟩)
+    -- Remove one product row at a time, but never shrink below 1 product
+    (List.range rdb.products.length).filterMap (fun i =>
+      let remainingProducts := rdb.products.take i ++ rdb.products.drop (i + 1)
+      if remainingProducts.isEmpty then none
+      else some ⟨rdb.users, rdb.orders, remainingProducts⟩)
 
 instance : SampleableExt RandomDb :=
   SampleableExt.mkSelfContained genRandomDb

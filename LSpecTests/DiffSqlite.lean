@@ -42,22 +42,24 @@ private def sqliteSetupSql : String :=
 -- SQLite query execution
 -- ============================================================================
 
-/-- Run SQL against sqlite3 and return raw stdout. -/
+/-- Run SQL against sqlite3 via stdin and return raw stdout. -/
 private def runSqliteRaw (querySql : String) : IO (Except String String) := do
   let fullSql := sqliteSetupSql ++ querySql ++ ";\n"
-  let ts ← IO.monoMsNow
-  let r ← IO.rand 0 1000000000
-  let tmpPath := s!"/tmp/sql_equiv_diff_{ts}_{r}.sql"
-  IO.FS.writeFile tmpPath fullSql
-  try
-    let result ← IO.Process.output {
-      cmd := "bash"
-      args := #["-c", s!"sqlite3 :memory: -header -separator '|' -nullvalue 'NULL' < {tmpPath}"]
-    }
-    if result.exitCode != 0 then return .error s!"sqlite3 error: {result.stderr}"
-    return .ok result.stdout
-  finally
-    IO.FS.removeFile tmpPath |>.catchExceptions fun _ => pure ()
+  let child ← IO.Process.spawn {
+    cmd := "sqlite3"
+    args := #[":memory:", "-header", "-separator", "|", "-nullvalue", "NULL"]
+    stdin := .piped
+    stdout := .piped
+    stderr := .piped
+  }
+  child.stdin.putStr fullSql
+  child.stdin.flush
+  let (_stdin, child) ← child.takeStdin
+  let stdout ← child.stdout.readToEnd
+  let stderr ← child.stderr.readToEnd
+  let exitCode ← child.wait
+  if exitCode != 0 then return .error s!"sqlite3 error: {stderr}"
+  return .ok stdout
 
 -- ============================================================================
 -- Output parsing
@@ -99,11 +101,11 @@ private def parseSqliteOutput (output : String) : Table :=
 -- Result comparison
 -- ============================================================================
 
-/-- Strip qualifier prefix from column names (e.g., "users.age" → "age"). -/
+/-- Strip qualifier prefix(es) from column names (e.g., "users.age" or
+    "alias.users.age" → "age"). -/
 private def stripQualifier (name : String) : String :=
-  match name.splitOn "." with
-  | [_, col] => col
-  | _ => name
+  let parts := name.splitOn "."
+  parts.getLastD name
 
 /-- Normalize a row by stripping qualifiers from column names. -/
 private def normalizeRow (row : Row) : Row :=
@@ -163,8 +165,19 @@ private def diffFullTest (description : String) (sel : SelectStmt) (sqlQuery : S
 -- Test definitions
 -- ============================================================================
 
-/-- All differential tests against SQLite. Returns IO TestSeq. -/
+/-- Check if sqlite3 is available on PATH. -/
+private def sqlite3Available : IO Bool := do
+  try
+    let result ← IO.Process.output { cmd := "sqlite3", args := #["--version"] }
+    return result.exitCode == 0
+  catch _ => return false
+
+/-- All differential tests against SQLite. Returns IO TestSeq.
+    Skips all tests with a message if sqlite3 is not available. -/
 def runAllTests : IO TestSeq := do
+  unless ← sqlite3Available do
+    IO.eprintln "  [DiffSqlite] sqlite3 not found on PATH, skipping differential tests"
+    return test "sqlite3 not available (skipped)" true
   let results ← [
     -- Simple WHERE queries
     diffCountTest "WHERE age > 25" (mkWhereAge .gt 25)

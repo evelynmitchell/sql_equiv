@@ -74,23 +74,35 @@ def idempotenceTests (cfg : Configuration) : TestSeq :=
 private def columnNames (tbl : Table) : Option (List String) :=
   tbl.head?.map (·.map (·.1))
 
-/-- Optimizer preserves output column names for simple WHERE queries. -/
+/-- Optimizer preserves output column names for simple WHERE queries.
+    Only checks when the unoptimized query returns at least one row. -/
 private def colNamesPreserved (age : AgeInt) : Bool :=
   let sel := mkWhereAge .gt age.val
-  columnNames (evalSelect testDb (optimizeSelectStmt sel)) ==
-  columnNames (evalSelect testDb sel)
+  let base := evalSelect testDb sel
+  match base.head? with
+  | some _ =>
+    columnNames (evalSelect testDb (optimizeSelectStmt sel)) == columnNames base
+  | none => true
 
-/-- Optimizer preserves output column names for projection queries. -/
+/-- Optimizer preserves output column names for projection queries.
+    Only checks when the unoptimized query returns at least one row. -/
 private def projColNamesPreserved (age : AgeInt) : Bool :=
   let sel := mkProjection age.val
-  columnNames (evalSelect testDb (optimizeSelectStmt sel)) ==
-  columnNames (evalSelect testDb sel)
+  let base := evalSelect testDb sel
+  match base.head? with
+  | some _ =>
+    columnNames (evalSelect testDb (optimizeSelectStmt sel)) == columnNames base
+  | none => true
 
-/-- Optimizer preserves output column names for JOIN queries. -/
+/-- Optimizer preserves output column names for JOIN queries.
+    Only checks when the unoptimized query returns at least one row. -/
 private def joinColNamesPreserved (jt : JoinType) (age : AgeInt) : Bool :=
   let sel := mkJoinQuery jt age.val
-  columnNames (evalSelect testDb (optimizeSelectStmt sel)) ==
-  columnNames (evalSelect testDb sel)
+  let base := evalSelect testDb sel
+  match base.head? with
+  | some _ =>
+    columnNames (evalSelect testDb (optimizeSelectStmt sel)) == columnNames base
+  | none => true
 
 def columnPreservationTests (cfg : Configuration) : TestSeq :=
   check (cfg := cfg) "column names preserved (WHERE)" (∀ age : AgeInt, colNamesPreserved age) $

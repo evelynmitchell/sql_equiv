@@ -143,8 +143,26 @@ private partial def genRandomQuery : Gen RandomQuery := do
   let distinct ← Gen.chooseAny Bool
   pure ⟨.mk distinct items (some (.table ⟨"users", none⟩)) where_ [] none orderBy limit offset⟩
 
+/-- Structural shrinking: drop WHERE, simplify projection, remove ORDER BY/LIMIT/OFFSET. -/
+private def shrinkRandomQuery (q : RandomQuery) : List RandomQuery :=
+  match q.stmt with
+  | .mk distinct items from_ where_ groupBy having orderBy limit offset =>
+    let mk := fun d i w ob l o => RandomQuery.mk (.mk d i from_ w groupBy having ob l o)
+    -- Drop WHERE clause
+    (if where_.isSome then [mk distinct items none orderBy limit offset] else []) ++
+    -- Replace projection with SELECT *
+    (match items with | [.star none] => [] | _ => [mk distinct [.star none] where_ orderBy limit offset]) ++
+    -- Drop ORDER BY
+    (if !orderBy.isEmpty then [mk distinct items where_ [] limit offset] else []) ++
+    -- Drop LIMIT
+    (if limit.isSome then [mk distinct items where_ orderBy none offset] else []) ++
+    -- Drop OFFSET
+    (if offset.isSome then [mk distinct items where_ orderBy limit none] else []) ++
+    -- Drop DISTINCT
+    (if distinct then [mk false items where_ orderBy limit offset] else [])
+
 instance : Shrinkable RandomQuery where
-  shrink _ := []
+  shrink q := shrinkRandomQuery q
 
 instance : SampleableExt RandomQuery :=
   SampleableExt.mkSelfContained genRandomQuery
