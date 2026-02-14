@@ -686,9 +686,10 @@ axiom not_in_empty_subquery_true (e : Expr) (sel : SelectStmt) :
               (some (Expr.inSubquery e true sel))
 
 /-- Scalar subquery returning empty = NULL -/
-axiom scalar_subquery_empty_null (db : Database) (row : Row) (sel : SelectStmt)
+theorem scalar_subquery_empty_null (db : Database) (row : Row) (sel : SelectStmt)
     (h : evalSelectWithContext db row sel = []) :
-    evalExprWithDb db row (Expr.subquery sel) = some (.null none)
+    evalExprWithDb db row (Expr.subquery sel) = some (.null none) := by
+  rw [evalExprWithDb_subquery, h]; rfl
 
 /-- EXISTS can be rewritten as COUNT(*) > 0 (semantic equivalence) -/
 theorem exists_as_count_gt_zero (db : Database) (row : Row) (sel : SelectStmt) :
@@ -772,21 +773,30 @@ theorem exists_monotonic (db : Database) (row : Row) (sel1 sel2 : SelectStmt)
     | cons _ _ => rfl
 
 /-- Adding WHERE TRUE to subquery doesn't change result -/
-axiom subquery_where_true (db : Database) (row : Row)
+theorem subquery_where_true (db : Database) (row : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     let sel := SelectStmt.mk distinct items from_ none groupBy having orderBy limit offset
     let selWithTrue := SelectStmt.mk distinct items from_ (some (.lit (.bool true))) groupBy having orderBy limit offset
-    evalSelectWithContext db row sel = evalSelectWithContext db row selWithTrue
+    evalSelectWithContext db row sel = evalSelectWithContext db row selWithTrue := by
+  simp only
+  apply evalSelectWithContext_where_congr
+  intro r
+  simp [evalExprWithDb_lit]
 
-/-- Adding WHERE FALSE to subquery makes it empty -/
-axiom subquery_where_false (db : Database) (row : Row)
+/-- Adding WHERE FALSE to subquery makes it empty (requires no aggregates) -/
+theorem subquery_where_false (db : Database) (row : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (hNoAgg : selectHasAggregate items = false) :
     let selWithFalse := SelectStmt.mk distinct items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset
-    evalSelectWithContext db row selWithFalse = []
+    evalSelectWithContext db row selWithFalse = [] := by
+  simp only
+  apply evalSelectWithContext_filter_all_false
+  · exact hNoAgg
+  · intro r; simp [evalExprWithDb_lit]
 
 /-- IN with single-value subquery is equivalent to equality -/
 axiom in_singleton_subquery (db : Database) (row : Row) (e : Expr) (sel : SelectStmt)

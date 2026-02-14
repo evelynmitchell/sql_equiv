@@ -244,6 +244,15 @@ theorem evalExprCore_exists (db : Database) (row : Row)
      some (Value.bool (if neg then !hasExists else hasExists))) := by
   simp [evalExprCore]
 
+/-- evalExprCore unfolds for scalar subquery expressions -/
+theorem evalExprCore_subquery (db : Database) (row : Row)
+    (sqe : Database → Row → SelectStmt → Table) (sel : SelectStmt) :
+    evalExprCore db row sqe (.subquery sel) =
+    (match (sqe db row sel).head? with
+     | some subRow => subRow.head?.map (·.2)
+     | none => some (.null none)) := by
+  simp [evalExprCore]
+
 -- ============================================================================
 -- Equational Theorems for evalExprCore CASE expression
 -- ============================================================================

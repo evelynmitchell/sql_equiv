@@ -602,6 +602,14 @@ theorem evalExprWithDb_exists (db : Database) (row : Row) (neg : Bool) (sel : Se
      some (Value.bool (if neg then !hasExists else hasExists))) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_exists ..
 
+/-- evalExprWithDb unfolds for scalar subquery expressions -/
+theorem evalExprWithDb_subquery (db : Database) (row : Row) (sel : SelectStmt) :
+    evalExprWithDb db row (Expr.subquery sel) =
+    (match (evalSelectWithContext db row sel).head? with
+     | some subRow => subRow.head?.map (·.2)
+     | none => some (.null none)) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_subquery ..
+
 /-- evalExprWithDb unfolds for case expressions -/
 theorem evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_ := by
@@ -860,6 +868,18 @@ axiom evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
     (fun items => selectHasAggregate items)
     sel
 
+/-- Bridge: evalSelectWithContext equals evalSelectCore instantiated with all partial def callbacks -/
+axiom evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row) (sel : SelectStmt) :
+  evalSelectWithContext db outerRow sel = evalSelectCore db outerRow evalFrom evalExprWithDb
+    (fun db row item => evalSelectItem db row item)
+    (fun db groupRows sampleRow item => evalSelectItemWithAgg db groupRows sampleRow item)
+    (fun db groupRows sampleRow cond => evalExprWithAgg db groupRows sampleRow cond)
+    (fun db r1 r2 items => compareByOrderItems db r1 r2 items)
+    (fun db row partition sorted idx e => evalExprWithWindow db row partition sorted idx e)
+    (fun items => selectHasWindowFn items)
+    (fun items => selectHasAggregate items)
+    sel
+
 -- ============================================================================
 -- Infrastructure theorems for evalSelect (proved via evalSelectCore bridge)
 -- ============================================================================
@@ -917,6 +937,38 @@ theorem evalSelect_filter_all_false (db : Database)
   evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
   intro hNoAgg hAllFalse
   rw [evalSelect_eq_evalSelectCore]
+  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hAllFalse
+
+-- ============================================================================
+-- Infrastructure theorems for evalSelectWithContext (proved via evalSelectCore bridge)
+-- ============================================================================
+
+/-- Infrastructure: WHERE clause congr for evalSelectWithContext (correlated subqueries).
+    Proved via evalSelectCore bridge. -/
+theorem evalSelectWithContext_where_congr (db : Database) (outerRow : Row)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (w1 w2 : Option Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  (∀ row : Row,
+    (match w1 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true) =
+    (match w2 with | some c => evalExprWithDb db row c == some (Value.bool true) | none => true)) →
+  evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ w1 groupBy having orderBy limit offset) =
+  evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ w2 groupBy having orderBy limit offset) := by
+  intro hCongr
+  rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
+  exact evalSelectCore_where_congr _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hCongr
+
+/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates.
+    For evalSelectWithContext (correlated subqueries). Proved via evalSelectCore bridge. -/
+theorem evalSelectWithContext_filter_all_false (db : Database) (outerRow : Row)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (cond : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+  selectHasAggregate items = false →
+  (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
+  evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
+  intro hNoAgg hAllFalse
+  rw [evalSelectWithContext_eq_evalSelectCore]
   exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hAllFalse
 
 /-- Infrastructure: evalQuery on a simple SELECT decomposes to evalSelect.
