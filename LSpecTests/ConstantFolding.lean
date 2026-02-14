@@ -35,32 +35,79 @@ private def foldLogAgrees (op : BinOp) (l r : Value) : Bool :=
   | none => true
 
 -- ============================================================================
--- Constant fold preserves semantics (random)
+-- Per-op stratified helpers (avoid match inside check — Checkable can't synth)
 -- ============================================================================
 
-def constantFoldTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "constantFoldBinOp preserves semantics" (∀ op : BinOp, ∀ l r : BoundedGroundExpr,
-    evalExpr [] (constantFoldBinOp op l.expr r.expr) ==
-    evalExpr [] (.binOp op l.expr r.expr)) $
-  check (cfg := cfg) "constantFoldUnaryOp preserves semantics" (∀ op : UnaryOp, ∀ e : BoundedGroundExpr,
-    evalExpr [] (constantFoldUnaryOp op e.expr) ==
-    evalExpr [] (.unaryOp op e.expr)) $
+private def constantFoldBinOpOk (op : BinOp) (l r : BoundedGroundExpr) : Bool :=
+  evalExpr [] (constantFoldBinOp op l.expr r.expr) ==
+  evalExpr [] (.binOp op l.expr r.expr)
+
+private def constantFoldUnaryOpOk (op : UnaryOp) (e : BoundedGroundExpr) : Bool :=
+  evalExpr [] (constantFoldUnaryOp op e.expr) ==
+  evalExpr [] (.unaryOp op e.expr)
+
+-- ============================================================================
+-- Per-op constantFoldBinOp: each op gets full sample budget on Expr × Expr
+-- ============================================================================
+
+def constantFoldBinOpTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "constantFoldBinOp .add" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .add l r) $
+  check (cfg := cfg) "constantFoldBinOp .sub" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .sub l r) $
+  check (cfg := cfg) "constantFoldBinOp .mul" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .mul l r) $
+  check (cfg := cfg) "constantFoldBinOp .div" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .div l r) $
+  check (cfg := cfg) "constantFoldBinOp .mod" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .mod l r) $
+  check (cfg := cfg) "constantFoldBinOp .eq" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .eq l r) $
+  check (cfg := cfg) "constantFoldBinOp .ne" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .ne l r) $
+  check (cfg := cfg) "constantFoldBinOp .lt" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .lt l r) $
+  check (cfg := cfg) "constantFoldBinOp .le" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .le l r) $
+  check (cfg := cfg) "constantFoldBinOp .gt" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .gt l r) $
+  check (cfg := cfg) "constantFoldBinOp .ge" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .ge l r) $
+  check (cfg := cfg) "constantFoldBinOp .and" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .and l r) $
+  check (cfg := cfg) "constantFoldBinOp .or" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .or l r) $
+  check (cfg := cfg) "constantFoldBinOp .concat" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .concat l r) $
+  check (cfg := cfg) "constantFoldBinOp .like" (∀ l r : BoundedGroundExpr, constantFoldBinOpOk .like l r)
+
+-- ============================================================================
+-- Per-op constantFoldUnaryOp: each op gets full sample budget
+-- ============================================================================
+
+def constantFoldUnaryOpTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "constantFoldUnaryOp .not" (∀ e : BoundedGroundExpr, constantFoldUnaryOpOk .not e) $
+  check (cfg := cfg) "constantFoldUnaryOp .neg" (∀ e : BoundedGroundExpr, constantFoldUnaryOpOk .neg e) $
+  check (cfg := cfg) "constantFoldUnaryOp .isNull" (∀ e : BoundedGroundExpr, constantFoldUnaryOpOk .isNull e) $
+  check (cfg := cfg) "constantFoldUnaryOp .isNotNull" (∀ e : BoundedGroundExpr, constantFoldUnaryOpOk .isNotNull e)
+
+-- ============================================================================
+-- simplifyExprOnce (no op parameter — already gets full budget)
+-- ============================================================================
+
+def simplifyExprOnceTests (cfg : Configuration) : TestSeq :=
   check (cfg := cfg) "simplifyExprOnce preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (simplifyExprOnce e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
--- Fold helpers are sound w.r.t. evalBinOp (random)
+-- Per-op fold agreement: only test relevant ops per fold function
 -- (soundness-only: `none` means the fold doesn't handle that op/type combo,
 -- so we only check that when a fold *does* produce a value, it matches eval)
 -- ============================================================================
 
 def foldAgreementTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "foldArithmetic sound w.r.t. evalBinOp (none = not handled)"
-    (∀ op : BinOp, ∀ l r : Value, foldArithAgrees op l r) $
-  check (cfg := cfg) "foldComparison sound w.r.t. evalBinOp (none = not handled)"
-    (∀ op : BinOp, ∀ l r : Value, foldCompAgrees op l r) $
-  check (cfg := cfg) "foldLogical sound w.r.t. evalBinOp (none = not handled)"
-    (∀ op : BinOp, ∀ l r : Value, foldLogAgrees op l r)
+  -- foldArithmetic: handles .add, .sub, .mul, .div, .mod
+  check (cfg := cfg) "foldArithmetic .add sound" (∀ l r : Value, foldArithAgrees .add l r) $
+  check (cfg := cfg) "foldArithmetic .sub sound" (∀ l r : Value, foldArithAgrees .sub l r) $
+  check (cfg := cfg) "foldArithmetic .mul sound" (∀ l r : Value, foldArithAgrees .mul l r) $
+  check (cfg := cfg) "foldArithmetic .div sound" (∀ l r : Value, foldArithAgrees .div l r) $
+  check (cfg := cfg) "foldArithmetic .mod sound" (∀ l r : Value, foldArithAgrees .mod l r) $
+  -- foldComparison: handles .eq, .ne, .lt, .le, .gt, .ge
+  check (cfg := cfg) "foldComparison .eq sound" (∀ l r : Value, foldCompAgrees .eq l r) $
+  check (cfg := cfg) "foldComparison .ne sound" (∀ l r : Value, foldCompAgrees .ne l r) $
+  check (cfg := cfg) "foldComparison .lt sound" (∀ l r : Value, foldCompAgrees .lt l r) $
+  check (cfg := cfg) "foldComparison .le sound" (∀ l r : Value, foldCompAgrees .le l r) $
+  check (cfg := cfg) "foldComparison .gt sound" (∀ l r : Value, foldCompAgrees .gt l r) $
+  check (cfg := cfg) "foldComparison .ge sound" (∀ l r : Value, foldCompAgrees .ge l r) $
+  -- foldLogical: handles .and, .or
+  check (cfg := cfg) "foldLogical .and sound" (∀ l r : Value, foldLogAgrees .and l r) $
+  check (cfg := cfg) "foldLogical .or sound" (∀ l r : Value, foldLogAgrees .or l r)
 
 -- ============================================================================
 -- Exhaustive fold tests: all BinOp × representative Value combinations
@@ -135,8 +182,10 @@ def idempotenceTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def allTests (cfg : Configuration) : TestSeq :=
-  group "Constant Fold Semantics" (constantFoldTests cfg) $
-  group "Fold Agreement (random)" (foldAgreementTests cfg) $
+  group "Per-Op constantFoldBinOp" (constantFoldBinOpTests cfg) $
+  group "Per-Op constantFoldUnaryOp" (constantFoldUnaryOpTests cfg) $
+  group "simplifyExprOnce" (simplifyExprOnceTests cfg) $
+  group "Per-Op Fold Agreement" (foldAgreementTests cfg) $
   group "Idempotence" (idempotenceTests cfg) $
   group "Exhaustive BinOp Fold" exhaustiveBinOpFoldTests $
   group "Exhaustive UnaryOp Fold" exhaustiveUnaryOpFoldTests $
