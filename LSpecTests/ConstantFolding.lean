@@ -92,12 +92,13 @@ def simplifyExprOnceTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def foldAgreementTests (cfg : Configuration) : TestSeq :=
-  -- foldArithmetic: handles .add, .sub, .mul, .div, .mod
+  -- foldArithmetic: handles .add, .sub, .mul, .div, .mod, .concat
   check (cfg := cfg) "foldArithmetic .add sound" (∀ l r : Value, foldArithAgrees .add l r) $
   check (cfg := cfg) "foldArithmetic .sub sound" (∀ l r : Value, foldArithAgrees .sub l r) $
   check (cfg := cfg) "foldArithmetic .mul sound" (∀ l r : Value, foldArithAgrees .mul l r) $
   check (cfg := cfg) "foldArithmetic .div sound" (∀ l r : Value, foldArithAgrees .div l r) $
   check (cfg := cfg) "foldArithmetic .mod sound" (∀ l r : Value, foldArithAgrees .mod l r) $
+  check (cfg := cfg) "foldArithmetic .concat sound" (∀ l r : Value, foldArithAgrees .concat l r) $
   -- foldComparison: handles .eq, .ne, .lt, .le, .gt, .ge
   check (cfg := cfg) "foldComparison .eq sound" (∀ l r : Value, foldCompAgrees .eq l r) $
   check (cfg := cfg) "foldComparison .ne sound" (∀ l r : Value, foldCompAgrees .ne l r) $
