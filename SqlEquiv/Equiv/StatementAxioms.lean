@@ -663,8 +663,13 @@ theorem not_exists_nonempty_false (db : Database) (row : Row) (sel : SelectStmt)
   simp [hne]
 
 /-- Double negation: NOT NOT EXISTS = EXISTS -/
-axiom not_not_exists (sel : SelectStmt) :
-    Expr.exists true sel ≃ₑ Expr.unaryOp .not (Expr.exists false sel)
+theorem not_not_exists (sel : SelectStmt) :
+    Expr.exists true sel ≃ₑ Expr.unaryOp .not (Expr.exists false sel) := by
+  intro row
+  simp only [evalExpr, evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
+  cases evalSelectWithContext (fun _ => []) row sel with
+  | nil => rfl
+  | cons _ _ => rfl
 
 /-- x IN (empty subquery) = FALSE -/
 axiom in_empty_subquery_false (e : Expr) (sel : SelectStmt) :
@@ -686,16 +691,26 @@ axiom scalar_subquery_empty_null (db : Database) (row : Row) (sel : SelectStmt)
     evalExprWithDb db row (Expr.subquery sel) = some (.null none)
 
 /-- EXISTS can be rewritten as COUNT(*) > 0 (semantic equivalence) -/
-axiom exists_as_count_gt_zero (db : Database) (row : Row) (sel : SelectStmt) :
+theorem exists_as_count_gt_zero (db : Database) (row : Row) (sel : SelectStmt) :
     let existsResult := evalExprWithDb db row (Expr.exists false sel)
     let subRows := evalSelectWithContext db row sel
-    existsResult = some (.bool (subRows.length > 0))
+    existsResult = some (.bool (subRows.length > 0)) := by
+  simp only
+  rw [evalExprWithDb_exists]
+  cases evalSelectWithContext db row sel with
+  | nil => rfl
+  | cons _ _ => rfl
 
 /-- NOT EXISTS can be rewritten as COUNT(*) = 0 (semantic equivalence) -/
-axiom not_exists_as_count_eq_zero (db : Database) (row : Row) (sel : SelectStmt) :
+theorem not_exists_as_count_eq_zero (db : Database) (row : Row) (sel : SelectStmt) :
     let existsResult := evalExprWithDb db row (Expr.exists true sel)
     let subRows := evalSelectWithContext db row sel
-    existsResult = some (.bool (subRows.length == 0))
+    existsResult = some (.bool (subRows.length == 0)) := by
+  simp only
+  rw [evalExprWithDb_exists]
+  cases evalSelectWithContext db row sel with
+  | nil => rfl
+  | cons _ _ => rfl
 
 /-- IN subquery is equivalent to EXISTS with equality condition.
     x IN (SELECT col FROM t) ≡ EXISTS (SELECT 1 FROM t WHERE t.col = x) -/
@@ -724,14 +739,6 @@ axiom not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
         [] none [] none none)
     evalExprWithDb db row notInSub = evalExprWithDb db row notExistsSub
 
-/-- Uncorrelated subquery can be evaluated independently of outer row.
-    If a subquery doesn't reference any columns from the outer query,
-    its result is the same regardless of the outer row context. -/
-axiom uncorrelated_subquery_independent (db : Database) (row1 row2 : Row) (sel : SelectStmt) :
-    -- Assuming sel doesn't reference columns from the outer context
-    -- (this is a semantic precondition)
-    evalSelectWithContext db row1 sel = evalSelectWithContext db row2 sel
-
 /-- Subquery with LIMIT 1 returns at most one row -/
 axiom subquery_limit_one (db : Database) (row : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
@@ -749,11 +756,20 @@ axiom scalar_subquery_is_first (db : Database) (row : Row) (sel : SelectStmt) :
       | none => some (.null none)
 
 /-- EXISTS is monotonic: more rows in subquery doesn't change TRUE to FALSE -/
-axiom exists_monotonic (db : Database) (row : Row) (sel1 sel2 : SelectStmt)
+theorem exists_monotonic (db : Database) (row : Row) (sel1 sel2 : SelectStmt)
     (h : ∀ r ∈ evalSelectWithContext db row sel1,
          r ∈ evalSelectWithContext db row sel2) :
     evalExprWithDb db row (Expr.exists false sel1) = some (.bool true) →
-    evalExprWithDb db row (Expr.exists false sel2) = some (.bool true)
+    evalExprWithDb db row (Expr.exists false sel2) = some (.bool true) := by
+  rw [evalExprWithDb_exists, evalExprWithDb_exists]
+  intro hprem
+  cases hsel1 : evalSelectWithContext db row sel1 with
+  | nil => simp [hsel1] at hprem
+  | cons r rs =>
+    have hr := h r (hsel1 ▸ List.mem_cons_self ..)
+    cases hsel2 : evalSelectWithContext db row sel2 with
+    | nil => exact absurd hsel2 (List.ne_nil_of_mem hr)
+    | cons _ _ => rfl
 
 /-- Adding WHERE TRUE to subquery doesn't change result -/
 axiom subquery_where_true (db : Database) (row : Row)

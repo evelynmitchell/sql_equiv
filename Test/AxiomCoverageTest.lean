@@ -1059,16 +1059,6 @@ def subqueryTests : List TestResult :=
     else .fail "not_exists_as_count_eq_zero"
       s!"NOT EXISTS={showOptVal notExistsResult}, expected={showOptVal expected}",
 
-    -- uncorrelated_subquery_independent: same result regardless of outer row
-    -- Use a subquery that only references its own table columns, not outer context
-    let uncorrelatedSel := SelectStmt.mk false
-      [.exprItem (.lit (.int 1)) (some "one")]
-      none none [] none [] none none
-    let r1 := evalSelectWithContext testDb [("x", .int 1)] uncorrelatedSel
-    let r2 := evalSelectWithContext testDb [("x", .int 99)] uncorrelatedSel
-    if r1 == r2 then .pass "uncorrelated_subquery_independent"
-    else .fail "uncorrelated_subquery_independent" "Different results for different outer rows",
-
     -- subquery_limit_one: LIMIT 1 => at most 1 row
     let selLimit1 := SelectStmt.mk false [.star none]
       (some (.table ⟨"users", none⟩)) none [] none [] (some 1) none
