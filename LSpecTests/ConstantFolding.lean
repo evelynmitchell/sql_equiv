@@ -114,9 +114,10 @@ def foldAgreementTests (cfg : Configuration) : TestSeq :=
 -- Exhaustive fold tests: all BinOp × representative Value combinations
 -- ============================================================================
 
-/-- Representative values covering every Value constructor and edge cases. -/
+/-- Representative values covering every Value constructor, typed NULLs, and edge cases. -/
 private def reprValues : List Value :=
-  [.null none, .bool true, .bool false,
+  [.null none, .null (some .int), .null (some .string), .null (some .bool),
+   .bool true, .bool false,
    .int 0, .int 1, .int (-1), .int 42,
    .string "", .string "hello"]
 
