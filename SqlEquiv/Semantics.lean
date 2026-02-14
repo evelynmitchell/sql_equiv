@@ -1106,6 +1106,23 @@ theorem evalSelect_filter_idempotent (db : Database) (items : List SelectItem) (
   · intro db' row; exact evalSelectItem_star db' row
   · intro sel alias; exact evalFrom_subquery_core db sel alias
 
+/-- Infrastructure: filter_pushdown_table at the evalSelect level.
+    SELECT items FROM from_ WHERE filter ... = SELECT items FROM (SELECT * FROM from_ WHERE filter) AS alias ... -/
+theorem evalSelect_filter_pushdown_table (db : Database) (items : List SelectItem)
+    (from_ : Option FromClause) (alias_ : String) (filter : Expr)
+    (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items from_ (some filter) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items
+      (some (.subquery (.mk false [.star none] from_ (some filter) [] none [] none none) alias_))
+      none groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_pushdown_table
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro sel alias; exact evalFrom_subquery_core db sel alias
+
 /-- Infrastructure: SELECT * FROM from_ WHERE p (all trivial options) = filter of base rows. -/
 theorem evalSelect_star_where_eq_filter (db : Database) (from_ : Option FromClause) (p : Expr) :
     evalSelect db (.mk false [.star none] from_ (some p) [] none [] none none) =

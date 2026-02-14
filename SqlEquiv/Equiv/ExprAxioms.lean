@@ -249,7 +249,9 @@ theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Opt
   simp [h]
 
 /-- Inner join is commutative up to row permutation.
-    Axiom: swapping join order preserves rows. -/
+    Axiom: Blocked — needs column disjointness precondition. Without it,
+    `List.lookup k (lr ++ rr) ≠ List.lookup k (rr ++ lr)` when `k` appears
+    in both tables, so the join condition may evaluate differently on swapped rows. -/
 axiom join_comm (db : Database) (a b : FromClause) (cond : Expr) :
     ∀ row ∈ evalFrom db (.join a .inner b (some cond)),
     ∃ row2 ∈ evalFrom db (.join b .inner a (some cond)),

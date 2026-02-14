@@ -37,12 +37,12 @@ Level 4: Optimizer Axioms (target)
 Level 3: Filter/Projection Axioms
 ├── filter_join_left
 ├── filter_join_right
-├── filter_pushdown_table
-└── filter_and
+├── filter_pushdown_table ✓ (Batch 22)
+└── filter_and ✓ (PR #147)
          ↓ depends on
 Level 2: Join Algebra Axioms
-├── join_comm_full
-├── join_assoc
+├── join_comm_full ✗ (DELETED — unsound, Batch 22)
+├── join_assoc (blocked: needs column disjointness)
 ├── cross_join_comm ✓ (PR #140)
 └── cross_join_assoc ✓ (PR #140)
          ↓ depends on
@@ -292,8 +292,8 @@ and empty-table behavior.
   `cross_join_assoc_cardinality`, `inner_join_cardinality_le`,
   `left_join_cardinality_ge`, `right_join_cardinality_ge`
 
-**Semantics (5 -- hard):** `join_comm`, `join_comm_full`, ~~`cross_join_comm`~~ ✓ PR #140,
-  `join_assoc`, ~~`cross_join_assoc`~~ ✓ PR #140
+**Semantics (4 -- hard):** `join_comm`, ~~`join_comm_full`~~ ✗ DELETED (unsound, Batch 22),
+  ~~`cross_join_comm`~~ ✓ PR #140, `join_assoc`, ~~`cross_join_assoc`~~ ✓ PR #140
 
 **Advanced (5 -- hard):** `inner_join_to_where`, `left_join_preserves_left`,
   `right_join_preserves_right`, `inner_subset_cross`,
@@ -364,10 +364,10 @@ row merging is commutative/associative (modulo column ordering).
 **Goal:** Prove predicates can be pushed into join operands.
 
 **Target axioms:**
-- `filter_join_left`, `filter_join_right`, `filter_pushdown_table`
+- `filter_join_left`, `filter_join_right`, ~~`filter_pushdown_table`~~ ✓ (Batch 22)
 
-**Approach:** Use column reference tracking from `exprReferencesOnlyFrom`,
-show filter evaluation only depends on referenced columns.
+**Approach:** `filter_join_left`/`filter_join_right` blocked — `exprReferencesOnlyFrom`
+is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 **Estimated complexity:** High.
 
@@ -390,8 +390,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 30 axioms remaining (15 in Equiv/, 15 in infrastructure files), 462 theorems proved (93.9%).
-Axiom ratchet: 30 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 28 axioms remaining (13 in Equiv/, 15 in infrastructure files), 465 theorems proved (94.3%).
+Axiom ratchet: 28 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -477,7 +477,7 @@ decision first (see "Unsound Axiom Strategy" below).
 | 26 | [#70](https://github.com/evelynmitchell/sql_equiv/issues/70) | Join edge cases (empty, TRUE/FALSE) | 7 | Medium |
 | 27 | [#69](https://github.com/evelynmitchell/sql_equiv/issues/69) | Join cardinality bounds | 7 | Medium |
 | 28 | [#67](https://github.com/evelynmitchell/sql_equiv/issues/67) | `cross_join_comm`, `cross_join_assoc` | 2 | **Proved** (PR #140) |
-| 29 | [#66](https://github.com/evelynmitchell/sql_equiv/issues/66) | `join_comm`, `join_comm_full` | 2 | Hard |
+| 29 | [#66](https://github.com/evelynmitchell/sql_equiv/issues/66) | `join_comm`, ~~`join_comm_full`~~ ✗ DELETED | 1 | Hard (blocked) |
 | 30 | [#68](https://github.com/evelynmitchell/sql_equiv/issues/68) | `join_assoc` (**hardest axiom**) | 1 | Hard |
 | 31 | [#71](https://github.com/evelynmitchell/sql_equiv/issues/71) | Outer join preservation | 4 | Hard |
 | 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | **All 5 proved** (PR #135: 4; PR #137: `not_not_exists`) |

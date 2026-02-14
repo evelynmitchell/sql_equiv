@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **30 axioms** across 9 `.lean` files (15 in `Equiv/`, 15 in infrastructure)
-- **462 theorems** proved (93.9%)
-- Axiom ratchet: 30 (`tools/axiom_count_minimum.txt`)
+- **28 axioms** across 9 `.lean` files (13 in `Equiv/`, 15 in infrastructure)
+- **465 theorems** proved (94.3%)
+- Axiom ratchet: 28 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
@@ -31,14 +31,14 @@ Run with `--runtime` flag for full analysis. No build required.
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Comparison.lean` | 5 | 188 | Comparison, boolean, arithmetic equivalences |
+| `Comparison.lean` | 3 | 189 | Comparison, boolean, arithmetic equivalences |
 | `Decidable.lean` | 3 | 2 | Decidable equivalence helpers |
 | `Defs.lean` | 0 | 20 | Core definitions (ExprEquiv, StmtEquiv) |
 | `ExprAxioms.lean` | 1 | 42 | Expression-level axioms and theorems |
 | `SetBagLemmas.lean` | 0 | 6 | Set/bag equivalence lemmas |
 | `StatementAxioms.lean` | 6 | 79 | Statement-level axioms (joins, subqueries, set ops) |
 | `ValueLemmas.lean` | 0 | 37 | Value-level helper lemmas |
-| **Subtotal** | **15** | **374** | |
+| **Subtotal** | **13** | **375** | |
 
 ### Infrastructure Axioms
 
@@ -49,12 +49,12 @@ Run with `--runtime` flag for full analysis. No build required.
 | `Optimizer.lean` | 3 | 6 | Optimizer correctness (pushdown, join reorder) |
 | `OptimizerUtils.lean` | 0 | 5 | Optimizer utility lemmas |
 | `PredicatePushdown.lean` | 1 | 0 | Predicate pushdown preserves semantics |
-| `Semantics.lean` | 7 | 37 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
+| `Semantics.lean` | 7 | 38 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
 | `SemanticsBase.lean` | 0 | 1 |  |
-| `SemanticsCore.lean` | 0 | 38 |  |
-| **Subtotal** | **15** | **88** | |
+| `SemanticsCore.lean` | 0 | 39 |  |
+| **Subtotal** | **15** | **90** | |
 
-### Grand Total: 30 axioms, 462 theorems (93.9% proved)
+### Grand Total: 28 axioms, 465 theorems (94.3% proved)
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)
