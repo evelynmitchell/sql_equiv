@@ -741,11 +741,6 @@ def orderByTests : List TestResult :=
       (evalSelect testDb selAsc).length
       (evalSelect testDb selNoOrder).length,
 
-    -- order_by_idempotent: sorting twice by same criteria = once
-    let sorted := evalSelect testDb selAsc
-    let reSorted := sorted.mergeSort (fun r1 r2 => compareByOrderItems testDb r1 r2 orderAsc)
-    if sorted == reSorted then .pass "order_by_idempotent"
-    else .fail "order_by_idempotent" "Re-sorting changed result",
 
     -- order_by_length_invariant: different ORDER BY clauses produce same row count
     testLengthEq "order_by_length_invariant"
@@ -753,11 +748,6 @@ def orderByTests : List TestResult :=
         [OrderByItem.mk (col "age") .asc, OrderByItem.mk (col "age") .desc] none none)).length
       (evalSelect testDb selDesc).length,
 
-    -- order_by_reverse: ORDER BY col ASC reversed = ORDER BY col DESC
-    let ascResult := evalSelect testDb selAsc
-    let descResult := evalSelect testDb selDesc
-    if ascResult.reverse == descResult then .pass "order_by_reverse"
-    else .fail "order_by_reverse" "Reverse of ASC ≠ DESC",
 
     -- order_limit_deterministic: ORDER BY + LIMIT n = (ORDER BY all).take n
     let selAscLimit2 := mkSelectFull false "users" none orderAsc (some 2) none

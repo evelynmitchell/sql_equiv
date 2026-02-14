@@ -900,15 +900,6 @@ theorem order_by_preserves_count (db : Database)
   simp only []
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having [] orderBy limit offset
 
-/-- ORDER BY is idempotent: ordering twice by same criteria is same as once -/
-axiom order_by_idempotent (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (limit offset : Option Nat) (orderBy : List OrderByItem) :
-    let sel := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset
-    -- Applying the same ORDER BY twice gives same result
-    let result := evalSelect db sel
-    result.mergeSort (fun r1 r2 => compareByOrderItems db r1 r2 orderBy) = result
 
 /-- Different ORDER BY clauses produce same number of rows -/
 theorem order_by_length_invariant (db : Database)
@@ -924,16 +915,6 @@ theorem order_by_length_invariant (db : Database)
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having
     [OrderByItem.mk col .asc, OrderByItem.mk col .desc] [OrderByItem.mk col .desc] limit offset
 
-/-- Reversing ORDER BY direction reverses the result (for single column) -/
-axiom order_by_reverse (db : Database)
-    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
-    (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (limit offset : Option Nat) (col : Expr) :
-    let selAsc := SelectStmt.mk distinct items from_ where_ groupBy having
-      [OrderByItem.mk col .asc] limit offset
-    let selDesc := SelectStmt.mk distinct items from_ where_ groupBy having
-      [OrderByItem.mk col .desc] limit offset
-    (evalSelect db selAsc).reverse = evalSelect db selDesc
 
 -- ============================================================================
 -- LIMIT Theorems

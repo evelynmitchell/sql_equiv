@@ -238,9 +238,7 @@ open Test
 
 -- ORDER BY axioms
 #check @order_by_preserves_count
-#check @order_by_idempotent
 #check @order_by_length_invariant
-#check @order_by_reverse
 #check @order_limit_deterministic
 
 -- LIMIT axioms
