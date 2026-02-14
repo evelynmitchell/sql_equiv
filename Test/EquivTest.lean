@@ -274,7 +274,6 @@ open Test
 #check @not_exists_as_count_eq_zero
 #check @in_subquery_as_exists
 #check @not_in_subquery_as_not_exists
-#check @uncorrelated_subquery_independent
 #check @subquery_limit_one
 #check @scalar_subquery_is_first
 #check @exists_monotonic

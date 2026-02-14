@@ -307,20 +307,21 @@ row merging is commutative/associative (modulo column ordering).
 
 **Goal:** Prove subquery evaluation properties.
 
-**Simple/empty (6 -- easy, 4 proved):** `exists_empty_false` (**PROVED**, PR #135),
+**Simple/empty (6 -- easy, 5 proved):** `exists_empty_false` (**PROVED**, PR #135),
   `not_exists_empty_true` (**PROVED**, PR #135),
   `exists_nonempty_true` (**PROVED**, PR #135),
-  `not_exists_nonempty_false` (**PROVED**, PR #135), `not_not_exists`,
+  `not_exists_nonempty_false` (**PROVED**, PR #135),
+  `not_not_exists` (**PROVED**, PR #137),
   `scalar_subquery_empty_null`
 
 **Subquery WHERE (2 -- easy):** `subquery_where_true`, `subquery_where_false`
 
-**Equivalences (4 -- medium):** `exists_as_count_gt_zero`,
-  `not_exists_as_count_eq_zero`, `subquery_limit_one`, `scalar_subquery_is_first`
+**Equivalences (4 -- medium, 2 proved):** `exists_as_count_gt_zero` (**PROVED**, PR #137),
+  `not_exists_as_count_eq_zero` (**PROVED**, PR #137), `subquery_limit_one`, `scalar_subquery_is_first`
 
-**Advanced (4 -- hard):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
-  `uncorrelated_subquery_independent`, `in_singleton_subquery`,
-  `exists_monotonic`
+**Advanced (4 -- hard, 1 proved, 1 removed):** `in_subquery_as_exists`, `not_in_subquery_as_not_exists`,
+  ~~`uncorrelated_subquery_independent`~~ (**REMOVED** as unsound, PR #137), `in_singleton_subquery`,
+  `exists_monotonic` (**PROVED**, PR #137)
 
 **Unnesting (4 -- hard):** `in_subquery_unnest_to_join`,
   `not_in_subquery_unnest_to_antijoin`, `in_subquery_implies_join_match`,
@@ -377,8 +378,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 47 axioms remaining (34 in Equiv/, 13 in infrastructure files), 418 theorems proved (89.9%).
-Axiom ratchet: 47 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 42 axioms remaining (29 in Equiv/, 13 in infrastructure files), 422 theorems proved (90.9%).
+Axiom ratchet: 42 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -467,9 +468,9 @@ decision first (see "Unsound Axiom Strategy" below).
 | 29 | [#66](https://github.com/evelynmitchell/sql_equiv/issues/66) | `join_comm`, `join_comm_full` | 2 | Hard |
 | 30 | [#68](https://github.com/evelynmitchell/sql_equiv/issues/68) | `join_assoc` (**hardest axiom**) | 1 | Hard |
 | 31 | [#71](https://github.com/evelynmitchell/sql_equiv/issues/71) | Outer join preservation | 4 | Hard |
-| 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | 4 **proved** (PR #135: `exists_empty_false`, `not_exists_empty_true`, `exists_nonempty_true`, `not_exists_nonempty_false`); 1 axiom (`not_not_exists`) |
+| 32 | [#75](https://github.com/evelynmitchell/sql_equiv/issues/75) | EXISTS/NOT EXISTS basic rules | 5 | **All 5 proved** (PR #135: 4; PR #137: `not_not_exists`) |
 | 33 | [#76](https://github.com/evelynmitchell/sql_equiv/issues/76) | IN subquery rules | 5 | Medium |
-| 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 8 | Medium-Hard |
+| 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 7 | Medium-Hard (1 removed: `uncorrelated_subquery_independent` unsound, PR #137; `exists_as_count_gt_zero`, `not_exists_as_count_eq_zero`, `exists_monotonic` proved PR #137) |
 | 35 | [#77](https://github.com/evelynmitchell/sql_equiv/issues/77) | Subquery unnesting (IN->JOIN) | 4 | Hard |
 
 ### Wave 6 -- Filter pushdown + optimizer (final target)

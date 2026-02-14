@@ -2926,3 +2926,50 @@ The `cases` tactic on `evalSelectWithContext db row sel` requires naming the equ
 ### Net axiom count change
 
 - **4 axioms → theorems**: 53 → 49
+
+---
+
+## Batch 30: EXISTS/Subquery Axioms + Unsound Removal
+
+**Branch**: `claude/prove-exists-subquery-axioms` | **PR**: #137
+
+### Axioms proved (4)
+
+**`exists_as_count_gt_zero`** and **`not_exists_as_count_eq_zero`**: Both follow the same pattern:
+```lean
+simp only
+rw [evalExprWithDb_exists]
+cases evalSelectWithContext db row sel with
+| nil => rfl
+| cons _ _ => rfl
+```
+After `rw [evalExprWithDb_exists]`, the goal has `!subResult.isEmpty` (for `neg=false`) or `subResult.isEmpty` (for `neg=true`). Case-splitting on the list makes both `isEmpty` and `length > 0`/`length == 0` reduce to concrete booleans, and `rfl` closes each branch.
+
+**`not_not_exists`**: Uses `≃ₑ` (= `ExprEquiv`), so the db is `fun _ => []`. Proof unfolds both sides with `simp only [evalExpr, evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]`, then case-splits the subquery result list. Both `nil` and `cons` close by `rfl` because `NOT (bool b) = bool (!b)` and the `if neg then !hasExists else hasExists` branches align.
+
+**`exists_monotonic`**: The most interesting proof. After `rw [evalExprWithDb_exists]` on both sides, the premise says sel1 is nonempty. Case-split sel1:
+- `nil`: contradiction with premise (via `simp [hsel1] at hprem`)
+- `cons r rs`: extract witness `r ∈ sel1` via `hsel1 ▸ List.mem_cons_self ..`, apply subset hypothesis `h` to get `r ∈ sel2`, then case-split sel2:
+  - `nil`: contradiction via `List.ne_nil_of_mem`
+  - `cons`: `rfl`
+
+### Axiom removed as unsound (1)
+
+**`uncorrelated_subquery_independent`**: Claimed `evalSelectWithContext db row1 sel = evalSelectWithContext db row2 sel` for ALL `sel`. No precondition required the subquery to be uncorrelated. A correlated subquery like `SELECT * FROM t WHERE t.x = outer.y` gives different results for different outer rows because `evalSelectWithContext` passes the outer row to the expression evaluator.
+
+### Key tactic: `hsel1 ▸ List.mem_cons_self`
+
+After `cases hsel1 : evalSelectWithContext db row sel1 with | cons r rs =>`, the hypothesis `h : ∀ r ∈ evalSelectWithContext db row sel1, ...` still references the original expression, not `r :: rs`. Using `hsel1 ▸ List.mem_cons_self ..` rewrites the membership proof through the case equation.
+
+### Files modified
+
+- `SqlEquiv/Equiv/StatementAxioms.lean` — 4 axioms → theorems, 1 axiom deleted
+- `Test/AxiomCoverageTest.lean` — removed `uncorrelated_subquery_independent` test
+- `Test/EquivTest.lean` — removed `#check @uncorrelated_subquery_independent`
+- `tools/axiom_count_minimum.txt` — 47 → 42
+- `docs/PROVING_AXIOMS_PLAN.md` — updated status
+- `docs/PROVING_LOG.md` — this entry
+
+### Net axiom count change
+
+- **4 axioms → theorems, 1 removed as unsound**: 47 → 42
