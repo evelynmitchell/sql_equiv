@@ -35,6 +35,7 @@ private def usersSchema : Array ColMeta := #[
   ⟨"department", "users", .string⟩
 ]
 
+-- Reserved for future JOIN query generation.
 private def ordersSchema : Array ColMeta := #[
   ⟨"id", "orders", .int⟩,
   ⟨"user_id", "orders", .int⟩,

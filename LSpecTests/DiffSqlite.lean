@@ -67,7 +67,8 @@ private def runSqliteRaw (querySql : String) : IO (Except String String) := do
 
 /-- Parse a single value from SQLite text output.
     Uses SQLite column type declarations to distinguish integers from strings.
-    Falls back to integer-first heuristic for untyped columns. -/
+    The integer-first fallback for non-TEXT columns is safe because our test
+    schema ensures INTEGER columns always contain integer values. -/
 private def parseValue (s : String) (colType : String) : Value :=
   if s == "NULL" then .null none
   else if colType == "TEXT" then .string s

@@ -93,6 +93,7 @@ instance : Shrinkable RandomDb where
       let remainingUsers := rdb.users.take i ++ rdb.users.drop (i + 1)
       if remainingUsers.isEmpty then none
       else
+        -- Safe: i < rdb.users.length is guaranteed by List.range
         let removedUser := rdb.users[i]!
         let removedId := getIntField removedUser "id"
         let remainingOrders := rdb.orders.filter fun row =>
