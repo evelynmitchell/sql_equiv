@@ -19,7 +19,7 @@ namespace OptimizerEquiv
 -- ============================================================================
 
 def optimizeExprTests : TestSeq :=
-  check "optimizeExpr preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "optimizeExpr preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (optimizeExpr e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
@@ -27,9 +27,9 @@ def optimizeExprTests : TestSeq :=
 -- ============================================================================
 
 def normalizeTests : TestSeq :=
-  check "normalizeExprCanonical preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "normalizeExprCanonical preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (normalizeExprCanonical e.expr) == evalExpr [] e.expr) $
-  check "normalizeExprCanonical is idempotent" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "normalizeExprCanonical is idempotent" (∀ e : BoundedGroundExpr,
     normalizeExprCanonical (normalizeExprCanonical e.expr) ==
     normalizeExprCanonical e.expr)
 
@@ -197,17 +197,17 @@ def arithmeticSoundnessTests : TestSeq :=
 -- ============================================================================
 
 def optimizerPassTests : TestSeq :=
-  check "applyIdentityLaws preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "applyIdentityLaws preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyIdentityLaws e.expr) == evalExpr [] e.expr) $
-  check "eliminateDoubleNegation preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "eliminateDoubleNegation preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (eliminateDoubleNegation e.expr) == evalExpr [] e.expr) $
-  check "applyIdempotentLaws preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "applyIdempotentLaws preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyIdempotentLaws e.expr) == evalExpr [] e.expr) $
-  check "applyComplementLaws preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "applyComplementLaws preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyComplementLaws e.expr) == evalExpr [] e.expr) $
-  check "simplifyArithmetic preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "simplifyArithmetic preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (simplifyArithmetic e.expr) == evalExpr [] e.expr) $
-  check "applyDeMorgan preserves semantics" (∀ e : BoundedGroundExpr,
+  check (cfg := slimCfg) "applyDeMorgan preserves semantics" (∀ e : BoundedGroundExpr,
     evalExpr [] (applyDeMorgan e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================

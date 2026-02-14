@@ -10,6 +10,9 @@ import SqlEquiv
 open LSpec SlimCheck
 open SqlEquiv
 
+/-- SlimCheck configuration: 1000 samples per property (10× the default 100). -/
+def slimCfg : Configuration := { numInst := 1000 }
+
 -- ============================================================================
 -- Simple enum generators
 -- ============================================================================
