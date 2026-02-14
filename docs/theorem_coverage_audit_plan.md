@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **35 axioms** across 9 `.lean` files (21 in `Equiv/`, 14 in infrastructure)
-- **437 theorems** proved (92.6%)
-- Axiom ratchet: 35 (`tools/axiom_count_minimum.txt`)
+- **33 axioms** across 9 `.lean` files (19 in `Equiv/`, 14 in infrastructure)
+- **439 theorems** proved (93.0%)
+- Axiom ratchet: 33 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
@@ -31,14 +31,14 @@ Run with `--runtime` flag for full analysis. No build required.
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Comparison.lean` | 11 | 182 | Comparison, boolean, arithmetic equivalences |
+| `Comparison.lean` | 9 | 184 | Comparison, boolean, arithmetic equivalences |
 | `Decidable.lean` | 3 | 2 | Decidable equivalence helpers |
 | `Defs.lean` | 0 | 20 | Core definitions (ExprEquiv, StmtEquiv) |
 | `ExprAxioms.lean` | 1 | 42 | Expression-level axioms and theorems |
 | `SetBagLemmas.lean` | 0 | 6 | Set/bag equivalence lemmas |
 | `StatementAxioms.lean` | 6 | 79 | Statement-level axioms (joins, subqueries, set ops) |
 | `ValueLemmas.lean` | 0 | 37 | Value-level helper lemmas |
-| **Subtotal** | **21** | **368** | |
+| **Subtotal** | **19** | **370** | |
 
 ### Infrastructure Axioms
 
@@ -53,7 +53,7 @@ Run with `--runtime` flag for full analysis. No build required.
 | `SemanticsCore.lean` | 0 | 30 |  |
 | **Subtotal** | **14** | **69** | |
 
-### Grand Total: 35 axioms, 437 theorems (92.6% proved)
+### Grand Total: 33 axioms, 439 theorems (93.0% proved)
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)
