@@ -107,14 +107,35 @@ def pushPredicateDownTests : TestSeq :=
     result.pushedFrom == from_)
 
 -- ============================================================================
+-- Property tests using ColumnGroundExpr
+-- ============================================================================
+
+private def colRefsSubset (outer inner : List ColumnRef) : Bool :=
+  inner.all fun c => outer.any (· == c)
+
+private def colRefsFromSubexprs (e : Expr) : Bool :=
+  let cols := getReferencedColumns e
+  match e with
+  | .binOp _ l r =>
+    colRefsSubset cols (getReferencedColumns l) &&
+    colRefsSubset cols (getReferencedColumns r)
+  | .unaryOp _ inner => colRefsSubset cols (getReferencedColumns inner)
+  | _ => true
+
+def columnExprPropertyTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "getReferencedColumns includes col refs from subexprs"
+    (∀ e : ColumnGroundExpr, colRefsFromSubexprs e.expr)
+
+-- ============================================================================
 -- All predicate pushdown tests
 -- ============================================================================
 
-def allTests (_cfg : Configuration) : TestSeq :=
+def allTests (cfg : Configuration) : TestSeq :=
   group "Join Pushability" joinPushabilityTests $
   group "getReferencedColumns" getReferencedColumnsTests $
   group "canPushPastProjection" canPushPastProjectionTests $
   group "transformColumnRefs" transformColumnRefsTests $
-  group "pushPredicateDown" pushPredicateDownTests
+  group "pushPredicateDown" pushPredicateDownTests $
+  group "Column Expr Properties" (columnExprPropertyTests cfg)
 
 end PredicatePushdown

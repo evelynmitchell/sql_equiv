@@ -48,15 +48,17 @@ def constantFoldTests (cfg : Configuration) : TestSeq :=
     evalExpr [] (simplifyExprOnce e.expr) == evalExpr [] e.expr)
 
 -- ============================================================================
--- Fold helpers agree with evalBinOp
+-- Fold helpers are sound w.r.t. evalBinOp
+-- (soundness-only: `none` means the fold doesn't handle that op/type combo,
+-- so we only check that when a fold *does* produce a value, it matches eval)
 -- ============================================================================
 
 def foldAgreementTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "foldArithmetic agrees with evalBinOp"
+  check (cfg := cfg) "foldArithmetic sound w.r.t. evalBinOp (none = not handled)"
     (∀ op : BinOp, ∀ l r : Value, foldArithAgrees op l r) $
-  check (cfg := cfg) "foldComparison agrees with evalBinOp"
+  check (cfg := cfg) "foldComparison sound w.r.t. evalBinOp (none = not handled)"
     (∀ op : BinOp, ∀ l r : Value, foldCompAgrees op l r) $
-  check (cfg := cfg) "foldLogical agrees with evalBinOp"
+  check (cfg := cfg) "foldLogical sound w.r.t. evalBinOp (none = not handled)"
     (∀ op : BinOp, ∀ l r : Value, foldLogAgrees op l r)
 
 -- ============================================================================
