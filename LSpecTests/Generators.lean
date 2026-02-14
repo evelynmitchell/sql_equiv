@@ -241,3 +241,48 @@ private partial def genColumnExpr (depth : Nat) : Gen Expr :=
 
 instance : SampleableExt ColumnGroundExpr :=
   SampleableExt.mkSelfContained (ColumnGroundExpr.mk <$> genColumnExpr 2)
+
+-- ============================================================================
+-- Query-level test generators
+-- ============================================================================
+
+/-- Comparison operators for WHERE clauses. -/
+structure CmpOp where
+  op : BinOp
+  deriving Repr
+
+instance : Shrinkable CmpOp where shrink _ := []
+
+instance : Inhabited CmpOp := ⟨⟨.eq⟩⟩
+
+instance : SampleableExt CmpOp :=
+  SampleableExt.mkSelfContained $
+    Gen.elements #[⟨.eq⟩, ⟨.ne⟩, ⟨.lt⟩, ⟨.le⟩, ⟨.gt⟩, ⟨.ge⟩]
+
+/-- Small Nat (0..10) for LIMIT/OFFSET. -/
+structure SmallNat where
+  val : Nat
+  deriving Repr
+
+instance : Shrinkable SmallNat where
+  shrink sn := (Shrinkable.shrink sn.val).map SmallNat.mk
+
+instance : SampleableExt SmallNat :=
+  SampleableExt.mkSelfContained (SmallNat.mk <$> Gen.choose Nat 0 10)
+
+/-- Bounded Int (20..40) matching users.age range for meaningful filtering. -/
+structure AgeInt where
+  val : Int
+  deriving Repr
+
+instance : Shrinkable AgeInt where shrink _ := []
+
+instance : SampleableExt AgeInt :=
+  SampleableExt.mkSelfContained (AgeInt.mk <$> Gen.choose Int 20 40)
+
+/-- JoinType generator for query-level property tests. -/
+instance : Shrinkable JoinType where shrink _ := []
+
+instance : SampleableExt JoinType :=
+  SampleableExt.mkSelfContained $
+    Gen.elements #[JoinType.inner, .left, .right, .full, .cross]
