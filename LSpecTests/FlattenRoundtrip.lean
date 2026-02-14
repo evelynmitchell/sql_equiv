@@ -41,11 +41,13 @@ def nonemptyTests (cfg : Configuration) : TestSeq :=
 -- Roundtrip preserves semantics
 -- ============================================================================
 
+-- Roundtrip uses BoolGroundExpr because flatten/unflatten changes AND/OR
+-- associativity, which only preserves semantics for boolean-valued inputs.
 def roundtripTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "unflattenAnd (flattenAnd e) preserves semantics"
-    (∀ e : BoundedGroundExpr, andRoundtripOk e.expr) $
-  check (cfg := cfg) "unflattenOr (flattenOr e) preserves semantics"
-    (∀ e : BoundedGroundExpr, orRoundtripOk e.expr)
+  check (cfg := cfg) "unflattenAnd (flattenAnd e) preserves semantics (bool)"
+    (∀ e : BoolGroundExpr, andRoundtripOk e.expr) $
+  check (cfg := cfg) "unflattenOr (flattenOr e) preserves semantics (bool)"
+    (∀ e : BoolGroundExpr, orRoundtripOk e.expr)
 
 -- ============================================================================
 -- Stability: literals flatten to singleton
