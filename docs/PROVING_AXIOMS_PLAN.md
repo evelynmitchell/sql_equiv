@@ -303,18 +303,19 @@ row merging is commutative/associative (modulo column ordering).
 
 ---
 
-### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms, 4 proved)
+### Phase 7: Subquery / EXISTS / IN Axioms (~17 axioms, 11 proved)
 
 **Goal:** Prove subquery evaluation properties.
 
-**Simple/empty (6 -- easy, 5 proved):** `exists_empty_false` (**PROVED**, PR #135),
+**Simple/empty (6 -- easy, 6 proved):** `exists_empty_false` (**PROVED**, PR #135),
   `not_exists_empty_true` (**PROVED**, PR #135),
   `exists_nonempty_true` (**PROVED**, PR #135),
   `not_exists_nonempty_false` (**PROVED**, PR #135),
   `not_not_exists` (**PROVED**, PR #137),
-  `scalar_subquery_empty_null`
+  `scalar_subquery_empty_null` (**PROVED**, PR #138)
 
-**Subquery WHERE (2 -- easy):** `subquery_where_true`, `subquery_where_false`
+**Subquery WHERE (2 -- easy, 2 proved):** `subquery_where_true` (**PROVED**, PR #138),
+  `subquery_where_false` (**PROVED**, PR #138 — added `selectHasAggregate` precondition)
 
 **Equivalences (4 -- medium, 2 proved):** `exists_as_count_gt_zero` (**PROVED**, PR #137),
   `not_exists_as_count_eq_zero` (**PROVED**, PR #137), `subquery_limit_one`, `scalar_subquery_is_first`
@@ -393,11 +394,11 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 0 | ~21 | Medium-Hard |
-| 7 | Subquery / EXISTS / IN | 4 | ~13 | Medium-Hard |
+| 7 | Subquery / EXISTS / IN | 11 | ~6 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | 10 | Optimizer correctness | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 21 | 5 (5 bridge axioms — irreducible) | N/A |
+| infra | Infrastructure (Semantics.lean) | 21 | 6 (6 bridge axioms — irreducible) | N/A |
 | runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
 | | **Total** | **~106** | **~83** | |
 

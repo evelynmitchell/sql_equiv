@@ -2973,3 +2973,61 @@ After `cases hsel1 : evalSelectWithContext db row sel1 with | cons r rs =>`, the
 ### Net axiom count change
 
 - **4 axioms → theorems, 1 removed as unsound**: 47 → 42
+
+---
+
+## Batch 31: Subquery WHERE / Scalar Subquery Axioms
+
+**Branch**: `claude/prove-subquery-axioms` | **PR**: #138
+
+### Axioms proved (3)
+
+**`scalar_subquery_empty_null`**: Trivial once `evalExprWithDb_subquery` bridge theorem exists:
+```lean
+rw [evalExprWithDb_subquery, h]; rfl
+```
+After `rw`, the goal becomes `match [].head? with ...` which reduces to `some (.null none)`.
+
+**`subquery_where_true`**: Via `evalSelectWithContext_where_congr`:
+```lean
+simp only
+apply evalSelectWithContext_where_congr
+intro r
+simp [evalExprWithDb_lit]
+```
+The congr precondition requires showing `(match none with ...) = (match some (.lit (.bool true)) with ...)`. LHS reduces to `true` (no WHERE = pass all). RHS: `evalExprWithDb_lit` reduces the literal to `some (.bool true)`, then `== some (.bool true)` is `true`.
+
+**`subquery_where_false`**: Via `evalSelectWithContext_filter_all_false`, but required a **soundness fix** — the original axiom had no `selectHasAggregate` precondition, making it unsound for aggregate queries (`SELECT COUNT(*) FROM t WHERE FALSE` returns `[0]`, not `[]`). Added `hNoAgg : selectHasAggregate items = false` precondition:
+```lean
+simp only
+apply evalSelectWithContext_filter_all_false
+· exact hNoAgg
+· intro r; simp [evalExprWithDb_lit]
+```
+
+### New infrastructure
+
+**`evalExprCore_subquery`** (SemanticsCore.lean): Unfolding theorem for `.subquery` case, following `evalExprCore_exists` pattern. Proved by `simp [evalExprCore]`.
+
+**`evalExprWithDb_subquery`** (Semantics.lean): Bridge theorem from `evalExprCore_subquery`, following `evalExprWithDb_exists` pattern.
+
+**`evalSelectWithContext_eq_evalSelectCore`** (Semantics.lean): New bridge axiom mirroring `evalSelect_eq_evalSelectCore` but with arbitrary `outerRow` instead of hardcoded `[]`. Required because the existing `evalSelect_where_congr` and `evalSelect_filter_all_false` only work with `outerRow = []`.
+
+**`evalSelectWithContext_where_congr`** and **`evalSelectWithContext_filter_all_false`** (Semantics.lean): Lifted versions of existing `evalSelect_*` theorems. Mechanical: replace `evalSelect_eq_evalSelectCore` with `evalSelectWithContext_eq_evalSelectCore`, add `outerRow` parameter.
+
+### Key insight: infrastructure lifts are formulaic
+
+The pattern `evalSelect_X` → `evalSelectWithContext_X` is completely mechanical. Any future `evalSelect_*` theorem that needs a `WithContext` variant follows the same recipe: swap the bridge axiom, add `outerRow`. The `evalSelectCore_*` theorems in SemanticsCore.lean are already parametric over `outerRow`.
+
+### Files modified
+
+- `SqlEquiv/SemanticsCore.lean` — added `evalExprCore_subquery`
+- `SqlEquiv/Semantics.lean` — added `evalExprWithDb_subquery`, `evalSelectWithContext_eq_evalSelectCore` bridge axiom, `evalSelectWithContext_where_congr`, `evalSelectWithContext_filter_all_false`
+- `SqlEquiv/Equiv/StatementAxioms.lean` — 3 axioms → theorems (`scalar_subquery_empty_null`, `subquery_where_true`, `subquery_where_false`); `subquery_where_false` gained `selectHasAggregate` precondition
+- `tools/axiom_count_minimum.txt` — 42 → 40
+- `docs/PROVING_AXIOMS_PLAN.md` — updated Phase 7 status
+- `docs/PROVING_LOG.md` — this entry
+
+### Net axiom count change
+
+- **3 axioms → theorems, 1 new bridge axiom**: 42 → 40
