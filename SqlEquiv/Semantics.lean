@@ -111,18 +111,12 @@ partial def evalFrom (db : Database) : FromClause → Table
     let qualifier := t.alias.getD t.name
     baseTable.map fun row =>
       row.map fun (col, val) => (s!"{qualifier}.{col}", val)
-  | .subquery sel alias =>
-    -- Evaluate subquery and qualify columns with alias.
-    -- NOTE: This causes double-qualification when the subquery itself contains
-    -- aliased tables. E.g., if the subquery selects from table "users" with alias
-    -- "u", columns come out as "u.id". Wrapping with alias "filtered_a" then
-    -- produces "filtered_a.u.id" instead of "filtered_a.id". This breaks axioms
-    -- like filter_join_left/right that wrap one side of a join in a subquery,
-    -- because the join condition still references the original qualifier ("u.id").
-    -- See docs/PROVING_AXIOMS_PLAN.md "Known Evaluator Limitations" for details.
-    let subResult := evalSelect db sel
-    subResult.map fun row =>
-      row.map fun (col, val) => (s!"{alias}.{col}", val)
+  | .subquery sel _alias =>
+    -- Pass through inner SELECT results without re-qualifying column names.
+    -- The subquery alias is purely syntactic at evaluation time.
+    -- Re-qualification caused double-qualification (e.g., "inner.users.id" instead
+    -- of "users.id"), breaking axioms like filter_and/filter_commute/filter_idempotent.
+    evalSelect db sel
   | .join left jtype right on_ =>
     let leftRows := evalFrom db left
     let rightRows := evalFrom db right
@@ -695,6 +689,12 @@ theorem evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool
 -- Infrastructure axioms for evalFrom join decomposition
 -- ============================================================================
 
+/-- evalFrom for subquery just returns the inner SELECT result (pass-through). -/
+theorem evalFrom_subquery (db : Database) (sel : SelectStmt) (alias : String) :
+    evalFrom db (.subquery sel alias) = evalSelect db sel := by
+  simp only [evalFrom_eq_evalFromCore]
+  exact evalFromCore_subquery ..
+
 /-- evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows. -/
 theorem evalFrom_cross_join (db : Database) (left right : FromClause) :
     evalFrom db (.join left .cross right none) =
@@ -1016,6 +1016,119 @@ theorem evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     | .intersect => l.filter (r.contains ·)
     | .exceptOp => l.filter (!r.contains ·) :=
   (evalQuery_eq_evalQueryCore db (.compound left op right)).trans (evalQueryCore_compound ..)
+
+-- ============================================================================
+-- Filter combination infrastructure (proved via evalSelectCore bridge)
+-- ============================================================================
+
+/-- selectHasAggregate returns false for [.star none]. -/
+private theorem selectHasAggregate_star : selectHasAggregate [.star none] = false := by rfl
+
+/-- selectHasWindowFn returns false for [.star none]. -/
+private theorem selectHasWindowFn_star : selectHasWindowFn [.star none] = false := by rfl
+
+/-- Bridge: evalSelectItem on .star none returns the row (partial def, needs axiom). -/
+axiom evalSelectItem_star (db : Database) (row : Row) :
+    evalSelectItem db row (.star none) = row
+
+/-- Bridge: evalFrom_subquery connects to evalSelectCore for subqueries. -/
+private theorem evalFrom_subquery_core (db : Database) (sel : SelectStmt) (alias : String) :
+    evalFrom db (.subquery sel alias) =
+    evalSelectCore db [] evalFrom evalExprWithDb
+      (fun db row item => evalSelectItem db row item)
+      (fun db groupRows sampleRow item => evalSelectItemWithAgg db groupRows sampleRow item)
+      (fun db groupRows sampleRow cond => evalExprWithAgg db groupRows sampleRow cond)
+      (fun db r1 r2 items => compareByOrderItems db r1 r2 items)
+      (fun db row partition sorted idx e => evalExprWithWindow db row partition sorted idx e)
+      (fun items => selectHasWindowFn items)
+      (fun items => selectHasAggregate items)
+      sel := by
+  rw [evalFrom_subquery, evalSelect_eq_evalSelectCore]
+
+/-- AND distributes over == some true for evalExprWithDb. -/
+private theorem evalExprWithDb_and_true_iff (db : Database) (row : Row) (p q : Expr) :
+    (evalExprWithDb db row (.binOp .and p q) == some (.bool true)) =
+    ((evalExprWithDb db row p == some (.bool true)) && (evalExprWithDb db row q == some (.bool true))) := by
+  rw [evalExprWithDb_binOp]
+  exact evalBinOp_and_true_iff _ _
+
+/-- Infrastructure: filter_and at the evalSelect level.
+    SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE q ...
+    = SELECT items FROM from_ WHERE (p AND q) ... -/
+theorem evalSelect_filter_and (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items
+      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some q) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_and
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro sel alias; exact evalFrom_subquery_core db sel alias
+  · intro row; exact evalExprWithDb_and_true_iff db row p q
+
+/-- Infrastructure: filter_commute at the evalSelect level.
+    SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE q ...
+    = SELECT items FROM (SELECT * FROM from_ WHERE q) AS inner WHERE p ... -/
+theorem evalSelect_filter_commute (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items
+      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some q) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items
+      (some (.subquery (.mk false [.star none] from_ (some q) [] none [] none none) "inner"))
+      (some p) groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_commute
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro sel alias; exact evalFrom_subquery_core db sel alias
+
+/-- Infrastructure: filter_idempotent at the evalSelect level.
+    SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE p ...
+    = SELECT items FROM from_ WHERE p ... -/
+theorem evalSelect_filter_idempotent (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+    (p : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items
+      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some p) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_idempotent
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro sel alias; exact evalFrom_subquery_core db sel alias
+
+/-- Infrastructure: SELECT * FROM from_ WHERE p (all trivial options) = filter of base rows. -/
+theorem evalSelect_star_where_eq_filter (db : Database) (from_ : Option FromClause) (p : Expr) :
+    evalSelect db (.mk false [.star none] from_ (some p) [] none [] none none) =
+    let baseRows := match from_ with | some f => evalFrom db f | none => [[]]
+    (baseRows.map fun row => ([] : Row) ++ row).filter fun row =>
+      evalExprWithDb db row p == some (Value.bool true) := by
+  rw [evalSelect_eq_evalSelectCore]
+  exact evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _
+    selectHasAggregate_star selectHasWindowFn_star (fun db' row => evalSelectItem_star db' row)
+
+/-- Infrastructure: predicate_pushdown at the evalSelect level.
+    (evalSelect db (SELECT * FROM t WHERE p)).filter q = evalSelect db (SELECT * FROM t WHERE (p AND q)) -/
+theorem evalSelect_predicate_pushdown (db : Database) (t : String) (p q : Expr) :
+    let inner := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some p) [] none [] none none
+    let outer := SelectStmt.mk false [.star none] (some (.table ⟨t, none⟩)) (some (.binOp .and p q)) [] none [] none none
+    (evalSelect db inner).filter (fun row => evalExprWithDb db row q == some (.bool true)) = evalSelect db outer := by
+  simp only []
+  rw [evalSelect_star_where_eq_filter db (some (.table ⟨t, none⟩)) p,
+      evalSelect_star_where_eq_filter db (some (.table ⟨t, none⟩)) (.binOp .and p q)]
+  simp only [List.nil_append, List.map_id']
+  rw [← list_filter_and_eq]
+  congr 1; funext row
+  exact (evalExprWithDb_and_true_iff db row p q).symm
 
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table

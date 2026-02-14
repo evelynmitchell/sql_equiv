@@ -233,4 +233,66 @@ def exprToName : Expr → String
   | .countStar => "count"
   | _ => "expr"
 
+-- ============================================================================
+-- evalBinOp Lemmas
+-- ============================================================================
+
+/-- AND returns `some (.bool true)` iff both operands are `some (.bool true)`. -/
+theorem evalBinOp_and_true_iff (l r : Option Value) :
+    (evalBinOp .and l r == some (.bool true)) =
+    ((l == some (.bool true)) && (r == some (.bool true))) := by
+  cases l with
+  | none =>
+    cases r with
+    | none => rfl
+    | some w => cases w with
+      | bool b => cases b <;> rfl
+      | null _ => rfl
+      | int _ => rfl
+      | string _ => rfl
+  | some v =>
+    cases v with
+    | bool b =>
+      cases b with
+      | true =>
+        cases r with
+        | none => rfl
+        | some w => cases w with
+          | bool b' => cases b' <;> rfl
+          | null _ => rfl
+          | int _ => rfl
+          | string _ => rfl
+      | false =>
+        cases r with
+        | none => rfl
+        | some w => cases w with
+          | bool b' => cases b' <;> rfl
+          | null _ => rfl
+          | int _ => rfl
+          | string _ => rfl
+    | null _ =>
+      cases r with
+      | none => rfl
+      | some w => cases w with
+        | bool b => cases b <;> rfl
+        | null _ => rfl
+        | int _ => rfl
+        | string _ => rfl
+    | int _ =>
+      cases r with
+      | none => rfl
+      | some w => cases w with
+        | bool b => cases b <;> rfl
+        | null _ => rfl
+        | int _ => rfl
+        | string _ => rfl
+    | string _ =>
+      cases r with
+      | none => rfl
+      | some w => cases w with
+        | bool b => cases b <;> rfl
+        | null _ => rfl
+        | int _ => rfl
+        | string _ => rfl
+
 end SqlEquiv

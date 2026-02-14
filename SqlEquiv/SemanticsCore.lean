@@ -105,10 +105,8 @@ def evalFromCore (db : Database)
     let qualifier := t.alias.getD t.name
     baseTable.map fun row =>
       row.map fun (col, val) => (s!"{qualifier}.{col}", val)
-  | .subquery sel alias =>
-    let subResult := selectEval db sel
-    subResult.map fun row =>
-      row.map fun (col, val) => (s!"{alias}.{col}", val)
+  | .subquery sel _alias =>
+    selectEval db sel
   | .join left jtype right on_ =>
     let leftRows := evalFromCore db exprEval selectEval left
     let rightRows := evalFromCore db exprEval selectEval right
@@ -343,6 +341,13 @@ theorem evalCaseHelper_cons_false (f : Expr → Option Value) (elseVal : Option 
 -- ============================================================================
 -- Equational Theorems for evalFromCore
 -- ============================================================================
+
+theorem evalFromCore_subquery (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectEval : Database → SelectStmt → Table)
+    (sel : SelectStmt) (alias : String) :
+    evalFromCore db exprEval selectEval (.subquery sel alias) = selectEval db sel := by
+  simp [evalFromCore]
 
 theorem evalFromCore_cross_join (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
@@ -917,5 +922,195 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
   rw [evalSelectProjectDistinct_nil _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg]
   -- applyOrderByLimitOffset ... [] = []
   exact applyOrderByLimitOffset_nil _ _ _ _ _
+
+-- ============================================================================
+-- List filter lemmas (needed for filter_and / filter_commute / filter_idempotent)
+-- ============================================================================
+
+/-- Conjunction of filters equals sequential filtering. -/
+theorem list_filter_and_eq {α : Type} (f g : α → Bool) (l : List α) :
+    l.filter (fun r => f r && g r) = (l.filter f).filter g := by
+  induction l with
+  | nil => rfl
+  | cons r rows ih =>
+    simp only [List.filter_cons]
+    by_cases hf : f r <;> by_cases hg : g r <;> simp [hf, hg, ih]
+
+/-- Filter order doesn't matter for sequential filtering. -/
+private theorem list_filter_comm {α : Type} (f g : α → Bool) (l : List α) :
+    (l.filter f).filter g = (l.filter g).filter f := by
+  rw [← list_filter_and_eq, ← list_filter_and_eq]
+  congr 1; ext r; exact Bool.and_comm (f r) (g r)
+
+-- ============================================================================
+-- SELECT * WHERE p = filter (infrastructure for filter_and / filter_commute / etc.)
+-- ============================================================================
+
+/-- `evalSelectAfterFilter` with trivial settings (SELECT *, no GROUP BY, no HAVING,
+    no ORDER BY, no LIMIT, no OFFSET, not DISTINCT) is the identity on filteredRows. -/
+private theorem evalSelectAfterFilter_star_identity (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (filteredRows : Table)
+    (h_hasAgg : hasAgg [.star none] = false)
+    (h_hasWindowFn : hasWindowFn [.star none] = false)
+    (h_star : ∀ db' row, selectItemEval db' row (.star none) = row) :
+    evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      false [SelectItem.star none] [] none [] none none filteredRows = filteredRows := by
+  simp [evalSelectAfterFilter, applyOrderByLimitOffset, evalSelectProjectDistinct,
+    h_hasAgg, h_hasWindowFn]
+  -- Goal: filteredRows.map (fun row => selectItemEval db row (.star none)) = filteredRows
+  have : (fun row => selectItemEval db row (.star none)) = id := by
+    funext row; exact h_star db row
+  rw [this, List.map_id]
+
+/-- SELECT * FROM from_ WHERE p (with all trivial options) equals the filtered base rows.
+    This is the key infrastructure for filter_and, filter_commute, and filter_idempotent. -/
+theorem evalSelectCore_star_where_eq_filter (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (from_ : Option FromClause) (p : Expr)
+    (h_hasAgg : hasAgg [.star none] = false)
+    (h_hasWindowFn : hasWindowFn [.star none] = false)
+    (h_star : ∀ db' row, selectItemEval db' row (.star none) = row) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false [.star none] from_ (some p) [] none [] none none) =
+    let baseRows := match from_ with | some f => fromEval db f | none => [[]]
+    (baseRows.map fun row => outerRow ++ row).filter fun row =>
+      exprEval db row p == some (Value.bool true) := by
+  simp only [evalSelectCore_eq_afterFilter]
+  exact evalSelectAfterFilter_star_identity db exprEval selectItemEval selectItemWithAggEval
+    exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg _ h_hasAgg h_hasWindowFn h_star
+
+/-- Core filter_and: filtering a subquery result is the same as combining WHERE clauses. -/
+theorem evalSelectCore_filter_and (db : Database)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : Option FromClause)
+    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_hasAgg_star : hasAgg [.star none] = false)
+    (h_hasWindowFn_star : hasWindowFn [.star none] = false)
+    (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
+    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+      evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel)
+    (h_and : ∀ row, (exprEval db row (.binOp .and p q) == some (Value.bool true)) =
+      ((exprEval db row p == some (Value.bool true)) && (exprEval db row q == some (Value.bool true)))) :
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items
+        (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+        (some q) groupBy having orderBy limit offset) =
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) := by
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  simp only [h_subquery]
+  rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
+  simp only [List.nil_append, List.map_id']
+  rw [← list_filter_and_eq]
+  congr 1; funext row; exact (h_and row).symm
+
+/-- Core filter_commute: filtering by p then q equals filtering by q then p. -/
+theorem evalSelectCore_filter_commute (db : Database)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : Option FromClause)
+    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_hasAgg_star : hasAgg [.star none] = false)
+    (h_hasWindowFn_star : hasWindowFn [.star none] = false)
+    (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
+    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+      evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items
+        (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+        (some q) groupBy having orderBy limit offset) =
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items
+        (some (.subquery (.mk false [.star none] from_ (some q) [] none [] none none) "inner"))
+        (some p) groupBy having orderBy limit offset) := by
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  simp only [h_subquery]
+  rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star,
+      evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
+  simp only [List.nil_append, List.map_id']
+  exact list_filter_comm _ _ _
+
+/-- Core filter_idempotent: filtering by p then p again equals filtering by p once. -/
+theorem evalSelectCore_filter_idempotent (db : Database)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : Option FromClause)
+    (p : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_hasAgg_star : hasAgg [.star none] = false)
+    (h_hasWindowFn_star : hasWindowFn [.star none] = false)
+    (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
+    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+      evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items
+        (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+        (some p) groupBy having orderBy limit offset) =
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items from_ (some p) groupBy having orderBy limit offset) := by
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  simp only [h_subquery]
+  rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
+  simp only [List.nil_append, List.map_id']
+  -- Goal: (baseRows.filter p).filter p = baseRows.filter p
+  induction (match from_ with | some f => fromEval db f | none => [[]]) with
+  | nil => rfl
+  | cons r rows ih =>
+    simp only [List.filter_cons]
+    split <;> simp_all
 
 end SqlEquiv

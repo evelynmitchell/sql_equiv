@@ -386,8 +386,8 @@ show filter evaluation only depends on referenced columns.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 33 axioms remaining (19 in Equiv/, 14 in infrastructure files), 439 theorems proved (93.0%).
-Axiom ratchet: 33 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 30 axioms remaining (15 in Equiv/, 15 in infrastructure files), 462 theorems proved (93.9%).
+Axiom ratchet: 30 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
