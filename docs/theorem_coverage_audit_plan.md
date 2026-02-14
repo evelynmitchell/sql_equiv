@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **40 axioms** across 9 `.lean` files (26 in `Equiv/`, 14 in infrastructure)
-- **429 theorems** proved (91.5%)
-- Axiom ratchet: 40 (`tools/axiom_count_minimum.txt`)
+- **35 axioms** across 9 `.lean` files (21 in `Equiv/`, 14 in infrastructure)
+- **437 theorems** proved (92.6%)
+- Axiom ratchet: 35 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
@@ -36,9 +36,9 @@ Run with `--runtime` flag for full analysis. No build required.
 | `Defs.lean` | 0 | 20 | Core definitions (ExprEquiv, StmtEquiv) |
 | `ExprAxioms.lean` | 1 | 42 | Expression-level axioms and theorems |
 | `SetBagLemmas.lean` | 0 | 6 | Set/bag equivalence lemmas |
-| `StatementAxioms.lean` | 11 | 74 | Statement-level axioms (joins, subqueries, set ops) |
+| `StatementAxioms.lean` | 6 | 79 | Statement-level axioms (joins, subqueries, set ops) |
 | `ValueLemmas.lean` | 0 | 37 | Value-level helper lemmas |
-| **Subtotal** | **26** | **363** | |
+| **Subtotal** | **21** | **368** | |
 
 ### Infrastructure Axioms
 
@@ -49,11 +49,11 @@ Run with `--runtime` flag for full analysis. No build required.
 | `Optimizer.lean` | 3 | 6 | Optimizer correctness (pushdown, join reorder) |
 | `OptimizerUtils.lean` | 0 | 5 | Optimizer utility lemmas |
 | `PredicatePushdown.lean` | 1 | 0 | Predicate pushdown preserves semantics |
-| `Semantics.lean` | 6 | 25 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
-| `SemanticsCore.lean` | 0 | 29 |  |
-| **Subtotal** | **14** | **66** | |
+| `Semantics.lean` | 6 | 27 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
+| `SemanticsCore.lean` | 0 | 30 |  |
+| **Subtotal** | **14** | **69** | |
 
-### Grand Total: 40 axioms, 429 theorems (91.5% proved)
+### Grand Total: 35 axioms, 437 theorems (92.6% proved)
 
 ## Key Constraints
 - NEVER run `lake clean` (20+ min full rebuild)

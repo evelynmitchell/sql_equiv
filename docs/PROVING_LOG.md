@@ -3031,3 +3031,90 @@ The pattern `evalSelect_X` → `evalSelectWithContext_X` is completely mechanica
 ### Net axiom count change
 
 - **3 axioms → theorems, 1 new bridge axiom**: 42 → 40
+
+---
+
+## Batch 32: IN Subquery Axioms (PR #139)
+
+**Date:** 2026-02-14
+**Axiom count:** 40 → 35 (5 axioms → theorems, 0 new bridge axioms)
+
+### Axioms proved
+
+| Axiom | Difficulty | Proof technique |
+|-------|-----------|----------------|
+| `scalar_subquery_is_first` | Trivial | Direct `exact evalExprWithDb_subquery db row sel` |
+| `subquery_limit_one` | Easy | `evalSelectWithContext_limit_offset` + `List.length_take` + `omega` |
+| `in_empty_subquery_false` | Medium | Case-split on subquery emptiness, `evalCase_cons_true/false` |
+| `not_in_empty_subquery_true` | Medium | Same pattern as `in_empty_subquery_false` |
+| `in_singleton_subquery` | Medium | Case-split on `Value` constructors for type compatibility |
+
+### Soundness issues discovered and fixed
+
+**`in_empty_subquery_false` — unsound original formulation:**
+The original axiom used `CASE WHEN EXISTS(sel) THEN FALSE ELSE IN(e, sel)`, which is unsound when the subquery has matching rows: LHS = TRUE (match found) but RHS = FALSE (CASE short-circuits to FALSE whenever EXISTS is true).
+
+The plan proposed fixing to `CASE WHEN NOT EXISTS(sel) THEN FALSE ELSE IN(e, sel)`. This fixes the non-empty case (CASE falls through to ELSE = IN(e, sel) = LHS), but introduces a new issue: when `e` errors (evaluates to `none`) and the subquery is empty, LHS = `none` (error propagation in IN) but CASE returns `some (.bool false)` (CASE doesn't evaluate `e`, just returns the literal).
+
+**Fix:** Added precondition `(hE : ∀ row, evalExpr row e ≠ none)` — requires that `e` evaluates without error. Same precondition added to `not_in_empty_subquery_true`.
+
+**`in_singleton_subquery` — semantic gap between IN and evalBinOp:**
+IN subquery uses `Value.eq` internally: `v.eq subVal == some true`. This returns `false` for null inputs and type mismatches. But `evalBinOp .eq` returns `some (.null none)` for null inputs and `none` for type mismatches. These are fundamentally different error models.
+
+**Fix:** Added precondition `(hCompat : ∀ val, evalExprWithDb db row e = some val → ∃ b, val.eq v = some b)` — requires type-compatible, non-null values. Proof then case-splits on `val` and `v` constructors; incompatible cases are eliminated by `hCompat`, compatible cases close with `simp_all [evalBinOp, Value.eq]`.
+
+### Proof details
+
+**`scalar_subquery_is_first`**: The statement is literally the unfolding of `evalExprWithDb_subquery`. After `simp only` to inline the `let` bindings, `exact evalExprWithDb_subquery db row sel` closes the goal.
+
+**`subquery_limit_one`**: Uses new `evalSelectWithContext_limit_offset` infrastructure theorem to decompose the LIMIT 1 query into `take 1` on the base result. Then `simp [List.length_take]` + `omega` proves `(base.take 1).length ≤ 1` (since `List.length_take` gives `min 1 base.length ≤ 1`).
+
+**`in_empty_subquery_false`**: Key tactic pattern for CASE proofs — establish the condition result as a `have`, then pass to `evalCase_cons_true/false`:
+```lean
+cases hsel : evalSelectWithContext (fun _ => []) row sel with
+| nil =>
+  have hcond : evalExprWithDb ... (Expr.unaryOp .not (Expr.exists false sel)) = some (.bool true) := by
+    rw [evalExprWithDb_unaryOp, evalExprWithDb_exists, hsel]
+    simp [List.isEmpty, evalUnaryOp]
+  rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
+  rw [evalExprWithDb_inSubquery, hsel]
+  cases hev : evalExprWithDb ... row e with
+  | none => exact absurd hev (hE row)
+  | some v => simp [List.any]
+| cons hd tl =>
+  have hcond : ... = some (.bool false) := by ...
+  rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some]
+```
+
+**`in_singleton_subquery`**: After unfolding with `evalExprWithDb_inSubquery` and `evalExprWithDb_binOp`, the `none` case closes by `rfl`. The `some val` case uses `hCompat` to get `⟨b, hb⟩ : ∃ b, val.eq v = some b`, then `cases val <;> cases v <;> simp_all [evalBinOp, Value.eq]` eliminates incompatible type combinations (where `hb` becomes a contradiction) and closes compatible ones.
+
+### New infrastructure
+
+**`evalExprCore_inSubquery`** (SemanticsCore.lean): Unfolding theorem for `.inSubquery` case, following `evalExprCore_exists` pattern. Proved by `simp [evalExprCore]`.
+
+**`evalExprWithDb_inSubquery`** (Semantics.lean): Bridge theorem from `evalExprCore_inSubquery`, following `evalExprWithDb_exists` pattern.
+
+**`evalSelectWithContext_limit_offset`** (Semantics.lean): Lifted version of `evalSelect_limit_offset` for correlated subquery context. Mechanical lift: swap `evalSelect_eq_evalSelectCore` → `evalSelectWithContext_eq_evalSelectCore`, add `outerRow`.
+
+### Key lessons
+
+1. **Plans can have soundness bugs that only proofs catch.** The plan's proof sketch for `in_empty_subquery_false` hand-waved "IN on empty = false", which is only true when `e` produces a value. The Lean proof checker caught what informal reasoning missed.
+
+2. **IN subquery and `evalBinOp .eq` have fundamentally different null/type-mismatch semantics.** IN uses `Value.eq` which returns `false` for mismatches; `evalBinOp .eq` returns `none`/`null`. Any equivalence needs a compatibility precondition.
+
+3. **CASE short-circuits don't preserve error propagation.** `CASE WHEN cond THEN literal ELSE e` returns the literal regardless of whether `e` would error.
+
+4. **For evalCase proofs, use `have hcond` + `rw [evalCase_cons_true/false _ _ _ _ _ _ hcond]`.** Can't use bare `rw [evalCase_cons_true]` because it requires the hypothesis proof as an argument.
+
+### Files modified
+
+- `SqlEquiv/SemanticsCore.lean` — added `evalExprCore_inSubquery`
+- `SqlEquiv/Semantics.lean` — added `evalExprWithDb_inSubquery`, `evalSelectWithContext_limit_offset`
+- `SqlEquiv/Equiv/StatementAxioms.lean` — 5 axioms → theorems; 2 soundness fixes with preconditions
+- `tools/axiom_count_minimum.txt` — 40 → 35
+- `docs/PROVING_AXIOMS_PLAN.md` — updated Phase 7 status
+- `docs/PROVING_LOG.md` — this entry
+
+### Net axiom count change
+
+- **5 axioms → theorems**: 40 → 35

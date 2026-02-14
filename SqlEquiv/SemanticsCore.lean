@@ -253,6 +253,21 @@ theorem evalExprCore_subquery (db : Database) (row : Row)
      | none => some (.null none)) := by
   simp [evalExprCore]
 
+/-- evalExprCore unfolds for IN subquery expressions -/
+theorem evalExprCore_inSubquery (db : Database) (row : Row)
+    (sqe : Database → Row → SelectStmt → Table) (e : Expr) (neg : Bool) (sel : SelectStmt) :
+    evalExprCore db row sqe (.inSubquery e neg sel) =
+    (match evalExprCore db row sqe e with
+     | none => none
+     | some v =>
+       let subResult := sqe db row sel
+       let hasMatch := subResult.any fun subRow =>
+         match subRow.head? with
+         | some (_, subVal) => v.eq subVal == some true
+         | none => false
+       some (Value.bool (if neg then !hasMatch else hasMatch))) := by
+  simp [evalExprCore]
+
 -- ============================================================================
 -- Equational Theorems for evalExprCore CASE expression
 -- ============================================================================
