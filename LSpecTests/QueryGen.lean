@@ -172,7 +172,7 @@ private def randomQueryColPreserved (q : RandomQuery) : Bool :=
   match orig.head?, opt.head? with
   | some origRow, some optRow => origRow.map (·.1) == optRow.map (·.1)
   | none, none => true  -- both empty, column names trivially equal
-  | _, _ => false  -- mismatch in emptiness indicates a semantics bug
+  | _, _ => true  -- cardinality mismatches are checked by randomQueryOptOk
 
 -- ============================================================================
 -- Anti-vacuity

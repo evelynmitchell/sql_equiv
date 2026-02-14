@@ -87,14 +87,17 @@ private def getIntField (row : Row) (field : String) : Option Int :=
 
 instance : Shrinkable RandomDb where
   shrink rdb :=
-    -- Remove one user row at a time (also remove orders referencing that user)
-    (List.range rdb.users.length).map (fun i =>
-      let removedUser := rdb.users[i]!
-      let removedId := getIntField removedUser "id"
+    -- Remove one user row at a time (also remove orders referencing that user),
+    -- but never shrink below 1 user (matching the generator's minimum).
+    (List.range rdb.users.length).filterMap (fun i =>
       let remainingUsers := rdb.users.take i ++ rdb.users.drop (i + 1)
-      let remainingOrders := rdb.orders.filter fun row =>
-        getIntField row "user_id" != removedId
-      ⟨remainingUsers, remainingOrders, rdb.products⟩) ++
+      if remainingUsers.isEmpty then none
+      else
+        let removedUser := rdb.users[i]!
+        let removedId := getIntField removedUser "id"
+        let remainingOrders := rdb.orders.filter fun row =>
+          getIntField row "user_id" != removedId
+        some ⟨remainingUsers, remainingOrders, rdb.products⟩) ++
     -- Remove one order row at a time
     (List.range rdb.orders.length).map (fun i =>
       ⟨rdb.users, rdb.orders.take i ++ rdb.orders.drop (i + 1), rdb.products⟩) ++

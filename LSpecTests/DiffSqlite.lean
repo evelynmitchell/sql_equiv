@@ -45,7 +45,9 @@ private def sqliteSetupSql : String :=
 /-- Run SQL against sqlite3 and return raw stdout. -/
 private def runSqliteRaw (querySql : String) : IO (Except String String) := do
   let fullSql := sqliteSetupSql ++ querySql ++ ";\n"
-  let tmpPath := s!"/tmp/sql_equiv_diff_{← IO.monoMsNow}.sql"
+  let ts ← IO.monoMsNow
+  let r ← IO.rand 0 1000000000
+  let tmpPath := s!"/tmp/sql_equiv_diff_{ts}_{r}.sql"
   IO.FS.writeFile tmpPath fullSql
   try
     let result ← IO.Process.output {
@@ -62,14 +64,22 @@ private def runSqliteRaw (querySql : String) : IO (Except String String) := do
 -- ============================================================================
 
 /-- Parse a single value from SQLite text output.
-    Note: integer-like strings (e.g., a product code "123") will be parsed as
-    integers. This is acceptable because our test data uses distinct string
-    values that are never purely numeric. -/
-private def parseValue (s : String) : Value :=
+    Uses SQLite column type declarations to distinguish integers from strings.
+    Falls back to integer-first heuristic for untyped columns. -/
+private def parseValue (s : String) (colType : String) : Value :=
   if s == "NULL" then .null none
+  else if colType == "TEXT" then .string s
   else match s.toInt? with
     | some n => .int n
     | none => .string s
+
+/-- Column type declarations for our test schema (used to disambiguate parsing). -/
+private def columnTypes : List (String × String) :=
+  [("id", "INTEGER"), ("name", "TEXT"), ("age", "INTEGER"), ("department", "TEXT"),
+   ("user_id", "INTEGER"), ("amount", "INTEGER"), ("product", "TEXT"), ("price", "INTEGER")]
+
+private def getColumnType (colName : String) : String :=
+  (columnTypes.find? (·.1 == colName) |>.map (·.2)).getD "INTEGER"
 
 /-- Parse sqlite3 pipe-separated output into Table.
     Note: pipe characters within values would break parsing. Our test data
@@ -83,7 +93,7 @@ private def parseSqliteOutput (output : String) : Table :=
     rows.map fun row =>
       let vals := row.splitOn "|"
       colNames.zip vals |>.map fun (col, valStr) =>
-        (col, parseValue valStr)
+        (col, parseValue valStr (getColumnType col))
 
 -- ============================================================================
 -- Result comparison
@@ -159,9 +169,9 @@ def runAllTests : IO TestSeq := do
     -- Simple WHERE queries
     diffCountTest "WHERE age > 25" (mkWhereAge .gt 25)
       "SELECT * FROM users WHERE age > 25",
-    diffCountTest "WHERE age = 30" (mkWhereAge .eq 30)
+    diffFullTest "WHERE age = 30" (mkWhereAge .eq 30)
       "SELECT * FROM users WHERE age = 30",
-    diffCountTest "WHERE department = 'Engineering'"
+    diffFullTest "WHERE department = 'Engineering'"
       (mkSelectWhere "users" (some (.binOp .eq (qcol "users" "department") (.lit (.string "Engineering")))))
       "SELECT * FROM users WHERE department = 'Engineering'",
     diffCountTest "WHERE age > 25 AND department = 'Engineering'"
@@ -177,7 +187,7 @@ def runAllTests : IO TestSeq := do
     diffCountTest "WHERE FALSE returns 0 rows"
       (mkSelectWhere "users" (some (.lit (.bool false))))
       "SELECT * FROM users WHERE 0",
-    diffCountTest "no WHERE returns all rows"
+    diffFullTest "no WHERE returns all rows"
       (mkSelectWhere "users" none)
       "SELECT * FROM users",
     -- DISTINCT
@@ -201,7 +211,7 @@ def runAllTests : IO TestSeq := do
         (.binOp .ge (qcol "users" "age") (.lit (.int 25)))
         (.binOp .le (qcol "users" "age") (.lit (.int 30))))))
       "SELECT * FROM users WHERE age >= 25 AND age <= 30",
-    diffCountTest "WHERE name != 'Alice'"
+    diffFullTest "WHERE name != 'Alice'"
       (mkSelectWhere "users" (some (.binOp .ne (qcol "users" "name") (.lit (.string "Alice")))))
       "SELECT * FROM users WHERE name != 'Alice'"
   ].mapM id
