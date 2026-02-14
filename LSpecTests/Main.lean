@@ -19,6 +19,12 @@ import LSpecTests.FlattenRoundtrip
 import LSpecTests.ExprOrdering
 import LSpecTests.PredicatePushdown
 import LSpecTests.QueryOptimizer
+import LSpecTests.QueryHelpers
+import LSpecTests.EdgeCaseDb
+import LSpecTests.QueryProperties
+import LSpecTests.RandomDb
+import LSpecTests.QueryGen
+import LSpecTests.DiffSqlite
 
 open LSpec SlimCheck
 
@@ -28,6 +34,8 @@ def main : IO UInt32 := do
     pure (env.bind String.toNat? |>.getD defaultNumSamples)
   let cfg := mkSlimCfg numSamples
   IO.println s!"Running LSpec with {numSamples} samples per property"
+  -- IO-based tests (SQLite differential)
+  let sqliteTests ← DiffSqlite.runAllTests
   lspecIO (.ofList [
     ("Expression Algebra", [ExprAlgebra.allTests cfg]),
     ("NULL Semantics", [NullSemantics.allTests cfg]),
@@ -36,5 +44,10 @@ def main : IO UInt32 := do
     ("Flatten Roundtrip", [FlattenRoundtrip.allTests cfg]),
     ("Expression Ordering", [ExprOrdering.allTests cfg]),
     ("Predicate Pushdown", [PredicatePushdown.allTests cfg]),
-    ("Query Optimizer", [QueryOptimizer.allTests cfg])
+    ("Query Optimizer", [QueryOptimizer.allTests cfg]),
+    ("Edge-Case Databases", [EdgeCaseDb.allTests cfg]),
+    ("Query Properties", [QueryProperties.allTests cfg]),
+    ("Random Database", [RandomDb.allTests cfg]),
+    ("Schema-Aware Query Gen", [QueryGen.allTests cfg]),
+    ("SQLite Differential", [sqliteTests])
   ]) []
