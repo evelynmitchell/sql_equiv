@@ -45,24 +45,29 @@ private def names : Array String := #["Alice", "Bob", "Carol", "Dave", "Eve", "F
 private def departments : Array String := #["Engineering", "Sales", "Marketing", "HR", "Finance"]
 private def productNames : Array String := #["Widget", "Gadget", "Gizmo", "Doohickey", "Thingamajig"]
 
-/-- Generate a random user row with the given id. -/
+/-- With ~15% probability, replace a value with NULL. -/
+private partial def maybeNull (v : Value) : Gen Value := do
+  let n ← Gen.choose Nat 0 6
+  if n == 0 then pure (.null none) else pure v
+
+/-- Generate a random user row with the given id. ~15% chance of NULL per nullable field. -/
 private partial def genUsersRow (id : Nat) : Gen Row := do
-  let name ← Gen.elements names
-  let age ← Gen.choose Int 18 65
-  let dept ← Gen.elements departments
-  pure [("id", .int id), ("name", .string name), ("age", .int age), ("department", .string dept)]
+  let name ← Gen.elements names >>= fun s => maybeNull (.string s)
+  let age ← Gen.choose Int 18 65 >>= fun n => maybeNull (.int n)
+  let dept ← Gen.elements departments >>= fun s => maybeNull (.string s)
+  pure [("id", .int id), ("name", name), ("age", age), ("department", dept)]
 
 /-- Generate a random order row with the given id and user_id. -/
 private partial def genOrdersRow (id userId : Nat) : Gen Row := do
-  let amount ← Gen.choose Int 10 500
-  let product ← Gen.elements productNames
-  pure [("id", .int id), ("user_id", .int userId), ("amount", .int amount), ("product", .string product)]
+  let amount ← Gen.choose Int 10 500 >>= fun n => maybeNull (.int n)
+  let product ← Gen.elements productNames >>= fun s => maybeNull (.string s)
+  pure [("id", .int id), ("user_id", .int userId), ("amount", amount), ("product", product)]
 
 /-- Generate a random product row with the given id. -/
 private partial def genProductsRow (id : Nat) : Gen Row := do
-  let name ← Gen.elements productNames
-  let price ← Gen.choose Int 10 300
-  pure [("id", .int id), ("name", .string name), ("price", .int price)]
+  let name ← Gen.elements productNames >>= fun s => maybeNull (.string s)
+  let price ← Gen.choose Int 10 300 >>= fun n => maybeNull (.int n)
+  pure [("id", .int id), ("name", name), ("price", price)]
 
 /-- Generate a RandomDb with 1–8 users, 0–6 orders, and 1–5 products (valid foreign keys). -/
 private partial def genRandomDb : Gen RandomDb := do
@@ -170,8 +175,27 @@ private def randomDbStmtOk (rdb : RandomDb) (age : AgeInt) : Bool :=
 private def genProducesUsers (rdb : RandomDb) : Bool :=
   rdb.users.length > 0
 
+/-- Check whether a table contains at least one NULL value. -/
+private def tableHasNull (t : Table) : Bool :=
+  t.any fun row => row.any fun (_, v) => match v with | .null _ => true | _ => false
+
 def antiVacuityTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "generator produces non-empty users table" (∀ rdb : RandomDb, genProducesUsers rdb)
+  check (cfg := cfg) "generator produces non-empty users table" (∀ rdb : RandomDb, genProducesUsers rdb) $
+  -- Deterministic: verify optimizer handles NULL-containing databases correctly
+  test "optimizer handles database with NULLs" (
+    let nullDb : RandomDb := ⟨
+      [[("id", .int 1), ("name", .null none), ("age", .int 30), ("department", .null none)],
+       [("id", .int 2), ("name", .string "Bob"), ("age", .null none), ("department", .string "Sales")]],
+      [[("id", .int 1), ("user_id", .int 1), ("amount", .null none), ("product", .string "Widget")]],
+      [[("id", .int 1), ("name", .null none), ("price", .int 50)]]
+    ⟩
+    -- Verify NULLs are present (anti-vacuity for the detector)
+    tableHasNull nullDb.users &&
+    -- Verify optimizer preserves semantics on NULL-containing data
+    rdbSelectOk nullDb (mkWhereAge .gt 25) &&
+    rdbSelectOk nullDb (mkJoinQuery .inner 25) &&
+    rdbSelectOk nullDb (mkJoinQuery .left 20)
+  )
 
 -- ============================================================================
 -- All random database tests

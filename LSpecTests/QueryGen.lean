@@ -35,7 +35,6 @@ private def usersSchema : Array ColMeta := #[
   ⟨"department", "users", .string⟩
 ]
 
--- Reserved for future JOIN query generation.
 private def ordersSchema : Array ColMeta := #[
   ⟨"id", "orders", .int⟩,
   ⟨"user_id", "orders", .int⟩,
@@ -169,6 +168,64 @@ instance : SampleableExt RandomQuery :=
   SampleableExt.mkSelfContained genRandomQuery
 
 -- ============================================================================
+-- Random JOIN query generator
+-- ============================================================================
+
+/-- A randomly generated JOIN query over users × orders. -/
+structure RandomJoinQuery where
+  stmt : SelectStmt
+  deriving Repr
+
+/-- Combined schema for JOIN queries. -/
+private def joinSchema : Array ColMeta := usersSchema ++ ordersSchema
+
+/-- Generate a random JOIN query over users × orders. -/
+private partial def genRandomJoinQuery : Gen RandomJoinQuery := do
+  let jt ← Gen.elements #[JoinType.inner, .left, .right, .full, .cross]
+  let items ← genProjection joinSchema
+  let fkCond := Expr.binOp .eq (qcol "users" "id") (qcol "orders" "user_id")
+  let onCond ← if jt == .cross then
+      pure none
+    else
+      Gen.frequency #[
+        (3, pure (some fkCond)),
+        (1, some <$> genWherePred joinSchema 0)
+      ] (pure (some fkCond))
+  let where_ ← Gen.frequency #[
+    (3, some <$> genWherePred joinSchema 2),
+    (1, pure none)
+  ] (pure none)
+  let usersFrom := FromClause.table ⟨"users", none⟩
+  let ordersFrom := FromClause.table ⟨"orders", none⟩
+  let joinFrom := FromClause.join usersFrom jt ordersFrom onCond
+  pure ⟨.mk false items (some joinFrom) where_ [] none [] none none⟩
+
+/-- Structural shrinking for JOIN queries. -/
+private def shrinkRandomJoinQuery (q : RandomJoinQuery) : List RandomJoinQuery :=
+  match q.stmt with
+  | .mk distinct items from_ where_ groupBy having orderBy limit offset =>
+    let mk := fun d i f w => RandomJoinQuery.mk (.mk d i f w groupBy having orderBy limit offset)
+    -- Drop WHERE clause
+    (if where_.isSome then [mk distinct items from_ none] else []) ++
+    -- Replace projection with SELECT *
+    (match items with | [.star none] => [] | _ => [mk distinct [.star none] from_ where_]) ++
+    -- Downgrade to INNER JOIN (simplest join type)
+    (match from_ with
+     | some (.join l jt r on_) =>
+       if jt != .inner then
+         [mk distinct items (some (.join l .inner r on_)) where_]
+       else []
+     | _ => []) ++
+    -- Drop DISTINCT
+    (if distinct then [mk false items from_ where_] else [])
+
+instance : Shrinkable RandomJoinQuery where
+  shrink q := shrinkRandomJoinQuery q
+
+instance : SampleableExt RandomJoinQuery :=
+  SampleableExt.mkSelfContained genRandomJoinQuery
+
+-- ============================================================================
 -- Property tests
 -- ============================================================================
 
@@ -193,15 +250,30 @@ private def randomQueryColPreserved (q : RandomQuery) : Bool :=
   | none, none => true  -- both empty, column names trivially equal
   | _, _ => true  -- cardinality mismatches are checked by randomQueryOptOk
 
+/-- Core property: random JOIN query + optimizer preserves semantics on testDb. -/
+private def randomJoinQueryOptOk (q : RandomJoinQuery) : Bool :=
+  selectOptOkDb testDb q.stmt
+
+/-- Cross-product: random JOIN query × random database. -/
+private def randomJoinQueryRandomDbOk (q : RandomJoinQuery) (rdb : RandomDb.RandomDb) : Bool :=
+  selectOptOkDb rdb.toDb q.stmt
+
+/-- Idempotence of optimizer on random JOIN queries. -/
+private def randomJoinQueryIdempotent (q : RandomJoinQuery) : Bool :=
+  optimizeSelectStmt (optimizeSelectStmt q.stmt) == optimizeSelectStmt q.stmt
+
 -- ============================================================================
 -- Anti-vacuity
 -- ============================================================================
 
-/-- Verify the infrastructure works with a known query. -/
+/-- Verify the infrastructure works with known queries. -/
 def antiVacuityTests : TestSeq :=
   test "random query infrastructure: SELECT * returns rows" (
     let q : RandomQuery := ⟨mkSelectWhere "users" none⟩
-    (evalSelect testDb q.stmt).length > 0)
+    (evalSelect testDb q.stmt).length > 0) $
+  test "random JOIN query infrastructure: INNER JOIN returns rows" (
+    let joinStmt := (mkJoinQuery .inner 20)
+    (evalSelect testDb joinStmt).length > 0)
 
 -- ============================================================================
 -- All schema-aware query tests
@@ -214,6 +286,11 @@ def allTests (cfg : Configuration) : TestSeq :=
     check (cfg := cfg) "random query preserves semantics (random db)" (∀ q : RandomQuery, ∀ rdb : RandomDb.RandomDb, randomQueryRandomDbOk q rdb) $
     check (cfg := cfg) "random query optimizer is idempotent" (∀ q : RandomQuery, randomQueryIdempotent q) $
     check (cfg := cfg) "random query preserves column names" (∀ q : RandomQuery, randomQueryColPreserved q)
+  ) $
+  group "Random JOIN Queries" (
+    check (cfg := cfg) "random JOIN query preserves semantics (testDb)" (∀ q : RandomJoinQuery, randomJoinQueryOptOk q) $
+    check (cfg := cfg) "random JOIN query preserves semantics (random db)" (∀ q : RandomJoinQuery, ∀ rdb : RandomDb.RandomDb, randomJoinQueryRandomDbOk q rdb) $
+    check (cfg := cfg) "random JOIN query optimizer is idempotent" (∀ q : RandomJoinQuery, randomJoinQueryIdempotent q)
   )
 
 end QueryGen
