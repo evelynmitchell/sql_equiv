@@ -691,7 +691,7 @@ example (h : a.isIntValued) : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := 
 
 | Axiom | Status | Reason |
 |-------|--------|--------|
-| `ground_expr_eval_independent` | **Kept as axiom** | Both `isGround` and `evalExprWithDb` are `partial def` — Lean blocks structural induction and definitional unfolding |
+| `ground_expr_eval_independent` | **Kept as axiom** (later proved in Batch 36 / PR #150) | Both `isGround` and `evalExprWithDb` are `partial def` — resolved via 3-file split pattern |
 | `decideGroundExprEquiv_sound` | **Proved as theorem** | Follows directly from `ground_expr_eval_independent` |
 
 ### Why `ground_expr_eval_independent` can't be proved
@@ -3249,7 +3249,7 @@ Example (`filter_and` at core level):
 
 ---
 
-## Batch 22: filter_pushdown_table + Join Axiom Triage
+## Batch 35: filter_pushdown_table + Join Axiom Triage
 
 **Branch**: `claude/filter-pushdown-join-triage`
 
@@ -3288,3 +3288,73 @@ Simpler than `filter_and` — no AND-splitting needed, just a direct equality af
 ### Net axiom count change
 
 - **1 axiom → theorem, 1 unsound axiom deleted**: 30 → 28
+
+---
+
+## Batch 36: Prove `ground_expr_eval_independent` (PR #150)
+
+**Branch**: `claude/prove-ground-expr-eval-independent`
+**Date**: 2026-02-15
+
+### Overview
+
+Proved the domain axiom `ground_expr_eval_independent` using the 3-file split pattern. This axiom states that ground expressions (no column references) produce the same result regardless of the evaluation row.
+
+### Approach: WFR mirror of `isGround`
+
+The `Expr.isGround` function is `partial def` in a mutual block with `SelectStmt.isGround` and `FromClause.isGround`. Created `isGroundCore` as a non-partial WFR mirror in SemanticsCore.lean, parameterized by a callback `selectGround : SelectStmt → Bool`.
+
+**Key difference from `Expr.isGround`**: `List.all` has no WFR support in Lean 4, so all list operations use `foldl (fun acc e => acc && f e) true` instead.
+
+### Core theorem: `isGroundCore_eval_independent`
+
+Proved by Nat-based strong induction (since `Expr` is mutually inductive — `induction e` fails):
+
+```lean
+suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n → ... by
+  exact key (sizeOf e + 1) e ...
+```
+
+15 cases, 12 straightforward. The 3 harder cases:
+
+1. **`.func args`**: Used `List.map_congr_left` + `foldl_and_true_forall` to show all args are row-independent.
+
+2. **`.case branches else_`**: Used `evalCaseHelper_congr` congruence lemma + `case_foldl_true_forall` to extract per-branch groundness from the foldl invariant.
+
+3. **`.inList e neg vals`**: Required a combined congruence lemma `inList_foldl_eval_independent` that handles both the `ev` change and per-`vi` changes simultaneously. A naive approach of first `rw [h_ev]` then `rw [h_foldl]` failed because `rw` rewrites ALL occurrences including inside foldl lambdas, breaking the subsequent match.
+
+### Helper lemmas (10 total, all private, all used)
+
+| Lemma | Purpose |
+|-------|---------|
+| `foldl_and_false_init` | foldl with && from false = false |
+| `foldl_and_true_forall` | foldl with && from true = true → every element maps to true |
+| `case_foldl_false_init` | double-&& foldl from false = false |
+| `case_foldl_true_forall` | double-&& foldl extraction |
+| `evalCaseHelper_congr` | case foldl congruence |
+| `inList_foldl_eval_independent` | inList foldl congruence (handles ev + vals simultaneously) |
+| `isGroundCore_case_branches` | extract branches groundness from `.case` |
+| `isGroundCore_case_else` | extract else groundness from `.case` |
+| `isGroundCore_inList_expr` | extract expr groundness from `.inList` |
+| `isGroundCore_inList_vals` | extract vals groundness from `.inList` |
+
+### Bridge axioms (2 new, in Decidable.lean)
+
+- `isGround_eq_isGroundCore`: `e.isGround = isGroundCore SelectStmt.isGround e`
+- `selectStmtGround_eval_independent`: if `sel.isGround = true`, `evalSelectWithContext` is row-independent
+
+### Lessons learned
+
+- **`subst heq` renames variables** — use `rcases ... with rfl | hmem` to avoid downstream breakage.
+- **`by_contra`/`by_cases` on Bool produce `decide` wrappers** — use `cases hv : expr` instead.
+- **`rw [h]` enters foldl lambdas** — build combined congruence lemmas or `generalize` first.
+
+### Files modified
+
+- `SqlEquiv/SemanticsCore.lean` — `isGroundCore`, 10 helpers, `isGroundCore_eval_independent`
+- `SqlEquiv/Equiv/Decidable.lean` — 2 bridge axioms, axiom → theorem
+- `tools/axiom_count_minimum.txt` — 28 → 29
+
+### Net axiom count change
+
+- **1 domain axiom → theorem, +2 bridge axioms**: 28 → 29
