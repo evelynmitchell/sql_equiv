@@ -193,44 +193,77 @@ def decideStmtEq (s1 s2 : Stmt) : Bool :=
 mutual
 
 /-- Check if an expression is ground (contains no column references) -/
-partial def Expr.isGround : Expr → Bool
+def Expr.isGround : Expr → Bool
   | .lit _ => true
   | .col _ => false  -- Column references are not ground
   | .binOp _ l r => l.isGround && r.isGround
   | .unaryOp _ e => e.isGround
-  | .func _ args => args.all Expr.isGround
-  | .agg _ arg _ => arg.map Expr.isGround |>.getD true
+  | .func _ args => args.foldl (fun acc e => acc && e.isGround) true
+  | .agg _ arg _ => match arg with | some e => e.isGround | none => true
   | .countStar => true
   | .case branches else_ =>
-    branches.all (fun (c, r) => c.isGround && r.isGround) &&
-    (else_.map Expr.isGround |>.getD true)
-  | .inList e _ vals => e.isGround && vals.all Expr.isGround
+    branches.foldl (fun acc pair => acc && pair.1.isGround && pair.2.isGround) true &&
+    (match else_ with | some e => e.isGround | none => true)
+  | .inList e _ vals => e.isGround && vals.foldl (fun acc vi => acc && vi.isGround) true
   | .inSubquery e _ sel => e.isGround && sel.isGround
   | .exists _ sel => sel.isGround
   | .subquery sel => sel.isGround
   | .between e lo hi => e.isGround && lo.isGround && hi.isGround
-  | .windowFn _ arg _ => arg.map Expr.isGround |>.getD true
+  | .windowFn _ arg _ => match arg with | some e => e.isGround | none => true
+termination_by e => sizeOf e
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
 
-partial def SelectStmt.isGround (s : SelectStmt) : Bool :=
+def SelectStmt.isGround (s : SelectStmt) : Bool :=
   match s with
   | .mk _ items from_ wc groupBy having orderBy _ _ =>
-    let itemsOk := items.all (fun item => match item with | .star _ => true | .exprItem e _ => Expr.isGround e)
-    let fromOk := from_.map FromClause.isGround |>.getD true
-    let whereOk := wc.map Expr.isGround |>.getD true
-    let groupOk := groupBy.all Expr.isGround
-    let havingOk := having.map Expr.isGround |>.getD true
-    let orderOk := orderBy.all (fun item => Expr.isGround item.expr)
+    let itemsOk := items.foldl (fun acc item => acc && match h : item with
+      | .star _ => false
+      | .exprItem e _ =>
+        have _hsz : sizeOf e < sizeOf item := by rw [h]; simp_wf; omega
+        Expr.isGround e) true
+    let fromOk := match from_ with | some fc => FromClause.isGround fc | none => true
+    let whereOk := match wc with | some e => Expr.isGround e | none => true
+    let groupOk := groupBy.foldl (fun acc e => acc && Expr.isGround e) true
+    let havingOk := match having with | some e => Expr.isGround e | none => true
+    let orderOk := orderBy.foldl (fun acc item => acc && match h : item with
+      | .mk e _ =>
+        have _hsz : sizeOf e < sizeOf item := by rw [h]; simp_wf; omega
+        Expr.isGround e) true
     itemsOk && fromOk && whereOk && groupOk && havingOk && orderOk
+termination_by sizeOf s
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
 
-partial def FromClause.isGround (fc : FromClause) : Bool :=
+def FromClause.isGround (fc : FromClause) : Bool :=
   match fc with
   | .table _ => true
   | .subquery sel _ => SelectStmt.isGround sel
   | .join l _ r on_ =>
     let leftOk := FromClause.isGround l
     let rightOk := FromClause.isGround r
-    let onOk := on_.map Expr.isGround |>.getD true
+    let onOk := match on_ with | some e => Expr.isGround e | none => true
     leftOk && rightOk && onOk
+termination_by sizeOf fc
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
 
 end
 
@@ -238,9 +271,88 @@ end
 -- Bridge axioms for isGround (connect partial defs to non-partial mirrors)
 -- ============================================================================
 
+/-- Helper: foldl with && is equal when pointwise functions are equal -/
+private theorem foldl_and_congr_bridge {f g : α → Bool} (xs : List α) (init : Bool)
+    (h : ∀ x ∈ xs, f x = g x) :
+    xs.foldl (fun acc x => acc && f x) init =
+    xs.foldl (fun acc x => acc && g x) init := by
+  induction xs generalizing init with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.foldl]
+    rw [h a List.mem_cons_self]
+    exact ih (init && g a) (fun x hx => h x (List.mem_cons.mpr (Or.inr hx)))
+
+/-- Helper: foldl with double && is equal when pointwise functions are equal -/
+private theorem foldl_double_and_congr_bridge {f1 g1 f2 g2 : α → Bool} (xs : List α) (init : Bool)
+    (h : ∀ x ∈ xs, f1 x = f2 x ∧ g1 x = g2 x) :
+    xs.foldl (fun acc x => acc && f1 x && g1 x) init =
+    xs.foldl (fun acc x => acc && f2 x && g2 x) init := by
+  induction xs generalizing init with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.foldl]
+    obtain ⟨hf, hg⟩ := h a List.mem_cons_self
+    rw [hf, hg]
+    exact ih (init && f2 a && g2 a) (fun x hx => h x (List.mem_cons.mpr (Or.inr hx)))
+
 /-- Bridge: Expr.isGround equals isGroundCore instantiated with SelectStmt.isGround -/
-axiom isGround_eq_isGroundCore (e : Expr) :
-  e.isGround = isGroundCore SelectStmt.isGround e
+theorem isGround_eq_isGroundCore : (e : Expr) →
+    e.isGround = isGroundCore SelectStmt.isGround e
+  | .lit _ => by simp [Expr.isGround, isGroundCore]
+  | .col _ => by simp [Expr.isGround, isGroundCore]
+  | .binOp _ l r => by
+    simp only [Expr.isGround, isGroundCore]
+    rw [isGround_eq_isGroundCore l, isGround_eq_isGroundCore r]
+  | .unaryOp _ e => by
+    simp only [Expr.isGround, isGroundCore]
+    rw [isGround_eq_isGroundCore e]
+  | .func _ args => by
+    simp only [Expr.isGround, isGroundCore]
+    exact foldl_and_congr_bridge args true (fun e _ => isGround_eq_isGroundCore e)
+  | .agg _ (some e) _ => by
+    simp only [Expr.isGround, isGroundCore]
+    exact isGround_eq_isGroundCore e
+  | .agg _ none _ => by simp [Expr.isGround, isGroundCore]
+  | .countStar => by simp [Expr.isGround, isGroundCore]
+  | .case branches (some else_) => by
+    simp only [Expr.isGround, isGroundCore]
+    congr 1
+    · exact foldl_double_and_congr_bridge branches true
+        (fun pair _ => ⟨isGround_eq_isGroundCore pair.1, isGround_eq_isGroundCore pair.2⟩)
+    · exact isGround_eq_isGroundCore else_
+  | .case branches none => by
+    simp only [Expr.isGround, isGroundCore]
+    congr 1
+    exact foldl_double_and_congr_bridge branches true
+      (fun pair _ => ⟨isGround_eq_isGroundCore pair.1, isGround_eq_isGroundCore pair.2⟩)
+  | .inList e _ vals => by
+    simp only [Expr.isGround, isGroundCore]
+    congr 1
+    · exact isGround_eq_isGroundCore e
+    · exact foldl_and_congr_bridge vals true (fun vi _ => isGround_eq_isGroundCore vi)
+  | .inSubquery e _ _ => by
+    simp only [Expr.isGround, isGroundCore]
+    rw [isGround_eq_isGroundCore e]
+  | .exists _ _ => by simp [Expr.isGround, isGroundCore]
+  | .subquery _ => by simp [Expr.isGround, isGroundCore]
+  | .between e lo hi => by
+    simp only [Expr.isGround, isGroundCore]
+    rw [isGround_eq_isGroundCore e, isGround_eq_isGroundCore lo, isGround_eq_isGroundCore hi]
+  | .windowFn _ (some e) _ => by
+    simp only [Expr.isGround, isGroundCore]
+    exact isGround_eq_isGroundCore e
+  | .windowFn _ none _ => by simp [Expr.isGround, isGroundCore]
+termination_by e => sizeOf e
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
 
 /-- Bridge: if a SelectStmt is ground, evalSelectWithContext is row-independent -/
 axiom selectStmtGround_eval_independent (sel : SelectStmt)

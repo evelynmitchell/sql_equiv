@@ -351,6 +351,7 @@ row merging is commutative/associative (modulo column ordering).
 - `normalizeExpr_equiv` -- normalization preserves semantics
 - `syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic
 - ~~`ground_expr_eval_independent` -- ground expressions don't depend on row~~ **PROVED** (PR #150, Batch 36) via `isGroundCore` WFR mirror + bridge axioms
+- ~~`isGround_eq_isGroundCore` -- bridge axiom for isGround~~ **PROVED** (PR #151, Batch 37) via converting `isGround` mutual block from `partial` to WFR
 - `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound (already a theorem, uses `ground_expr_eval_independent`)
 
 **Approach:** Structural induction on `Expr`. `normalizeExpr_equiv` and `syntacticEquiv_implies_equiv` remain blocked by `normalizeExpr` using `toString (repr ...)` (opaque) for comparison and `Expr.beq` being `partial def`.
@@ -390,8 +391,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 29 axioms remaining (14 in Equiv/, 15 in infrastructure files), 477 theorems proved (94.3%).
-Axiom ratchet: 29 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 28 axioms remaining (13 in Equiv/, 15 in infrastructure files), 480 theorems proved (94.5%).
+Axiom ratchet: 28 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -468,7 +469,7 @@ decision first (see "Unsound Axiom Strategy" below).
 | Order | Issue | Description | Axioms | Difficulty |
 |:-----:|-------|-------------|:------:|------------|
 | 24 | [#52](https://github.com/evelynmitchell/sql_equiv/issues/52) | Normalization equivalence | 2 | Medium-High |
-| 25 | [#53](https://github.com/evelynmitchell/sql_equiv/issues/53) | Ground expr independence | 2 | 1 **proved** (PR #94), 1 kept as axiom (`partial def` limitation) |
+| 25 | [#53](https://github.com/evelynmitchell/sql_equiv/issues/53) | Ground expr independence | 2 | 2 **proved** (PR #150: `ground_expr_eval_independent`; PR #151: `isGround_eq_isGroundCore` via WFR conversion) |
 
 ### Wave 5 -- Joins (sequential dependency chain)
 
