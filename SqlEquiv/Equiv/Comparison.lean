@@ -14,7 +14,8 @@ namespace SqlEquiv
 
 /-- Predicate pushdown: push filter into the left side of an inner join
     when the filter only references columns from the left table.
-    Axiom: Standard predicate pushdown optimization rule. -/
+    Axiom: Blocked — `exprReferencesOnlyFrom` calls `exprReferencesOnlyTable` which is
+    `partial def` (opaque in kernel), so the precondition `h_ref` can't be unfolded in proofs. -/
 axiom filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
@@ -23,7 +24,7 @@ axiom filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
     evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a) (some filter) [] none [] none none) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset)
 
 /-- Predicate pushdown: push filter into the right side of an inner join.
-    Axiom: Standard predicate pushdown optimization rule. -/
+    Axiom: Blocked — same `partial def exprReferencesOnlyTable` blocker as filter_join_left. -/
 axiom filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
@@ -31,30 +32,35 @@ axiom filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.join a .inner (.subquery (.mk false [.star none] (some b) (some filter) [] none [] none none) "filtered_b") (some cond))) none groupBy having orderBy limit offset)
 
-/-- Simpler version: filter pushdown for basic FROM clause with table.
-    Axiom: Filter in WHERE is equivalent to filter in subquery. -/
-axiom filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr)
+/-- Filter pushdown for basic FROM clause with table.
+    Proved: filter in WHERE is equivalent to filter in subquery. -/
+theorem filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items (some (.table t)) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.subquery (.mk false [.star none] (some (.table t)) (some filter) [] none [] none none) (t.alias.getD t.name))) none groupBy having orderBy limit offset)
+    evalSelect db (.mk false items (some (.subquery (.mk false [.star none] (some (.table t)) (some filter) [] none [] none none) (t.alias.getD t.name))) none groupBy having orderBy limit offset) :=
+  evalSelect_filter_pushdown_table db items (some (.table t)) (t.alias.getD t.name) filter groupBy having orderBy limit offset
 
 -- ============================================================================
 -- Join Reordering Theorems
 -- ============================================================================
 
 /-- Join associativity for inner joins.
-    Axiom: Standard relational algebra associativity. -/
+    Axiom: Blocked — needs column disjointness + scope preconditions on ON predicates.
+    The real obstruction is semantic: the ON predicates are evaluated at different times
+    with different row scopes between the two association orders (e.g., `cond1` on
+    `lr ++ rr` vs `lr ++ rr ++ cr`, and `cond2` on `(lr ++ rr) ++ cr` vs `rr ++ cr`),
+    and unqualified column resolution via `Row.getQualified` can make predicate meaning
+    depend on which tables are present. Standard relational algebra associativity. -/
 axiom join_assoc (db : Database) (a b c : FromClause) (cond1 cond2 : Expr) :
     ∀ row ∈ evalFrom db (.join (.join a .inner b (some cond1)) .inner c (some cond2)),
     ∃ row' ∈ evalFrom db (.join a .inner (.join b .inner c (some cond2)) (some cond1)),
     (∀ p, p ∈ row → p ∈ row')
 
-/-- Join commutativity - explicit version with full equality.
-    Axiom: Standard relational algebra commutativity. -/
-axiom join_comm_full (db : Database) (a b : FromClause) (cond : Expr) :
-    evalFrom db (.join a .inner b (some cond)) =
-    evalFrom db (.join b .inner a (some cond))
+-- join_comm_full was DELETED: strict Table equality (`evalFrom ... = evalFrom ...`) is
+-- unsound because swapping join sides produces `lr ++ rr` vs `rr ++ lr`, which are
+-- structurally different List (String × Value). No precondition can rescue this.
+-- Use cross_join_comm (membership-based, already proved) for commutativity.
 
 /-- Cross join associativity.
     Theorem: Cartesian product is associative. -/

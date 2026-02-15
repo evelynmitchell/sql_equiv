@@ -3246,3 +3246,45 @@ Example (`filter_and` at core level):
 ### Net axiom count change
 
 - **4 axioms → theorems, 1 bridge axiom added**: 33 → 30
+
+---
+
+## Batch 22: filter_pushdown_table + Join Axiom Triage
+
+**Branch**: `claude/filter-pushdown-join-triage`
+
+### filter_pushdown_table — proved (30 → 29)
+
+**What it says**: `SELECT items FROM t WHERE filter ... = SELECT items FROM (SELECT * FROM t WHERE filter) AS alias WHERE none ...` — moving a WHERE clause into a subquery is equivalent.
+
+**Proof strategy**: Follows the exact pattern of `evalSelectCore_filter_and`:
+1. `simp only [evalSelectCore_eq_afterFilter]` — decompose both sides
+2. `congr 1` — reduce to showing filtered rows are equal
+3. `simp only [h_subquery]` — expand subquery
+4. `rw [evalSelectCore_star_where_eq_filter ...]` — expand inner SELECT * WHERE
+5. `simp only [List.nil_append, List.map_id']` — both sides identical
+
+Simpler than `filter_and` — no AND-splitting needed, just a direct equality after expanding both sides.
+
+### join_comm_full — deleted as unsound (29 → 28)
+
+**Why unsound**: `evalFrom db (.join a .inner b (some cond)) = evalFrom db (.join b .inner a (some cond))` claims strict `Table` equality. But LHS rows are `lr ++ rr` (left columns first), RHS rows are `rr ++ lr` (right columns first). These are structurally different `List (String × Value)` — equality always fails when tables have different column names. No precondition can rescue strict equality. `cross_join_comm` (membership-based, already proved) is the correct pattern.
+
+### Remaining join axioms — triaged as blocked
+
+- **`join_comm` / `join_assoc`**: Need column disjointness preconditions. Expression evaluation goes through `Row.getQualified`, which first tries a fully qualified match and otherwise picks the first column whose name ends with `".{col}"` for an unqualified reference. Reordering or reassociating joins changes which side's column is selected for an unqualified name when both sides expose the same suffix, and it also changes the row scope in which the `ON` predicate is evaluated. So the two join trees can disagree on the value of the same syntactic expression even when they range over the same underlying row pairs.
+- **`filter_join_left` / `filter_join_right`**: `exprReferencesOnlyFrom` is `partial def` = opaque in kernel. Can't unfold to prove the filter only accesses one side's columns.
+
+### Files modified
+
+- `SqlEquiv/SemanticsCore.lean` — `evalSelectCore_filter_pushdown_table`
+- `SqlEquiv/Semantics.lean` — `evalSelect_filter_pushdown_table` bridge
+- `SqlEquiv/Equiv/Comparison.lean` — axiom → theorem + delete `join_comm_full` + blocker comments
+- `SqlEquiv/Equiv/ExprAxioms.lean` — blocker comment on `join_comm`
+- `Test/AxiomCoverageTest.lean` — remove `join_comm_full` test
+- `Test/EquivTest.lean` — remove `#check @join_comm_full`
+- `tools/axiom_count_minimum.txt` — 30 → 28
+
+### Net axiom count change
+
+- **1 axiom → theorem, 1 unsound axiom deleted**: 30 → 28

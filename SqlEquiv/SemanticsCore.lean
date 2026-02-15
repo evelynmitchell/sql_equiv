@@ -1113,4 +1113,39 @@ theorem evalSelectCore_filter_idempotent (db : Database)
     simp only [List.filter_cons]
     split <;> simp_all
 
+/-- Core filter_pushdown_table: moving a WHERE filter into a subquery is equivalent.
+    SELECT items FROM from_ WHERE filter ... = SELECT items FROM (SELECT * FROM from_ WHERE filter) AS alias ... -/
+theorem evalSelectCore_filter_pushdown_table (db : Database)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : Option FromClause) (alias_ : String) (filter : Expr)
+    (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_hasAgg_star : hasAgg [.star none] = false)
+    (h_hasWindowFn_star : hasWindowFn [.star none] = false)
+    (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
+    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+      evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items from_ (some filter) groupBy having orderBy limit offset) =
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (.mk false items
+        (some (.subquery (.mk false [.star none] from_ (some filter) [] none [] none none) alias_))
+        none groupBy having orderBy limit offset) := by
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  simp only [h_subquery]
+  rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
+  simp only [List.nil_append, List.map_id']
+
 end SqlEquiv

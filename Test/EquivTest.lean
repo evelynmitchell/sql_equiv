@@ -134,7 +134,7 @@ open Test
 
 -- Join axioms
 #check @join_assoc
-#check @join_comm_full
+-- join_comm_full: DELETED (unsound — strict Table equality fails due to column ordering)
 #check @cross_join_assoc
 #check @cross_join_comm
 #check @cross_join_cardinality_comm
