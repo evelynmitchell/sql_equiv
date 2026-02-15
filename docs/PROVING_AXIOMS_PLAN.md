@@ -350,10 +350,10 @@ row merging is commutative/associative (modulo column ordering).
 **Target lemmas:**
 - `normalizeExpr_equiv` -- normalization preserves semantics
 - `syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic
-- `ground_expr_eval_independent` -- ground expressions don't depend on row
-- `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound
+- ~~`ground_expr_eval_independent` -- ground expressions don't depend on row~~ **PROVED** (PR #150, Batch 36) via `isGroundCore` WFR mirror + bridge axioms
+- `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound (already a theorem, uses `ground_expr_eval_independent`)
 
-**Approach:** Structural induction on `Expr`.
+**Approach:** Structural induction on `Expr`. `normalizeExpr_equiv` and `syntacticEquiv_implies_equiv` remain blocked by `normalizeExpr` using `toString (repr ...)` (opaque) for comparison and `Expr.beq` being `partial def`.
 
 **Estimated complexity:** Medium-High.
 
@@ -390,8 +390,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 28 axioms remaining (13 in Equiv/, 15 in infrastructure files), 465 theorems proved (94.3%).
-Axiom ratchet: 28 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 29 axioms remaining (14 in Equiv/, 15 in infrastructure files), 477 theorems proved (94.3%).
+Axiom ratchet: 29 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -747,7 +747,7 @@ counts would catch this automatically.
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
 2. ~~**NULL handling:** Three-valued logic adds complexity - start with two-valued subset?~~ **Resolved** — Option 3 null semantics adopted (PR #92).
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
-4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Partially resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus 3 bridge axioms. CASE axioms (5) proved in PR #131.
+4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Partially resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. PR #150 proved `ground_expr_eval_independent` via `isGroundCore` WFR mirror. Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus bridge axioms. `normalizeExpr_equiv` and `syntacticEquiv_implies_equiv` still blocked (opaque `toString (repr ...)` + `partial def beq`).
 5. ~~**Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion.~~ **Partially resolved** — Option 3 fixes `none` vs `some (.null _)` conflation. The `/audit` tool (PR #99) now catches unsound optimizer rewrites. Remaining unsound axioms are documented in PROVING_LOG.md.
 
 ---
