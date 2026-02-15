@@ -1148,4 +1148,285 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
   simp only [List.nil_append, List.map_id']
 
+-- ============================================================================
+-- Ground Expression Detection (non-partial mirror of Expr.isGround)
+-- ============================================================================
+
+/-- Non-partial mirror of `Expr.isGround`, parameterized by a callback for SelectStmt groundness. -/
+def isGroundCore (selectGround : SelectStmt → Bool) : Expr → Bool
+  | .lit _ => true
+  | .col _ => false
+  | .binOp _ l r => isGroundCore selectGround l && isGroundCore selectGround r
+  | .unaryOp _ e => isGroundCore selectGround e
+  | .func _ args => args.foldl (fun acc e => acc && isGroundCore selectGround e) true
+  | .agg _ arg _ => match arg with | some e => isGroundCore selectGround e | none => true
+  | .countStar => true
+  | .case branches else_ =>
+    branches.foldl (fun acc pair => acc && isGroundCore selectGround pair.1 && isGroundCore selectGround pair.2) true &&
+    (match else_ with | some e => isGroundCore selectGround e | none => true)
+  | .inList e _ vals => isGroundCore selectGround e && vals.foldl (fun acc vi => acc && isGroundCore selectGround vi) true
+  | .inSubquery e _ sel => isGroundCore selectGround e && selectGround sel
+  | .exists _ sel => selectGround sel
+  | .subquery sel => selectGround sel
+  | .between e lo hi => isGroundCore selectGround e && isGroundCore selectGround lo && isGroundCore selectGround hi
+  | .windowFn _ arg _ => match arg with | some e => isGroundCore selectGround e | none => true
+termination_by e => sizeOf e
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
+
+-- ============================================================================
+-- Helper lemmas for isGroundCore_eval_independent
+-- ============================================================================
+
+/-- foldl with && from false always returns false. -/
+private theorem foldl_and_false_init {α : Type} {f : α → Bool} (xs : List α) :
+    xs.foldl (fun acc e => acc && f e) false = false := by
+  induction xs with
+  | nil => rfl
+  | cons _ _ ih => simp only [List.foldl, Bool.false_and]; exact ih
+
+/-- If foldl with && from true returns true, every element maps to true. -/
+private theorem foldl_and_true_forall {α : Type} {f : α → Bool} {xs : List α}
+    (h : xs.foldl (fun acc e => acc && f e) true = true)
+    {x : α} (hx : x ∈ xs) : f x = true := by
+  induction xs with
+  | nil => contradiction
+  | cons a rest ih =>
+    simp only [List.foldl, Bool.true_and] at h
+    rcases List.mem_cons.mp hx with rfl | hmem
+    · -- x = a, h : rest.foldl ... (f x) = true
+      cases hfx : f x with
+      | true => rfl
+      | false => rw [hfx] at h; rw [foldl_and_false_init] at h; exact absurd h Bool.false_ne_true
+    · -- x ∈ rest
+      cases hfa : f a with
+      | true => rw [hfa] at h; exact ih h hmem
+      | false => rw [hfa] at h; rw [foldl_and_false_init] at h; exact absurd h Bool.false_ne_true
+
+/-- foldl with double-&& from false always returns false. -/
+private theorem case_foldl_false_init {α : Type} {f g : α → Bool} (xs : List α) :
+    xs.foldl (fun acc pair => acc && f pair && g pair) false = false := by
+  induction xs with
+  | nil => rfl
+  | cons _ _ ih => simp only [List.foldl, Bool.false_and]; exact ih
+
+/-- If case foldl from true returns true, both components of every element map to true. -/
+private theorem case_foldl_true_forall {α : Type} {f g : α → Bool} {xs : List α}
+    (h : xs.foldl (fun acc pair => acc && f pair && g pair) true = true)
+    {x : α} (hx : x ∈ xs) : f x = true ∧ g x = true := by
+  induction xs with
+  | nil => contradiction
+  | cons a rest ih =>
+    simp only [List.foldl, Bool.true_and] at h
+    -- h : rest.foldl step (f a && g a) = true
+    cases hv : f a && g a
+    case false =>
+      rw [hv] at h
+      rw [case_foldl_false_init] at h; exact absurd h Bool.false_ne_true
+    case true =>
+      rw [hv] at h
+      rcases List.mem_cons.mp hx with rfl | hmem
+      · -- x = a, hv : f x && g x = true
+        constructor
+        · cases hf : f x with
+          | true => rfl
+          | false => simp [hf] at hv
+        · cases hg : g x with
+          | true => rfl
+          | false => simp [hg] at hv
+      · exact ih h hmem
+
+/-- evalCaseHelper congruence: if two functions agree on all branches, results agree. -/
+private theorem evalCaseHelper_congr (f g : Expr → Option Value)
+    (elseVal1 elseVal2 : Option Value) (h_else : elseVal1 = elseVal2)
+    (branches : List (Expr × Expr))
+    (h : ∀ pair, pair ∈ branches → f pair.1 = g pair.1 ∧ f pair.2 = g pair.2) :
+    evalCaseHelper f elseVal1 branches = evalCaseHelper g elseVal2 branches := by
+  induction branches with
+  | nil => simp [evalCaseHelper]; exact h_else
+  | cons hd tl ih =>
+    simp only [evalCaseHelper]
+    have ⟨hc, hr⟩ := h hd List.mem_cons_self
+    rw [hc]
+    generalize g hd.1 = v
+    have ih' := ih (fun pair hp => h pair (List.mem_cons_of_mem hd hp))
+    cases v with
+    | none => exact ih'
+    | some val =>
+      cases val with
+      | bool b => cases b with
+        | true => exact hr
+        | false => exact ih'
+      | int _ => exact ih'
+      | string _ => exact ih'
+      | null _ => exact ih'
+
+/-- InList foldl congruence: if ev and all value evaluations agree, foldl results agree. -/
+private theorem inList_foldl_eval_independent
+    (f g : Expr → Option Value)
+    (ev1 ev2 : Option Value) (h_ev : ev1 = ev2)
+    (vals : List Expr)
+    (h : ∀ vi, vi ∈ vals → f vi = g vi)
+    (init : Option Value) :
+    vals.foldl (fun acc vi => evalBinOp .or acc (evalBinOp .eq ev1 (f vi))) init =
+    vals.foldl (fun acc vi => evalBinOp .or acc (evalBinOp .eq ev2 (g vi))) init := by
+  subst h_ev
+  induction vals generalizing init with
+  | nil => rfl
+  | cons v rest ih =>
+    simp only [List.foldl]
+    rw [h v List.mem_cons_self]
+    exact ih (fun vi hvi => h vi (List.mem_cons_of_mem v hvi)) _
+
+/-- Extraction: if isGroundCore on .case is true, then branches foldl is true. -/
+private theorem isGroundCore_case_branches (sg : SelectStmt → Bool)
+    (branches : List (Expr × Expr)) (else_ : Option Expr)
+    (h : isGroundCore sg (.case branches else_) = true) :
+    branches.foldl (fun acc pair => acc && isGroundCore sg pair.1 && isGroundCore sg pair.2) true = true := by
+  rw [isGroundCore.eq_def] at h
+  exact (Bool.and_eq_true_iff.mp h).1
+
+/-- Extraction: if isGroundCore on .case with some else is true, then the else expr is ground. -/
+private theorem isGroundCore_case_else (sg : SelectStmt → Bool)
+    (branches : List (Expr × Expr)) (e : Expr)
+    (h : isGroundCore sg (.case branches (some e)) = true) :
+    isGroundCore sg e = true := by
+  rw [isGroundCore.eq_def] at h
+  exact (Bool.and_eq_true_iff.mp h).2
+
+/-- Extraction: if isGroundCore on .inList is true, then the expression is ground. -/
+private theorem isGroundCore_inList_expr (sg : SelectStmt → Bool)
+    (e : Expr) (neg : Bool) (vals : List Expr)
+    (h : isGroundCore sg (.inList e neg vals) = true) :
+    isGroundCore sg e = true := by
+  rw [isGroundCore.eq_def] at h
+  exact (Bool.and_eq_true_iff.mp h).1
+
+/-- Extraction: if isGroundCore on .inList is true, then the vals foldl is true. -/
+private theorem isGroundCore_inList_vals (sg : SelectStmt → Bool)
+    (e : Expr) (neg : Bool) (vals : List Expr)
+    (h : isGroundCore sg (.inList e neg vals) = true) :
+    vals.foldl (fun acc vi => acc && isGroundCore sg vi) true = true := by
+  rw [isGroundCore.eq_def] at h
+  exact (Bool.and_eq_true_iff.mp h).2
+
+-- ============================================================================
+-- Core theorem: ground expressions are row-independent
+-- ============================================================================
+
+/-- If `isGroundCore selectGround e = true` and subqueries are row-independent for ground selects,
+    then `evalExprCore` produces the same result for any row. -/
+theorem isGroundCore_eval_independent
+    (selectGround : SelectStmt → Bool)
+    (subqueryEval : Database → Row → SelectStmt → Table)
+    (h_sq : ∀ sel, selectGround sel = true →
+      ∀ db r1 r2, subqueryEval db r1 sel = subqueryEval db r2 sel)
+    (db : Database) (e : Expr) (hg : isGroundCore selectGround e = true)
+    (r1 r2 : Row) :
+    evalExprCore db r1 subqueryEval e = evalExprCore db r2 subqueryEval e := by
+  -- Expr is mutually inductive so `induction` doesn't work directly.
+  -- Use strong induction on sizeOf via Nat induction.
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
+      isGroundCore selectGround e = true →
+      ∀ r1 r2 : Row, evalExprCore db r1 subqueryEval e = evalExprCore db r2 subqueryEval e by
+    exact key (sizeOf e + 1) e (Nat.lt_succ_of_le (Nat.le_refl _)) hg r1 r2
+  intro n
+  induction n with
+  | zero => intro e hlt; exact absurd hlt (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt hg r1 r2
+    cases e with
+    | lit _ => simp [evalExprCore]
+    | col _ => simp [isGroundCore] at hg
+    | binOp op l r =>
+      simp [isGroundCore] at hg
+      have h_sz_l : sizeOf l < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have h_sz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      simp only [evalExprCore]
+      rw [ih l (by omega) hg.1 r1 r2, ih r (by omega) hg.2 r1 r2]
+    | unaryOp op e =>
+      simp [isGroundCore] at hg
+      have h_sz : sizeOf e < sizeOf (Expr.unaryOp op e) := by simp_wf; omega
+      simp only [evalExprCore]
+      rw [ih e (by omega) hg r1 r2]
+    | func name args =>
+      simp only [evalExprCore]
+      congr 1
+      apply List.map_congr_left
+      intro e he
+      simp [isGroundCore] at hg
+      have hge := foldl_and_true_forall hg he
+      have h_sz : sizeOf e < sizeOf (Expr.func name args) := by
+        have := List.sizeOf_lt_of_mem he; simp_wf; omega
+      exact ih e (by omega) hge r1 r2
+    | agg _ _ _ => simp [evalExprCore]
+    | countStar => simp [evalExprCore]
+    | «case» branches else_ =>
+      rw [evalExprCore_case, evalExprCore_case]
+      apply evalCaseHelper_congr
+      · cases else_ with
+        | none => rfl
+        | some e =>
+          have hg_else := isGroundCore_case_else _ _ _ hg
+          have h_sz : sizeOf e < sizeOf (Expr.case branches (some e)) := by simp_wf; omega
+          exact ih e (by omega) hg_else r1 r2
+      · intro pair hp
+        have hg_branches := isGroundCore_case_branches _ _ _ hg
+        have ⟨hc, hr⟩ := case_foldl_true_forall hg_branches hp
+        have h_pair_lt := List.sizeOf_lt_of_mem hp
+        have h_pair_sz : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+          obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+        have h_sz_case : sizeOf branches < sizeOf (Expr.case branches else_) := by simp_wf; omega
+        exact ⟨ih pair.1 (by omega) hc r1 r2, ih pair.2 (by omega) hr r1 r2⟩
+    | inList e _neg vals =>
+      have hge := isGroundCore_inList_expr _ _ _ _ hg
+      have hgv := isGroundCore_inList_vals _ _ _ _ hg
+      have h_sz_e : sizeOf e < sizeOf (Expr.inList e _neg vals) := by simp_wf; omega
+      rw [evalExprCore_inList, evalExprCore_inList]
+      have h_ev := ih e (by omega) hge r1 r2
+      have h_foldl := inList_foldl_eval_independent
+        (evalExprCore db r1 subqueryEval) (evalExprCore db r2 subqueryEval)
+        (evalExprCore db r1 subqueryEval e) (evalExprCore db r2 subqueryEval e)
+        h_ev vals
+        (fun vi hvi => by
+          have hgvi := foldl_and_true_forall hgv hvi
+          have h_sz_vi : sizeOf vi < sizeOf (Expr.inList e _neg vals) := by
+            have := List.sizeOf_lt_of_mem hvi; simp_wf; omega
+          exact ih vi (by omega) hgvi r1 r2)
+        (some (.bool false))
+      -- Reduce let bindings, then rewrite the foldl
+      dsimp only []
+      rw [h_foldl]
+    | inSubquery e _neg sel =>
+      simp [isGroundCore] at hg
+      have h_sz_e : sizeOf e < sizeOf (Expr.inSubquery e _neg sel) := by simp_wf; omega
+      simp only [evalExprCore]
+      rw [ih e (by omega) hg.1 r1 r2, h_sq sel hg.2 db r1 r2]
+    | «exists» _neg sel =>
+      simp [isGroundCore] at hg
+      simp only [evalExprCore]
+      rw [h_sq sel hg db r1 r2]
+    | subquery sel =>
+      simp [isGroundCore] at hg
+      simp only [evalExprCore]
+      rw [h_sq sel hg db r1 r2]
+    | between e lo hi =>
+      simp [isGroundCore] at hg
+      have h_sz_e : sizeOf e < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have h_sz_lo : sizeOf lo < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have h_sz_hi : sizeOf hi < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      simp only [evalExprCore]
+      -- hg has structure: (isGroundCore sg e ∧ isGroundCore sg lo) ∧ isGroundCore sg hi
+      rw [ih e (by omega) hg.1.1 r1 r2,
+          ih lo (by omega) hg.1.2 r1 r2,
+          ih hi (by omega) hg.2 r1 r2]
+    | windowFn _ _ _ => simp [evalExprCore]
+
 end SqlEquiv

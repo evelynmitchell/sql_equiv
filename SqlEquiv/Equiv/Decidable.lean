@@ -235,6 +235,19 @@ partial def FromClause.isGround (fc : FromClause) : Bool :=
 end
 
 -- ============================================================================
+-- Bridge axioms for isGround (connect partial defs to non-partial mirrors)
+-- ============================================================================
+
+/-- Bridge: Expr.isGround equals isGroundCore instantiated with SelectStmt.isGround -/
+axiom isGround_eq_isGroundCore (e : Expr) :
+  e.isGround = isGroundCore SelectStmt.isGround e
+
+/-- Bridge: if a SelectStmt is ground, evalSelectWithContext is row-independent -/
+axiom selectStmtGround_eval_independent (sel : SelectStmt)
+    (hg : sel.isGround = true) :
+    ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel
+
+-- ============================================================================
 -- Decidable Equivalence via Normalization
 -- ============================================================================
 
@@ -257,15 +270,20 @@ theorem decideExprEquiv_sound {e1 e2 : Expr} :
 def GroundExpr := { e : Expr // e.isGround = true }
 
 /-- Evaluation of ground expressions is row-independent.
-    Axiom: By structural induction on the expression:
-    - Literals: evalExprWithDb_lit shows result is just the literal value
-    - Column refs: excluded since isGround = false for column refs
-    - BinOp/UnaryOp: by IH, subexpressions are row-independent
-    - Aggregates: operate on subqueries, not the current row
-    - Subqueries: have their own scope
-    Direct proof is blocked by Lean's treatment of partial functions. -/
-axiom ground_expr_eval_independent (e : Expr) (hg : e.isGround = true) :
-    ∀ r1 r2 : Row, evalExpr r1 e = evalExpr r2 e
+    Proved via isGroundCore_eval_independent (SemanticsCore.lean) + bridge axioms. -/
+theorem ground_expr_eval_independent (e : Expr) (hg : e.isGround = true) :
+    ∀ r1 r2 : Row, evalExpr r1 e = evalExpr r2 e := by
+  intro r1 r2
+  -- evalExpr row e = evalExprWithDb (fun _ => []) row e (by definition)
+  -- evalExprWithDb db row e = evalExprCore db row sqe e (bridge axiom)
+  show evalExprWithDb (fun _ => []) r1 e = evalExprWithDb (fun _ => []) r2 e
+  simp only [evalExprWithDb_eq_evalExprCore]
+  rw [isGround_eq_isGroundCore] at hg
+  exact isGroundCore_eval_independent
+    SelectStmt.isGround
+    (fun db' row' sel => evalSelectWithContext db' row' sel)
+    (fun sel hgs db' r1' r2' => selectStmtGround_eval_independent sel hgs db' r1' r2')
+    _ e hg r1 r2
 
 /-- For ground expressions, equivalence is decidable by evaluation -/
 def decideGroundExprEquiv (e1 e2 : Expr) (_h1 : e1.isGround = true) (_h2 : e2.isGround = true) : Bool :=
