@@ -3358,3 +3358,64 @@ suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n → ... by
 ### Net axiom count change
 
 - **1 domain axiom → theorem, +2 bridge axioms**: 28 → 29
+
+---
+
+## Batch 37: Prove `isGround_eq_isGroundCore` (PR #151)
+
+**Date:** 2026-02-15
+**Branch:** `claude/prove-isGround-eq-isGroundCore`
+**Axiom count:** 29 → 28 (−1 bridge axiom proved)
+
+### Context
+
+`isGround_eq_isGroundCore` was a bridge axiom connecting the `partial def Expr.isGround` (in a mutual block) to `isGroundCore` (non-partial WFR mirror in SemanticsCore.lean). It was unprovable because `partial def` = `opaque` in Lean 4's kernel.
+
+### Solution
+
+Converted the `isGround` mutual block from `partial` to well-founded recursion. Once non-partial, `isGround` is kernel-reducible and the bridge axiom becomes a provable theorem.
+
+### Key transformations (partial → WFR)
+
+| Pattern (partial) | Replacement (WFR) | Reason |
+|---|---|---|
+| `args.all Expr.isGround` | `args.foldl (fun acc e => acc && e.isGround) true` | `List.all` has no WFR support |
+| `branches.all (fun (c, r) => ...)` | `branches.foldl (fun acc pair => acc && pair.1.isGround && pair.2.isGround) true` | Same |
+| `arg.map Expr.isGround \|>.getD true` | `match arg with \| some e => e.isGround \| none => true` | Clearer for WFR |
+| `.star _ => true` | `.star _ => false` | **Soundness fix** (SELECT * is not ground) |
+
+### Termination proof technique
+
+Each function in the mutual block has its own `termination_by sizeOf` and `decreasing_by`. The three-tier `decreasing_by` pattern from `isGroundCore` handles most cases:
+1. `omega` — direct subterms
+2. `have := List.sizeOf_lt_of_mem ‹_›; omega` — list elements
+3. Pair decomposition for `(Expr × Expr)` branches
+
+**New technique: `match h : item with` for nested structures.** When a foldl lambda pattern-matches a list element (e.g., `SelectItem.exprItem e _`), the `sizeOf e < sizeOf item` relation is not automatically available. Fix: use `match h : item with` to introduce the equation `h : item = .exprItem e _`, then `have _hsz : sizeOf e < sizeOf item := by rw [h]; simp_wf; omega`. Same pattern for `OrderByItem`.
+
+### Proof of `isGround_eq_isGroundCore`
+
+Term-mode WFR proof by pattern matching on `Expr` constructors:
+- **Base cases** (lit, col, countStar, exists, subquery): `simp [Expr.isGround, isGroundCore]`
+- **Recursive cases** (binOp, unaryOp, between): `rw [isGround_eq_isGroundCore subexpr]`
+- **Subquery cases** (inSubquery, exists, subquery): `selectGround = SelectStmt.isGround`, so both sides are definitionally equal
+- **List cases** (func, inList, case): `foldl_and_congr'` / `foldl_double_and_congr'` helpers
+
+**Helper lemmas (2, private):**
+- `foldl_and_congr'`: pointwise-equal functions produce equal foldl results
+- `foldl_double_and_congr'`: same for double-&& pattern
+
+### Soundness fix: `.star _ => false`
+
+`SelectStmt.isGround` previously treated `.star _` as ground, but `evalSelectWithContext` prepends `outerRow` to rows and `SELECT *` returns the full row with prefix. This makes `selectStmtGround_eval_independent` unsound for `SELECT * FROM t`. Fix: mark `.star` as NOT ground. All tests pass with this change.
+
+### Files modified
+
+- `SqlEquiv/Equiv/Decidable.lean` — Convert `isGround` mutual to WFR; prove `isGround_eq_isGroundCore`; fix `.star`; add 2 helper lemmas
+- `tools/axiom_count_minimum.txt` — 29 → 28
+- `docs/PROVING_LOG.md` — This entry
+- `docs/PROVING_AXIOMS_PLAN.md` — Update axiom count
+
+### Net axiom count change
+
+- **1 bridge axiom → theorem**: 29 → 28
