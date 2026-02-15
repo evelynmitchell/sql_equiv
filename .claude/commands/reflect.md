@@ -2,6 +2,8 @@
 
 Post-task reflection to extract durable lessons. Use after completing a task, PR, or debugging session — especially when something surprising happened.
 
+> **Note**: This skill references Claude Code's auto-memory `MEMORY.md`, which is a persistent file managed outside the repository at `~/.claude/projects/<project>/memory/MEMORY.md`. It is not committed to the repo.
+
 ## Usage
 
 - `/reflect` — Reflect on the most recent task
@@ -36,11 +38,13 @@ For each significant subtask, classify it:
 
 ### Step 3: What pattern repeated?
 
-Search the memory file for related entries:
+Search the auto-memory directory for related entries:
 
 ```
-Grep pattern="<keyword>" path="/home/codespace/.claude/projects/-workspaces-sql-equiv/memory/" glob="*.md"
+Grep pattern="<keyword>" path="<auto_memory_dir>" glob="*.md"
 ```
+
+(The auto-memory directory is Claude Code's persistent memory at `~/.claude/projects/<project>/memory/`. The exact path is shown in your system prompt as the "auto memory directory".)
 
 If the current experience matches an existing memory entry:
 - Did the entry help prevent a mistake? (Good — the system works.)
@@ -71,7 +75,7 @@ Separate project-specific detail from general principle:
 | `join_comm_full` was unsound due to `lr ++ rr ≠ rr ++ lr` | Strict equality on ordered structures is almost always wrong for commutativity |
 | Pre-commit hook catches unstaged axiom count updates | Automate what you forget to do manually |
 
-Record both, but in different places and with different weight. General principles go in the Working Principles section of MEMORY.md. Project-specific tactics go in their relevant section.
+Record both, but in different places and with different weight. General principles go in the "Working Principles" section of your auto-memory `MEMORY.md`. Project-specific tactics go in their relevant section (e.g., "Lean Proof Tactics", "Optimizer Soundness Patterns").
 
 ### Step 6: What should I stop doing?
 
@@ -101,14 +105,14 @@ If nothing comes to mind, skip this step. Don't invent things to stop doing.
 
 **Stop doing**: [bad habit identified, if any]
 
-**Memory update**: [what to add/update/remove in MEMORY.md, or "none needed"]
+**Memory update**: [what to add/update/remove in auto-memory MEMORY.md, or "none needed"]
 ```
 
 ## After reflecting
 
 If the reflection identified:
-- **A new working principle**: Add it to the Working Principles section of MEMORY.md
-- **A project-specific tactic**: Add it to the relevant section of MEMORY.md
+- **A new working principle**: Add it to the "Working Principles" section of auto-memory `MEMORY.md`
+- **A project-specific tactic**: Add it to the relevant section of auto-memory `MEMORY.md`
 - **An outdated memory entry**: Update or remove it
 - **A missing tool/test/hook**: Create a task or note it in Next Session TODO
 - **Nothing**: That's fine. Not every task produces a lesson.
