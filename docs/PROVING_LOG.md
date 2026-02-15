@@ -3272,7 +3272,7 @@ Simpler than `filter_and` — no AND-splitting needed, just a direct equality af
 
 ### Remaining join axioms — triaged as blocked
 
-- **`join_comm` / `join_assoc`**: Need column disjointness preconditions. Without them, `List.lookup k (lr ++ rr) ≠ List.lookup k (rr ++ lr)` when `k` appears in both tables.
+- **`join_comm` / `join_assoc`**: Need column disjointness preconditions. Expression evaluation goes through `Row.getQualified`, which first tries a fully qualified match and otherwise picks the first column whose name ends with `".{col}"` for an unqualified reference. Reordering or reassociating joins changes which side's column is selected for an unqualified name when both sides expose the same suffix, and it also changes the row scope in which the `ON` predicate is evaluated. So the two join trees can disagree on the value of the same syntactic expression even when they range over the same underlying row pairs.
 - **`filter_join_left` / `filter_join_right`**: `exprReferencesOnlyFrom` is `partial def` = opaque in kernel. Can't unfold to prove the filter only accesses one side's columns.
 
 ### Files modified

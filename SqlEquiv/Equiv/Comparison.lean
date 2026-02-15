@@ -46,10 +46,12 @@ theorem filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr)
 -- ============================================================================
 
 /-- Join associativity for inner joins.
-    Axiom: Blocked — needs column disjointness + scope preconditions.
-    Without disjointness, List.lookup on `lr ++ rr ++ cr` vs `lr ++ (rr ++ cr)` differs
-    when a column name appears in multiple tables.
-    Standard relational algebra associativity. -/
+    Axiom: Blocked — needs column disjointness + scope preconditions on ON predicates.
+    The real obstruction is semantic: the ON predicates are evaluated at different times
+    with different row scopes between the two association orders (e.g., `cond1` on
+    `lr ++ rr` vs `lr ++ rr ++ cr`, and `cond2` on `(lr ++ rr) ++ cr` vs `rr ++ cr`),
+    and unqualified column resolution via `Row.getQualified` can make predicate meaning
+    depend on which tables are present. Standard relational algebra associativity. -/
 axiom join_assoc (db : Database) (a b c : FromClause) (cond1 cond2 : Expr) :
     ∀ row ∈ evalFrom db (.join (.join a .inner b (some cond1)) .inner c (some cond2)),
     ∃ row' ∈ evalFrom db (.join a .inner (.join b .inner c (some cond2)) (some cond1)),
