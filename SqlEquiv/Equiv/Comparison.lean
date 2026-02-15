@@ -14,8 +14,8 @@ namespace SqlEquiv
 
 /-- Predicate pushdown: push filter into the left side of an inner join
     when the filter only references columns from the left table.
-    Axiom: Blocked — `exprReferencesOnlyFrom` (Decidable.lean) is `partial def` = opaque
-    in kernel, so the precondition `h_ref` can't be unfolded in proofs. -/
+    Axiom: Blocked — `exprReferencesOnlyFrom` calls `exprReferencesOnlyTable` which is
+    `partial def` (opaque in kernel), so the precondition `h_ref` can't be unfolded in proofs. -/
 axiom filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
@@ -24,7 +24,7 @@ axiom filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
     evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a) (some filter) [] none [] none none) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset)
 
 /-- Predicate pushdown: push filter into the right side of an inner join.
-    Axiom: Blocked — same `partial def` blocker as filter_join_left. -/
+    Axiom: Blocked — same `partial def exprReferencesOnlyTable` blocker as filter_join_left. -/
 axiom filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
