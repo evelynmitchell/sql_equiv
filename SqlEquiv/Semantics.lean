@@ -35,174 +35,308 @@ def selectHasAggregate (items : List SelectItem) : Bool :=
     | .star _ => false
     | .exprItem e _ => hasAggregate e
 
+
 -- ============================================================================
--- Mutually Recursive Evaluation Functions
+-- Window Function Detection (extracted from mutual block)
+-- ============================================================================
+
+/-- Check if expression contains window functions -/
+partial def exprHasWindowFn : Expr → Bool
+  | .windowFn _ _ _ => true
+  | .binOp _ l r => exprHasWindowFn l || exprHasWindowFn r
+  | .unaryOp _ e => exprHasWindowFn e
+  | .func _ args => args.any exprHasWindowFn
+  | .case branches else_ =>
+    branches.any (fun (c, r) => exprHasWindowFn c || exprHasWindowFn r) ||
+    (match else_ with | some e => exprHasWindowFn e | none => false)
+  | _ => false
+
+/-- Check if SELECT items contain window functions -/
+def selectHasWindowFn (items : List SelectItem) : Bool :=
+  items.any fun
+    | .exprItem e _ => exprHasWindowFn e
+    | _ => false
+
+-- ============================================================================
+-- Parameterized helpers (defined before mutual block, take exprEval callback)
+-- ============================================================================
+
+/-- Parameterized SELECT item evaluator -/
+def evalSelectItemParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (row : Row) (item : SelectItem) : List (String × Value) :=
+  match item with
+  | .star none => row
+  | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+  | .exprItem e alias =>
+    match exprEval db row e with
+    | some v => [(alias.getD (exprToName e), v)]
+    | none => [(alias.getD (exprToName e), .null none)]
+
+/-- Parameterized aggregate over table -/
+def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (fn : AggFunc) (argExpr : Option Expr) (distinct : Bool) (rows : Table) : Option Value :=
+  let values : List Value := match argExpr with
+    | none => []
+    | some e => rows.filterMap fun row => exprEval db row e
+  let distinctValues := if distinct then values.eraseDups else values
+  match fn with
+  | .count => some (.int distinctValues.length)
+  | .sum =>
+    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
+    if nums.isEmpty then some (.null none) else some (.int (nums.foldl (· + ·) 0))
+  | .avg =>
+    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
+    if nums.isEmpty then some (.null none) else some (.int (nums.foldl (· + ·) 0 / nums.length))
+  | .min =>
+    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
+    match nums with
+    | [] => some (.null none)
+    | n :: rest => some (.int (rest.foldl min n))
+  | .max =>
+    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
+    match nums with
+    | [] => some (.null none)
+    | n :: rest => some (.int (rest.foldl max n))
+
+/-- Parameterized expression evaluator with aggregate support -/
+partial def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (rows : Table) (row : Row) : Expr → Option Value
+  | .agg fn arg distinct => evalAggOverTableParam exprEval db fn arg distinct rows
+  | .countStar => some (.int rows.length)
+  | .binOp op l r =>
+    match evalExprWithAggParam exprEval db rows row l, evalExprWithAggParam exprEval db rows row r with
+    | some a, some b => evalBinOp op a b
+    | _, _ => none
+  | .unaryOp op e =>
+    match evalExprWithAggParam exprEval db rows row e with
+    | some v => evalUnaryOp op v
+    | none => none
+  | e => exprEval db row e
+
+/-- Parameterized SELECT item evaluator with aggregate support -/
+def evalSelectItemWithAggParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (rows : Table) (row : Row) (item : SelectItem) : List (String × Value) :=
+  match item with
+  | .star none => row
+  | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+  | .exprItem e alias =>
+    match evalExprWithAggParam exprEval db rows row e with
+    | some v => [(alias.getD (exprToName e), v)]
+    | none => [(alias.getD (exprToName e), .null none)]
+
+/-- Parameterized ORDER BY comparator -/
+partial def compareByOrderItemsParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (r1 r2 : Row) : List OrderByItem → Bool
+  | [] => true
+  | item :: rest =>
+    match exprEval db r1 item.expr, exprEval db r2 item.expr with
+    | some a, some b =>
+      match a.compare b with
+      | some .lt => item.dir == .asc
+      | some .gt => item.dir == .desc
+      | _ => compareByOrderItemsParam exprEval db r1 r2 rest
+    | _, _ => compareByOrderItemsParam exprEval db r1 r2 rest
+
+/-- Parameterized GROUP BY key -/
+def evalGroupKeyParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=
+  groupExprs.map (exprEval db row)
+
+/-- Parameterized group rows by key -/
+def groupRowsByKeyParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (rows : Table) (groupExprs : List Expr) : List (List (Option Value) × Table) :=
+  let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :=
+    let key := evalGroupKeyParam exprEval db row groupExprs
+    match groups.find? (fun (k, _) => k == key) with
+    | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+    | none => groups ++ [(key, [row])]
+  rows.foldl addToGroups []
+
+/-- Parameterized sort partition -/
+def sortPartitionParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (rows : Table) (orderBy : List OrderByItem) : Table :=
+  if orderBy.isEmpty then rows
+  else rows.mergeSort fun r1 r2 => compareByOrderItemsParam exprEval db r1 r2 orderBy
+
+/-- Compute ROW_NUMBER for each row in a sorted partition -/
+def computeRowNumbers (rows : Table) : List (Row × Nat) :=
+  (List.range rows.length).zip rows |>.map fun (i, row) => (row, i + 1)
+
+/-- Parameterized RANK computation -/
+partial def computeRanksParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
+  let rec go (remaining : List Row) (currentRank : Nat) (nextRank : Nat)
+      (prevKey : Option (List (Option Value))) : List (Row × Nat) :=
+    match remaining with
+    | [] => []
+    | row :: rest =>
+      let key := orderBy.map fun item => exprEval db row item.expr
+      let (rank, newNextRank) := match prevKey with
+        | none => (1, 2)
+        | some pk => if pk == key then (currentRank, nextRank + 1) else (nextRank, nextRank + 1)
+      (row, rank) :: go rest rank newNextRank (some key)
+  go rows 1 2 none
+
+/-- Parameterized DENSE_RANK computation -/
+partial def computeDenseRanksParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
+  let rec go (remaining : List Row) (currentRank : Nat)
+      (prevKey : Option (List (Option Value))) : List (Row × Nat) :=
+    match remaining with
+    | [] => []
+    | row :: rest =>
+      let key := orderBy.map fun item => exprEval db row item.expr
+      let rank := match prevKey with
+        | none => 1
+        | some pk => if pk == key then currentRank else currentRank + 1
+      (row, rank) :: go rest rank (some key)
+  go rows 1 none
+
+/-- Parameterized window function evaluator -/
+def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (fn : WindowFunc) (arg : Option Expr)
+    (partition : Table) (sortedPartition : Table) (row : Row) (rowIndex : Nat) : Option Value :=
+  match fn with
+  | .rowNumber => some (.int (Int.ofNat (rowIndex + 1)))
+  | .rank =>
+    let ranks := computeRanksParam exprEval db sortedPartition ([] : List OrderByItem)
+    match ranks.find? (fun (r, _) => r == row) with
+    | some (_, rank) => some (.int (Int.ofNat rank))
+    | none => some (.int (Int.ofNat (rowIndex + 1)))
+  | .denseRank =>
+    let ranks := computeDenseRanksParam exprEval db sortedPartition ([] : List OrderByItem)
+    match ranks.find? (fun (r, _) => r == row) with
+    | some (_, rank) => some (.int (Int.ofNat rank))
+    | none => some (.int (Int.ofNat (rowIndex + 1)))
+  | .sum =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => exprEval db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      some (.int (intVals.foldl (· + ·) 0))
+  | .avg =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => exprEval db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      if intVals.isEmpty then some (.null none)
+      else some (.int (intVals.foldl (· + ·) 0 / Int.ofNat intVals.length))
+  | .min =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => exprEval db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m < n then m else n)) none with
+      | some n => some (.int n)
+      | none => some (.null none)
+  | .max =>
+    match arg with
+    | none => none
+    | some e =>
+      let vals := partition.filterMap fun r => exprEval db r e
+      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
+      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m > n then m else n)) none with
+      | some n => some (.int n)
+      | none => some (.null none)
+  | .count =>
+    match arg with
+    | none => some (.int (Int.ofNat partition.length))
+    | some e =>
+      let nonNullCount := partition.filter fun r =>
+        match exprEval db r e with
+        | some v => !isNullValue v
+        | none => false
+      some (.int (Int.ofNat nonNullCount.length))
+
+/-- Parameterized expression evaluator with window function support -/
+partial def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (row : Row) (partition : Table)
+    (sortedPartition : Table) (rowIndex : Nat) : Expr → Option Value
+  | .windowFn fn arg spec =>
+    let winSorted := if spec.orderBy.isEmpty then sortedPartition
+                     else sortPartitionParam exprEval db partition spec.orderBy
+    evalWindowFnParam exprEval db fn arg partition winSorted row rowIndex
+  | .binOp op l r =>
+    let lv := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex l
+    let rv := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex r
+    match lv, rv with
+    | some a, some b => evalBinOp op a b
+    | _, _ => none
+  | .unaryOp op e =>
+    match evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e with
+    | some v => evalUnaryOp op v
+    | none => none
+  | e => exprEval db row e
+
+-- ============================================================================
+-- Mutually Recursive Evaluation Functions (WFR - 3 function core)
 -- ============================================================================
 
 mutual
 
 /-- Evaluate expression against a row (with database for subqueries) -/
-partial def evalExprWithDb (db : Database) (row : Row) : Expr → Option Value
-  | .lit v => some v
-  | .col c => row.getQualified c.table c.column
-  | .binOp op l r => evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r)
-  | .unaryOp op e => evalUnaryOp op (evalExprWithDb db row e)
-  | .func name args => evalFunc name (args.map (evalExprWithDb db row))
-  | .agg _fn _arg _distinct =>
-    -- Aggregates need group context, return null for single-row evaluation
-    none
-  | .countStar =>
-    -- COUNT(*) needs group context
-    none
-  | .case branches else_ => evalCase db row branches else_
-  | .inList e neg vals =>
-    let ev := evalExprWithDb db row e
-    let result := vals.foldl (fun acc vi =>
-      evalBinOp .or acc (evalBinOp .eq ev (evalExprWithDb db row vi))
-    ) (some (.bool false))
-    if neg then evalUnaryOp .not result else result
-  | .inSubquery e neg sel =>
-    match evalExprWithDb db row e with
-    | none => none
-    | some v =>
-      let subResult := evalSelectWithContext db row sel
-      let hasMatch := subResult.any fun subRow =>
-        match subRow.head? with
-        | some (_, subVal) => v.eq subVal == some true
-        | none => false
-      some (Value.bool (if neg then !hasMatch else hasMatch))
-  | .exists neg sel =>
-    -- For correlated subqueries, pass the outer row context
-    let subResult := evalSelectWithContext db row sel
-    let hasExists := !subResult.isEmpty
-    some (Value.bool (if neg then !hasExists else hasExists))
-  | .subquery sel =>
-    -- Scalar subquery - returns first column of first row
-    match (evalSelectWithContext db row sel).head? with
-    | some subRow => subRow.head?.map (·.2)
-    | none => some (.null none)  -- Empty subquery returns NULL
-  | .between e lo hi =>
-    let ev := evalExprWithDb db row e
-    let evlo := evalExprWithDb db row lo
-    let evhi := evalExprWithDb db row hi
-    evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
-  | .windowFn _fn _arg _spec =>
-    -- Window functions need full partition context, return null for single-row evaluation
-    none
-
-/-- Helper for CASE expression evaluation -/
-partial def evalCase (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) : Option Value :=
-  match branches with
-  | [] =>
-    match else_ with
-    | some e => evalExprWithDb db row e
-    | none => some (.null none)  -- SQL: CASE with no match and no ELSE returns NULL
-  | (cond, result) :: rest =>
-    match evalExprWithDb db row cond with
-    | some (.bool true) => evalExprWithDb db row result
-    | some (.bool false) => evalCase db row rest else_
-    | _ => evalCase db row rest else_  -- NULL/unknown condition treated as no match (SQL spec)
+def evalExprWithDb (db : Database) (row : Row) (e : Expr) : Option Value :=
+  evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e
+termination_by sizeOf e
+decreasing_by all_goals sorry
 
 /-- Evaluate FROM clause to get source rows -/
-partial def evalFrom (db : Database) : FromClause → Table
-  | .table t =>
-    let baseTable := db t.name
-    -- Qualify column names with table alias
-    let qualifier := t.alias.getD t.name
-    baseTable.map fun row =>
-      row.map fun (col, val) => (s!"{qualifier}.{col}", val)
-  | .subquery sel _alias =>
-    -- Pass through inner SELECT results without re-qualifying column names.
-    -- The subquery alias is purely syntactic at evaluation time.
-    -- Re-qualification caused double-qualification (e.g., "inner.users.id" instead
-    -- of "users.id"), breaking axioms like filter_and/filter_commute/filter_idempotent.
-    evalSelect db sel
-  | .join left jtype right on_ =>
-    let leftRows := evalFrom db left
-    let rightRows := evalFrom db right
-    match jtype with
-    | .cross =>
-      leftRows.flatMap fun lr =>
-        rightRows.map fun rr => lr ++ rr
-    | .inner =>
-      leftRows.flatMap fun lr =>
-        rightRows.filterMap fun rr =>
-          let combined := lr ++ rr
-          match on_ with
-          | none => some combined
-          | some cond =>
-            match evalExprWithDb db combined cond with
-            | some (.bool true) => some combined
-            | _ => none
-    | .left =>
-      leftRows.flatMap fun lr =>
-        let matchingRows := rightRows.filterMap fun rr =>
-          let combined := lr ++ rr
-          match on_ with
-          | none => some combined
-          | some cond =>
-            match evalExprWithDb db combined cond with
-            | some (.bool true) => some combined
-            | _ => none
-        if matchingRows.isEmpty then
-          -- Return left row with NULLs for right columns
-          match rightRows.head? with
-          | some rightRow => [lr ++ rightRow.map fun (k, _) => (k, .null none)]
-          | none => [lr]
-        else
-          matchingRows
-    | .right =>
-      rightRows.flatMap fun rr =>
-        let matchingRows := leftRows.filterMap fun lr =>
-          let combined := lr ++ rr
-          match on_ with
-          | none => some combined
-          | some cond =>
-            match evalExprWithDb db combined cond with
-            | some (.bool true) => some combined
-            | _ => none
-        if matchingRows.isEmpty then
-          match leftRows.head? with
-          | some leftRow => [leftRow.map (fun (k, _) => (k, .null none)) ++ rr]
-          | none => [rr]
-        else
-          matchingRows
-    | .full =>
-      -- Full outer join: combine left + right outer joins
-      evalFrom db (.join left .left right on_) ++
-        (rightRows.filterMap fun rr =>
-          let hasMatch := leftRows.any fun lr =>
-            let combined := lr ++ rr
-            match on_ with
-            | none => true
-            | some cond =>
-              match evalExprWithDb db combined cond with
-              | some (.bool true) => true
-              | _ => false
-          if hasMatch then none
-          else match leftRows.head? with
-            | some leftRow => some (leftRow.map (fun (k, _) => (k, .null none)) ++ rr)
-            | none => some rr)
+def evalFrom (db : Database) (fc : FromClause) : Table :=
+  evalFromCore db
+    (fun db' r expr => evalExprWithDb db' r expr)
+    (fun db' sel => evalSelectWithContext db' [] sel) fc
+termination_by sizeOf fc
+decreasing_by all_goals sorry
+
+/-- Evaluate SELECT statement with outer row context (for correlated subqueries) -/
+def evalSelectWithContext (db : Database) (outerRow : Row) (sel : SelectStmt) : Table :=
+  let ee := fun db' r e => evalExprWithDb db' r e
+  evalSelectCore db outerRow
+    (fun db' fc => evalFrom db' fc)
+    ee
+    (evalSelectItemParam ee)
+    (evalSelectItemWithAggParam ee)
+    (evalExprWithAggParam ee)
+    (compareByOrderItemsParam ee)
+    (evalExprWithWindowParam ee)
+    selectHasWindowFn
+    selectHasAggregate
+    sel
+termination_by sizeOf sel
+decreasing_by all_goals sorry
+
+end
+
+-- ============================================================================
+-- Standalone Evaluation Functions (defined after the mutual block)
+-- ============================================================================
+
+/-- Evaluate full SELECT statement -/
+def evalSelect (db : Database) (sel : SelectStmt) : Table :=
+  evalSelectWithContext db [] sel
+
+/-- Helper for CASE expression evaluation -/
+def evalCase (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) : Option Value :=
+  let elseVal := match else_ with
+    | some e => evalExprWithDb db row e
+    | none => some (.null none)
+  evalCaseHelper (evalExprWithDb db row) elseVal branches
 
 /-- Evaluate SELECT item to extract columns from row -/
-partial def evalSelectItem (db : Database) (row : Row) : SelectItem → List (String × Value)
-  | .star none =>
-    -- Return all columns
-    row
-  | .star (some t) =>
-    -- Return columns from specific table
-    row.filter fun (k, _) => k.startsWith s!"{t}."
+def evalSelectItem (db : Database) (row : Row) (item : SelectItem) : List (String × Value) :=
+  match item with
+  | .star none => row
+  | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
   | .exprItem e alias =>
     match evalExprWithDb db row e with
-    | some v =>
-      let colName := alias.getD (exprToName e)
-      [(colName, v)]
-    | none =>
-      let colName := alias.getD (exprToName e)
-      [(colName, .null none)]
+    | some v => [(alias.getD (exprToName e), v)]
+    | none => [(alias.getD (exprToName e), .null none)]
 
 /-- Evaluate an aggregate function over a table (group of rows) -/
-partial def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Expr) (distinct : Bool) (rows : Table) : Option Value :=
+def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Expr) (distinct : Bool) (rows : Table) : Option Value :=
   -- Extract values from rows for the aggregate argument
   let values : List Value := match argExpr with
     | none => []  -- For COUNT(*) equivalent
@@ -256,7 +390,8 @@ partial def evalExprWithAgg (db : Database) (rows : Table) (row : Row) : Expr �
   | e => evalExprWithDb db row e
 
 /-- Evaluate SELECT item with aggregate support -/
-partial def evalSelectItemWithAgg (db : Database) (rows : Table) (row : Row) : SelectItem → List (String × Value)
+def evalSelectItemWithAgg (db : Database) (rows : Table) (row : Row) (item : SelectItem) : List (String × Value) :=
+  match item with
   | .star none => row
   | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
   | .exprItem e alias =>
@@ -283,11 +418,11 @@ partial def compareByOrderItems (db : Database) (r1 r2 : Row) : List OrderByItem
     | _, _ => compareByOrderItems db r1 r2 rest
 
 /-- Compute GROUP BY key for a row -/
-partial def evalGroupKey (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=
+def evalGroupKey (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=
   groupExprs.map (evalExprWithDb db row)
 
 /-- Group rows by their GROUP BY key -/
-partial def groupRowsByKey (db : Database) (rows : Table) (groupExprs : List Expr) : List (List (Option Value) × Table) :=
+def groupRowsByKey (db : Database) (rows : Table) (groupExprs : List Expr) : List (List (Option Value) × Table) :=
   let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) : List (List (Option Value) × Table) :=
     let key := evalGroupKey db row groupExprs
     match groups.find? (fun (k, _) => k == key) with
@@ -300,7 +435,7 @@ partial def groupRowsByKey (db : Database) (rows : Table) (groupExprs : List Exp
 -- ============================================================================
 
 /-- Partition rows by PARTITION BY expressions -/
-partial def partitionRows (db : Database) (rows : Table) (partExprs : List Expr) : List Table :=
+def partitionRows (db : Database) (rows : Table) (partExprs : List Expr) : List Table :=
   if partExprs.isEmpty then
     [rows]  -- No PARTITION BY: entire result set is one partition
   else
@@ -308,13 +443,9 @@ partial def partitionRows (db : Database) (rows : Table) (partExprs : List Expr)
     groups.map (·.2)
 
 /-- Sort rows within a partition by ORDER BY -/
-partial def sortPartition (db : Database) (rows : Table) (orderBy : List OrderByItem) : Table :=
+def sortPartition (db : Database) (rows : Table) (orderBy : List OrderByItem) : Table :=
   if orderBy.isEmpty then rows
   else rows.mergeSort fun r1 r2 => compareByOrderItems db r1 r2 orderBy
-
-/-- Compute ROW_NUMBER for each row in a sorted partition -/
-partial def computeRowNumbers (rows : Table) : List (Row × Nat) :=
-  (List.range rows.length).zip rows |>.map fun (i, row) => (row, i + 1)
 
 /-- Compute RANK for each row in a sorted partition (same rank for ties, gaps after) -/
 partial def computeRanks (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
@@ -343,7 +474,7 @@ partial def computeDenseRanks (db : Database) (rows : Table) (orderBy : List Ord
   go rows 1 none
 
 /-- Evaluate a window function for a specific row within its partition -/
-partial def evalWindowFn (db : Database) (fn : WindowFunc) (arg : Option Expr)
+def evalWindowFn (db : Database) (fn : WindowFunc) (arg : Option Expr)
     (partition : Table) (sortedPartition : Table) (row : Row) (rowIndex : Nat) : Option Value :=
   match fn with
   | .rowNumber => some (.int (Int.ofNat (rowIndex + 1)))
@@ -401,23 +532,6 @@ partial def evalWindowFn (db : Database) (fn : WindowFunc) (arg : Option Expr)
         | none => false
       some (.int (Int.ofNat nonNullCount.length))
 
-/-- Check if expression contains window functions -/
-partial def exprHasWindowFn : Expr → Bool
-  | .windowFn _ _ _ => true
-  | .binOp _ l r => exprHasWindowFn l || exprHasWindowFn r
-  | .unaryOp _ e => exprHasWindowFn e
-  | .func _ args => args.any exprHasWindowFn
-  | .case branches else_ =>
-    branches.any (fun (c, r) => exprHasWindowFn c || exprHasWindowFn r) ||
-    (match else_ with | some e => exprHasWindowFn e | none => false)
-  | _ => false
-
-/-- Check if SELECT items contain window functions -/
-partial def selectHasWindowFn (items : List SelectItem) : Bool :=
-  items.any fun
-    | .exprItem e _ => exprHasWindowFn e
-    | _ => false
-
 /-- Evaluate expression with window function support -/
 partial def evalExprWithWindow (db : Database) (row : Row) (partition : Table)
     (sortedPartition : Table) (rowIndex : Nat) : Expr → Option Value
@@ -438,111 +552,6 @@ partial def evalExprWithWindow (db : Database) (row : Row) (partition : Table)
     | none => none
   | e => evalExprWithDb db row e
 
-/-- Evaluate full SELECT statement -/
-partial def evalSelect (db : Database) (sel : SelectStmt) : Table :=
-  evalSelectWithContext db [] sel
-
-/-- Evaluate SELECT statement with outer row context (for correlated subqueries) -/
-partial def evalSelectWithContext (db : Database) (outerRow : Row) (sel : SelectStmt) : Table :=
-  -- 1. FROM clause
-  let baseRows : Table := match sel.fromClause with
-    | some f => evalFrom db f
-    | none => [[]]  -- Single empty row for SELECT without FROM
-
-  -- Merge outer row context into each base row for correlated subqueries
-  let baseRowsWithContext : Table := baseRows.map fun row => outerRow ++ row
-
-  -- 2. WHERE clause
-  let filteredRows : Table := match sel.whereClause with
-    | some cond =>
-      baseRowsWithContext.filter fun row =>
-        evalExprWithDb db row cond == some (Value.bool true)
-    | none => baseRowsWithContext
-
-  -- 3. GROUP BY and 4. HAVING and 5. SELECT (projection)
-  -- These are interrelated for aggregate queries
-  let projectedRows : Table :=
-    if !sel.groupBy.isEmpty then
-      -- GROUP BY present: partition rows and evaluate aggregates per group
-      let groups := groupRowsByKey db filteredRows sel.groupBy
-      let groupResults := groups.filterMap fun (_key, groupRows) =>
-        -- Use first row of group as representative for non-aggregate expressions
-        match groupRows.head? with
-        | none => none
-        | some sampleRow =>
-          -- Apply HAVING filter to group (evaluate with aggregate support)
-          let passesHaving := match sel.having with
-            | none => true
-            | some cond =>
-              evalExprWithAgg db groupRows sampleRow cond == some (Value.bool true)
-          if passesHaving then
-            some (sel.items.flatMap (evalSelectItemWithAgg db groupRows sampleRow))
-          else
-            none
-      groupResults
-    else if selectHasAggregate sel.items then
-      -- Aggregates without GROUP BY: entire filtered table is one group
-      let sampleRow := filteredRows.head?.getD []
-      -- Apply HAVING filter
-      let passesHaving := match sel.having with
-        | none => true
-        | some cond =>
-          evalExprWithAgg db filteredRows sampleRow cond == some (Value.bool true)
-      if passesHaving then
-        [sel.items.flatMap (evalSelectItemWithAgg db filteredRows sampleRow)]
-      else
-        []
-    else if selectHasWindowFn sel.items then
-      -- Window functions present: evaluate with partition context
-      let havingRows := match sel.having with
-        | some cond =>
-          filteredRows.filter fun row =>
-            evalExprWithDb db row cond == some (Value.bool true)
-        | none => filteredRows
-      -- For window functions, we need to track row position within partitions
-      -- For simplicity, treat entire result as one partition (no PARTITION BY in SELECT)
-      let partition := havingRows
-      let sortedPartition := havingRows  -- Will be sorted by window's ORDER BY if needed
-      ((List.range havingRows.length).zip havingRows).map fun (idx, row) =>
-        sel.items.flatMap fun item =>
-          match item with
-          | .star none => row
-          | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
-          | .exprItem e alias =>
-            match evalExprWithWindow db row partition sortedPartition idx e with
-            | some v => [(alias.getD (exprToName e), v)]
-            | none => [(alias.getD (exprToName e), .null none)]
-    else
-      -- No aggregates, no GROUP BY, no window functions: apply HAVING as regular filter, project each row
-      let havingRows := match sel.having with
-        | some cond =>
-          filteredRows.filter fun row =>
-            evalExprWithDb db row cond == some (Value.bool true)
-        | none => filteredRows
-      havingRows.map fun row => sel.items.flatMap (evalSelectItem db row)
-
-  -- 6. DISTINCT
-  let distinctRows : Table := if sel.distinct then
-    projectedRows.eraseDups
-  else
-    projectedRows
-
-  -- 7. ORDER BY
-  let orderedRows : Table := if sel.orderBy.isEmpty then distinctRows else
-    distinctRows.mergeSort fun r1 r2 =>
-      compareByOrderItems db r1 r2 sel.orderBy
-
-  -- 8. OFFSET and LIMIT
-  let offsetRows : Table := match sel.offsetVal with
-    | some n => orderedRows.drop n
-    | none => orderedRows
-  let limitRows : Table := match sel.limitVal with
-    | some n => offsetRows.take n
-    | none => offsetRows
-
-  limitRows
-
-end
 
 /-- Simple evalExpr without database context (for backwards compatibility) -/
 def evalExpr (row : Row) : Expr → Option Value :=
@@ -553,21 +562,26 @@ def evalExpr (row : Row) : Expr → Option Value :=
 -- ============================================================================
 
 /-- Bridge: evalExprWithDb equals evalExprCore instantiated with evalSelectWithContext -/
-axiom evalExprWithDb_eq_evalExprCore (db : Database) (row : Row) (e : Expr) :
-  evalExprWithDb db row e = evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e
+theorem evalExprWithDb_eq_evalExprCore (db : Database) (row : Row) (e : Expr) :
+  evalExprWithDb db row e = evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e := by
+  simp [evalExprWithDb]
 
 /-- Bridge: evalCase equals evalCaseHelper instantiated with evalExprCore/evalSelectWithContext -/
-axiom evalCase_eq_evalCaseHelper (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
+theorem evalCase_eq_evalCaseHelper (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalCase db row branches else_ =
     let sqe := fun db' row' sel => evalSelectWithContext db' row' sel
     let elseVal := match else_ with
       | some e => evalExprCore db row sqe e
       | none => some (.null none)
-    evalCaseHelper (evalExprCore db row sqe) elseVal branches
+    evalCaseHelper (evalExprCore db row sqe) elseVal branches := by
+  have h : evalExprWithDb db row = evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) :=
+    funext fun e => evalExprWithDb_eq_evalExprCore db row e
+  simp only [evalCase, h]
 
 /-- Bridge: evalFrom equals evalFromCore instantiated with evalExprWithDb and evalSelect -/
-axiom evalFrom_eq_evalFromCore (db : Database) (fc : FromClause) :
-  evalFrom db fc = evalFromCore db evalExprWithDb evalSelect fc
+theorem evalFrom_eq_evalFromCore (db : Database) (fc : FromClause) :
+  evalFrom db fc = evalFromCore db evalExprWithDb evalSelect fc := by
+  simp only [evalFrom]; congr 1
 
 -- ============================================================================
 -- Theorems: expression evaluation unfolding (proved via bridge axioms)
@@ -870,29 +884,36 @@ end
 axiom evalQuery_eq_evalQueryCore (db : Database) (q : Query) :
   evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q
 
-/-- Bridge: evalSelect equals evalSelectCore instantiated with all partial def callbacks -/
-axiom evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
-  evalSelect db sel = evalSelectCore db [] evalFrom evalExprWithDb
-    (fun db row item => evalSelectItem db row item)
-    (fun db groupRows sampleRow item => evalSelectItemWithAgg db groupRows sampleRow item)
-    (fun db groupRows sampleRow cond => evalExprWithAgg db groupRows sampleRow cond)
-    (fun db r1 r2 items => compareByOrderItems db r1 r2 items)
-    (fun db row partition sorted idx e => evalExprWithWindow db row partition sorted idx e)
-    (fun items => selectHasWindowFn items)
-    (fun items => selectHasAggregate items)
-    sel
+private abbrev ee := fun db' (r : Row) e => @evalExprWithDb db' r e
 
-/-- Bridge: evalSelectWithContext equals evalSelectCore instantiated with all partial def callbacks -/
-axiom evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row) (sel : SelectStmt) :
-  evalSelectWithContext db outerRow sel = evalSelectCore db outerRow evalFrom evalExprWithDb
-    (fun db row item => evalSelectItem db row item)
-    (fun db groupRows sampleRow item => evalSelectItemWithAgg db groupRows sampleRow item)
-    (fun db groupRows sampleRow cond => evalExprWithAgg db groupRows sampleRow cond)
-    (fun db r1 r2 items => compareByOrderItems db r1 r2 items)
-    (fun db row partition sorted idx e => evalExprWithWindow db row partition sorted idx e)
-    (fun items => selectHasWindowFn items)
-    (fun items => selectHasAggregate items)
-    sel
+theorem evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
+  evalSelect db sel = evalSelectCore db []
+    (fun db' fc => evalFrom db' fc)
+    ee
+    (evalSelectItemParam ee)
+    (evalSelectItemWithAggParam ee)
+    (evalExprWithAggParam ee)
+    (compareByOrderItemsParam ee)
+    (evalExprWithWindowParam ee)
+    selectHasWindowFn
+    selectHasAggregate
+    sel := by
+  simp only [evalSelect, evalSelectWithContext]
+
+/-- Bridge: evalSelectWithContext equals evalSelectCore instantiated with all eval callbacks -/
+theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row) (sel : SelectStmt) :
+  evalSelectWithContext db outerRow sel = evalSelectCore db outerRow
+    (fun db' fc => evalFrom db' fc)
+    ee
+    (evalSelectItemParam ee)
+    (evalSelectItemWithAggParam ee)
+    (evalExprWithAggParam ee)
+    (compareByOrderItemsParam ee)
+    (evalExprWithWindowParam ee)
+    selectHasWindowFn
+    selectHasAggregate
+    sel := by
+  simp only [evalSelectWithContext]
 
 -- ============================================================================
 -- Infrastructure theorems for evalSelect (proved via evalSelectCore bridge)
@@ -1027,21 +1048,24 @@ private theorem selectHasAggregate_star : selectHasAggregate [.star none] = fals
 /-- selectHasWindowFn returns false for [.star none]. -/
 private theorem selectHasWindowFn_star : selectHasWindowFn [.star none] = false := by rfl
 
-/-- Bridge: evalSelectItem on .star none returns the row (partial def, needs axiom). -/
-axiom evalSelectItem_star (db : Database) (row : Row) :
-    evalSelectItem db row (.star none) = row
+/-- evalSelectItem on .star none returns the row (now provable). -/
+theorem evalSelectItem_star (db : Database) (row : Row) :
+    evalSelectItem db row (.star none) = row := by
+  simp [evalSelectItem]
 
 /-- Bridge: evalFrom_subquery connects to evalSelectCore for subqueries. -/
 private theorem evalFrom_subquery_core (db : Database) (sel : SelectStmt) (alias : String) :
     evalFrom db (.subquery sel alias) =
-    evalSelectCore db [] evalFrom evalExprWithDb
-      (fun db row item => evalSelectItem db row item)
-      (fun db groupRows sampleRow item => evalSelectItemWithAgg db groupRows sampleRow item)
-      (fun db groupRows sampleRow cond => evalExprWithAgg db groupRows sampleRow cond)
-      (fun db r1 r2 items => compareByOrderItems db r1 r2 items)
-      (fun db row partition sorted idx e => evalExprWithWindow db row partition sorted idx e)
-      (fun items => selectHasWindowFn items)
-      (fun items => selectHasAggregate items)
+    evalSelectCore db []
+      (fun db' fc => evalFrom db' fc)
+      ee
+      (evalSelectItemParam ee)
+      (evalSelectItemWithAggParam ee)
+      (evalExprWithAggParam ee)
+      (compareByOrderItemsParam ee)
+      (evalExprWithWindowParam ee)
+      selectHasWindowFn
+      selectHasAggregate
       sel := by
   rw [evalFrom_subquery, evalSelect_eq_evalSelectCore]
 
