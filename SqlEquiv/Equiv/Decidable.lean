@@ -531,21 +531,20 @@ instance decideExprEquivByNorm (e1 e2 : Expr) : Decidable (normalizeExpr e1 = no
 -- ============================================================================
 
 /-- Check if an expression only references columns from a specific table -/
-partial def exprReferencesOnlyTable (tableName : String) : Expr → Bool
+def exprReferencesOnlyTable (tableName : String) : Expr → Bool
   | .lit _ => true
   | .col c => match c.table with
     | some t => t == tableName
     | none => false  -- unqualified columns may reference multiple tables
   | .binOp _ l r => exprReferencesOnlyTable tableName l && exprReferencesOnlyTable tableName r
   | .unaryOp _ e => exprReferencesOnlyTable tableName e
-  | .func _ args => args.all (exprReferencesOnlyTable tableName)
-  | .agg _ (some e) _ => exprReferencesOnlyTable tableName e
-  | .agg _ none _ => true
+  | .func _ args => args.foldl (fun acc e => acc && exprReferencesOnlyTable tableName e) true
+  | .agg _ arg _ => match arg with | some e => exprReferencesOnlyTable tableName e | none => true
   | .countStar => true
   | .case branches else_ =>
-    branches.all (fun (c, r) => exprReferencesOnlyTable tableName c && exprReferencesOnlyTable tableName r) &&
-    (else_.map (exprReferencesOnlyTable tableName) |>.getD true)
-  | .inList e _ vals => exprReferencesOnlyTable tableName e && vals.all (exprReferencesOnlyTable tableName)
+    branches.foldl (fun acc pair => acc && exprReferencesOnlyTable tableName pair.1 && exprReferencesOnlyTable tableName pair.2) true &&
+    (match else_ with | some e => exprReferencesOnlyTable tableName e | none => true)
+  | .inList e _ vals => exprReferencesOnlyTable tableName e && vals.foldl (fun acc vi => acc && exprReferencesOnlyTable tableName vi) true
   | .inSubquery e _ _ => exprReferencesOnlyTable tableName e
   | .exists _ _ => true  -- subquery scope
   | .subquery _ => true  -- subquery scope
@@ -553,8 +552,17 @@ partial def exprReferencesOnlyTable (tableName : String) : Expr → Bool
     exprReferencesOnlyTable tableName e &&
     exprReferencesOnlyTable tableName lo &&
     exprReferencesOnlyTable tableName hi
-  | .windowFn _ (some e) _ => exprReferencesOnlyTable tableName e
-  | .windowFn _ none _ => true
+  | .windowFn _ arg _ => match arg with | some e => exprReferencesOnlyTable tableName e | none => true
+termination_by e => sizeOf e
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
 
 /-- Get all column references from a FromClause -/
 def getFromClauseTableNames : FromClause → List String
