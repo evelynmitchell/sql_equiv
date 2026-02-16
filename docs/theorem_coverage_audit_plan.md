@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **29 axioms** across 10 `.lean` files (13 in `Equiv/`, 16 in infrastructure)
-- **524 theorems** proved (94.8%)
-- Axiom ratchet: 29 (`tools/axiom_count_minimum.txt`)
+- **22 axioms** across 9 `.lean` files (13 in `Equiv/`, 9 in infrastructure)
+- **524 theorems** proved (96.0%)
+- Axiom ratchet: 22 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
