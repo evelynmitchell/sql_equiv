@@ -3,6 +3,7 @@
 -/
 import SqlEquiv.Equiv.Defs
 import SqlEquiv.Equiv.SetBagLemmas
+import SqlEquiv.Equiv.ValueLemmas
 
 namespace SqlEquiv
 
@@ -759,32 +760,132 @@ theorem not_exists_as_count_eq_zero (db : Database) (row : Row) (sel : SelectStm
   | nil => rfl
   | cons _ _ => rfl
 
+/-- Helper: list.any p = !(list.filter p).isEmpty -/
+private theorem List.any_eq_not_isEmpty_filter {α : Type} (p : α → Bool) (l : List α) :
+    l.any p = !(l.filter p).isEmpty := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.any_cons, List.filter_cons]
+    cases hp : p a <;> simp [ih]
+
+/-- Helper: (l.map f).isEmpty = l.isEmpty -/
+private theorem List.isEmpty_map {α β : Type} (f : α → β) (l : List α) :
+    (l.map f).isEmpty = l.isEmpty := by
+  cases l <;> rfl
+
+/-- Helper: (l.map f).any p = l.any (fun x => p (f x)) -/
+private theorem List.any_map {α β : Type} (f : α → β) (p : β → Bool) (l : List α) :
+    (l.map f).any p = l.any (fun x => p (f x)) := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih => simp [List.any_cons, ih]
+
 /-- IN subquery is equivalent to EXISTS with equality condition.
-    x IN (SELECT col FROM t) ≡ EXISTS (SELECT 1 FROM t WHERE t.col = x) -/
-axiom in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
-    (tableName : String) (colName : String) :
+    x IN (SELECT tableName.col FROM t) ≡ EXISTS (SELECT 1 FROM t WHERE t.col = x)
+    Requires that e evaluates to a value and is stable under row extension.
+    The hNoAgg/hNoWin conditions are needed because hasAggregate/exprHasWindowFn are
+    partial functions. For concrete items (.col, .lit), use `native_decide`. -/
+theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
+    (tableName : String) (colName : String) (v : Value)
+    (heval : evalExprWithDb db row e = some v)
+    (hstable : ∀ extra : Row, evalExprWithDb db (row ++ extra) e = some v)
+    (hNoAggCol : selectHasAggregate [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
+    (hNoWinCol : selectHasWindowFn [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
+    (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
+    (hNoWinLit : selectHasWindowFn [.exprItem (.lit (.int 1)) none] = false) :
     let inSub := Expr.inSubquery e false
-      (SelectStmt.mk false [.exprItem (.col ⟨none, colName⟩) none]
+      (SelectStmt.mk false [.exprItem (.col ⟨some tableName, colName⟩) none]
         (some (.table ⟨tableName, none⟩)) none [] none [] none none)
     let existsSub := Expr.exists false
       (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
         (some (.table ⟨tableName, none⟩))
         (some (.binOp .eq (.col ⟨some tableName, colName⟩) e))
         [] none [] none none)
-    evalExprWithDb db row inSub = evalExprWithDb db row existsSub
+    evalExprWithDb db row inSub = evalExprWithDb db row existsSub := by
+  simp only []
+  -- Unfold both sides
+  rw [evalExprWithDb_inSubquery, evalExprWithDb_exists]
+  -- Substitute heval into the IN side
+  rw [heval]
+  simp only [Bool.false_eq_true, ↓reduceIte]
+  -- Simplify both evalSelectWithContext calls
+  rw [evalSelectWithContext_simple_project db row _ _ hNoAggCol hNoWinCol]
+  rw [evalSelectWithContext_simple_project_where db row _ _ _ hNoAggLit hNoWinLit]
+  -- LHS: (contextRows.map project_col).any matchPred
+  -- RHS: !(contextRows.filter filterPred |>.map project_lit).isEmpty
+  congr 1
+  -- Transform LHS using list algebra
+  rw [List.any_map, List.isEmpty_map, List.any_eq_not_isEmpty_filter]
+  -- Now: Value.bool (!(filter pred1 ctx).isEmpty) = Value.bool (!(filter pred2 ctx).isEmpty)
+  congr 1  -- strip Value.bool
+  congr 1  -- strip !
+  congr 1  -- strip .isEmpty
+  -- goal: filter pred1 ctx = filter pred2 ctx where ctx = map (row ++ ·) baseRows
+  -- Can't use funext because hstable requires r = row ++ extra
+  apply List.filter_congr
+  intro r hr
+  -- r ∈ List.map (row ++ ·) baseRows, so r = row ++ extra for some extra
+  obtain ⟨extra, _, rfl⟩ := List.mem_map.mp hr
+  -- Per-row equivalence: IN match pred = EXISTS WHERE pred
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
+    evalExprWithDb_binOp]
+  rw [hstable extra]
+  -- Case split on column evaluation to reduce nested match + head?
+  cases hcol : evalExprWithDb db (row ++ extra) (.col ⟨some tableName, colName⟩) with
+  | none => cases v <;> rfl
+  | some colVal =>
+    simp only [List.head?_cons]
+    rw [Value.eq_comm v colVal]
+    cases colVal <;> cases v <;> rfl
 
-/-- NOT IN subquery is equivalent to NOT EXISTS with equality condition -/
-axiom not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
-    (tableName : String) (colName : String) :
+/-- NOT IN subquery is equivalent to NOT EXISTS with equality condition.
+    Requires that e evaluates to a value and is stable under row extension. -/
+theorem not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
+    (tableName : String) (colName : String) (v : Value)
+    (heval : evalExprWithDb db row e = some v)
+    (hstable : ∀ extra : Row, evalExprWithDb db (row ++ extra) e = some v)
+    (hNoAggCol : selectHasAggregate [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
+    (hNoWinCol : selectHasWindowFn [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
+    (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
+    (hNoWinLit : selectHasWindowFn [.exprItem (.lit (.int 1)) none] = false) :
     let notInSub := Expr.inSubquery e true
-      (SelectStmt.mk false [.exprItem (.col ⟨none, colName⟩) none]
+      (SelectStmt.mk false [.exprItem (.col ⟨some tableName, colName⟩) none]
         (some (.table ⟨tableName, none⟩)) none [] none [] none none)
     let notExistsSub := Expr.exists true
       (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
         (some (.table ⟨tableName, none⟩))
         (some (.binOp .eq (.col ⟨some tableName, colName⟩) e))
         [] none [] none none)
-    evalExprWithDb db row notInSub = evalExprWithDb db row notExistsSub
+    evalExprWithDb db row notInSub = evalExprWithDb db row notExistsSub := by
+  simp only []
+  rw [evalExprWithDb_inSubquery, evalExprWithDb_exists]
+  rw [heval]
+  simp only [↓reduceIte]
+  rw [evalSelectWithContext_simple_project db row _ _ hNoAggCol hNoWinCol]
+  rw [evalSelectWithContext_simple_project_where db row _ _ _ hNoAggLit hNoWinLit]
+  congr 1  -- strip some
+  -- List algebra transformations
+  rw [List.any_map, List.isEmpty_map, List.any_eq_not_isEmpty_filter]
+  -- Goal: Value.bool (!(!(filter pred1 ctx).isEmpty)) = Value.bool ((filter pred2 ctx).isEmpty)
+  congr 1  -- strip Value.bool
+  -- Goal: !(!(filter pred1 ctx).isEmpty) = (filter pred2 ctx).isEmpty
+  simp only [Bool.not_not]
+  -- Goal: (filter pred1 ctx).isEmpty = (filter pred2 ctx).isEmpty
+  congr 1  -- strip .isEmpty
+  -- Goal: filter pred1 ctx = filter pred2 ctx
+  apply List.filter_congr
+  intro r hr
+  obtain ⟨extra, _, rfl⟩ := List.mem_map.mp hr
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
+    evalExprWithDb_binOp]
+  rw [hstable extra]
+  cases hcol : evalExprWithDb db (row ++ extra) (.col ⟨some tableName, colName⟩) with
+  | none => cases v <;> rfl
+  | some colVal =>
+    simp only [List.head?_cons]
+    rw [Value.eq_comm v colVal]
+    cases colVal <;> cases v <;> rfl
 
 /-- Subquery with LIMIT 1 returns at most one row -/
 theorem subquery_limit_one (db : Database) (row : Row)

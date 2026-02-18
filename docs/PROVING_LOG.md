@@ -3454,3 +3454,76 @@ Axiom ratchet updated: 22 → 14.
 the pre-commit hook (`tools/pre-commit`) which called the deleted
 `rewrite_audit_validator.py`, causing the first commit attempt to fail. CI steps,
 hooks, ratchet files, and tooling scripts all need to be checked.
+
+---
+
+## Batch 22: IN subquery ↔ EXISTS — 2 axioms → theorems
+
+**Branch**: `claude/prove-in-subquery-exists` | **PR**: #157
+
+### Axioms proved (2)
+
+| Axiom | Technique |
+|-------|-----------|
+| `in_subquery_as_exists` | `List.filter_congr` + `Value.eq_comm` + constructor case split |
+| `not_in_subquery_as_not_exists` | Same + `Bool.not_not` for double negation |
+
+### Soundness issues fixed (3)
+
+The original axioms were unsound as stated. Three issues:
+
+1. **Unqualified column shadowing**: IN's SELECT used `.col ⟨none, colName⟩` — if the outer
+   row has a column named `colName`, it shadows the table's column. Fixed by using qualified
+   `.col ⟨some tableName, colName⟩`.
+
+2. **Missing eval precondition**: When `evalExprWithDb db row e = none`, the IN side returns
+   `none` but the EXISTS side always returns `some (.bool ...)`. Fixed by adding
+   `heval : evalExprWithDb db row e = some v`.
+
+3. **Row-stability precondition**: `e` is evaluated against `row` in the IN side but against
+   `row ++ tableRow` in the EXISTS WHERE clause. If `e` references table columns, it could
+   evaluate differently. Fixed by adding `hstable : ∀ extra, evalExprWithDb db (row ++ extra) e = some v`.
+
+Additional `hNoAgg`/`hNoWin` hypotheses needed because `hasAggregate`/`exprHasWindowFn` are
+`partial def` (opaque to kernel) — can't prove `selectHasAggregate [.exprItem (.col ...) none] = false` by `rfl`.
+
+### Helper infrastructure added
+
+- **ValueLemmas.lean**: `Value.eq_comm` — symmetry of Value equality
+- **SemanticsCore.lean**: `evalFromCore_table`, `evalSelectCore_simple_project`,
+  `evalSelectCore_simple_project_where` — decompose simple SELECT queries
+- **Semantics.lean**: Bridge theorems `evalFrom_table`, `evalSelectWithContext_simple_project`,
+  `evalSelectWithContext_simple_project_where`
+- **StatementAxioms.lean**: List algebra helpers `List.any_eq_not_isEmpty_filter`,
+  `List.isEmpty_map`, `List.any_map`
+
+### Proof structure
+
+1. Unfold both sides via `evalExprWithDb_inSubquery` / `evalExprWithDb_exists`
+2. Substitute `heval`, reduce `if neg then ... else ...` via `simp only [↓reduceIte]`
+3. Decompose both `evalSelectWithContext` calls via `simple_project` / `simple_project_where`
+4. List algebra: `List.any_map` + `List.isEmpty_map` + `List.any_eq_not_isEmpty_filter`
+   converts both sides to `!(filter pred ctx).isEmpty` form
+5. Peel through `Value.bool`, `!`, `.isEmpty` with `congr 1` chain
+6. `List.filter_congr` + `List.mem_map.mp` to get `r = row ++ extra`
+7. Per-row: `rw [hstable extra]`, case-split on column eval, `Value.eq_comm` + `rfl`
+
+For `neg = true` (NOT IN / NOT EXISTS): step 4 produces `!!(filter ...).isEmpty` on one
+side — `simp only [Bool.not_not]` reduces before proceeding.
+
+### Lessons learned
+
+1. **`List.filter_congr` over `funext` when membership matters.** `funext r` abstracts `r`
+   to an arbitrary element, losing the `row ++ extra` structure needed for `hstable`.
+   `List.filter_congr` provides membership, letting you recover structure via
+   `obtain ⟨extra, _, rfl⟩ := List.mem_map.mp hr`.
+
+2. **`rfl` beats `simp` through BEq instances.** `cases colVal <;> cases v <;> rfl` closes
+   goals like `(a == b) = (Value.bool (a == b) == Value.bool true)` that `simp` gets stuck
+   on, because BEq for Value/Option/Bool reduces definitionally.
+
+3. **`evalSelectItem` never returns `[]`** — even for `none` eval, it returns
+   `[(name, .null none)]`. This meant a helper lemma matching `match colResult with | some => val | none => .null none`
+   didn't match the actual goal (nested match + `.head?`). Direct case-splitting was cleaner.
+
+Axiom ratchet updated: 14 → 12.

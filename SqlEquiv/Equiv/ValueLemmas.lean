@@ -492,4 +492,15 @@ theorem evalBinOp_or_and_distrib_right (a b c : Bool) :
                    (evalBinOp .or (some (.bool b)) (some (.bool c))) := by
   cases a <;> cases b <;> cases c <;> rfl
 
+-- ============================================================================
+-- Value.eq Symmetry
+-- ============================================================================
+
+/-- Value.eq is symmetric -/
+theorem Value.eq_comm (a b : Value) : a.eq b = b.eq a := by
+  cases a <;> cases b <;> simp [Value.eq]
+  · exact Int.beq_comm ..
+  · exact String.beq_comm ..
+  · exact Bool.beq_comm ..
+
 end SqlEquiv
