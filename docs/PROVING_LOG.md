@@ -1624,7 +1624,7 @@ The fix: `suffices ∀ n l, l.length ≤ n → P l` + induction on `n`.
 
 **3. Avoid importing Batteries.Data.List.Perm transitively.**
 Batteries re-exports `Tactic.Alias`, which makes `alias` a keyword. This broke
-Optimizer.lean and PredicatePushdown.lean which use `alias` as a variable name.
+Optimizer.lean and PredicatePushdown.lean (since removed in PR #156) which used `alias` as a variable name.
 The fix: prove `perm_ext_iff_of_nodup` ourselves from core lemmas (`perm_iff_count`
 + `Nodup.count`) rather than importing Batteries.
 
@@ -3419,3 +3419,38 @@ Term-mode WFR proof by pattern matching on `Expr` constructors:
 ### Net axiom count change
 
 - **1 bridge axiom → theorem**: 29 → 28
+
+---
+
+## Optimizer Module Removed (PR #156)
+
+**Date:** 2026-02-18
+**Not a proving batch** — module deletion.
+
+### What happened
+
+The optimizer module was removed entirely (~7,800 LOC). It was the only major
+module with zero formal proofs in a verification project. The dependency was
+strictly one-directional (Optimizer imported Equiv, never reverse), so removal
+had zero impact on the 410+ theorems/axioms in `Equiv/`.
+
+### Axiom impact
+
+8 optimizer axioms deleted:
+- `optimizeExpr_equiv`, `optimizeSelectStmt_equiv`, `optimize_equiv` (Optimizer.lean)
+- `normalizeExprCanonical_equiv`, `normalizeExprCanonical_idempotent` (ExprNormalization.lean)
+- `pushdown_preserves_semantics` (PredicatePushdown.lean)
+- `join_reorder_preserves_forward`, `join_reorder_preserves_backward` (JoinReordering.lean)
+
+Axiom ratchet updated: 22 → 14.
+
+### Files deleted (23)
+
+5 source, 4 unit tests, 9 LSpec tests, 4 docs, 1 Python tool.
+
+### Lesson learned
+
+**When deleting a module, trace references beyond source code.** The plan missed
+the pre-commit hook (`tools/pre-commit`) which called the deleted
+`rewrite_audit_validator.py`, causing the first commit attempt to fail. CI steps,
+hooks, ratchet files, and tooling scripts all need to be checked.

@@ -354,36 +354,6 @@ def cmdNormalize (sql : String) : IO Unit := do
   | .error e =>
     IO.println s!"\n{Color.error "Parse error"}: {e}"
 
-/-- Show optimized query (placeholder for future optimizer) -/
-def cmdOptimize (sql : String) : IO Unit := do
-  IO.println s!"\n{Color.info "Optimizing"}: {sql}"
-  match parse sql with
-  | .ok stmt =>
-    IO.println s!"\n{Color.success "Original"}:"
-    IO.println s!"  {stmt.toSql}"
-
-    -- Apply basic optimizations
-    match stmt with
-    | .query (.simple sel) =>
-      -- Optimization 1: Remove WHERE TRUE
-      let (optimized, msg) : SelectStmt × Option String := match sel.whereClause with
-        | some (.lit (.bool true)) =>
-          let newSel := SelectStmt.mk sel.distinct sel.items sel.fromClause none sel.groupBy sel.having sel.orderBy sel.limitVal sel.offsetVal
-          (newSel, some s!"\n{Color.info "Optimization"}: Removed redundant WHERE TRUE")
-        -- Optimization 2: Detect WHERE FALSE (empty result)
-        | some (.lit (.bool false)) =>
-          (sel, some s!"\n{Color.warning "Warning"}: WHERE FALSE will always return empty result")
-        | _ => (sel, none)
-
-      if let some m := msg then IO.println m
-      IO.println s!"\n{Color.success "Optimized"}:"
-      IO.println s!"  {optimized.toSql}"
-    | _ =>
-      IO.println s!"\n{Color.dimText "(No optimizations available for this statement type)"}"
-      IO.println s!"  {stmt.toSql}"
-  | .error e =>
-    IO.println s!"\n{Color.error "Parse error"}: {e}"
-
 /-- Show help -/
 def cmdHelp : IO Unit := do
   IO.println s!"\n{Color.boldCyan "SQL Equivalence REPL - Available Commands"}{Color.reset}\n"
@@ -391,7 +361,6 @@ def cmdHelp : IO Unit := do
   IO.println s!"  {Color.keyword "eval"} <sql>         Evaluate query against sample database"
   IO.println s!"  {Color.keyword "equiv"} <q1> | <q2>  Check if two queries are equivalent"
   IO.println s!"  {Color.keyword "normalize"} <sql>    Show normalized form of query"
-  IO.println s!"  {Color.keyword "optimize"} <sql>     Show optimized query"
   IO.println s!"  {Color.keyword "schema"}             Show sample database schema"
   IO.println s!"  {Color.keyword "help"}               Show this help message"
   IO.println s!"  {Color.keyword "quit"} / {Color.keyword "exit"}       Exit the REPL"
@@ -534,13 +503,6 @@ partial def replLoop : IO Unit := do
         IO.println "  Usage: normalize <sql>"
       else
         cmdNormalize args
-      replLoop
-    | "optimize" | "opt" | "o" =>
-      if args.isEmpty then
-        IO.println s!"{Color.error "Error"}: Missing SQL argument"
-        IO.println "  Usage: optimize <sql>"
-      else
-        cmdOptimize args
       replLoop
     | "schema" | "s" =>
       cmdSchema

@@ -4,9 +4,12 @@ This document outlines a phased approach to replacing axioms with proven theorem
 
 ## Current State
 
-### Target Axioms (Issue #11)
+### Original Target Axioms (Issue #11) — Removed (PR #156)
 
-**PredicatePushdown:**
+> The optimizer module and its axioms were removed in PR #156. The original
+> targets are preserved here for historical context.
+
+**PredicatePushdown (removed):**
 ```lean
 axiom pushdown_preserves_semantics (db : Database) (pred : Expr) (from_ : FromClause) :
   let result := pushPredicateDown pred from_
@@ -14,7 +17,7 @@ axiom pushdown_preserves_semantics (db : Database) (pred : Expr) (from_ : FromCl
   filterRows db (evalFrom db from_) (some pred)
 ```
 
-**JoinReordering:**
+**JoinReordering (removed):**
 ```lean
 axiom join_reorder_preserves_forward (db : Database) (from_ : FromClause) :
   canReorderJoins from_ →
@@ -30,10 +33,6 @@ axiom join_reorder_preserves_backward (db : Database) (from_ : FromClause) :
 ### Axiom Dependency Hierarchy
 
 ```
-Level 4: Optimizer Axioms (target)
-├── pushdown_preserves_semantics
-└── join_reorder_preserves_*
-         ↓ depends on
 Level 3: Filter/Projection Axioms
 ├── filter_join_left
 ├── filter_join_right
@@ -57,6 +56,11 @@ Level 0: Semantic Model
 ├── evalFrom
 └── evalSelect
 ```
+
+> **Note (PR #156):** Level 4 "Optimizer Axioms" (`pushdown_preserves_semantics`,
+> `join_reorder_preserves_*`) was removed along with the entire optimizer module.
+> The optimizer was the only major module with zero formal proofs. All 410+
+> theorems in `Equiv/` are untouched.
 
 ### Semantic Model (Level 0)
 
@@ -372,27 +376,18 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 **Estimated complexity:** High.
 
----
-
-### Phase 10: Optimizer Correctness (Final Target)
-
-**Goal:** Prove the top-level optimizer axioms from Issue #11.
-
-**Target axioms (not in Equiv.lean -- in Optimizer modules):**
-- `pushdown_preserves_semantics`
-- `join_reorder_preserves_forward`
-- `join_reorder_preserves_backward`
-
-**Strategy:** Compose lemmas from all prior phases.
-
-**Estimated complexity:** High -- ties everything together.
+> **Note (PR #156):** Phase 10 "Optimizer Correctness" has been removed.
+> The optimizer module was deleted — its 3 axioms (`pushdown_preserves_semantics`,
+> `join_reorder_preserves_forward`, `join_reorder_preserves_backward`) and 5
+> other axioms in optimizer files are gone. Phase 9 remains as the final phase
+> for filter pushdown through joins (an Equiv-level concern independent of the optimizer).
 
 ---
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 22 axioms remaining (13 in Equiv/, 9 in infrastructure files), 524 theorems proved (96.0%).
-Axiom ratchet: 22 (in `tools/axiom_count_minimum.txt`).
+**Current totals**: 14 axioms remaining (13 in Equiv/, 1 in Semantics.lean), 512 theorems proved.
+Axiom ratchet: 14 (in `tools/axiom_count_minimum.txt`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -409,10 +404,11 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 7 | Subquery / EXISTS / IN | 16 | ~1 | Medium-Hard |
 | 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
-| 10 | Optimizer correctness | 0 | ~3 | High |
 | infra | Infrastructure (Semantics.lean) | 21 | 6 (6 bridge axioms — irreducible) | N/A |
-| runtime | Optimizer/Normalization/Pushdown | 0 | 8 | N/A |
-| | **Total** | **~106** | **~83** | |
+| | **Total** | **~106** | **~75** | |
+
+> **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
+> (8 optimizer axioms) were removed when the optimizer module was deleted.
 
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
@@ -486,12 +482,14 @@ decision first (see "Unsound Axiom Strategy" below).
 | 34 | [#78](https://github.com/evelynmitchell/sql_equiv/issues/78) | Scalar/correlated subquery | 7 | Medium-Hard (1 removed: `uncorrelated_subquery_independent` unsound, PR #137; `exists_as_count_gt_zero`, `not_exists_as_count_eq_zero`, `exists_monotonic` proved PR #137; `scalar_subquery_is_first`, `subquery_limit_one` proved PR #139) |
 | 35 | [#77](https://github.com/evelynmitchell/sql_equiv/issues/77) | Subquery unnesting (IN->JOIN) | 4 | Hard |
 
-### Wave 6 -- Filter pushdown + optimizer (final target)
+### Wave 6 -- Filter pushdown (final target)
 
 | Order | Issue | Description | Axioms | Difficulty |
 |:-----:|-------|-------------|:------:|------------|
 | 36 | [#73](https://github.com/evelynmitchell/sql_equiv/issues/73) | Filter pushdown through joins | 3 | High |
-| 37 | [#74](https://github.com/evelynmitchell/sql_equiv/issues/74) | `predicate_pushdown` (optimizer) | 1 | High |
+
+> **Note (PR #156):** Issue #74 (`predicate_pushdown` optimizer axiom) removed
+> with the optimizer module.
 
 ---
 
@@ -684,12 +682,12 @@ A full `Expr.wellTyped` type system (Option 2, PR #88) remains the long-term
 goal for composability, but the ad-hoc predicates are proving sufficient for
 now and don't block progress.
 
-**Optimizer guards mirror axiom preconditions (PRs #100-101):**
-The optimizer now has runtime type guards that match the proof preconditions:
-- `isDefinitelyBool` (allowlist) guards boolean rewrites — mirrors `isBoolValued`
-- `isDefinitelyNonInt` (blocklist) guards arithmetic rewrites — mirrors `isIntValued`
-This creates a virtuous cycle: the same type reasoning protects both the
-optimizer (at runtime) and the axioms (in proofs).
+**Optimizer guards mirrored axiom preconditions (PRs #100-101, removed PR #156):**
+The optimizer had runtime type guards matching the proof preconditions:
+- `isDefinitelyBool` (allowlist) guarded boolean rewrites — mirrored `isBoolValued`
+- `isDefinitelyNonInt` (blocklist) guarded arithmetic rewrites — mirrored `isIntValued`
+The optimizer module was removed in PR #156. The axiom preconditions remain
+as they are intrinsic to the equivalence proofs.
 
 ### What this means for the wave plan
 

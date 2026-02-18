@@ -5,10 +5,6 @@ import Test.ParserTest
 import Test.SemanticsTest
 import Test.EquivTest
 import Test.PropertyTest
-import Test.OptimizerTest
-import Test.ExprNormalizationTest
-import Test.JoinReorderingTest
-import Test.PredicatePushdownTest
 import Test.AxiomCoverageTest
 
 def main : IO Unit := do
@@ -26,18 +22,6 @@ def main : IO Unit := do
   IO.println ""
 
   let _ ← PropertyTest.runPropertyTests
-  IO.println ""
-
-  let _ ← OptimizerTest.runOptimizerTests
-  IO.println ""
-
-  let _ ← ExprNormalizationTest.runExprNormalizationTests
-  IO.println ""
-
-  let _ ← JoinReorderingTest.runJoinReorderingTests
-  IO.println ""
-
-  let _ ← PredicatePushdownTest.runPredicatePushdownTests
   IO.println ""
 
   let _ ← AxiomCoverageTest.runAxiomCoverageTests

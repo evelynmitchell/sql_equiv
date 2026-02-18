@@ -711,11 +711,6 @@ sql_equiv/
 |   +-- Semantics.lean         # Evaluation model
 |   +-- Equiv.lean             # Equivalence proofs
 |   +-- Tactics.lean           # Custom tactics
-|   +-- Optimizer.lean         # Top-level query optimizer
-|   +-- OptimizerUtils.lean    # Shared optimizer utilities
-|   +-- ExprNormalization.lean # Canonical expression ordering
-|   +-- PredicatePushdown.lean # WHERE clause optimization
-|   +-- JoinReordering.lean    # Cost-based join reordering
 |   +-- Basic.lean             # Re-exports
 +-- Test/
 |   +-- Common.lean              # Test infrastructure
@@ -723,10 +718,6 @@ sql_equiv/
 |   +-- SemanticsTest.lean       # Semantics tests
 |   +-- EquivTest.lean           # Equivalence tests
 |   +-- PropertyTest.lean        # Property-based tests
-|   +-- OptimizerTest.lean       # Optimizer tests
-|   +-- ExprNormalizationTest.lean # Expression normalization tests
-|   +-- PredicatePushdownTest.lean # Predicate pushdown tests
-|   +-- JoinReorderingTest.lean  # Join reordering tests
 |   +-- AxiomCoverageTest.lean   # Runtime tests for 141 axioms
 |   +-- Main.lean                # Test runner
 +-- docs/                    # Documentation and specs
