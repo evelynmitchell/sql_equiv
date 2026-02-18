@@ -703,6 +703,15 @@ theorem evalExprWithDb_inList (db : Database) (row : Row) (e : Expr) (neg : Bool
 -- Infrastructure axioms for evalFrom join decomposition
 -- ============================================================================
 
+/-- evalFrom for table reference produces qualified rows from the database. -/
+theorem evalFrom_table (db : Database) (t : TableRef) :
+    evalFrom db (.table t) =
+    let qualifier := t.alias.getD t.name
+    (db t.name).map fun row =>
+      row.map fun (col, val) => (s!"{qualifier}.{col}", val) := by
+  simp only [evalFrom_eq_evalFromCore]
+  exact evalFromCore_table ..
+
 /-- evalFrom for subquery just returns the inner SELECT result (pass-through). -/
 theorem evalFrom_subquery (db : Database) (sel : SelectStmt) (alias : String) :
     evalFrom db (.subquery sel alias) = evalSelect db sel := by
@@ -1037,6 +1046,35 @@ theorem evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     | .intersect => l.filter (r.contains ·)
     | .exceptOp => l.filter (!r.contains ·) :=
   (evalQuery_eq_evalQueryCore db (.compound left op right)).trans (evalQueryCore_compound ..)
+
+-- ============================================================================
+-- Simple SELECT decomposition (for IN/EXISTS subquery proofs)
+-- ============================================================================
+
+/-- Simple SELECT items FROM from_ (no WHERE) evaluates to projecting each base row. -/
+theorem evalSelectWithContext_simple_project (db : Database) (outerRow : Row)
+    (items : List SelectItem) (from_ : FromClause)
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWin : selectHasWindowFn items = false) :
+    evalSelectWithContext db outerRow
+      (SelectStmt.mk false items (some from_) none [] none [] none none) =
+    List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.map (outerRow ++ ·) (evalFrom db from_)) := by
+  rw [evalSelectWithContext_eq_evalSelectCore]
+  exact evalSelectCore_simple_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
+
+/-- Simple SELECT items FROM from_ WHERE cond evaluates to filtering then projecting. -/
+theorem evalSelectWithContext_simple_project_where (db : Database) (outerRow : Row)
+    (items : List SelectItem) (from_ : FromClause) (cond : Expr)
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWin : selectHasWindowFn items = false) :
+    evalSelectWithContext db outerRow
+      (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
+    List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
+        (List.map (outerRow ++ ·) (evalFrom db from_))) := by
+  rw [evalSelectWithContext_eq_evalSelectCore]
+  exact evalSelectCore_simple_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
 
 -- ============================================================================
 -- Filter combination infrastructure (proved via evalSelectCore bridge)

@@ -1358,13 +1358,14 @@ def additionalLogicTests : List TestResult :=
 def subqueryUnnestingTests : List TestResult :=
   let unnestRow : Row := [("x", .int 1)]
   [
-    -- in_subquery_as_exists: x IN (SELECT col FROM t) = EXISTS (SELECT 1 FROM t WHERE t.col = x)
+    -- in_subquery_as_exists: x IN (SELECT t.col FROM t) = EXISTS (SELECT 1 FROM t WHERE t.col = x)
+    -- Uses qualified column references and no table alias, matching the theorem signature
     let inSub := Expr.inSubquery (.lit (.int 1)) false
-      (SelectStmt.mk false [.exprItem (col "user_id") none]
+      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
         (some (.table ⟨"orders", none⟩)) none [] none [] none none)
     let existsSub := Expr.exists false
       (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
-        (some (.table ⟨"orders", some "orders"⟩))
+        (some (.table ⟨"orders", none⟩))
         (some (.binOp .eq (.col ⟨some "orders", "user_id"⟩) (.lit (.int 1))))
         [] none [] none none)
     let inResult := evalExprWithDb testDb unnestRow inSub
@@ -1375,11 +1376,11 @@ def subqueryUnnestingTests : List TestResult :=
 
     -- not_in_subquery_as_not_exists
     let notInSub := Expr.inSubquery (.lit (.int 999)) true
-      (SelectStmt.mk false [.exprItem (col "user_id") none]
+      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
         (some (.table ⟨"orders", none⟩)) none [] none [] none none)
     let notExistsSub := Expr.exists true
       (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
-        (some (.table ⟨"orders", some "orders"⟩))
+        (some (.table ⟨"orders", none⟩))
         (some (.binOp .eq (.col ⟨some "orders", "user_id"⟩) (.lit (.int 999))))
         [] none [] none none)
     let notInResult := evalExprWithDb testDb unnestRow notInSub

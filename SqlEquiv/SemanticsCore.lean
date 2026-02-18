@@ -342,6 +342,16 @@ theorem evalCaseHelper_cons_false (f : Expr → Option Value) (elseVal : Option 
 -- Equational Theorems for evalFromCore
 -- ============================================================================
 
+theorem evalFromCore_table (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectEval : Database → SelectStmt → Table)
+    (t : TableRef) :
+    evalFromCore db exprEval selectEval (.table t) =
+    let qualifier := t.alias.getD t.name
+    (db t.name).map fun row =>
+      row.map fun (col, val) => (s!"{qualifier}.{col}", val) := by
+  simp [evalFromCore]
+
 theorem evalFromCore_subquery (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
     (selectEval : Database → SelectStmt → Table)
@@ -1147,6 +1157,61 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
   simp only [List.nil_append, List.map_id']
+
+-- ============================================================================
+-- Simple SELECT decomposition (for IN/EXISTS subquery proofs)
+-- ============================================================================
+
+/-- For a simple SELECT items FROM from_ (no WHERE, no GROUP BY, etc.),
+    the result is just projecting each base row. -/
+theorem evalSelectCore_simple_project (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause)
+    (hNoAgg : hasAgg items = false)
+    (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk false items (some from_) none [] none [] none none) =
+    List.map (fun row => items.flatMap (selectItemEval db row))
+      (List.map (outerRow ++ ·) (fromEval db from_)) := by
+  rw [evalSelectCore_eq_afterFilter]
+  dsimp only []
+  simp [evalSelectAfterFilter, applyOrderByLimitOffset, evalSelectProjectDistinct,
+    hNoAgg, hNoWin]
+
+/-- For a simple SELECT items FROM from_ WHERE cond (no GROUP BY, etc.),
+    the result is filtering then projecting. -/
+theorem evalSelectCore_simple_project_where (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (cond : Expr)
+    (hNoAgg : hasAgg items = false)
+    (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
+    List.map (fun row => items.flatMap (selectItemEval db row))
+      (List.filter (fun row => exprEval db row cond == some (Value.bool true))
+        (List.map (outerRow ++ ·) (fromEval db from_))) := by
+  rw [evalSelectCore_eq_afterFilter]
+  dsimp only []
+  simp [evalSelectAfterFilter, applyOrderByLimitOffset, evalSelectProjectDistinct,
+    hNoAgg, hNoWin]
 
 -- ============================================================================
 -- Ground Expression Detection (non-partial mirror of Expr.isGround)
