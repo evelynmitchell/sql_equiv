@@ -229,7 +229,7 @@ squash_mul    : squash (mul (squash a) (squash b)) = mul (squash a) (squash b)
 
 -- Not properties
 not_zero      : not zero = one
-not_one       : not one = zero    -- more precisely: not (squash a) when a ≠ zero
+not_one       : not one = zero
 
 -- Pred properties
 pred_tt       : pred tt = one
@@ -442,8 +442,8 @@ enum SemiringLaw {
     MulAssoc, MulOneLeft, MulOneRight,
     MulZeroLeft, MulZeroRight,
     MulAddLeft, MulAddRight,
-    SquashIdem, SquashZero, SquashOne,
-    NotZero, NotSquash,
+    SquashIdem, SquashZero, SquashOne, SquashMul,
+    NotZero, NotOne,
     PredTt, PredFf, PredAnd, PredOr, PredNot,
     SumZero, SumAdd, SumComm, SumSquash,
 }
@@ -875,7 +875,7 @@ Lean must independently verify it.
 |-----------|----------|--------|-------------|
 | `decide` | Finite/decidable propositions | Built-in | Slow for large instances |
 | `native_decide` | Same, compiled to native code | Built-in | Fast |
-| `omega` | Linear integer arithmetic (LIA) | Built-in (Batteries) | Good for small formulas |
+| `omega` | Linear integer arithmetic (LIA) | Lean core (since v4.3) | Good for small formulas |
 | `simp` | Equational rewriting | Built-in | Depends on simp lemmas |
 | `norm_num` | Numeric normalization | Mathlib | Good |
 | `polyrith` | Polynomial arithmetic | Mathlib | Needs Mathlib dependency |
