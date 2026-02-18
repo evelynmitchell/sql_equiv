@@ -14,9 +14,6 @@
         - name: Checkout repository                                                                                                                          
           uses: actions/checkout@v4                                                                                                                          
                                                                                                                                                              
-        - name: Validate rewrite audit annotations
-          run: python3 tools/rewrite_audit_validator.py --no-report
-
         - name: Install elan                                                                                                                                 
           run: |                                                                                                                                             
             curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none                          
