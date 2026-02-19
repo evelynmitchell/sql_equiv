@@ -29,6 +29,7 @@ analyzed in detail.
    - [Option A: Trust SMT as Axiom](#option-a-trust-smt-as-axiom)
    - [Option B: Verify SMT Proof Certificates](#option-b-verify-smt-proof-certificates-alethelfsc)
    - [Option C: Lean-Native Decision Procedures](#option-c-lean-native-decision-procedures)
+   - [Recommendation: Phased Option C→B→A](#recommendation-phased-option-cba)
 8. [Phase 6: Integration and Migration](#8-phase-6-integration-and-migration)
 9. [What Stays, What Goes](#9-what-stays-what-goes)
 10. [Risk Analysis](#10-risk-analysis)
@@ -227,9 +228,11 @@ squash_zero   : squash zero = zero
 squash_one    : squash one = one
 squash_mul    : squash (mul (squash a) (squash b)) = mul (squash a) (squash b)
 
--- Not properties
-not_zero      : not zero = one
-not_one       : not one = zero
+-- Not properties (not is defined as: not(e) = if e = 0 then 1 else 0)
+not_zero             : not zero = one
+not_one              : not one = zero
+-- Derived: the conditional form useful for normalization proofs
+not_squash_nonzero   : (a ≠ zero) → not (squash a) = zero
 
 -- Pred properties
 pred_tt       : pred tt = one
@@ -443,7 +446,7 @@ enum SemiringLaw {
     MulZeroLeft, MulZeroRight,
     MulAddLeft, MulAddRight,
     SquashIdem, SquashZero, SquashOne, SquashMul,
-    NotZero, NotOne,
+    NotZero, NotOne, NotSquashNonzero,
     PredTt, PredFf, PredAnd, PredOr, PredNot,
     SumZero, SumAdd, SumComm, SumSquash,
 }
@@ -871,15 +874,21 @@ Lean must independently verify it.
 
 #### Available Lean 4 decision procedures
 
-| Procedure | Fragment | Status | Performance |
+| Procedure | Fragment | Source | Performance |
 |-----------|----------|--------|-------------|
-| `decide` | Finite/decidable propositions | Built-in | Slow for large instances |
-| `native_decide` | Same, compiled to native code | Built-in | Fast |
+| `decide` | Finite/decidable propositions | Lean core | Slow for large instances |
+| `native_decide` | Same, compiled to native code | Lean core | Fast |
 | `omega` | Linear integer arithmetic (LIA) | Lean core (since v4.3) | Good for small formulas |
-| `simp` | Equational rewriting | Built-in | Depends on simp lemmas |
-| `norm_num` | Numeric normalization | Mathlib | Good |
-| `polyrith` | Polynomial arithmetic | Mathlib | Needs Mathlib dependency |
-| `aesop` | Automated reasoning | Mathlib | General-purpose |
+| `simp` | Equational rewriting | Lean core + local simp lemmas | Depends on lemma set |
+| `norm_num` | Numeric normalization | Mathlib | Requires Mathlib dependency |
+| `polyrith` | Polynomial arithmetic | Mathlib | Requires Mathlib dependency |
+| `aesop` | Automated reasoning | Mathlib | General-purpose, requires Mathlib |
+
+**Dependency note:** `decide`, `native_decide`, `omega`, and `simp` are available
+from Lean core with no extra dependencies. `norm_num`, `polyrith`, and `aesop`
+require a Mathlib dependency. This project currently uses only Batteries (via Std).
+If Option C needs Mathlib tactics, adding Mathlib as a dependency would need to be
+evaluated for build-time and maintenance impact.
 
 #### Trust model
 
@@ -991,7 +1000,7 @@ and cache verified claims.
 
 ---
 
-## 7.1 Recommendation: Phased Option C→B→A
+### Recommendation: Phased Option C→B→A
 
 Start with the highest-assurance option and fall back as needed:
 
