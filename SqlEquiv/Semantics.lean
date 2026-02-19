@@ -99,7 +99,7 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
     | n :: rest => some (.int (rest.foldl max n))
 
 /-- Parameterized expression evaluator with aggregate support -/
-partial def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
+def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (rows : Table) (row : Row) : Expr → Option Value
   | .agg fn arg distinct => evalAggOverTableParam exprEval db fn arg distinct rows
   | .countStar => some (.int rows.length)
@@ -112,6 +112,8 @@ partial def evalExprWithAggParam (exprEval : Database → Row → Expr → Optio
     | some v => evalUnaryOp op v
     | none => none
   | e => exprEval db row e
+termination_by e => sizeOf e
+decreasing_by all_goals simp_wf; omega
 
 /-- Parameterized SELECT item evaluator with aggregate support -/
 def evalSelectItemWithAggParam (exprEval : Database → Row → Expr → Option Value)
@@ -252,7 +254,7 @@ def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
       some (.int (Int.ofNat nonNullCount.length))
 
 /-- Parameterized expression evaluator with window function support -/
-partial def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Value)
+def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (row : Row) (partition : Table)
     (sortedPartition : Table) (rowIndex : Nat) : Expr → Option Value
   | .windowFn fn arg spec =>
@@ -270,6 +272,8 @@ partial def evalExprWithWindowParam (exprEval : Database → Row → Expr → Op
     | some v => evalUnaryOp op v
     | none => none
   | e => exprEval db row e
+termination_by e => sizeOf e
+decreasing_by all_goals simp_wf; omega
 
 -- ============================================================================
 -- Mutually Recursive Evaluation Functions (WFR - 3 function core)

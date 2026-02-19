@@ -209,7 +209,7 @@ def Expr.isGround : Expr → Bool
   | .exists _ sel => sel.isGround
   | .subquery sel => sel.isGround
   | .between e lo hi => e.isGround && lo.isGround && hi.isGround
-  | .windowFn _ arg _ => match arg with | some e => e.isGround | none => true
+  | .windowFn _ _ _ => false
 termination_by e => sizeOf e
 decreasing_by
   all_goals simp_wf
@@ -339,10 +339,7 @@ theorem isGround_eq_isGroundCore : (e : Expr) →
   | .between e lo hi => by
     simp only [Expr.isGround, isGroundCore]
     rw [isGround_eq_isGroundCore e, isGround_eq_isGroundCore lo, isGround_eq_isGroundCore hi]
-  | .windowFn _ (some e) _ => by
-    simp only [Expr.isGround, isGroundCore]
-    exact isGround_eq_isGroundCore e
-  | .windowFn _ none _ => by simp [Expr.isGround, isGroundCore]
+  | .windowFn _ _ _ => by simp [Expr.isGround, isGroundCore]
 termination_by e => sizeOf e
 decreasing_by
   all_goals simp_wf
@@ -354,10 +351,338 @@ decreasing_by
          obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
        omega)
 
+-- ============================================================================
+-- Helpers for evalSelectCore_ground_outerRow_eq
+-- ============================================================================
+
+/-- foldl with && from false always returns false -/
+private theorem foldl_and_false_local {α : Type} (f : α → Bool) (xs : List α) :
+    xs.foldl (fun acc e => acc && f e) false = false := by
+  induction xs with
+  | nil => rfl
+  | cons _ _ ih => simp only [List.foldl, Bool.false_and]; exact ih
+
+/-- foldl with && from true → every element satisfies f -/
+private theorem foldl_and_true_forall_local {α : Type} {f : α → Bool} {xs : List α}
+    (h : xs.foldl (fun acc e => acc && f e) true = true)
+    {x : α} (hx : x ∈ xs) : f x = true := by
+  induction xs with
+  | nil => contradiction
+  | cons a rest ih =>
+    simp only [List.foldl, Bool.true_and] at h
+    rcases List.mem_cons.mp hx with rfl | hmem
+    · cases hfx : f x with
+      | true => rfl
+      | false =>
+        rw [hfx] at h; rw [foldl_and_false_local f rest] at h
+        exact absurd h Bool.false_ne_true
+    · cases hfa : f a with
+      | true => rw [hfa] at h; exact ih h hmem
+      | false =>
+        rw [hfa] at h; rw [foldl_and_false_local f rest] at h
+        exact absurd h Bool.false_ne_true
+
+/-- If f is constant (same output for all inputs), filterMap depends only on list length -/
+private theorem filterMap_const_eq {f : α → Option β} {xs ys : List α}
+    (hf : ∀ a b, f a = f b) (hlen : xs.length = ys.length) :
+    xs.filterMap f = ys.filterMap f := by
+  induction xs generalizing ys with
+  | nil => cases ys with | nil => rfl | cons _ _ => simp at hlen
+  | cons x xs' ih =>
+    cases ys with
+    | nil => simp at hlen
+    | cons y ys' =>
+      have hlen' : xs'.length = ys'.length := by
+        simp only [List.length_cons, Nat.add_right_cancel_iff] at hlen; exact hlen
+      simp only [List.filterMap_cons, hf x y]
+      generalize f y = fy
+      cases fy with
+      | none => exact ih hlen'
+      | some v => exact congrArg (v :: ·) (ih hlen')
+
+/-- evalAggOverTableParam depends only on rows.length when ee is row-independent for arg -/
+private theorem evalAggOverTableParam_ground_eq
+    (ee : Database → Row → Expr → Option Value)
+    (db : Database) (fn : AggFunc) (arg : Option Expr) (distinct : Bool)
+    (rows1 rows2 : Table)
+    (hlen : rows1.length = rows2.length)
+    (harg : ∀ e, arg = some e → ∀ r1 r2, ee db r1 e = ee db r2 e) :
+    evalAggOverTableParam ee db fn arg distinct rows1 =
+    evalAggOverTableParam ee db fn arg distinct rows2 := by
+  cases arg with
+  | none => simp [evalAggOverTableParam]
+  | some e =>
+    have hv := filterMap_const_eq (fun a b => harg e rfl a b) hlen
+    simp only [evalAggOverTableParam, hv]
+
+/-- evalExprWithAggParam is row/length-independent for ground expressions -/
+private theorem evalExprWithAggParam_ground_eq
+    (ee : Database → Row → Expr → Option Value)
+    (db : Database) (rows1 rows2 : Table) (s1 s2 : Row) (e : Expr)
+    (hlen : rows1.length = rows2.length)
+    (hg : e.isGround = true)
+    (h_ee : ∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
+        ∀ row1 row2, ee db row1 e' = ee db row2 e') :
+    evalExprWithAggParam ee db rows1 s1 e = evalExprWithAggParam ee db rows2 s2 e := by
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
+      e.isGround = true →
+      (∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
+          ∀ row1 row2, ee db row1 e' = ee db row2 e') →
+      evalExprWithAggParam ee db rows1 s1 e = evalExprWithAggParam ee db rows2 s2 e by
+    exact key (sizeOf e + 1) e (by omega) hg h_ee
+  intro n; induction n with
+  | zero => intro _ h; exact absurd h (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt hg h_ee
+    cases e with
+    | agg fn arg distinct =>
+      simp only [evalExprWithAggParam]
+      exact evalAggOverTableParam_ground_eq ee db fn arg distinct rows1 rows2 hlen
+        (fun e' harg r1 r2 =>
+          have : sizeOf e' < sizeOf (Expr.agg fn arg distinct) := by subst harg; simp_wf; omega
+          h_ee e' (by simp [Expr.isGround, harg] at hg; exact hg) (by omega) r1 r2)
+    | countStar =>
+      simp only [evalExprWithAggParam]; rw [hlen]
+    | binOp op l r =>
+      have hgl : l.isGround = true := by
+        simp only [Expr.isGround, Bool.and_eq_true] at hg; exact hg.1
+      have hgr : r.isGround = true := by
+        simp only [Expr.isGround, Bool.and_eq_true] at hg; exact hg.2
+      have h_sz_l : sizeOf l < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have h_sz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have hl := ih l (by omega) hgl
+        (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+      have hr := ih r (by omega) hgr
+        (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+      simp only [evalExprWithAggParam, hl, hr]
+    | unaryOp op inner =>
+      have hgi : inner.isGround = true := by simp only [Expr.isGround] at hg; exact hg
+      have h_sz_i : sizeOf inner < sizeOf (Expr.unaryOp op inner) := by simp_wf; omega
+      have hi := ih inner (by omega) hgi
+        (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+      simp only [evalExprWithAggParam, hi]
+    | lit _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | col _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | func _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | «case» _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | inList _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | inSubquery _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | «exists» _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | subquery _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | between _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | windowFn _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+
+/-- evalExprWithWindowParam is row/partition-independent for ground expressions -/
+private theorem evalExprWithWindowParam_ground_eq
+    (ee : Database → Row → Expr → Option Value)
+    (db : Database) (e : Expr) (row1 row2 : Row)
+    (p1 p2 sp1 sp2 : Table) (idx : Nat)
+    (hg : e.isGround = true)
+    (h_ee : ∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
+        ∀ row1 row2, ee db row1 e' = ee db row2 e') :
+    evalExprWithWindowParam ee db row1 p1 sp1 idx e =
+    evalExprWithWindowParam ee db row2 p2 sp2 idx e := by
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
+      e.isGround = true →
+      (∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
+          ∀ row1 row2, ee db row1 e' = ee db row2 e') →
+      evalExprWithWindowParam ee db row1 p1 sp1 idx e =
+      evalExprWithWindowParam ee db row2 p2 sp2 idx e by
+    exact key (sizeOf e + 1) e (by omega) hg h_ee
+  intro n; induction n with
+  | zero => intro _ h; exact absurd h (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt hg h_ee
+    cases e with
+    | windowFn _ _ _ => simp [Expr.isGround] at hg
+    | binOp op l r =>
+      have hgl : l.isGround = true := by
+        simp only [Expr.isGround, Bool.and_eq_true] at hg; exact hg.1
+      have hgr : r.isGround = true := by
+        simp only [Expr.isGround, Bool.and_eq_true] at hg; exact hg.2
+      have h_sz_l : sizeOf l < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have h_sz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have hl := ih l (by omega) hgl
+        (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+      have hr := ih r (by omega) hgr
+        (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+      simp only [evalExprWithWindowParam, hl, hr]
+    | unaryOp op inner =>
+      have hgi : inner.isGround = true := by simp only [Expr.isGround] at hg; exact hg
+      have h_sz_i : sizeOf inner < sizeOf (Expr.unaryOp op inner) := by simp_wf; omega
+      have hi := ih inner (by omega) hgi
+        (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+      simp only [evalExprWithWindowParam, hi]
+    | lit _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | col _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | func _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | agg _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | countStar => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | «case» _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | inList _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | inSubquery _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | «exists» _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | subquery _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | between _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+
+/-- When expression evaluation is row-independent for ground expressions,
+    evalSelectCore doesn't depend on outerRow for a ground SELECT. -/
+private theorem evalSelectCore_ground_outerRow_eq
+    (db : Database) (r1 r2 : Row)
+    (ee : Database → Row → Expr → Option Value)
+    (sel : SelectStmt)
+    (hg : sel.isGround = true)
+    (h_ee : ∀ e, e.isGround = true → sizeOf e < sizeOf sel →
+        ∀ row1 row2, ee db row1 e = ee db row2 e) :
+    evalSelectCore db r1 (fun db' fc => evalFrom db' fc) ee (evalSelectItemParam ee)
+      (evalSelectItemWithAggParam ee) (evalExprWithAggParam ee)
+      (compareByOrderItemsParam ee) (evalExprWithWindowParam ee)
+      selectHasWindowFn selectHasAggregate sel =
+    evalSelectCore db r2 (fun db' fc => evalFrom db' fc) ee (evalSelectItemParam ee)
+      (evalSelectItemWithAggParam ee) (evalExprWithAggParam ee)
+      (compareByOrderItemsParam ee) (evalExprWithWindowParam ee)
+      selectHasWindowFn selectHasAggregate sel := by
+  -- Destructure sel to access fields
+  obtain ⟨d, items, from_, wc, gb, hv, ob, lim, off⟩ := sel
+  -- Decompose sel.isGround into individual field conditions
+  unfold SelectStmt.isGround at hg
+  simp only [Bool.and_eq_true] at hg
+  have h_items_ok := hg.1.1.1.1.1
+  have h_where_ok := hg.1.1.1.2
+  have h_group_ok := hg.1.1.2
+  have h_having_ok := hg.1.2
+  -- Helper: any expression in a ground SELECT item is ground
+  have h_item_ground : ∀ item ∈ items, ∀ e alias_, item = .exprItem e alias_ →
+      e.isGround = true := by
+    intro item hitem e alias_ heq
+    have hf := foldl_and_true_forall_local h_items_ok hitem
+    rw [heq] at hf; exact hf
+  -- Helper: no star items in a ground SELECT
+  have h_items_no_star : ∀ item ∈ items, ∃ e alias_, item = .exprItem e alias_ := by
+    intro item hitem
+    have hf := foldl_and_true_forall_local h_items_ok hitem
+    cases item with
+    | star _ => exact absurd hf Bool.false_ne_true
+    | exprItem e alias_ => exact ⟨e, alias_, rfl⟩
+  -- Helper: WHERE clause expression is ground
+  have h_wc_ground : ∀ e, wc = some e → e.isGround = true := by
+    intro e hwc; have h := h_where_ok; rw [hwc] at h; exact h
+  -- Helper: GROUP BY expressions are ground
+  have h_gb_ground : ∀ e, e ∈ gb → e.isGround = true := by
+    intro e hmem; exact foldl_and_true_forall_local h_group_ok hmem
+  -- Helper: HAVING clause expression is ground
+  have h_hv_ground : ∀ e, hv = some e → e.isGround = true := by
+    intro e hhv; have h := h_having_ok; rw [hhv] at h; exact h
+  -- Apply the congruence lemma
+  apply evalSelectCore_outerRow_congr
+  -- h_wc: WHERE clause row-independence
+  · intro e hwc row1 row2
+    have hge := h_wc_ground e hwc
+    have hwc' : wc = some e := hwc
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      subst hwc'; simp_wf; omega
+    exact h_ee e hge h_sz row1 row2
+  -- h_gb: GROUP BY row-independence
+  · intro e hmem row1 row2
+    have hge := h_gb_ground e hmem
+    have hmem' : e ∈ gb := hmem
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      have := List.sizeOf_lt_of_mem hmem'; simp_wf; omega
+    exact h_ee e hge h_sz row1 row2
+  -- h_hv: HAVING clause row-independence
+  · intro e hhv row1 row2
+    have hge := h_hv_ground e hhv
+    have hhv' : hv = some e := hhv
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      subst hhv'; simp_wf; omega
+    exact h_ee e hge h_sz row1 row2
+  -- h_items_no_star
+  · intro item hitem
+    exact h_items_no_star item hitem
+  -- h_si: selectItemParam row-independence
+  · intro item hitem row1 row2
+    obtain ⟨e, alias_, heq⟩ := h_items_no_star item hitem
+    rw [heq]; simp only [evalSelectItemParam]
+    have hge := h_item_ground item hitem e alias_ heq
+    have hitem' : item ∈ items := hitem
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      have h_item_sz := List.sizeOf_lt_of_mem hitem'
+      have : sizeOf e < sizeOf item := by rw [heq]; simp_wf; omega
+      simp_wf; omega
+    rw [h_ee e hge h_sz row1 row2]
+  -- h_sia: selectItemWithAggParam row/length-independence
+  · intro item hitem rows1 rows2 s1 s2 hlen
+    obtain ⟨e, alias_, heq⟩ := h_items_no_star item hitem
+    rw [heq]; simp only [evalSelectItemWithAggParam]
+    have hge := h_item_ground item hitem e alias_ heq
+    have hitem' : item ∈ items := hitem
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      have h_item_sz := List.sizeOf_lt_of_mem hitem'
+      have : sizeOf e < sizeOf item := by rw [heq]; simp_wf; omega
+      simp_wf; omega
+    have := evalExprWithAggParam_ground_eq ee db rows1 rows2 s1 s2 e hlen hge
+      (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
+    rw [this]
+  -- h_ea: exprWithAggParam for HAVING
+  · intro e hhv rows1 rows2 s1 s2 hlen
+    have hge := h_hv_ground e hhv
+    have hhv' : hv = some e := hhv
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      subst hhv'; simp_wf; omega
+    exact evalExprWithAggParam_ground_eq ee db rows1 rows2 s1 s2 e hlen hge
+      (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
+  -- h_ew: exprWithWindowParam row/partition-independence
+  · intro e alias_ hitem row1 row2 p1 p2 sp1 sp2 idx hplen
+    have hge := h_item_ground (.exprItem e alias_) hitem e alias_ rfl
+    have hitem' : SelectItem.exprItem e alias_ ∈ items := hitem
+    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+      have h_item_sz := List.sizeOf_lt_of_mem hitem'
+      have : sizeOf e < sizeOf (SelectItem.exprItem e alias_) := by simp_wf; omega
+      simp_wf; omega
+    exact evalExprWithWindowParam_ground_eq ee db e row1 row2 p1 p2 sp1 sp2 idx hge
+      (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
+
 /-- Bridge: if a SelectStmt is ground, evalSelectWithContext is row-independent -/
-axiom selectStmtGround_eval_independent (sel : SelectStmt)
+theorem selectStmtGround_eval_independent (sel : SelectStmt)
     (hg : sel.isGround = true) :
-    ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel
+    ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel := by
+  -- Strong induction on sizeOf sel
+  suffices key : ∀ (bound : Nat) (sel : SelectStmt), sizeOf sel < bound →
+      sel.isGround = true →
+      ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel by
+    intro db r1 r2; exact key (sizeOf sel + 1) sel (by omega) hg db r1 r2
+  intro bound
+  induction bound with
+  | zero => intro _ hlt; exact absurd hlt (Nat.not_lt_zero _)
+  | succ bound ih =>
+    intro sel hlt hg db r1 r2
+    -- Bridge to evalSelectCore
+    rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
+    -- Establish row-independence of ee for ground expressions
+    let ee := fun db' (r : Row) e => @evalExprWithDb db' r e
+    have h_ee : ∀ e, e.isGround = true → sizeOf e < sizeOf sel →
+        ∀ row1 row2, ee db row1 e = ee db row2 e := by
+      intro e hge h_sz_e row1 row2
+      simp only [ee, evalExprWithDb_eq_evalExprCore]
+      let truncSqe : Database → Row → SelectStmt → Table :=
+        fun db' r' sel' => if sizeOf sel' < bound then evalSelectWithContext db' r' sel' else []
+      have h_bridge : ∀ (r : Row),
+          evalExprCore db r (fun db' r' sel' => evalSelectWithContext db' r' sel') e =
+          evalExprCore db r truncSqe e := by
+        intro r
+        exact evalExprCore_sqe_congr db r _ truncSqe e (fun sel' h_sz db' r' => by
+          simp only [truncSqe]; rw [if_pos (by omega)])
+      rw [h_bridge row1, h_bridge row2]
+      have h_sq : ∀ sel', SelectStmt.isGround sel' = true →
+          ∀ db' r1' r2', truncSqe db' r1' sel' = truncSqe db' r2' sel' := by
+        intro sel' hg' db' r1' r2'
+        simp only [truncSqe]
+        split
+        · next h_lt => exact ih sel' h_lt hg' db' r1' r2'
+        · rfl
+      exact isGroundCore_eval_independent SelectStmt.isGround truncSqe h_sq db e
+        (isGround_eq_isGroundCore e ▸ hge) row1 row2
+    exact evalSelectCore_ground_outerRow_eq db r1 r2 ee sel hg h_ee
 
 -- ============================================================================
 -- Decidable Equivalence via Normalization

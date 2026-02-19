@@ -35,8 +35,12 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         if not m:
             continue
         name = m.group(1)
-        # Count occurrences as whole-word matches
-        occurrences = len(re.findall(rf"\b{re.escape(name)}\b", full_text))
+        # Count occurrences as whole-identifier matches
+        # Use Lean identifier boundary (letters, digits, _, ') instead of \b,
+        # because names like `foo'` end with non-word chars that \b mishandles.
+        occurrences = len(re.findall(
+            rf"(?<![a-zA-Z0-9_']){re.escape(name)}(?![a-zA-Z0-9_'])", full_text
+        ))
         if occurrences <= 1:
             unused.append((i, name))
 
