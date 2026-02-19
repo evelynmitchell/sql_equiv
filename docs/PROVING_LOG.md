@@ -3457,7 +3457,7 @@ hooks, ratchet files, and tooling scripts all need to be checked.
 
 ---
 
-## Batch 22: IN subquery ↔ EXISTS — 2 axioms → theorems
+## Batch 38: IN subquery ↔ EXISTS — 2 axioms → theorems
 
 **Branch**: `claude/prove-in-subquery-exists` | **PR**: #157
 
@@ -3527,3 +3527,96 @@ side — `simp only [Bool.not_not]` reduces before proceeding.
    didn't match the actual goal (nested match + `.head?`). Direct case-splitting was cleaner.
 
 Axiom ratchet updated: 14 → 12.
+
+---
+
+## Batch 39: Prove `selectStmtGround_eval_independent` (PR #160) — 1 axiom → theorem
+
+**Branch**: `claude/selectStmtGround-redo` | **PR**: #160 (merged)
+
+### Axiom proved (1)
+
+| Axiom | Technique |
+|-------|-----------|
+| `selectStmtGround_eval_independent` | Strong Nat induction on `sizeOf`, 4-layer factored proof |
+
+### Overview
+
+This axiom states that a ground SELECT statement (no column references, no aggregates
+referencing non-ground expressions) evaluates identically regardless of which rows are
+passed as context. This is the semantic foundation for constant-folding SELECT subqueries.
+
+### Proof structure — 4 layers
+
+The proof required making `evalExprWithAggParam` and `evalExprWithWindowParam` non-partial
+(Layer 1), then building congruence lemmas bottom-up through the evaluator stack.
+
+**Layer 1: Remove `partial` from aggregate/window evaluators**
+
+`evalExprWithAggParam` and `evalExprWithWindowParam` were `partial def` (opaque to the
+kernel). Converted to well-founded recursive `def` with `termination_by sizeOf e` and
+`decreasing_by` blocks. Key technique: replace `List.all` (no WFR support) with `foldl`,
+and use `match h : item with | .exprItem e _ => have _hsz := by rw [h]; simp_wf; omega`
+to provide sizeOf bounds through pattern matches.
+
+**Layer 2: Subquery evaluator congruence (`evalExprCore_sqe_congr`)**
+
+A 14-constructor case split proving that if two subquery-evaluator callbacks agree on all
+inputs, then `evalExprCore` produces identical results. Each constructor case uses
+`simp only [evalExprCore]` then either `rfl` (for leaves) or recursive application
+of the hypothesis.
+
+**Layer 3: Statement-level congruence**
+
+- `evalSelectProjectDistinct_eq_of_length_eq`: projection/DISTINCT is length-independent
+  when the underlying evaluator is row-independent.
+- `evalSelectCore_outerRow_congr`: if all callbacks (expression evaluator, subquery evaluator)
+  are row-independent for ground expressions, then `evalSelectCore` output is independent of
+  the outer row. Proved by strong induction on `sizeOf sel`.
+
+**Layer 4: Ground instantiation**
+
+- `evalExprWithAggParam_ground_eq`: strong Nat induction — ground aggregate expressions
+  evaluate identically with different rows/tables (given equal table lengths).
+- `evalExprWithWindowParam_ground_eq`: same for window function expressions. The `windowFn`
+  case closes by contradiction (`simp [Expr.isGround] at hg`) since `isGround` returns
+  `false` for window functions.
+- `evalSelectCore_ground_outerRow_eq`: instantiates Layer 3 with the ground callbacks.
+
+### Key fix: `windowFn` groundness
+
+`Expr.isGround` for `windowFn` was returning the conjunction of its sub-expressions'
+groundness. Changed to always return `false` — window functions inherently depend on
+partition context (partition rows, sorted partition, row index), so they can never be
+"ground" in the row-independence sense.
+
+### Obstacles and solutions
+
+| Problem | Solution |
+|---------|----------|
+| Mutual WFR blocks don't generate `.eq_def` | Use `unfold SelectStmt.isGround` instead of `simp` |
+| `obtain ⟨...⟩` after `unfold` produces dependent types | Use explicit projections `hg.1.1.1.1.1` |
+| `simp_wf at h` — "unexpected token 'at'" | Use `simp_wf` only on goal, `have` for hypotheses |
+| `List.sizeOf_lt_of_mem hitem` uses accessor form | Coerce: `have hitem' : item ∈ items := hitem` |
+| `hwc` type is `(SelectStmt.mk ...).whereClause = some e` | Bridge: `have hwc' : wc = some e := hwc; subst hwc'` |
+
+### Files changed (7)
+
+- **SemanticsCore.lean** (+423): Layers 1-4 helper lemmas
+- **Decidable.lean** (+339): Final theorem + `windowFn` isGround fix
+- **Semantics.lean** (+8/-8): Remove `partial` from agg/window evaluators
+- **tools/axiom_count_minimum.txt**: 12 → 11
+- **tools/unused_private_checker.py**: Fix `\b` regex for Lean names ending in `'`
+
+### Lessons learned
+
+1. **`unfold` works when `simp [f]` doesn't** for mutual WFR blocks. Always check
+   `#check @f.eq_def` first — if it fails, `simp [f]` can never work.
+
+2. **After `obtain`, accessor forms persist in callback hypotheses.** Use intermediate
+   `have` bindings to coerce accessor-form types to raw field types before `subst`.
+
+3. **Window functions are never ground.** Even if sub-expressions are ground, the
+   partition/sort/index context differs between evaluation sites.
+
+Axiom ratchet updated: 12 → 11.
