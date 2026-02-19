@@ -3487,6 +3487,52 @@ The original axioms were unsound as stated. Three issues:
 Additional `hNoAgg`/`hNoWin` hypotheses needed because `hasAggregate`/`exprHasWindowFn` are
 `partial def` (opaque to kernel) — can't prove `selectHasAggregate [.exprItem (.col ...) none] = false` by `rfl`.
 
+---
+
+## Batch 23: Prove `selectStmtGround_eval_independent` (12→11 axioms)
+
+**Branch**: `claude/prove-in-subquery-exists`
+
+### Axiom proved (1)
+
+| Axiom | Technique |
+|-------|-----------|
+| `selectStmtGround_eval_independent` | Strong Nat induction on `sizeOf sel` + `evalSelectCore_outerRow_congr` |
+
+### Key technique: Truncated subquery evaluator
+
+The proof uses a "truncated subquery evaluator" `sqe` that agrees with `evalSelectWithContext`
+for subqueries smaller than the current SELECT, and returns `[]` for larger ones. This breaks
+the circularity: `isGroundCore_eval_independent` needs its `selectGround` callback to be
+row-independent for ALL ground SELECTs, but the IH only gives smaller ones.
+
+### Infrastructure lemmas added
+
+1. **`evalSelectProjectDistinct_eq_of_length_eq`** (SemanticsCore.lean): If filtered rows have
+   the same length and callbacks are ground-independent, projection + DISTINCT gives the same result.
+   Proved for all 3 branches (simple, aggregate, window).
+
+2. **`evalSelectCore_outerRow_congr`** (SemanticsCore.lean): The main congruence lemma with 8
+   callback hypotheses (WHERE, GROUP BY, HAVING, items_no_star, selectItem, selectItemWithAgg,
+   exprWithAgg, exprWithWindow).
+
+3. **`evalExprWithAggParam_ground_eq`** / **`evalExprWithWindowParam_ground_eq`** (Decidable.lean):
+   Ground aggregate/window expressions produce identical results regardless of row/partition,
+   when the base expression evaluator is row-independent.
+
+### Obstacles
+
+1. **No equational theorems for mutual WFR**: `SelectStmt.isGround` is in a mutual block with
+   `Expr.isGround` and `FromClause.isGround`. Unlike non-mutual WFR functions, no `.eq_def`
+   theorems are generated. Fix: use `unfold SelectStmt.isGround` instead of `simp [SelectStmt.isGround]`.
+
+2. **Accessor coercion**: After destructuring `sel` and applying `evalSelectCore_outerRow_congr`,
+   hypotheses like `hitem : item ∈ sel.items` retain the `.items` accessor form, which doesn't
+   unify with `items` in sizeOf proofs. Fix: add `have hitem' : item ∈ items := hitem`.
+
+3. **`simp_wf` doesn't support `at` syntax**: `simp_wf at h` fails with "unexpected token".
+   Fix: separate into `simp_wf` (on goal) and explicit `have` for hypothesis expansion.
+
 ### Helper infrastructure added
 
 - **ValueLemmas.lean**: `Value.eq_comm` — symmetry of Value equality

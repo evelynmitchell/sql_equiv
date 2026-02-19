@@ -36,7 +36,9 @@ def check_file(path: Path) -> list[tuple[int, str]]:
             continue
         name = m.group(1)
         # Count occurrences as whole-word matches
-        occurrences = len(re.findall(rf"\b{re.escape(name)}\b", full_text))
+        # Use (?!\w) instead of \b for trailing boundary to handle names
+        # ending with ' (prime), which is a non-word character
+        occurrences = len(re.findall(rf"\b{re.escape(name)}(?!\w)", full_text))
         if occurrences <= 1:
             unused.append((i, name))
 

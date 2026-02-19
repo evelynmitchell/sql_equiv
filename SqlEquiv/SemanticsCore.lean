@@ -1234,7 +1234,7 @@ def isGroundCore (selectGround : SelectStmt → Bool) : Expr → Bool
   | .exists _ sel => selectGround sel
   | .subquery sel => selectGround sel
   | .between e lo hi => isGroundCore selectGround e && isGroundCore selectGround lo && isGroundCore selectGround hi
-  | .windowFn _ arg _ => match arg with | some e => isGroundCore selectGround e | none => true
+  | .windowFn _ _ _ => false
 termination_by e => sizeOf e
 decreasing_by
   all_goals simp_wf
@@ -1492,6 +1492,438 @@ theorem isGroundCore_eval_independent
       rw [ih e (by omega) hg.1.1 r1 r2,
           ih lo (by omega) hg.1.2 r1 r2,
           ih hi (by omega) hg.2 r1 r2]
+    | windowFn _ _ _ => simp [isGroundCore] at hg
+
+-- ============================================================================
+-- Subquery evaluator congruence for evalExprCore
+-- ============================================================================
+
+/-- If two subquery evaluators agree on all subqueries smaller than `e`,
+    then `evalExprCore` produces the same result. -/
+theorem evalExprCore_sqe_congr (db : Database) (row : Row)
+    (sqe1 sqe2 : Database → Row → SelectStmt → Table) (e : Expr)
+    (h : ∀ sel, sizeOf sel < sizeOf e → ∀ db' r', sqe1 db' r' sel = sqe2 db' r' sel) :
+    evalExprCore db row sqe1 e = evalExprCore db row sqe2 e := by
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
+      (∀ sel, sizeOf sel < sizeOf e → ∀ db' r', sqe1 db' r' sel = sqe2 db' r' sel) →
+      evalExprCore db row sqe1 e = evalExprCore db row sqe2 e by
+    exact key (sizeOf e + 1) e (by omega) h
+  intro n
+  induction n with
+  | zero => intro e hlt; exact absurd hlt (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt h
+    cases e with
+    | lit _ => simp [evalExprCore]
+    | col _ => simp [evalExprCore]
+    | binOp op l r =>
+      have hsz_l : sizeOf l < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have hsz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have hl := ih l (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz_l) db' r')
+      have hr := ih r (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz_r) db' r')
+      simp only [evalExprCore]; rw [hl, hr]
+    | unaryOp op e =>
+      have hsz : sizeOf e < sizeOf (Expr.unaryOp op e) := by simp_wf; omega
+      have he := ih e (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz) db' r')
+      simp only [evalExprCore]; rw [he]
+    | func name args =>
+      simp only [evalExprCore]
+      congr 1
+      apply List.map_congr_left
+      intro e' he'
+      have hsz : sizeOf e' < sizeOf (Expr.func name args) := by
+        have := List.sizeOf_lt_of_mem he'; simp_wf; omega
+      exact ih e' (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz) db' r')
+    | agg _ _ _ => simp [evalExprCore]
+    | countStar => simp [evalExprCore]
+    | «case» branches else_ =>
+      rw [evalExprCore_case, evalExprCore_case]
+      apply evalCaseHelper_congr
+      · cases else_ with
+        | none => rfl
+        | some e =>
+          have hsz : sizeOf e < sizeOf (Expr.case branches (some e)) := by simp_wf; omega
+          exact ih e (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz) db' r')
+      · intro pair hp
+        have h_pair_lt := List.sizeOf_lt_of_mem hp
+        have h_pair_sz : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+          obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+        have h_case_sz : sizeOf branches < sizeOf (Expr.case branches else_) := by simp_wf; omega
+        have hsz_fst : sizeOf pair.fst < sizeOf (Expr.case branches else_) := by omega
+        have hsz_snd : sizeOf pair.snd < sizeOf (Expr.case branches else_) := by omega
+        exact ⟨ih pair.1 (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz_fst) db' r'),
+               ih pair.2 (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz_snd) db' r')⟩
+    | inList e neg vals =>
+      rw [evalExprCore_inList, evalExprCore_inList]
+      have hsz_e : sizeOf e < sizeOf (Expr.inList e neg vals) := by simp_wf; omega
+      have h_ev := ih e (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz_e) db' r')
+      have h_foldl := inList_foldl_eval_independent
+        (evalExprCore db row sqe1) (evalExprCore db row sqe2)
+        (evalExprCore db row sqe1 e) (evalExprCore db row sqe2 e)
+        h_ev vals
+        (fun vi hvi => by
+          have hsz_vi : sizeOf vi < sizeOf (Expr.inList e neg vals) := by
+            have := List.sizeOf_lt_of_mem hvi; simp_wf; omega
+          exact ih vi (by omega) (fun sel hs db' r' => h sel (Nat.lt_trans hs hsz_vi) db' r'))
+        (some (.bool false))
+      dsimp only []
+      rw [h_foldl]
+    | inSubquery e neg sel =>
+      have hsz_e : sizeOf e < sizeOf (Expr.inSubquery e neg sel) := by simp_wf; omega
+      have hsz_sel : sizeOf sel < sizeOf (Expr.inSubquery e neg sel) := by simp_wf
+      have he := ih e (by omega) (fun s hs db' r' => h s (Nat.lt_trans hs hsz_e) db' r')
+      have hs : sqe1 db row sel = sqe2 db row sel := h sel hsz_sel db row
+      simp only [evalExprCore, he, hs]
+    | «exists» neg sel =>
+      have hsz_sel : sizeOf sel < sizeOf (Expr.exists neg sel) := by simp_wf
+      have hs : sqe1 db row sel = sqe2 db row sel := h sel hsz_sel db row
+      simp only [evalExprCore, hs]
+    | subquery sel =>
+      have hsz_sel : sizeOf sel < sizeOf (Expr.subquery sel) := by simp_wf
+      have hs : sqe1 db row sel = sqe2 db row sel := h sel hsz_sel db row
+      simp only [evalExprCore, hs]
+    | between e lo hi =>
+      have hsz_e : sizeOf e < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have hsz_lo : sizeOf lo < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have hsz_hi : sizeOf hi < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have he := ih e (by omega) (fun s hs db' r' => h s (Nat.lt_trans hs hsz_e) db' r')
+      have hlo := ih lo (by omega) (fun s hs db' r' => h s (Nat.lt_trans hs hsz_lo) db' r')
+      have hhi := ih hi (by omega) (fun s hs db' r' => h s (Nat.lt_trans hs hsz_hi) db' r')
+      simp only [evalExprCore]; rw [he, hlo, hhi]
     | windowFn _ _ _ => simp [evalExprCore]
+
+-- ============================================================================
+-- List helper lemmas for ground independence
+-- ============================================================================
+
+/-- If a function maps to a constant value, then List.map produces the same result
+    for any two lists of the same length. -/
+private theorem map_const_length_eq' {α β : Type} (f : α → β)
+    (xs ys : List α) (c : β) (hf : ∀ x, f x = c) (hlen : xs.length = ys.length) :
+    xs.map f = ys.map f := by
+  induction xs generalizing ys with
+  | nil => cases ys with
+    | nil => rfl
+    | cons _ _ => simp at hlen
+  | cons a rest ih =>
+    cases ys with
+    | nil => simp at hlen
+    | cons b rest' =>
+      simp only [List.length_cons, Nat.add_right_cancel_iff] at hlen
+      simp only [List.map_cons]
+      rw [hf a, hf b]
+      exact congrArg (c :: ·) (ih rest' hlen)
+
+/-- filter with a constant predicate: length depends only on input length. -/
+private theorem filter_const_length_eq' {α : Type} (f : α → Bool)
+    (xs ys : List α) (c : Bool) (hf : ∀ x, f x = c) (hlen : xs.length = ys.length) :
+    (xs.filter f).length = (ys.filter f).length := by
+  induction xs generalizing ys with
+  | nil => cases ys with
+    | nil => rfl
+    | cons _ _ => simp at hlen
+  | cons a rest ih =>
+    cases ys with
+    | nil => simp at hlen
+    | cons b rest' =>
+      simp only [List.filter_cons, List.length_cons, Nat.add_right_cancel_iff] at hlen ⊢
+      rw [hf a, hf b]
+      cases c <;> simp [ih rest' hlen]
+
+/-- flatMap with membership-dependent congr. -/
+private theorem flatMap_congr_mem {α β : Type} {f g : α → List β} {l : List α}
+    (h : ∀ a ∈ l, f a = g a) : l.flatMap f = l.flatMap g := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.flatMap_cons]
+    rw [h x List.mem_cons_self]
+    rw [ih (fun a ha => h a (List.mem_cons_of_mem x ha))]
+
+/-- When two map functions agree regardless of second argument, mapping over zip
+    with different second lists (of the same length) gives the same result. -/
+private theorem map_zip_congr_snd {α β γ : Type} (ns : List α) (xs ys : List β)
+    (f g : α × β → γ) (hlen : xs.length = ys.length)
+    (hfg : ∀ (a : α) (b1 b2 : β), f (a, b1) = g (a, b2)) :
+    (ns.zip xs).map f = (ns.zip ys).map g := by
+  induction ns generalizing xs ys with
+  | nil => simp
+  | cons n rest ih =>
+    cases xs with
+    | nil => cases ys with | nil => simp | cons _ _ => simp at hlen
+    | cons x xs' =>
+      cases ys with
+      | nil => simp at hlen
+      | cons y ys' =>
+        simp only [List.zip_cons_cons, List.map_cons, List.length_cons,
+                   Nat.add_right_cancel_iff] at *
+        congr 1
+        · exact hfg n x y
+        · exact ih xs' ys' hlen
+
+-- ============================================================================
+-- GROUP BY with constant keys: foldl addToGroups produces single group
+-- ============================================================================
+
+/-- The inline addToGroups function from evalSelectProjectDistinct, extracted for proofs. -/
+private def addToGroupsByKey
+    (exprEval : Database → Row → Expr → Option Value) (db : Database) (groupBy : List Expr)
+    (groups : List (List (Option Value) × Table)) (row : Row) :
+    List (List (Option Value) × Table) :=
+  let key := groupBy.map (exprEval db row)
+  match groups.find? (fun (k, _) => k == key) with
+  | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+  | none => groups ++ [(key, [row])]
+
+/-- Accumulator invariant: foldl with constant key on [(k0, acc)] gives [(k0, acc ++ rows)]. -/
+private theorem foldl_addToGroupsByKey_const_key_acc
+    (exprEval : Database → Row → Expr → Option Value) (db : Database) (groupBy : List Expr)
+    (k0 : List (Option Value)) (acc : Table) (rows : Table)
+    (hk : ∀ row ∈ rows, groupBy.map (exprEval db row) = k0) :
+    rows.foldl (addToGroupsByKey exprEval db groupBy) [(k0, acc)] = [(k0, acc ++ rows)] := by
+  induction rows generalizing acc with
+  | nil => simp [List.append_nil]
+  | cons row rest ih =>
+    simp only [List.foldl_cons]
+    have hk_row : groupBy.map (exprEval db row) = k0 := hk row List.mem_cons_self
+    have hk_rest : ∀ r ∈ rest, groupBy.map (exprEval db r) = k0 :=
+      fun r hr => hk r (List.mem_cons_of_mem row hr)
+    -- Compute addToGroupsByKey on [(k0, acc)] with key = k0
+    simp only [addToGroupsByKey, hk_row]
+    -- find? on [(k0, acc)] with predicate (k, _) => k == k0
+    -- k0 == k0 = true by LawfulBEq
+    simp only [List.find?_cons, beq_self_eq_true, List.map_cons, List.map_nil,
+               ite_true, List.cons_append]
+    -- Now goal is: rest.foldl ... [(k0, acc ++ [row])] = [(k0, acc ++ row :: rest)]
+    rw [ih (acc ++ [row]) hk_rest]
+    congr 1; congr 1
+    rw [List.append_assoc]; rfl
+
+/-- foldl with constant key from empty produces [(k0, rows)] for non-empty rows. -/
+private theorem foldl_addToGroupsByKey_const_key
+    (exprEval : Database → Row → Expr → Option Value) (db : Database) (groupBy : List Expr)
+    (k0 : List (Option Value)) (row : Row) (rest : Table)
+    (hk_row : groupBy.map (exprEval db row) = k0)
+    (hk_rest : ∀ r ∈ rest, groupBy.map (exprEval db r) = k0) :
+    (row :: rest).foldl (addToGroupsByKey exprEval db groupBy) [] = [(k0, row :: rest)] := by
+  simp only [List.foldl_cons, addToGroupsByKey, hk_row, List.find?_nil, List.nil_append]
+  rw [foldl_addToGroupsByKey_const_key_acc exprEval db groupBy k0 [row] rest hk_rest]
+  simp [List.singleton_append]
+
+-- ============================================================================
+-- evalSelectProjectDistinct: equality from length and row-independent callbacks
+-- ============================================================================
+
+/-- evalSelectProjectDistinct depends only on filteredRows.length when all callbacks
+    are row-independent. This is the core lemma for the outer row congruence. -/
+private theorem evalSelectProjectDistinct_eq_of_length_eq
+    (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr)
+    (fr1 fr2 : Table) (hlen : fr1.length = fr2.length)
+    (h_gb : ∀ e ∈ groupBy, ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
+    (h_hv : ∀ cond, having = some cond →
+        ∀ row1 row2, exprEval db row1 cond = exprEval db row2 cond)
+    (h_items_no_star : ∀ item ∈ items, ∃ e alias, item = .exprItem e alias)
+    (h_si : ∀ item ∈ items, ∀ row1 row2,
+        selectItemEval db row1 item = selectItemEval db row2 item)
+    (h_sia : ∀ item ∈ items, ∀ rows1 rows2 s1 s2,
+        rows1.length = rows2.length →
+        selectItemWithAggEval db rows1 s1 item = selectItemWithAggEval db rows2 s2 item)
+    (h_ea : ∀ cond, having = some cond → ∀ rows1 rows2 s1 s2,
+        rows1.length = rows2.length →
+        exprWithAggEval db rows1 s1 cond = exprWithAggEval db rows2 s2 cond)
+    (h_ew : ∀ e alias, .exprItem e alias ∈ items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
+        p1.length = p2.length →
+        exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e) :
+    evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval exprWithAggEval
+      exprWithWindowEval hasWindowFn hasAgg distinct items groupBy having fr1 =
+    evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval exprWithAggEval
+      exprWithWindowEval hasWindowFn hasAgg distinct items groupBy having fr2 := by
+  unfold evalSelectProjectDistinct
+  -- Split on distinct (eraseDups wrapper)
+  cases distinct
+  all_goals simp only [Bool.false_eq_true, ↓reduceIte]
+  -- Split on the 4 branches
+  all_goals {
+    split
+    · -- GROUP BY branch
+      first | apply congrArg List.eraseDups | skip
+      cases fr1 with
+      | nil =>
+        cases fr2 with | nil => rfl | cons _ _ => simp at hlen
+      | cons row1 rest1 =>
+        cases fr2 with
+        | nil => simp at hlen
+        | cons row2 rest2 =>
+          simp only [List.length_cons, Nat.add_right_cancel_iff] at hlen
+          have hk0 : ∀ row, groupBy.map (exprEval db row) = groupBy.map (exprEval db row1) :=
+            fun row => List.map_congr_left fun e he => h_gb e he row row1
+          -- Apply constant-key foldl lemma (unfold addToGroupsByKey to match inline form)
+          have hfold1 := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row1 rest1
+            rfl (fun r _ => hk0 r)
+          have hfold2 := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row2 rest2
+            (hk0 row2) (fun r _ => hk0 r)
+          unfold addToGroupsByKey at hfold1 hfold2
+          rw [hfold1, hfold2]
+          -- Now: filterMap on [(k0, row1::rest1)] vs [(k0, row2::rest2)]
+          simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons, List.append_nil]
+          -- passesHaving case split
+          have hlen' : (row1 :: rest1).length = (row2 :: rest2).length := by simp [hlen]
+          cases having with
+          | none =>
+            -- passesHaving = true for both; match some => [flatMap ...]
+            dsimp only []
+            simp only [ite_true]
+            exact congrArg (fun x => [x]) (flatMap_congr_mem fun item hmem =>
+              h_sia item hmem (row1 :: rest1) (row2 :: rest2) _ _ hlen')
+          | some hcond =>
+            dsimp only []
+            have hph : (exprWithAggEval db (row1 :: rest1) row1 hcond == some (Value.bool true)) =
+                (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) := by
+              congr 1; exact h_ea hcond rfl (row1 :: rest1) (row2 :: rest2) _ _ hlen'
+            simp only [hph]
+            -- Split on the Bool to reduce if-then-else + match
+            cases (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) with
+            | true =>
+              simp only [ite_true]
+              exact congrArg (fun x => [x]) (flatMap_congr_mem fun item hmem =>
+                h_sia item hmem (row1 :: rest1) (row2 :: rest2) _ _ hlen')
+            | false => simp
+    · split
+      · -- Aggregate branch
+        first | apply congrArg List.eraseDups | skip
+        cases having with
+        | none =>
+          -- passesHaving = true for both
+          simp only [ite_true]
+          exact congrArg (fun x => [x]) (flatMap_congr_mem fun item hmem =>
+            h_sia item hmem fr1 fr2 _ _ hlen)
+        | some hcond =>
+          -- Reduce match (some hcond) with ...
+          simp only []
+          -- Show passesHaving is the same for both sides
+          have hph : (exprWithAggEval db fr1 (fr1.head?.getD []) hcond == some (Value.bool true)) =
+              (exprWithAggEval db fr2 (fr2.head?.getD []) hcond == some (Value.bool true)) := by
+            congr 1; exact h_ea hcond rfl fr1 fr2 _ _ hlen
+          simp only [hph]
+          split
+          · exact congrArg (fun x => [x]) (flatMap_congr_mem fun item hmem =>
+              h_sia item hmem fr1 fr2 _ _ hlen)
+          · rfl
+      · split
+        · -- Window branch
+          first | apply congrArg List.eraseDups | skip
+          cases having with
+          | none =>
+            -- havingRows = fr1 / fr2, partition = sortedPartition = fr1 / fr2
+            rw [show fr2.length = fr1.length from hlen.symm]
+            apply map_zip_congr_snd _ fr1 fr2 _ _ hlen
+            intro idx row1 row2
+            apply flatMap_congr_mem
+            intro item hmem
+            obtain ⟨e, alias_, rfl⟩ := h_items_no_star item hmem
+            simp only []
+            rw [h_ew e alias_ hmem row1 row2 fr1 fr2 fr1 fr2 idx hlen]
+          | some hcond =>
+            simp only []
+            -- havingRows = filter pred fr1/fr2, pred is constant
+            have hlf : (fr1.filter (fun row => exprEval db row hcond == some (Value.bool true))).length =
+                (fr2.filter (fun row => exprEval db row hcond == some (Value.bool true))).length :=
+              filter_const_length_eq' _ fr1 fr2
+                (exprEval db (fr1.head?.getD []) hcond == some (Value.bool true))
+                (fun row => by congr 1; exact h_hv hcond rfl row _) hlen
+            rw [show (fr2.filter _).length = (fr1.filter _).length from hlf.symm]
+            apply map_zip_congr_snd _ _ _ _ _ hlf
+            intro idx row1 row2
+            apply flatMap_congr_mem
+            intro item hmem
+            obtain ⟨e, alias_, rfl⟩ := h_items_no_star item hmem
+            simp only []
+            rw [h_ew e alias_ hmem row1 row2 _ _ _ _ idx hlf]
+        · -- Simple branch
+          first | apply congrArg List.eraseDups | skip
+          have hf_const : ∀ row, items.flatMap (selectItemEval db row) =
+              items.flatMap (selectItemEval db (fr1.head?.getD [])) :=
+            fun row => flatMap_congr_mem fun item hmem => h_si item hmem row _
+          cases having with
+          | none =>
+            exact map_const_length_eq' _ _ _ _ hf_const hlen
+          | some hcond =>
+            apply map_const_length_eq' _ _ _ _ hf_const
+            apply filter_const_length_eq' _ _ _
+              (exprEval db (fr1.head?.getD []) hcond == some (Value.bool true))
+            · intro row; congr 1; exact h_hv hcond rfl row _
+            · exact hlen
+  }
+
+-- ============================================================================
+-- evalSelectCore outer row congruence
+-- ============================================================================
+
+/-- When all expression callbacks are row-independent for the expressions used
+    in sel, changing outerRow doesn't affect the evalSelectCore result.
+    This is the core infrastructure lemma for selectStmtGround_eval_independent. -/
+theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (sel : SelectStmt)
+    (h_wc : ∀ e, sel.whereClause = some e →
+        ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
+    (h_gb : ∀ e, e ∈ sel.groupBy → ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
+    (h_hv : ∀ e, sel.having = some e →
+        ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
+    (h_items_no_star : ∀ item ∈ sel.items, ∃ e alias, item = .exprItem e alias)
+    (h_si : ∀ item ∈ sel.items, ∀ row1 row2,
+        selectItemEval db row1 item = selectItemEval db row2 item)
+    (h_sia : ∀ item ∈ sel.items, ∀ rows1 rows2 s1 s2,
+        rows1.length = rows2.length →
+        selectItemWithAggEval db rows1 s1 item = selectItemWithAggEval db rows2 s2 item)
+    (h_ea : ∀ e, sel.having = some e → ∀ rows1 rows2 s1 s2,
+        rows1.length = rows2.length →
+        exprWithAggEval db rows1 s1 e = exprWithAggEval db rows2 s2 e)
+    (h_ew : ∀ e alias, .exprItem e alias ∈ sel.items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
+        p1.length = p2.length →
+        exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e) :
+    evalSelectCore db r1 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
+      compareEval exprWithWindowEval hasWindowFn hasAgg sel =
+    evalSelectCore db r2 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
+      compareEval exprWithWindowEval hasWindowFn hasAgg sel := by
+  obtain ⟨distinct, items, from_, where_, groupBy, having, orderBy, limitVal, offsetVal⟩ := sel
+  simp only [SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having,
+             SelectStmt.items] at *
+  simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter]
+  apply congrArg (applyOrderByLimitOffset compareEval db orderBy limitVal offsetVal)
+  -- Goal: evalSelectProjectDistinct ... fr1_expr = evalSelectProjectDistinct ... fr2_expr
+  -- Case split on where_ to establish filteredRows length equality
+  cases where_ with
+  | none =>
+    -- filteredRows = baseRows.map (ri ++ ·), length = baseRows.length
+    exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
+      distinct items groupBy having _ _ (by simp [List.length_map])
+      h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+  | some wcond =>
+    -- filteredRows = (baseRows.map (ri ++ ·)).filter pred, pred is constant
+    exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
+      distinct items groupBy having _ _
+      (by apply filter_const_length_eq' _ _ _
+            (exprEval db r1 wcond == some (Value.bool true))
+          · intro row; congr 1; exact h_wc wcond rfl row r1
+          · simp [List.length_map])
+      h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
 
 end SqlEquiv

@@ -387,8 +387,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 12 axioms remaining (11 in Equiv/, 1 in Semantics.lean), 524 theorems proved (97.7%).
-Axiom ratchet: 12 (in `tools/axiom_count_minimum.txt`, reduced from 14 in PR #157).
+**Current totals**: 11 axioms remaining (10 in Equiv/, 1 in infrastructure files), 503 theorems proved (97.9%).
+Axiom ratchet: 11 (in `tools/axiom_count_minimum.txt`, reduced from 12 by proving `selectStmtGround_eval_independent`).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
