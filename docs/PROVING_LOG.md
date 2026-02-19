@@ -3533,43 +3533,17 @@ row-independent for ALL ground SELECTs, but the IH only gives smaller ones.
 3. **`simp_wf` doesn't support `at` syntax**: `simp_wf at h` fails with "unexpected token".
    Fix: separate into `simp_wf` (on goal) and explicit `have` for hypothesis expansion.
 
-### Helper infrastructure added
-
-- **ValueLemmas.lean**: `Value.eq_comm` — symmetry of Value equality
-- **SemanticsCore.lean**: `evalFromCore_table`, `evalSelectCore_simple_project`,
-  `evalSelectCore_simple_project_where` — decompose simple SELECT queries
-- **Semantics.lean**: Bridge theorems `evalFrom_table`, `evalSelectWithContext_simple_project`,
-  `evalSelectWithContext_simple_project_where`
-- **StatementAxioms.lean**: List algebra helpers `List.any_eq_not_isEmpty_filter`,
-  `List.isEmpty_map`, `List.any_map`
-
-### Proof structure
-
-1. Unfold both sides via `evalExprWithDb_inSubquery` / `evalExprWithDb_exists`
-2. Substitute `heval`, reduce `if neg then ... else ...` via `simp only [↓reduceIte]`
-3. Decompose both `evalSelectWithContext` calls via `simple_project` / `simple_project_where`
-4. List algebra: `List.any_map` + `List.isEmpty_map` + `List.any_eq_not_isEmpty_filter`
-   converts both sides to `!(filter pred ctx).isEmpty` form
-5. Peel through `Value.bool`, `!`, `.isEmpty` with `congr 1` chain
-6. `List.filter_congr` + `List.mem_map.mp` to get `r = row ++ extra`
-7. Per-row: `rw [hstable extra]`, case-split on column eval, `Value.eq_comm` + `rfl`
-
-For `neg = true` (NOT IN / NOT EXISTS): step 4 produces `!!(filter ...).isEmpty` on one
-side — `simp only [Bool.not_not]` reduces before proceeding.
-
 ### Lessons learned
 
-1. **`List.filter_congr` over `funext` when membership matters.** `funext r` abstracts `r`
-   to an arbitrary element, losing the `row ++ extra` structure needed for `hstable`.
-   `List.filter_congr` provides membership, letting you recover structure via
-   `obtain ⟨extra, _, rfl⟩ := List.mem_map.mp hr`.
+1. **Mutual WFR blocks have NO equational theorems.** `#check @SelectStmt.isGround.eq_def`
+   returns "Unknown identifier". Use `unfold` instead of `simp`.
 
-2. **`rfl` beats `simp` through BEq instances.** `cases colVal <;> cases v <;> rfl` closes
-   goals like `(a == b) = (Value.bool (a == b) == Value.bool true)` that `simp` gets stuck
-   on, because BEq for Value/Option/Bool reduces definitionally.
+2. **Structure accessor coercion is required for `omega`.** After destructuring `sel`,
+   hypotheses retain accessor form (`.items`, `.having`). `omega` can't relate these to
+   raw field names. Fix: `have hitem' : item ∈ items := hitem`.
 
-3. **`evalSelectItem` never returns `[]`** — even for `none` eval, it returns
-   `[(name, .null none)]`. This meant a helper lemma matching `match colResult with | some => val | none => .null none`
-   didn't match the actual goal (nested match + `.head?`). Direct case-splitting was cleaner.
+3. **`unfold` + `simp only [Bool.and_eq_true]` + explicit projections** is the pattern for
+   decomposing mutual WFR `&&` chains. `obtain` fails due to dependent types from
+   `match h : item with` in foldl bodies.
 
-Axiom ratchet updated: 14 → 12.
+Axiom ratchet updated: 12 → 11.
