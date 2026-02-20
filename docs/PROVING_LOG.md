@@ -3933,3 +3933,51 @@ with a pre-filtered side — pure list algebra.
 
 - **2 axioms → theorems**: 6 → 4
 - **Remaining 4 axioms**: `join_comm`, `join_assoc`, `in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`
+
+---
+
+## Batch 45: Prove join_comm (Step 4 of Final Seven)
+
+**Date:** 2026-02-20
+
+### What changed
+
+Converted `join_comm` from axiom to theorem. Inner join commutativity:
+for every row in `a INNER JOIN b ON cond`, there exists a corresponding row in
+`b INNER JOIN a ON cond` with the same key-value pairs (as a set).
+
+### Soundness fix
+
+The old axiom had no preconditions, which is unsound because `Row.getQualified`
+uses `List.find?` which returns the first match — column resolution is
+order-dependent. When `lr ++ rr` is reordered to `rr ++ lr`, the condition
+may evaluate differently if both sides have columns with the same qualified name.
+
+Fixed by adding a semantic precondition:
+`∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b, evalExprWithDb db (lr ++ rr) cond = evalExprWithDb db (rr ++ lr) cond`
+
+This holds whenever column names are disjoint between the two sides (the common case).
+
+### Approach
+
+Direct extension of `cross_join_comm` (already proved). The proof:
+1. Decompose inner join via `evalFrom_inner_join` into flatMap/filterMap
+2. Extract witness `lr ∈ evalFrom db a`, `rr ∈ evalFrom db b` from membership
+3. Use `h_cond` to rewrite condition evaluation on swapped row order
+4. Show `rr ++ lr` is in the swapped join using the rewritten condition
+5. Element permutation: `lr ++ rr ↔ rr ++ lr` by `List.mem_append` + `Or.comm`
+
+No new helper lemmas needed — proof is ~20 lines, self-contained.
+
+### Files changed
+
+- **SqlEquiv/Equiv/Comparison.lean** (+25): New `theorem join_comm` with semantic precondition
+- **SqlEquiv/Equiv/ExprAxioms.lean** (-12): Removed `axiom join_comm`
+- **tools/axiom_count_minimum.txt**: 4 → 3
+- **docs/PROVING_LOG.md**: This entry
+- **docs/PROVING_AXIOMS_PLAN.md**: Mark step 4 complete
+
+### Net axiom count change
+
+- **1 axiom → theorem**: 4 → 3
+- **Remaining 3 axioms**: `join_assoc`, `in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`

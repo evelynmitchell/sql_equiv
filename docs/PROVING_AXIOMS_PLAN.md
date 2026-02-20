@@ -40,6 +40,7 @@ Level 3: Filter/Projection Axioms
 └── filter_and ✓ (PR #147)
          ↓ depends on
 Level 2: Join Algebra Axioms
+├── join_comm ✓ (Batch 45)
 ├── join_comm_full ✗ (DELETED — unsound, Batch 22)
 ├── join_assoc (blocked: needs column disjointness)
 ├── cross_join_comm ✓ (PR #140)
@@ -387,8 +388,8 @@ row merging is commutative/associative (modulo column ordering).
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 4 axioms remaining (4 in Equiv/, 0 in infrastructure files), 539 theorems proved (99.3%).
-Axiom ratchet: 4 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
+**Current totals**: 3 axioms remaining (3 in Equiv/, 0 in infrastructure files), 540 theorems proved (99.4%).
+Axiom ratchet: 3 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -668,7 +669,7 @@ principles.
 | 1 | `evalQuery_eq_evalQueryCore` | `partial` → WFR refactor | Low | 7→6 ✅ |
 | ~~2~~ | ~~`filter_join_left`~~ | ~~Semantic precondition + list algebra~~ | ~~Medium~~ | ~~6→5~~ ✅ |
 | ~~3~~ | ~~`filter_join_right`~~ | ~~Symmetric to Step 2~~ | ~~Low~~ | ~~5→4~~ ✅ |
-| 4 | `join_comm` | Add disjointness precondition | Med-High | 4→3 |
+| ~~4~~ | ~~`join_comm`~~ | ~~Add semantic precondition~~ | ~~Med-High~~ | ~~4→3~~ ✅ |
 | 5 | `join_assoc` | Add disjointness + scope preconditions | High | 3→2 |
 | 6 | `in_subquery_unnest_to_join` | Leverage bidirectional lemmas | High | 2→1 |
 | 7 | `not_in_subquery_unnest_to_antijoin` | Fix statement + LEFT JOIN proof | Very High | 1→0 |

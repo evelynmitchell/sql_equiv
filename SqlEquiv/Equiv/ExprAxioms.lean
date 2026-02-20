@@ -248,18 +248,6 @@ theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Opt
     (fun row => by simp [evalExprWithDb_lit])
   simp [h]
 
-/-- Inner join is commutative up to row permutation.
-    Axiom: Blocked — needs a column-disjointness precondition. Without it,
-    `Row.getQualified` may resolve a column reference differently when the
-    join order is swapped: unqualified references pick the first matching key
-    (by an `endsWith` search on the column name) in row order, and even
-    qualified references can be ambiguous if the same qualifier/alias is
-    reused so that there are duplicate qualified keys. In such cases the join
-    condition may evaluate differently on swapped rows. -/
-axiom join_comm (db : Database) (a b : FromClause) (cond : Expr) :
-    ∀ row ∈ evalFrom db (.join a .inner b (some cond)),
-    ∃ row2 ∈ evalFrom db (.join b .inner a (some cond)),
-    (∀ p, p ∈ row ↔ p ∈ row2)
 
 def normalizeExpr : Expr → Expr
   | .binOp .and a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .and na nb else .binOp .and nb na

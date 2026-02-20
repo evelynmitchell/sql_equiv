@@ -85,6 +85,34 @@ theorem cross_join_assoc (db : Database) (a b c : FromClause) :
   congr 1; funext cr
   exact congrArg (· :: []) (List.append_assoc lr rr cr)
 
+/-- Inner join commutativity (row set equality).
+    Theorem: Inner join is commutative up to column ordering, given that the join
+    condition evaluates the same regardless of concatenation order. This holds
+    whenever column names are disjoint between the two sides. -/
+theorem join_comm (db : Database) (a b : FromClause) (cond : Expr)
+    (h_cond : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) cond = evalExprWithDb db (rr ++ lr) cond) :
+    ∀ row ∈ evalFrom db (.join a .inner b (some cond)),
+    ∃ row2 ∈ evalFrom db (.join b .inner a (some cond)),
+    (∀ p, p ∈ row ↔ p ∈ row2) := by
+  intro row hrow
+  rw [evalFrom_inner_join] at hrow
+  dsimp only [] at hrow
+  simp only [List.mem_flatMap, List.mem_filterMap] at hrow
+  obtain ⟨lr, hlr, rr, hrr, hfm⟩ := hrow
+  split at hfm
+  · rename_i heq
+    simp only [Option.some.injEq] at hfm; subst hfm
+    refine ⟨rr ++ lr, ?_, ?_⟩
+    · rw [evalFrom_inner_join]; dsimp only []
+      simp only [List.mem_flatMap, List.mem_filterMap]
+      refine ⟨rr, hrr, lr, hlr, ?_⟩
+      have heq' : evalExprWithDb db (rr ++ lr) cond = some (.bool true) := by
+        rw [← h_cond lr hlr rr hrr]; exact heq
+      simp [heq']
+    · intro p; simp only [List.mem_append]; exact Or.comm
+  · simp at hfm
+
 /-- Cross join commutativity (row set equality).
     Theorem: Cartesian product is commutative up to column ordering. -/
 theorem cross_join_comm (db : Database) (a b : FromClause) :
