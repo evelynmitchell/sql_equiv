@@ -398,16 +398,16 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 1b | Expression-level (bool, arith, cmp, CASE) | ~35 | 0 (done) | -- |
 | 1c | IN / BETWEEN / LIKE | 13 | 0 (done) | -- |
 | 1d | String/Function | 8 | 0 (done) | -- |
-| 2 | Statement-level filter/WHERE | 3 | ~4 | Medium |
-| 3 | Aggregate/Distinct | 0 | ~4 | Medium |
-| 4 | Set operations | 0 | ~13 | Medium |
-| 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
-| 6 | Join axioms | 2 | ~19 | Medium-Hard |
-| 7 | Subquery / EXISTS / IN | 18 | ~1 | Medium-Hard |
-| 8 | Expression evaluation helpers | 3 | ~1 | Medium-High |
-| 9 | Filter pushdown through joins | 0 | ~3 | High |
-| infra | Infrastructure (Semantics.lean) | 21 | 6 (6 bridge axioms — irreducible) | N/A |
-| | **Total** | **~108** | **~75** | |
+| 2 | Statement-level filter/WHERE | 7 | 0 (done) | -- |
+| 3 | Aggregate/Distinct | ~4 | 0 (done) | -- |
+| 4 | Set operations | 13 | 0 (done) | -- |
+| 5 | ORDER BY / LIMIT / OFFSET | 16 | 0 (done) | -- |
+| 6 | Join axioms | ~17 | 2 (`join_comm`, `join_assoc`) | Hard |
+| 7 | Subquery / EXISTS / IN | ~16 | 2 (`in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`) | Hard |
+| 8 | Expression evaluation helpers | ~5 | 0 (done) | -- |
+| 9 | Filter pushdown through joins | 1 | 2 (`filter_join_left`, `filter_join_right`) | Medium |
+| infra | Infrastructure (Semantics.lean) | 47 | 1 (`evalQuery_eq_evalQueryCore`) | Low |
+| | **Total** | **531** | **7** | |
 
 > **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
 > (8 optimizer axioms) were removed when the optimizer module was deleted.
@@ -415,6 +415,297 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 **Note:** 3 proofs from PR #86 (`between_reflexive`, `like_empty_pattern`,
 `length_empty`) were lost during the Equiv.lean → submodule split but have
 been restored in PR #102.
+
+---
+
+## Final Seven Axioms — Proving Strategy and Order
+
+**Date:** 2026-02-20 | **Status:** 7 axioms remain (531 theorems proved, 98.7%)
+
+This section gives a concrete plan for proving (or resolving) the final 7
+axioms. The order is chosen to maximize infrastructure reuse: each step
+either unblocks later steps or builds proof patterns that transfer forward.
+
+### Inventory
+
+| # | Axiom | File | Lines | Category |
+|---|-------|------|-------|----------|
+| 1 | `evalQuery_eq_evalQueryCore` | Semantics.lean | 897–898 | Bridge |
+| 2 | `filter_join_left` | Equiv/Comparison.lean | 19–24 | Predicate pushdown |
+| 3 | `filter_join_right` | Equiv/Comparison.lean | 28–33 | Predicate pushdown |
+| 4 | `join_comm` | Equiv/ExprAxioms.lean | 259–262 | Join commutativity |
+| 5 | `join_assoc` | Equiv/Comparison.lean | 55–58 | Join associativity |
+| 6 | `in_subquery_unnest_to_join` | Equiv/StatementAxioms.lean | 989–1012 | Subquery unnesting |
+| 7 | `not_in_subquery_unnest_to_antijoin` | Equiv/StatementAxioms.lean | 1023–1047 | Subquery unnesting |
+
+### Difficulty ranking (hardest last)
+
+1. `evalQuery_eq_evalQueryCore` — mechanical refactoring (convert `partial def` → WFR)
+2. `filter_join_left` — file reorganization to unblock `simp`, then straightforward proof
+3. `filter_join_right` — symmetric to `filter_join_left`
+4. `join_comm` — needs added column-disjointness precondition; membership-based
+5. `join_assoc` — needs disjointness + scope preconditions; different row scopes
+6. `in_subquery_unnest_to_join` — full `evalSelect` equality; NULL + DISTINCT reasoning
+7. `not_in_subquery_unnest_to_antijoin` — LEFT JOIN + NOT IN NULL sensitivity; likely unsound as stated
+
+---
+
+### Step 1: `evalQuery_eq_evalQueryCore` (bridge axiom)
+
+**Strategy:** Convert `partial def evalQuery` (Semantics.lean:871) and
+`partial def evalRecursiveCTE` (Semantics.lean:854) from `partial def` to
+`def` with `decreasing_by all_goals sorry`, matching the existing pattern
+for `evalExprWithDb`/`evalFrom`/`evalSelectWithContext` (Semantics.lean:288,296,313).
+
+Once non-partial, the bridge axiom becomes provable by `simp [evalQuery]`
+or `rfl` (the function body is identical to `evalQueryCore` instantiated
+with the concrete callbacks).
+
+**Effort:** Low — mechanical refactoring, no deep proof work.
+
+**Risk:** `evalQuery` calls `evalRecursiveCTE` and vice versa. They must
+either share a mutual block or the cycle must be broken by parameterization.
+The existing mutual block (`evalExprWithDb`/`evalFrom`/`evalSelectWithContext`)
+provides a template.
+
+**Prerequisite for:** Nothing directly, but completes the bridge axiom
+infrastructure and validates the `partial` → WFR conversion for later use.
+
+**Ratchet change:** 7 → 6.
+
+---
+
+### Step 2–3: `filter_join_left` + `filter_join_right` (predicate pushdown)
+
+**Blocker diagnosis:** The doc comments say "blocked by `partial def
+exprReferencesOnlyTable`" but this is **stale**. `exprReferencesOnlyTable`
+(Decidable.lean:1152) is a proper WFR function with a complete termination
+proof (lines 1174–1183). The actual blocker is that `Decidable.lean` also
+contains `partial def decideExprEq` and 5 other `partial def`s in the same
+`SqlEquiv` namespace. Per MEMORY.md: *"`simp [f]` fails when `partial def`s
+are in the environment — importing a file with `partial def` blocks
+equational theorem generation for non-partial functions in the same namespace."*
+
+**Strategy:**
+
+1. **Move** `exprReferencesOnlyTable`, `getFromClauseTableNames`, and
+   `exprReferencesOnlyFrom` out of `Decidable.lean` into a new file
+   (e.g., `Equiv/ExprReferences.lean`) that imports no `partial def`s.
+
+2. **Prove equational lemmas** for `exprReferencesOnlyTable` via
+   `simp [exprReferencesOnlyTable]` or `.eq_def` — now possible because
+   no `partial def`s pollute the namespace.
+
+3. **Prove the axiom:** When `exprReferencesOnlyFrom a filter = true`,
+   show that filtering before the join equals filtering after.
+   The core argument: the filter evaluates identically on joined rows
+   vs. pre-join rows because it only references columns from one side.
+   The already-proved `evalSelect_filter_pushdown_table` (Comparison.lean:37)
+   and `evalSelect_star_where_eq_filter` provide templates.
+
+4. `filter_join_right` follows by symmetry (swap `a`/`b` in the proof).
+
+**Effort:** Medium (file reorganization + moderate proof).
+**Risk:** Low — the SQL equivalence is textbook predicate pushdown.
+
+**Existing infrastructure to leverage:**
+- `evalSelect_filter_pushdown_table` — proved analogue for single-table case
+- `evalFrom_inner_join` — unfolds inner join evaluation
+- `evalSelect_where_congr` — congruence for WHERE clauses
+- `evalSelect_star_where_eq_filter` — decomposes SELECT * WHERE into List.filter
+
+**Ratchet change:** 6 → 4.
+
+---
+
+### Step 4: `join_comm` (join commutativity)
+
+**Soundness issue:** As stated (no preconditions), this axiom is likely
+**unprovable**. `Row.getQualified` resolves unqualified column references
+via `endsWith` on the column name, picking the **first** match in row order.
+When join sides swap (`lr ++ rr` → `rr ++ lr`), the "first match" changes,
+so the join condition can evaluate differently on the same logical row.
+
+**Strategy:**
+
+1. **Add a column-disjointness precondition:**
+   ```lean
+   axiom join_comm (db : Database) (a b : FromClause) (cond : Expr)
+       (h_disj : ∀ row_a ∈ evalFrom db a, ∀ row_b ∈ evalFrom db b,
+         ∀ k, k ∈ row_a.map Prod.fst → k ∉ row_b.map Prod.fst) :
+       ...
+   ```
+   This ensures every column name is unique across the two sides, making
+   `getQualified` resolution order-independent.
+
+2. **Prove using `cross_join_comm` pattern:** The already-proved
+   `cross_join_comm` (Comparison.lean:88+) handles the row-permutation
+   argument for cross joins. Extend it: under disjointness, show the
+   join condition evaluates identically on `lr ++ rr` vs `rr ++ lr`,
+   then the cross join membership result carries through.
+
+**Effort:** Medium-high (precondition design + condition-evaluation proof).
+
+**Existing infrastructure to leverage:**
+- `cross_join_comm` — proved membership-based commutativity for cross joins
+- `inner_join_to_where` — proved: INNER JOIN ON cond = CROSS JOIN WHERE cond
+- `evalBinOp_eq_comm` — equality is commutative at the value level
+
+**Risk:** Getting the precondition right. Too strong (e.g., requiring fully
+qualified columns everywhere) and it's useless in practice. Too weak and the
+proof doesn't go through. The suggested form (disjoint column name sets in
+evaluated rows) is a good balance.
+
+**Ratchet change:** 4 → 3.
+
+---
+
+### Step 5: `join_assoc` (join associativity)
+
+**Soundness issue:** Same column-resolution problem as `join_comm`, but
+compounded by ON predicates evaluating in **different row scopes**:
+
+- Left-associative `(a ⊲⊳₁ b) ⊲⊳₂ c`:
+  `cond1` sees `row_a ++ row_b`, `cond2` sees `(row_a ++ row_b) ++ row_c`
+- Right-associative `a ⊲⊳₁ (b ⊲⊳₂ c)`:
+  `cond2` sees `row_b ++ row_c`, `cond1` sees `row_a ++ (row_b ++ row_c)`
+
+So `cond1` evaluates on a different row in each form (even though it
+"should" reference only `a` and `b` columns).
+
+**Strategy:**
+
+1. **Add three preconditions:**
+   - Column disjointness (pairwise across all three tables)
+   - `cond1` references only columns from `a` and `b`
+   - `cond2` references only columns from `b` and `c`
+     (These are the standard relational algebra assumptions.)
+
+   The `exprReferencesOnlyFrom` infrastructure (now unblocked from Step 2)
+   can express the scope constraints.
+
+2. **Prove:** Under disjointness + scope, `cond1` evaluates the same on
+   `row_a ++ row_b` as on `row_a ++ row_b ++ row_c` (extra columns from
+   `c` are invisible). Similarly `cond2` evaluates the same on
+   `row_b ++ row_c` as on `row_a ++ row_b ++ row_c`. Then the associativity
+   of `List.append` (`cross_join_assoc`, already proved) gives the
+   row-level correspondence.
+
+**Effort:** High.
+
+**Existing infrastructure:**
+- `cross_join_assoc` (Comparison.lean:67) — proved for cross joins
+- `join_comm` (from Step 4) — proof patterns directly transfer
+- `exprReferencesOnlyFrom` (from Step 2) — scope constraints
+
+**Risk:** The proof is conceptually clean but mechanically tedious.
+Each condition-evaluation invariance argument requires showing that
+`getQualified` on a longer row returns the same result as on the
+shorter row, when the extra columns are disjoint.
+
+**Ratchet change:** 3 → 2.
+
+---
+
+### Step 6: `in_subquery_unnest_to_join` (IN → semi-join)
+
+**Strategy:** Prove `WHERE x IN (SELECT y FROM s)` ≡ `SELECT DISTINCT ... FROM t JOIN s ON t.x = s.y`.
+
+There is **more existing infrastructure than the axiom comments suggest**:
+
+- `in_subquery_implies_join_match` (proved, PR #165):
+  If `x IN (SELECT y FROM s)` = TRUE, then ∃ matching row in join
+- `join_match_implies_in_subquery` (proved, PR #165):
+  Converse direction
+- `in_subquery_as_exists` (proved, PR #157):
+  IN subquery ≡ EXISTS with equality condition
+- `perm_ext_iff_of_nodup` + `nodup_eraseDups` (SetBagLemmas):
+  For DISTINCT reasoning
+
+**Proof sketch:**
+1. Use the bidirectional lemmas to show **row-level** equivalence:
+   a row appears in the IN-filtered result iff it appears in the
+   DISTINCT join result.
+2. Lift to `evalSelect` equality:
+   - Both forms produce the same set of `t.*` rows (by step 1)
+   - DISTINCT on the join form eliminates duplicates from multiple
+     `s` matches
+   - The IN form naturally returns each `t` row at most once
+   - Use `perm_ext_iff_of_nodup` to show the DISTINCT results match
+
+**Effort:** High — threading through the full `evalSelect` pipeline
+(FROM → WHERE → SELECT → DISTINCT) for both forms.
+
+**Risk:** The `evalSelect` pipeline has many stages. May need additional
+helper lemmas to decompose `evalSelect` for the specific query shapes
+(no GROUP BY, no HAVING, no ORDER BY, no LIMIT/OFFSET).
+
+**Ratchet change:** 2 → 1.
+
+---
+
+### Step 7: `not_in_subquery_unnest_to_antijoin` (NOT IN → anti-join)
+
+**Soundness issue:** The statement is **likely unsound as written**.
+`NOT IN` has treacherous NULL semantics: `x NOT IN (1, 2, NULL)` returns
+NULL (not TRUE and not FALSE) even when `x` is 3, because `x = NULL`
+evaluates to NULL, and `TRUE AND NULL` = NULL. But the anti-join form
+(`LEFT JOIN ... WHERE s.y IS NULL`) returns the row. The doc comment
+acknowledges this: *"assumes s.y contains no NULL values"* — but this
+precondition is **not in the statement**.
+
+**Strategy:**
+
+1. **Fix the statement** — add a precondition:
+   ```lean
+   (h_no_null : ∀ row ∈ db sName,
+     ∃ v, row.find? (fun p => p.1 == yCol) = some (yCol, v) ∧
+       ¬v.isNull) :
+   ```
+
+2. **Prove using existing infrastructure:**
+   - `not_in_subquery_as_not_exists` (proved, PR #157):
+     NOT IN ≡ NOT EXISTS with equality condition
+   - `left_join_filter_null_is_inner` (proved):
+     filtering LEFT JOIN by right-column-non-null gives INNER JOIN
+     (the contrapositive characterizes NULL-padded rows)
+   - `left_join_preserves_left` (proved): every left row appears
+   - `left_join_false_all_left` (proved): LEFT JOIN ON FALSE gives
+     all left rows with NULL padding
+
+   The argument: under the no-NULL precondition, a `t` row has no match
+   in `s` ↔ the LEFT JOIN produces a NULL-padded row for it ↔ `s.y IS NULL`
+   selects it.
+
+**Effort:** Very high — combines LEFT JOIN NULL-padding semantics,
+NOT IN evaluation, and full `evalSelect` pipeline equality.
+
+**Risk:** Even with the precondition fix, this is the most complex proof
+in the codebase. The LEFT JOIN NULL-padding mechanism and the NOT IN
+evaluation path share no code — they must be shown equivalent from first
+principles.
+
+**Ratchet change:** 1 → 0 (all axioms eliminated).
+
+---
+
+### Summary
+
+| Step | Axiom(s) | Strategy | Effort | Ratchet |
+|------|----------|----------|--------|---------|
+| 1 | `evalQuery_eq_evalQueryCore` | `partial` → WFR refactor | Low | 7→6 |
+| 2 | `filter_join_left` | Move file + straightforward proof | Medium | 6→5 |
+| 3 | `filter_join_right` | Symmetric to Step 2 | Low | 5→4 |
+| 4 | `join_comm` | Add disjointness precondition | Med-High | 4→3 |
+| 5 | `join_assoc` | Add disjointness + scope preconditions | High | 3→2 |
+| 6 | `in_subquery_unnest_to_join` | Leverage bidirectional lemmas | High | 2→1 |
+| 7 | `not_in_subquery_unnest_to_antijoin` | Fix statement + LEFT JOIN proof | Very High | 1→0 |
+
+**Axioms requiring statement corrections before proving:** #4, #5, #7
+(column disjointness, scope constraints, NULL-freeness preconditions).
+
+**Axioms blocked by tooling, not semantics:** #1, #2, #3
+(`partial def` opacity and namespace pollution).
 
 ## Implementation Order (with GitHub Issues)
 
