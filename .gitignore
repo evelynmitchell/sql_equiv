@@ -13,3 +13,6 @@ build/
 .DS_Store
 Thumbs.db
 tools/rewrite_audit_report.json
+
+# LeanDojo trace output
+.leandojo_trace/
