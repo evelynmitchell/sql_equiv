@@ -42,7 +42,7 @@ Level 3: Filter/Projection Axioms
 Level 2: Join Algebra Axioms
 ├── join_comm ✓ (Batch 45)
 ├── join_comm_full ✗ (DELETED — unsound, Batch 22)
-├── join_assoc (blocked: needs column disjointness)
+├── join_assoc ✓ (Batch 46)
 ├── cross_join_comm ✓ (PR #140)
 └── cross_join_assoc ✓ (PR #140)
          ↓ depends on
@@ -298,7 +298,7 @@ and empty-table behavior.
   `left_join_cardinality_ge`, `right_join_cardinality_ge`
 
 **Semantics (4 -- hard):** `join_comm`, ~~`join_comm_full`~~ ✗ DELETED (unsound, Batch 22),
-  ~~`cross_join_comm`~~ ✓ PR #140, `join_assoc`, ~~`cross_join_assoc`~~ ✓ PR #140
+  ~~`cross_join_comm`~~ ✓ PR #140, ~~`join_assoc`~~ ✓ Batch 46, ~~`cross_join_assoc`~~ ✓ PR #140
 
 **Advanced (5 -- hard):** `inner_join_to_where`, `left_join_preserves_left`,
   `right_join_preserves_right`, `inner_subset_cross`,
@@ -388,8 +388,8 @@ row merging is commutative/associative (modulo column ordering).
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 3 axioms remaining (3 in Equiv/, 0 in infrastructure files), 540 theorems proved (99.4%).
-Axiom ratchet: 3 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
+**Current totals**: 2 axioms remaining (2 in Equiv/, 0 in infrastructure files), 542 theorems proved (99.6%).
+Axiom ratchet: 2 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -402,12 +402,12 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 3 | Aggregate/Distinct | ~4 | 0 (done) | -- |
 | 4 | Set operations | 13 | 0 (done) | -- |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 0 (done) | -- |
-| 6 | Join axioms | ~17 | 2 (`join_comm`, `join_assoc`) | Hard |
+| 6 | Join axioms | ~19 | 0 (done) | -- |
 | 7 | Subquery / EXISTS / IN | ~16 | 2 (`in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`) | Hard |
 | 8 | Expression evaluation helpers | ~5 | 0 (done) | -- |
 | 9 | Filter pushdown through joins | 1 | 0 (done) | -- |
 | infra | Infrastructure (Semantics.lean) | 48 | 0 (done) | -- |
-| | **Total** | **532+** | **4** | |
+| | **Total** | **535+** | **2** | |
 
 > **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
 > (8 optimizer axioms) were removed when the optimizer module was deleted.
@@ -533,7 +533,17 @@ evaluated rows) is a good balance.
 
 ---
 
-### Step 5: `join_assoc` (join associativity)
+### Step 5: `join_assoc` (join associativity) — ✅ DONE
+
+**Status:** PROVED. Added two semantic preconditions (`h_cond1`, `h_cond2`)
+that the ON predicates evaluate consistently across the two association orders.
+Proof extends the `join_comm` pattern with two-level decomposition (outer then
+inner join) and `List.append_assoc` for element inclusion. ~40 lines, no new
+helper lemmas needed.
+
+**Ratchet change:** 4 → 3.
+
+**Original analysis:**
 
 **Soundness issue:** Same column-resolution problem as `join_comm`, but
 compounded by ON predicates evaluating in **different row scopes**:
@@ -670,7 +680,7 @@ principles.
 | ~~2~~ | ~~`filter_join_left`~~ | ~~Semantic precondition + list algebra~~ | ~~Medium~~ | ~~6→5~~ ✅ |
 | ~~3~~ | ~~`filter_join_right`~~ | ~~Symmetric to Step 2~~ | ~~Low~~ | ~~5→4~~ ✅ |
 | ~~4~~ | ~~`join_comm`~~ | ~~Add semantic precondition~~ | ~~Med-High~~ | ~~4→3~~ ✅ |
-| 5 | `join_assoc` | Add disjointness + scope preconditions | High | 3→2 |
+| ~~5~~ | ~~`join_assoc`~~ | ~~Add semantic preconditions~~ | ~~High~~ | ~~3→2~~ ✅ |
 | 6 | `in_subquery_unnest_to_join` | Leverage bidirectional lemmas | High | 2→1 |
 | 7 | `not_in_subquery_unnest_to_antijoin` | Fix statement + LEFT JOIN proof | Very High | 1→0 |
 

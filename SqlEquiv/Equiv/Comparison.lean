@@ -55,16 +55,55 @@ theorem filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr)
 -- ============================================================================
 
 /-- Join associativity for inner joins.
-    Axiom: Blocked — needs column disjointness + scope preconditions on ON predicates.
-    The real obstruction is semantic: the ON predicates are evaluated at different times
-    with different row scopes between the two association orders (e.g., `cond1` on
-    `lr ++ rr` vs `lr ++ rr ++ cr`, and `cond2` on `(lr ++ rr) ++ cr` vs `rr ++ cr`),
-    and unqualified column resolution via `Row.getQualified` can make predicate meaning
-    depend on which tables are present. Standard relational algebra associativity. -/
-axiom join_assoc (db : Database) (a b c : FromClause) (cond1 cond2 : Expr) :
+    Theorem: `(a ⋈₁ b) ⋈₂ c` row membership implies `a ⋈₁ (b ⋈₂ c)` row membership,
+    given that ON predicates evaluate consistently across the two association orders.
+    - `h_cond1`: cond1 doesn't depend on c's columns (eval same with/without c's row)
+    - `h_cond2`: cond2 doesn't depend on a's columns (eval same with/without a's row)
+    Standard relational algebra associativity. -/
+theorem join_assoc (db : Database) (a b c : FromClause) (cond1 cond2 : Expr)
+    (h_cond1 : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b, ∀ cr ∈ evalFrom db c,
+        evalExprWithDb db (lr ++ rr) cond1 = evalExprWithDb db (lr ++ (rr ++ cr)) cond1)
+    (h_cond2 : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b, ∀ cr ∈ evalFrom db c,
+        evalExprWithDb db ((lr ++ rr) ++ cr) cond2 = evalExprWithDb db (rr ++ cr) cond2) :
     ∀ row ∈ evalFrom db (.join (.join a .inner b (some cond1)) .inner c (some cond2)),
     ∃ row' ∈ evalFrom db (.join a .inner (.join b .inner c (some cond2)) (some cond1)),
-    (∀ p, p ∈ row → p ∈ row')
+    (∀ p, p ∈ row → p ∈ row') := by
+  intro row hrow
+  -- Decompose outer join: (a ⋈₁ b) ⋈₂ c
+  rw [evalFrom_inner_join] at hrow; dsimp only [] at hrow
+  simp only [List.mem_flatMap, List.mem_filterMap] at hrow
+  obtain ⟨ab_row, hab, cr, hcr, hfm⟩ := hrow
+  split at hfm
+  · rename_i heq2
+    simp only [Option.some.injEq] at hfm; subst hfm
+    -- Decompose inner join: a ⋈₁ b
+    rw [evalFrom_inner_join] at hab; dsimp only [] at hab
+    simp only [List.mem_flatMap, List.mem_filterMap] at hab
+    obtain ⟨lr, hlr, rr, hrr, hfm2⟩ := hab
+    split at hfm2
+    · rename_i heq1
+      simp only [Option.some.injEq] at hfm2; subst hfm2
+      -- row = (lr ++ rr) ++ cr, witness = lr ++ (rr ++ cr)
+      refine ⟨lr ++ (rr ++ cr), ?_, ?_⟩
+      · -- Membership in a ⋈₁ (b ⋈₂ c)
+        rw [evalFrom_inner_join]; dsimp only []
+        simp only [List.mem_flatMap, List.mem_filterMap]
+        refine ⟨lr, hlr, rr ++ cr, ?_, ?_⟩
+        · -- rr ++ cr ∈ b ⋈₂ c
+          rw [evalFrom_inner_join]; dsimp only []
+          simp only [List.mem_flatMap, List.mem_filterMap]
+          refine ⟨rr, hrr, cr, hcr, ?_⟩
+          have : evalExprWithDb db (rr ++ cr) cond2 = some (.bool true) := by
+            rw [← h_cond2 lr hlr rr hrr cr hcr]; exact heq2
+          simp [this]
+        · -- cond1 true on lr ++ (rr ++ cr)
+          have : evalExprWithDb db (lr ++ (rr ++ cr)) cond1 = some (.bool true) := by
+            rw [← h_cond1 lr hlr rr hrr cr hcr]; exact heq1
+          simp [this]
+      · -- Element inclusion via List.append_assoc
+        intro p hp; rw [List.append_assoc] at hp; exact hp
+    · simp at hfm2
+  · simp at hfm
 
 -- join_comm_full was DELETED: strict Table equality (`evalFrom ... = evalFrom ...`) is
 -- unsound because swapping join sides produces `lr ++ rr` vs `rr ++ lr`, which are
