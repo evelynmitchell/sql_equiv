@@ -969,48 +969,6 @@ theorem in_singleton_subquery (db : Database) (row : Row) (e : Expr) (sel : Sele
     cases val <;> cases v <;> simp_all [evalBinOp, Value.eq]
 
 
--- ============================================================================
--- Subquery Unnesting Theorems
--- ============================================================================
-
-/-- Subquery unnesting: IN subquery can be rewritten as a semi-join with DISTINCT.
-    SELECT * FROM t WHERE x IN (SELECT y FROM s)
-    ≡ SELECT DISTINCT t.* FROM t JOIN s ON t.x = s.y
-
-    This is a key database optimization. The DISTINCT is required because
-    the join may produce duplicates when multiple s rows have the same y value.
-
-    NULL handling: Both forms exclude rows where t.x is NULL (IN returns NULL
-    which WHERE treats as FALSE; JOIN condition evaluates to NULL/no match).
-    Similarly, NULL values in s.y don't cause differences - they simply
-    don't match in either form.
-
-    This axiom expresses the semantic equivalence at the statement level. -/
-axiom in_subquery_unnest_to_join (db : Database)
-    (tName sName : String) (xCol yCol : String) :
-    let inSubqueryForm := SelectStmt.mk false
-        [.star (some tName)]  -- SELECT t.*
-        (some (.table ⟨tName, some tName⟩))  -- FROM t
-        (some (.inSubquery
-          (.col ⟨some tName, xCol⟩)
-          false  -- not negated (IN, not NOT IN)
-          (SelectStmt.mk false
-            [.exprItem (.col ⟨none, yCol⟩) none]
-            (some (.table ⟨sName, some sName⟩))
-            none [] none [] none none)))  -- WHERE x IN (SELECT y FROM s)
-        [] none [] none none
-    let joinForm := SelectStmt.mk true  -- DISTINCT
-        [.star (some tName)]  -- SELECT DISTINCT t.*
-        (some (.join
-          (.table ⟨tName, some tName⟩)
-          .inner
-          (.table ⟨sName, some sName⟩)
-          (some (.binOp .eq
-            (.col ⟨some tName, xCol⟩)
-            (.col ⟨some sName, yCol⟩)))))  -- FROM t JOIN s ON t.x = s.y
-        none [] none [] none none
-    evalSelect db inSubqueryForm = evalSelect db joinForm
-
 /-- NOT IN subquery can be unnested to an anti-join pattern.
     SELECT * FROM t WHERE x NOT IN (SELECT y FROM s)
     ≡ SELECT t.* FROM t LEFT JOIN s ON t.x = s.y WHERE s.y IS NULL
@@ -1166,6 +1124,126 @@ theorem join_match_implies_in_subquery (db : Database) (row : Row)
         List.head?_cons]
       rw [Option.beq_some_true_iff]
       exact heq
+
+-- ============================================================================
+-- Subquery Unnesting Theorems
+-- ============================================================================
+
+/-- Subquery unnesting: IN subquery can be rewritten as a semi-join with DISTINCT.
+    SELECT DISTINCT t.* FROM t WHERE t.x IN (SELECT s.y FROM s)
+    ≡ SELECT DISTINCT t.* FROM t JOIN s ON t.x = s.y
+
+    This is a key database optimization. The DISTINCT is required because
+    the join may produce duplicates when multiple s rows have the same y value.
+
+    NULL handling: Both forms exclude rows where t.x is NULL (IN returns NULL
+    which WHERE treats as FALSE; JOIN condition evaluates to NULL/no match).
+    Similarly, NULL values in s.y don't cause differences - they simply
+    don't match in either form.
+
+    Preconditions:
+    - hStable: t.xCol eval is stable when extra columns are appended
+    - hNoAgg/hNoWin: subquery items have no aggregates/window functions
+    - hProjT: .star (some tName) projection on tRow ++ sRow = projection on tRow alone -/
+theorem in_subquery_unnest_to_join (db : Database)
+    (tName sName : String) (xCol yCol : String)
+    (hStable : ∀ row ∈ evalFrom db (.table ⟨tName, some tName⟩), ∀ extra : Row,
+      evalExprWithDb db row (.col ⟨some tName, xCol⟩) =
+      evalExprWithDb db (row ++ extra) (.col ⟨some tName, xCol⟩))
+    (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hProjT : ∀ tRow ∈ evalFrom db (.table ⟨tName, some tName⟩),
+      ∀ sRow ∈ evalFrom db (.table ⟨sName, some sName⟩),
+      (tRow ++ sRow).filter (fun (k, _) => k.startsWith s!"{tName}.") =
+      tRow.filter (fun (k, _) => k.startsWith s!"{tName}.")) :
+    let inSubqueryForm := SelectStmt.mk true  -- DISTINCT
+        [.star (some tName)]  -- SELECT DISTINCT t.*
+        (some (.table ⟨tName, some tName⟩))  -- FROM t
+        (some (.inSubquery
+          (.col ⟨some tName, xCol⟩)
+          false  -- not negated (IN, not NOT IN)
+          (SelectStmt.mk false
+            [.exprItem (.col ⟨some sName, yCol⟩) none]  -- qualified
+            (some (.table ⟨sName, some sName⟩))
+            none [] none [] none none)))  -- WHERE t.x IN (SELECT s.y FROM s)
+        [] none [] none none
+    let joinForm := SelectStmt.mk true  -- DISTINCT
+        [.star (some tName)]  -- SELECT DISTINCT t.*
+        (some (.join
+          (.table ⟨tName, some tName⟩)
+          .inner
+          (.table ⟨sName, some sName⟩)
+          (some (.binOp .eq
+            (.col ⟨some tName, xCol⟩)
+            (.col ⟨some sName, yCol⟩)))))  -- FROM t JOIN s ON t.x = s.y
+        none [] none [] none none
+    (evalSelect db inSubqueryForm).Perm (evalSelect db joinForm) := by
+  simp only []
+  -- Abbreviations for readability
+  let tRows := evalFrom db (.table ⟨tName, some tName⟩)
+  let sRows := evalFrom db (.table ⟨sName, some sName⟩)
+  let proj := fun (row : Row) => row.filter (fun (k, _) => k.startsWith s!"{tName}.")
+  let inExpr := Expr.inSubquery (.col ⟨some tName, xCol⟩) false
+    (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+      (some (.table ⟨sName, some sName⟩)) none [] none [] none none)
+  let eqExpr := Expr.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩)
+  -- Decompose LHS: SELECT DISTINCT t.* FROM t WHERE IN(...)
+  rw [evalSelect_distinct_project_where db [.star (some tName)]
+    (.table ⟨tName, some tName⟩) inExpr
+    (selectHasAggregate_qualified_star tName) (selectHasWindowFn_qualified_star tName)]
+  -- Decompose RHS: SELECT DISTINCT t.* FROM t JOIN s ON ...
+  rw [evalSelect_distinct_project db [.star (some tName)]
+    (.join (.table ⟨tName, some tName⟩) .inner (.table ⟨sName, some sName⟩) (some eqExpr))
+    (selectHasAggregate_qualified_star tName) (selectHasWindowFn_qualified_star tName)]
+  -- Simplify: [.star (some tName)].flatMap (evalSelectItem db row) = proj row
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem_qualified_star]
+  -- Both sides are now (...).eraseDups, use Perm on nodup lists with same membership
+  apply (perm_ext_iff_of_nodup (nodup_eraseDups _) (nodup_eraseDups _)).mpr
+  intro v
+  rw [mem_eraseDups, mem_eraseDups]
+  -- Need: v ∈ (tRows.filter IN).map proj ↔ v ∈ (evalFrom db (.join ...)).map proj
+  constructor
+  · -- Forward: IN subquery → join match
+    intro hv
+    rw [List.mem_map] at hv ⊢
+    obtain ⟨tRow, htRow, hproj⟩ := hv
+    rw [List.mem_filter] at htRow
+    obtain ⟨htMem, hIN⟩ := htRow
+    rw [beq_iff_eq] at hIN
+    -- Use in_subquery_implies_join_match to get matching sRow
+    have hStableRow := hStable tRow htMem
+    obtain ⟨sRow, hsMem, hMatch⟩ := in_subquery_implies_join_match db tRow
+      (.col ⟨some tName, xCol⟩) sName yCol hStableRow hNoAgg hNoWin hIN
+    -- tRow ++ sRow ∈ join result
+    refine ⟨tRow ++ sRow, ?_, ?_⟩
+    · -- Membership in join
+      rw [evalFrom_inner_join]; dsimp only []
+      simp only [List.mem_flatMap, List.mem_filterMap]
+      exact ⟨tRow, htMem, sRow, hsMem, by rw [hMatch]⟩
+    · -- proj(tRow ++ sRow) = proj(tRow) = v
+      rw [hProjT tRow htMem sRow hsMem]; exact hproj
+  · -- Backward: join match → IN subquery
+    intro hv
+    rw [List.mem_map] at hv ⊢
+    obtain ⟨joinRow, hjMem, hproj⟩ := hv
+    -- Decompose join membership
+    rw [evalFrom_inner_join] at hjMem; dsimp only [] at hjMem
+    simp only [List.mem_flatMap, List.mem_filterMap] at hjMem
+    obtain ⟨tRow, htMem, sRow, hsMem, hfm⟩ := hjMem
+    split at hfm
+    · rename_i hMatch
+      simp only [Option.some.injEq] at hfm; subst hfm
+      -- Use join_match_implies_in_subquery to get IN = true
+      have hStableRow := hStable tRow htMem
+      have hIN := join_match_implies_in_subquery db tRow
+        (.col ⟨some tName, xCol⟩) sName yCol sRow hsMem hStableRow hNoAgg hNoWin hMatch
+      refine ⟨tRow, ?_, ?_⟩
+      · -- tRow ∈ filtered
+        rw [List.mem_filter]
+        exact ⟨htMem, by rw [beq_iff_eq]; exact hIN⟩
+      · -- proj(tRow) = v
+        rw [← hProjT tRow htMem sRow hsMem]; exact hproj
+    · simp at hfm
 
 -- ============================================================================
 -- ORDER BY Theorems

@@ -341,7 +341,7 @@ row merging is commutative/associative (modulo column ordering).
   `in_empty_subquery_false` (**PROVED**, PR #139 — fixed unsound EXISTS→NOT EXISTS condition, added `evalExpr row e ≠ none` precondition),
   `not_in_empty_subquery_true` (**PROVED**, PR #139 — same precondition pattern)
 
-**Unnesting (4 -- hard, 2 proved):** `in_subquery_unnest_to_join`,
+**Unnesting (4 -- hard, 3 proved):** `in_subquery_unnest_to_join` (**PROVED**, Batch 47 — added DISTINCT to LHS, qualified yCol, `List.Perm` conclusion, `hStable`/`hNoAgg`/`hNoWin`/`hProjT` preconditions),
   `not_in_subquery_unnest_to_antijoin`,
   `in_subquery_implies_join_match` (**PROVED**, PR #165 — fixed 3 soundness issues: qualified rows via `evalFrom`, qualified column ref `⟨some sName, yCol⟩`, added `hStable` + `hNoAgg`/`hNoWin` preconditions),
   `join_match_implies_in_subquery` (**PROVED**, PR #165 — same fixes)
@@ -388,8 +388,8 @@ row merging is commutative/associative (modulo column ordering).
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 2 axioms remaining (2 in Equiv/, 0 in infrastructure files), 542 theorems proved (99.6%).
-Axiom ratchet: 2 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
+**Current totals**: 1 axioms remaining (1 in Equiv/, 0 in infrastructure files), 550 theorems proved (99.8%).
+Axiom ratchet: 1 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -433,9 +433,9 @@ either unblocks later steps or builds proof patterns that transfer forward.
 | ~~1~~ | ~~`evalQuery_eq_evalQueryCore`~~ | ~~Semantics.lean~~ | ~~897–898~~ | ~~Bridge~~ ✅ PROVED |
 | ~~2~~ | ~~`filter_join_left`~~ | ~~Equiv/Comparison.lean~~ | ~~19–24~~ | ~~Predicate pushdown~~ ✅ PROVED |
 | ~~3~~ | ~~`filter_join_right`~~ | ~~Equiv/Comparison.lean~~ | ~~28–33~~ | ~~Predicate pushdown~~ ✅ PROVED |
-| 4 | `join_comm` | Equiv/ExprAxioms.lean | 259–262 | Join commutativity |
-| 5 | `join_assoc` | Equiv/Comparison.lean | 55–58 | Join associativity |
-| 6 | `in_subquery_unnest_to_join` | Equiv/StatementAxioms.lean | 989–1012 | Subquery unnesting |
+| ~~4~~ | ~~`join_comm`~~ | ~~Equiv/ExprAxioms.lean~~ | ~~259–262~~ | ~~Join commutativity~~ ✅ PROVED |
+| ~~5~~ | ~~`join_assoc`~~ | ~~Equiv/Comparison.lean~~ | ~~55–58~~ | ~~Join associativity~~ ✅ PROVED |
+| ~~6~~ | ~~`in_subquery_unnest_to_join`~~ | ~~Equiv/StatementAxioms.lean~~ | ~~989–1012~~ | ~~Subquery unnesting~~ ✅ PROVED |
 | 7 | `not_in_subquery_unnest_to_antijoin` | Equiv/StatementAxioms.lean | 1023–1047 | Subquery unnesting |
 
 ### Difficulty ranking (hardest last)
@@ -443,9 +443,9 @@ either unblocks later steps or builds proof patterns that transfer forward.
 1. ~~`evalQuery_eq_evalQueryCore` — mechanical refactoring (convert `partial def` → WFR)~~ ✅ DONE
 2. ~~`filter_join_left` — added semantic precondition, proved via list algebra~~ ✅ DONE
 3. ~~`filter_join_right` — symmetric to `filter_join_left`~~ ✅ DONE
-4. `join_comm` — needs added column-disjointness precondition; membership-based
-5. `join_assoc` — needs disjointness + scope preconditions; different row scopes
-6. `in_subquery_unnest_to_join` — full `evalSelect` equality; NULL + DISTINCT reasoning
+4. ~~`join_comm` — needs added column-disjointness precondition; membership-based~~ ✅ DONE
+5. ~~`join_assoc` — needs disjointness + scope preconditions; different row scopes~~ ✅ DONE
+6. ~~`in_subquery_unnest_to_join` — full `evalSelect` equality; NULL + DISTINCT reasoning~~ ✅ DONE
 7. `not_in_subquery_unnest_to_antijoin` — LEFT JOIN + NOT IN NULL sensitivity; likely unsound as stated
 
 ---
@@ -590,38 +590,23 @@ shorter row, when the extra columns are disjoint.
 
 ---
 
-### Step 6: `in_subquery_unnest_to_join` (IN → semi-join)
+### Step 6: `in_subquery_unnest_to_join` (IN → semi-join) — **PROVED** (Batch 47)
 
-**Strategy:** Prove `WHERE x IN (SELECT y FROM s)` ≡ `SELECT DISTINCT ... FROM t JOIN s ON t.x = s.y`.
+**Strategy:** Proved `WHERE x IN (SELECT y FROM s)` ≡ `SELECT DISTINCT ... FROM t JOIN s ON t.x = s.y`.
 
-There is **more existing infrastructure than the axiom comments suggest**:
+**Changes from original axiom:**
+- Added DISTINCT to LHS (`distinct=true`, was `false`)
+- Qualified yCol in subquery (`⟨some sName, yCol⟩`, was `⟨none, yCol⟩`)
+- Changed conclusion from `=` to `List.Perm`
+- Added semantic preconditions: `hStable`, `hNoAgg`, `hNoWin`, `hProjT`
 
-- `in_subquery_implies_join_match` (proved, PR #165):
-  If `x IN (SELECT y FROM s)` = TRUE, then ∃ matching row in join
-- `join_match_implies_in_subquery` (proved, PR #165):
-  Converse direction
-- `in_subquery_as_exists` (proved, PR #157):
-  IN subquery ≡ EXISTS with equality condition
-- `perm_ext_iff_of_nodup` + `nodup_eraseDups` (SetBagLemmas):
-  For DISTINCT reasoning
+**Infrastructure added:**
+- `evalSelectCore_distinct_project` / `evalSelectCore_distinct_project_where` (SemanticsCore.lean)
+- `evalSelect_distinct_project` / `evalSelect_distinct_project_where` (Semantics.lean — bridge theorems)
+- `selectHasAggregate_qualified_star`, `selectHasWindowFn_qualified_star`, `evalSelectItem_qualified_star`
+- `list_map_nil_append_eq` helper
 
-**Proof sketch:**
-1. Use the bidirectional lemmas to show **row-level** equivalence:
-   a row appears in the IN-filtered result iff it appears in the
-   DISTINCT join result.
-2. Lift to `evalSelect` equality:
-   - Both forms produce the same set of `t.*` rows (by step 1)
-   - DISTINCT on the join form eliminates duplicates from multiple
-     `s` matches
-   - The IN form naturally returns each `t` row at most once
-   - Use `perm_ext_iff_of_nodup` to show the DISTINCT results match
-
-**Effort:** High — threading through the full `evalSelect` pipeline
-(FROM → WHERE → SELECT → DISTINCT) for both forms.
-
-**Risk:** The `evalSelect` pipeline has many stages. May need additional
-helper lemmas to decompose `evalSelect` for the specific query shapes
-(no GROUP BY, no HAVING, no ORDER BY, no LIMIT/OFFSET).
+**Proof technique:** Decompose both sides via bridge theorems, reduce to `eraseDups` of mapped/filtered lists, apply `perm_ext_iff_of_nodup` + `mem_eraseDups`, prove bidirectional membership using `in_subquery_implies_join_match` / `join_match_implies_in_subquery`.
 
 **Ratchet change:** 2 → 1.
 
@@ -681,7 +666,7 @@ principles.
 | ~~3~~ | ~~`filter_join_right`~~ | ~~Symmetric to Step 2~~ | ~~Low~~ | ~~5→4~~ ✅ |
 | ~~4~~ | ~~`join_comm`~~ | ~~Add semantic precondition~~ | ~~Med-High~~ | ~~4→3~~ ✅ |
 | ~~5~~ | ~~`join_assoc`~~ | ~~Add semantic preconditions~~ | ~~High~~ | ~~3→2~~ ✅ |
-| 6 | `in_subquery_unnest_to_join` | Leverage bidirectional lemmas | High | 2→1 |
+| ~~6~~ | ~~`in_subquery_unnest_to_join`~~ | ~~Leverage bidirectional lemmas~~ | ~~High~~ | ~~2→1~~ ✅ |
 | 7 | `not_in_subquery_unnest_to_antijoin` | Fix statement + LEFT JOIN proof | Very High | 1→0 |
 
 **Axioms requiring statement corrections before proving:** #4, #5, #7

@@ -1268,6 +1268,57 @@ theorem evalSelectCore_simple_project_where (db : Database) (outerRow : Row)
   simp [evalSelectAfterFilter, applyOrderByLimitOffset, evalSelectProjectDistinct,
     hNoAgg, hNoWin]
 
+/-- For SELECT DISTINCT items FROM from_ (no WHERE, no GROUP BY, etc.),
+    the result is (projection of each base row).eraseDups -/
+theorem evalSelectCore_distinct_project (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause)
+    (hNoAgg : hasAgg items = false)
+    (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk true items (some from_) none [] none [] none none) =
+    (List.map (fun row => items.flatMap (selectItemEval db row))
+      (List.map (outerRow ++ ·) (fromEval db from_))).eraseDups := by
+  rw [evalSelectCore_eq_afterFilter]
+  dsimp only []
+  simp [evalSelectAfterFilter, applyOrderByLimitOffset, evalSelectProjectDistinct,
+    hNoAgg, hNoWin]
+
+/-- For SELECT DISTINCT items FROM from_ WHERE cond (no GROUP BY, etc.),
+    the result is (filter then project).eraseDups -/
+theorem evalSelectCore_distinct_project_where (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (cond : Expr)
+    (hNoAgg : hasAgg items = false)
+    (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
+    (List.map (fun row => items.flatMap (selectItemEval db row))
+      (List.filter (fun row => exprEval db row cond == some (Value.bool true))
+        (List.map (outerRow ++ ·) (fromEval db from_)))).eraseDups := by
+  rw [evalSelectCore_eq_afterFilter]
+  dsimp only []
+  simp [evalSelectAfterFilter, applyOrderByLimitOffset, evalSelectProjectDistinct,
+    hNoAgg, hNoWin]
+
 -- ============================================================================
 -- Ground Expression Detection (non-partial mirror of Expr.isGround)
 -- ============================================================================
