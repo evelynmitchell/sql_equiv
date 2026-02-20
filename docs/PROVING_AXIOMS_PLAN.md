@@ -340,9 +340,10 @@ row merging is commutative/associative (modulo column ordering).
   `in_empty_subquery_false` (**PROVED**, PR #139 — fixed unsound EXISTS→NOT EXISTS condition, added `evalExpr row e ≠ none` precondition),
   `not_in_empty_subquery_true` (**PROVED**, PR #139 — same precondition pattern)
 
-**Unnesting (4 -- hard):** `in_subquery_unnest_to_join`,
-  `not_in_subquery_unnest_to_antijoin`, `in_subquery_implies_join_match`,
-  `join_match_implies_in_subquery`
+**Unnesting (4 -- hard, 2 proved):** `in_subquery_unnest_to_join`,
+  `not_in_subquery_unnest_to_antijoin`,
+  `in_subquery_implies_join_match` (**PROVED**, PR #165 — fixed 3 soundness issues: qualified rows via `evalFrom`, qualified column ref `⟨some sName, yCol⟩`, added `hStable` + `hNoAgg`/`hNoWin` preconditions),
+  `join_match_implies_in_subquery` (**PROVED**, PR #165 — same fixes)
 
 **Estimated complexity:** Medium-Hard.
 
@@ -387,8 +388,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 9 axioms remaining (8 in Equiv/, 1 in infrastructure files), 524 theorems proved (98.3%).
-Axiom ratchet: 9 (in `tools/axiom_count_minimum.txt`, reduced from 14 in PR #157).
+**Current totals**: 7 axioms remaining (6 in Equiv/, 1 in infrastructure files), 531 theorems proved (98.7%).
+Axiom ratchet: 7 (in `tools/axiom_count_minimum.txt`, reduced from 9 in PR #165).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -402,11 +403,11 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 4 | Set operations | 0 | ~13 | Medium |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 2 | ~19 | Medium-Hard |
-| 7 | Subquery / EXISTS / IN | 16 | ~1 | Medium-Hard |
+| 7 | Subquery / EXISTS / IN | 18 | ~1 | Medium-Hard |
 | 8 | Expression evaluation helpers | 3 | ~1 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | infra | Infrastructure (Semantics.lean) | 21 | 6 (6 bridge axioms — irreducible) | N/A |
-| | **Total** | **~106** | **~75** | |
+| | **Total** | **~108** | **~75** | |
 
 > **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
 > (8 optimizer axioms) were removed when the optimizer module was deleted.

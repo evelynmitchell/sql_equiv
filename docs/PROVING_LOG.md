@@ -3765,3 +3765,72 @@ reduction behavior.
 - **tools/axiom_count_minimum.txt**: 10 → 9
 
 Axiom ratchet updated: 10 → 9.
+
+## Batch 42: Prove Subquery Unnesting Expression Axioms (PR #165) — 2 axioms → theorems
+
+**Branch**: `claude/fix-subquery-unnesting-axioms` | **PR**: #165
+**Axiom count**: 9 → 7
+
+### Problem
+
+`in_subquery_implies_join_match` and `join_match_implies_in_subquery` were unsound as
+stated due to three issues:
+
+1. **Unqualified rows**: Conclusions used `sRow ∈ db sName` (raw unqualified rows), but
+   column ref `⟨some sName, yCol⟩` does qualified lookup (`row.lookup "sName.yCol"`).
+   Raw rows have `("yCol", v)`, so lookup fails.
+
+2. **Column shadowing**: Subquery SELECT used `⟨none, yCol⟩` (unqualified).
+   `evalSelectWithContext` prepends `outerRow`, so `Row.getQualified none yCol` searches
+   `outerRow ++ qualifiedSRow` and may find a column in `outerRow` ending in `.yCol`
+   before reaching the inner table's column.
+
+3. **Expression stability**: IN evaluates `x` with just `row` (outer context), but the
+   join conclusion evaluates with `row ++ sRow`. If `x` references inner-table columns,
+   these differ.
+
+### Fixes applied
+
+| Issue | Old | New |
+|-------|-----|-----|
+| Unqualified rows | `sRow ∈ db sName` | `sRow ∈ evalFrom db (.table ⟨sName, some sName⟩)` |
+| Column shadowing | `⟨none, yCol⟩` | `⟨some sName, yCol⟩` |
+| Expression stability | (none) | `hStable : ∀ extra, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x` |
+
+Also added `hNoAgg`/`hNoWin` preconditions (needed because `hasAggregate`/`exprHasWindowFn`
+are `partial def`; callers use `native_decide`).
+
+### Proof structure
+
+Both proofs follow the same pattern:
+1. `evalExprWithDb_inSubquery` unfolds the IN expression
+2. `evalSelectWithContext_simple_project` decomposes the subquery (no WHERE, no agg, no window)
+3. `List.any_map` (private helper, already in file) pushes through two `List.map` layers
+4. `List.any_eq_true` (stdlib) converts between `l.any f = true` and `∃ x ∈ l, f x = true`
+5. Bridge lemmas `eq_true_of_evalBinOp_eq` / `evalBinOp_eq_of_eq_true` convert between
+   `Value.eq v w = some true` and `evalBinOp .eq (some v) (some w) = some (.bool true)`
+
+For axiom 3 (→): extract existential from `List.any`, use stability to rewrite `evalExprWithDb`,
+case-split on column evaluation result, bridge back via `evalBinOp_eq_of_eq_true`.
+
+For axiom 4 (←): decompose `hMatch` via `evalExprWithDb_binOp`, use stability, generalize and
+case-split on both operand values, exhibit `sRow` as witness via `List.any_eq_true`.
+
+### Helper lemmas added (ValueLemmas.lean)
+
+- `eq_true_of_evalBinOp_eq`: `evalBinOp .eq (some v) (some w) = some (.bool true) → v.eq w = some true`
+- `evalBinOp_eq_of_eq_true`: converse
+- `Value.eq_some_true_not_null_left` / `_right`: null exclusion from `Value.eq = some true`
+- `Option.beq_some_true_iff`: `(ob == some true) = true ↔ ob = some true`
+
+### Files changed
+
+- **StatementAxioms.lean** (+125/-22): 2 axioms → theorems with full proofs
+- **ValueLemmas.lean** (+33/-0): 5 bridge lemmas
+- **Test/AxiomCoverageTest.lean** (+18/-22): Tests updated for qualified refs and `evalFrom`
+- **tools/axiom_count_minimum.txt**: 9 → 7
+- **docs/PROVING_AXIOMS_PLAN.md**: Updated phase 7 and remaining counts
+
+### Net axiom count change
+
+- **2 axioms → theorems**: 9 → 7
