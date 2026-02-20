@@ -503,4 +503,37 @@ theorem Value.eq_comm (a b : Value) : a.eq b = b.eq a := by
   · exact String.beq_comm ..
   · exact Bool.beq_comm ..
 
+-- ============================================================================
+-- evalBinOp .eq ↔ Value.eq Bridge Lemmas (for subquery unnesting proofs)
+-- ============================================================================
+
+/-- If evalBinOp .eq on two non-none values gives true, then Value.eq gives some true -/
+theorem eq_true_of_evalBinOp_eq {v w : Value}
+    (h : evalBinOp .eq (some v) (some w) = some (.bool true)) :
+    v.eq w = some true := by
+  cases v <;> cases w <;> simp [evalBinOp, Value.eq] at h ⊢ <;> exact h
+
+/-- If Value.eq gives some true, then evalBinOp .eq gives true -/
+theorem evalBinOp_eq_of_eq_true {v w : Value}
+    (h : v.eq w = some true) :
+    evalBinOp .eq (some v) (some w) = some (.bool true) := by
+  cases v <;> cases w <;> simp [evalBinOp, Value.eq] at h ⊢ <;> exact h
+
+/-- Value.eq returning some true means v is not null -/
+theorem Value.eq_some_true_not_null_left {v w : Value}
+    (h : v.eq w = some true) : ∀ t, v ≠ .null t := by
+  intro t ht; subst ht; cases w <;> simp [Value.eq] at h
+
+/-- Value.eq returning some true means w is not null -/
+theorem Value.eq_some_true_not_null_right {v w : Value}
+    (h : v.eq w = some true) : ∀ t, w ≠ .null t := by
+  intro t ht; subst ht; cases v <;> simp [Value.eq] at h
+
+/-- BEq (Option Bool) true equivalence: (ob == some true) = true ↔ ob = some true -/
+theorem Option.beq_some_true_iff (ob : Option Bool) :
+    (ob == some true) = true ↔ ob = some true := by
+  cases ob with
+  | none => constructor <;> intro h <;> contradiction
+  | some b => cases b <;> (constructor <;> intro h <;> first | rfl | contradiction)
+
 end SqlEquiv

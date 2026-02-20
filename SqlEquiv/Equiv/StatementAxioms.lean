@@ -1046,33 +1046,125 @@ axiom not_in_subquery_unnest_to_antijoin (db : Database)
         [] none [] none none
     evalSelect db notInSubqueryForm = evalSelect db antijoinForm
 
-/-- At the expression level: x IN (SELECT y FROM s) evaluates to true for a row
-    if and only if there exists a matching row in the join result.
+/-- At the expression level: if x IN (SELECT s.y FROM s) evaluates to true,
+    then there exists a matching row in s such that x = s.y in the join.
 
     This captures the logical essence of the unnesting transformation:
-    membership in a subquery result corresponds to a successful join match. -/
-axiom in_subquery_implies_join_match (db : Database) (row : Row)
+    membership in a subquery result corresponds to a successful join match.
+
+    The subquery uses a qualified column reference ⟨some sName, yCol⟩ to avoid
+    column shadowing when evalSelectWithContext prepends the outer row.
+
+    The hStable precondition ensures x evaluates the same with or without
+    extra columns appended (holds for ground expressions or expressions
+    referencing only outer-table columns).
+
+    The hNoAgg/hNoWin preconditions are needed because hasAggregate/exprHasWindowFn
+    are partial functions. For concrete items (.col), use `native_decide`. -/
+theorem in_subquery_implies_join_match (db : Database) (row : Row)
     (x : Expr) (sName yCol : String)
+    (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
+    (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (h : evalExprWithDb db row (Expr.inSubquery x false
            (SelectStmt.mk false
-             [.exprItem (.col ⟨none, yCol⟩) none]
+             [.exprItem (.col ⟨some sName, yCol⟩) none]
              (some (.table ⟨sName, some sName⟩))
              none [] none [] none none)) = some (.bool true)) :
-    ∃ sRow ∈ db sName,
+    ∃ sRow ∈ evalFrom db (.table ⟨sName, some sName⟩),
       evalExprWithDb db (row ++ sRow)
-        (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)
+        (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true) := by
+  -- Unfold the IN subquery
+  rw [evalExprWithDb_inSubquery] at h
+  -- Case split on evalExprWithDb db row x
+  generalize hv : evalExprWithDb db row x = val at h
+  cases val with
+  | none => simp at h
+  | some v =>
+    -- Now h : some (.bool (if false then ... else hasMatch)) = some (.bool true)
+    simp only [Bool.false_eq_true, ↓reduceIte] at h
+    -- h : some (.bool (any ...)) = some (.bool true)
+    -- Decompose evalSelectWithContext using simple_project
+    rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin] at h
+    -- Push through the two List.map layers
+    rw [List.any_map, List.any_map] at h
+    -- h : some (.bool (baseRows.any f)) = some (.bool true)
+    -- Extract the boolean equality
+    have hAny : (evalFrom db (.table ⟨sName, some sName⟩)).any
+      (fun qRow => match (([.exprItem (.col ⟨some sName, yCol⟩) none].flatMap
+        (evalSelectItem db (row ++ qRow))).head?) with
+        | some (_, subVal) => v.eq subVal == some true
+        | none => false) = true := by
+      have hinj := Option.some.inj h
+      exact Value.bool.inj hinj
+    rw [List.any_eq_true] at hAny
+    obtain ⟨qRow, hqMem, hqMatch⟩ := hAny
+    refine ⟨qRow, hqMem, ?_⟩
+    -- Need to show evalExprWithDb db (row ++ qRow) (.binOp .eq x (.col ...)) = some (.bool true)
+    rw [evalExprWithDb_binOp, ← hStable qRow, hv]
+    -- From hqMatch, we know the evalSelectItem produced a row whose head matches
+    simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem] at hqMatch
+    generalize hcol : evalExprWithDb db (row ++ qRow) (.col ⟨some sName, yCol⟩) = colResult at hqMatch
+    cases colResult with
+    | none =>
+      simp [List.head?] at hqMatch
+      cases v <;> simp [Value.eq] at hqMatch
+    | some colVal =>
+      simp [List.head?] at hqMatch
+      -- hqMatch is now v.eq colVal = some true (simp simplified == to =)
+      exact evalBinOp_eq_of_eq_true hqMatch
 
-/-- The converse: if a join match exists, the IN subquery returns true. -/
-axiom join_match_implies_in_subquery (db : Database) (row : Row)
+/-- The converse: if a join match exists with a qualified row from s,
+    then the IN subquery returns true.
+
+    See in_subquery_implies_join_match for documentation of preconditions. -/
+theorem join_match_implies_in_subquery (db : Database) (row : Row)
     (x : Expr) (sName yCol : String) (sRow : Row)
-    (hMem : sRow ∈ db sName)
+    (hMem : sRow ∈ evalFrom db (.table ⟨sName, some sName⟩))
+    (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
+    (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hMatch : evalExprWithDb db (row ++ sRow)
                 (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)) :
     evalExprWithDb db row (Expr.inSubquery x false
       (SelectStmt.mk false
-        [.exprItem (.col ⟨none, yCol⟩) none]
+        [.exprItem (.col ⟨some sName, yCol⟩) none]
         (some (.table ⟨sName, some sName⟩))
-        none [] none [] none none)) = some (.bool true)
+        none [] none [] none none)) = some (.bool true) := by
+  -- Extract v and w from hMatch
+  rw [evalExprWithDb_binOp] at hMatch
+  -- hMatch : evalBinOp .eq (evalExprWithDb db (row ++ sRow) x) (evalExprWithDb db (row ++ sRow) (.col ...)) = some (.bool true)
+  -- Use stability: evalExprWithDb db (row ++ sRow) x = evalExprWithDb db row x
+  rw [← hStable sRow] at hMatch
+  -- hMatch : evalBinOp .eq (evalExprWithDb db row x) (evalExprWithDb db (row ++ sRow) (.col ...)) = some (.bool true)
+  generalize hv : evalExprWithDb db row x = valX at hMatch
+  generalize hw : evalExprWithDb db (row ++ sRow) (.col ⟨some sName, yCol⟩) = valY at hMatch
+  -- Case split on valX, valY
+  cases valX with
+  | none => simp [evalBinOp] at hMatch
+  | some v =>
+    cases valY with
+    | none => simp [evalBinOp] at hMatch
+    | some w =>
+      -- hMatch : evalBinOp .eq (some v) (some w) = some (.bool true)
+      have heq := eq_true_of_evalBinOp_eq hMatch
+      -- Unfold the IN subquery
+      rw [evalExprWithDb_inSubquery, hv]
+      simp only [Bool.false_eq_true, ↓reduceIte]
+      -- Need to show hasMatch = true
+      rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin]
+      -- Transform any on composed maps to any on base rows
+      rw [List.any_map, List.any_map]
+      -- Goal: some (Value.bool (baseRows.any f)) = some (Value.bool true)
+      -- Suffices to show baseRows.any f = true
+      congr 1; congr 1
+      rw [List.any_eq_true]
+      refine ⟨sRow, hMem, ?_⟩
+      -- Need to show the predicate holds for sRow
+      simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem, hw,
+        List.head?_cons]
+      rw [Option.beq_some_true_iff]
+      exact heq
 
 -- ============================================================================
 -- ORDER BY Theorems

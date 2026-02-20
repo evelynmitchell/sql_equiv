@@ -1622,19 +1622,17 @@ def equivAdditionalTests : List TestResult :=
       s!"NOT IN={r1.length} rows, Antijoin={r2.length} rows",
 
     -- in_subquery_implies_join_match: if IN returns true, a matching row exists
-    -- Qualify rows from db to match how evalFrom qualifies them (e.g., "orders.user_id")
-    let qualifyRow (qualifier : String) (row : Row) : Row :=
-      row.map fun (k, v) => (s!"{qualifier}.{k}", v)
+    -- Uses qualified column ref and evalFrom for qualified rows (matching theorem signature)
     let testRow : Row := [("x", .int 1)]
     let inExpr := Expr.inSubquery (.lit (.int 1)) false
-      (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
         (some (.table ⟨"orders", some "orders"⟩))
         none [] none [] none none)
     let inResult := evalExprWithDb testDb testRow inExpr
-    -- Check that a matching row exists in the orders table (qualified)
-    let matchExists := (testDb "orders").any fun sRow =>
-      let qualifiedSRow := qualifyRow "orders" sRow
-      evalExprWithDb testDb (testRow ++ qualifiedSRow)
+    -- Check that a matching row exists using evalFrom (qualified rows)
+    let qualifiedRows := evalFrom testDb (.table ⟨"orders", some "orders"⟩)
+    let matchExists := qualifiedRows.any fun sRow =>
+      evalExprWithDb testDb (testRow ++ sRow)
         (.binOp .eq (.lit (.int 1)) (.col ⟨some "orders", "user_id"⟩)) == some (.bool true)
     if inResult == some (.bool true) && matchExists then
       .pass "in_subquery_implies_join_match (value 1 in orders.user_id)"
@@ -1642,16 +1640,14 @@ def equivAdditionalTests : List TestResult :=
       s!"IN={showOptVal inResult}, matchExists={matchExists}",
 
     -- join_match_implies_in_subquery: if a matching row exists, IN returns true
-    let qualifyRow (qualifier : String) (row : Row) : Row :=
-      row.map fun (k, v) => (s!"{qualifier}.{k}", v)
     let testRow : Row := [("x", .int 2)]
-    -- orders table has user_id=2, so there exists a match (qualified)
-    let matchRow := (testDb "orders").find? fun sRow =>
-      let qualifiedSRow := qualifyRow "orders" sRow
-      evalExprWithDb testDb (testRow ++ qualifiedSRow)
+    -- orders table has user_id=2, so there exists a match via evalFrom (qualified rows)
+    let qualifiedRows := evalFrom testDb (.table ⟨"orders", some "orders"⟩)
+    let matchRow := qualifiedRows.find? fun sRow =>
+      evalExprWithDb testDb (testRow ++ sRow)
         (.binOp .eq (.lit (.int 2)) (.col ⟨some "orders", "user_id"⟩)) == some (.bool true)
     let inExpr := Expr.inSubquery (.lit (.int 2)) false
-      (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
         (some (.table ⟨"orders", some "orders"⟩))
         none [] none [] none none)
     let inResult := evalExprWithDb testDb testRow inExpr
