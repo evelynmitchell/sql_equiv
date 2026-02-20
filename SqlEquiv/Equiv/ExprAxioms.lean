@@ -261,23 +261,148 @@ axiom join_comm (db : Database) (a b : FromClause) (cond : Expr) :
     ∃ row2 ∈ evalFrom db (.join b .inner a (some cond)),
     (∀ p, p ∈ row ↔ p ∈ row2)
 
-partial def normalizeExpr : Expr → Expr
+def normalizeExpr : Expr → Expr
   | .binOp .and a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .and na nb else .binOp .and nb na
   | .binOp .or a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .or na nb else .binOp .or nb na
   | .binOp .add a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .add na nb else .binOp .add nb na
   | .binOp .mul a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .mul na nb else .binOp .mul nb na
   | .binOp op a b => .binOp op (normalizeExpr a) (normalizeExpr b)
-  | .unaryOp .not (.unaryOp .not e) => normalizeExpr e
   | .unaryOp op e => .unaryOp op (normalizeExpr e)
-  | .func name args => .func name (args.map normalizeExpr)
-  | .agg fn arg distinct => .agg fn (arg.map normalizeExpr) distinct
-  | .case branches else_ => .case (branches.map fun (c, r) => (normalizeExpr c, normalizeExpr r)) (else_.map normalizeExpr)
-  | .inList e neg vals => .inList (normalizeExpr e) neg (vals.map normalizeExpr)
+  | .func name args => .func name (args.foldl (fun acc e => acc ++ [normalizeExpr e]) [])
+  | .agg fn arg distinct => .agg fn (match arg with | none => none | some e => some (normalizeExpr e)) distinct
+  | .case branches else_ =>
+    .case (branches.foldl (fun acc pair => match h : pair with
+      | (c, r) =>
+        have _hc : sizeOf c < sizeOf pair := by rw [h]; simp_wf; omega
+        have _hr : sizeOf r < sizeOf pair := by rw [h]; simp_wf; omega
+        acc ++ [(normalizeExpr c, normalizeExpr r)]) [])
+      (match else_ with | none => none | some e => some (normalizeExpr e))
+  | .inList e neg vals => .inList (normalizeExpr e) neg (vals.foldl (fun acc v => acc ++ [normalizeExpr v]) [])
   | .inSubquery e neg sel => .inSubquery (normalizeExpr e) neg sel
   | .exists neg sel => .exists neg sel
   | .subquery sel => .subquery sel
   | .between e lo hi => .between (normalizeExpr e) (normalizeExpr lo) (normalizeExpr hi)
-  | e => e
+  | .lit v => .lit v
+  | .col c => .col c
+  | .countStar => .countStar
+  | .windowFn fn arg spec => .windowFn fn arg spec
+termination_by e => sizeOf e
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
+
+-- Equational lemmas for normalizeExpr (WFR functions don't reduce by rfl)
+@[simp] theorem normalizeExpr_lit (v : Value) : normalizeExpr (.lit v) = .lit v := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_col (c : ColumnRef) : normalizeExpr (.col c) = .col c := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_countStar : normalizeExpr .countStar = .countStar := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_windowFn (fn arg spec) :
+    normalizeExpr (.windowFn fn arg spec) = .windowFn fn arg spec := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_exists (neg sel) :
+    normalizeExpr (.exists neg sel) = .exists neg sel := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_subquery (sel) :
+    normalizeExpr (.subquery sel) = .subquery sel := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_unaryOp (op e) :
+    normalizeExpr (.unaryOp op e) = .unaryOp op (normalizeExpr e) := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_inSubquery (e neg sel) :
+    normalizeExpr (.inSubquery e neg sel) = .inSubquery (normalizeExpr e) neg sel := by
+  simp [normalizeExpr]
+@[simp] theorem normalizeExpr_between (e lo hi) :
+    normalizeExpr (.between e lo hi) = .between (normalizeExpr e) (normalizeExpr lo) (normalizeExpr hi) := by
+  simp [normalizeExpr]
+
+-- Non-commutative binOp
+theorem normalizeExpr_binOp_other (op : BinOp) (a b : Expr)
+    (h : op ≠ .and ∧ op ≠ .or ∧ op ≠ .add ∧ op ≠ .mul) :
+    normalizeExpr (.binOp op a b) = .binOp op (normalizeExpr a) (normalizeExpr b) := by
+  cases op <;> simp_all [normalizeExpr]
+
+-- Commutative binOps
+theorem normalizeExpr_binOp_and (a b : Expr) :
+    normalizeExpr (.binOp .and a b) =
+    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+     then .binOp .and (normalizeExpr a) (normalizeExpr b)
+     else .binOp .and (normalizeExpr b) (normalizeExpr a)) := by
+  simp only [normalizeExpr]
+
+theorem normalizeExpr_binOp_or (a b : Expr) :
+    normalizeExpr (.binOp .or a b) =
+    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+     then .binOp .or (normalizeExpr a) (normalizeExpr b)
+     else .binOp .or (normalizeExpr b) (normalizeExpr a)) := by
+  simp only [normalizeExpr]
+
+theorem normalizeExpr_binOp_add (a b : Expr) :
+    normalizeExpr (.binOp .add a b) =
+    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+     then .binOp .add (normalizeExpr a) (normalizeExpr b)
+     else .binOp .add (normalizeExpr b) (normalizeExpr a)) := by
+  simp only [normalizeExpr]
+
+theorem normalizeExpr_binOp_mul (a b : Expr) :
+    normalizeExpr (.binOp .mul a b) =
+    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+     then .binOp .mul (normalizeExpr a) (normalizeExpr b)
+     else .binOp .mul (normalizeExpr b) (normalizeExpr a)) := by
+  simp only [normalizeExpr]
+
+-- Func
+theorem normalizeExpr_func (name : String) (args : List Expr) :
+    normalizeExpr (.func name args) =
+    .func name (args.foldl (fun acc e => acc ++ [normalizeExpr e]) []) := by
+  simp only [normalizeExpr]
+
+-- Agg
+theorem normalizeExpr_agg (fn : AggFunc) (arg : Option Expr) (distinct : Bool) :
+    normalizeExpr (.agg fn arg distinct) =
+    .agg fn (match arg with | none => none | some e => some (normalizeExpr e)) distinct := by
+  cases arg with
+  | none => simp [normalizeExpr]
+  | some e => simp [normalizeExpr]
+
+-- Case equational lemma
+theorem normalizeExpr_case (branches : List (Expr × Expr)) (else_ : Option Expr) :
+    normalizeExpr (.case branches else_) =
+    .case (branches.map (fun p => (normalizeExpr p.1, normalizeExpr p.2)))
+      (match else_ with | none => none | some e => some (normalizeExpr e)) := by
+  change normalizeExpr (.case branches else_) = _
+  rw [normalizeExpr.eq_def]
+  -- After rw, LHS is the body of normalizeExpr for .case, RHS is map form
+  -- Need to show foldl (with match h/have) = map, and else clauses match
+  congr 1
+  suffices h : ∀ init, branches.foldl (fun acc pair =>
+      match h : pair with
+      | (c, r) =>
+        have _hc : sizeOf c < sizeOf pair := by rw [h]; simp_wf; omega
+        have _hr : sizeOf r < sizeOf pair := by rw [h]; simp_wf; omega
+        acc ++ [(normalizeExpr c, normalizeExpr r)]) init =
+      init ++ branches.map (fun p => (normalizeExpr p.1, normalizeExpr p.2)) by
+    simp [h]
+  induction branches with
+  | nil => intro init; simp
+  | cons p rest ih =>
+    intro init
+    obtain ⟨c, r⟩ := p
+    simp only [List.foldl, List.map_cons]
+    rw [ih]; simp [List.append_assoc]
+
+-- InList
+theorem normalizeExpr_inList (e : Expr) (neg : Bool) (vals : List Expr) :
+    normalizeExpr (.inList e neg vals) =
+    .inList (normalizeExpr e) neg (vals.foldl (fun acc v => acc ++ [normalizeExpr v]) []) := by
+  simp only [normalizeExpr]
 
 def syntacticEquiv (e1 e2 : Expr) : Bool := normalizeExpr e1 == normalizeExpr e2
 

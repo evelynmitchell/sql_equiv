@@ -10,10 +10,295 @@ namespace SqlEquiv
 -- Normalization Equivalence
 -- ============================================================================
 
-/-- Normalized expressions are equivalent to originals.
-    Axiom: The normalizer applies commutativity (proven) and not_not elimination
-    (only valid for booleans). For boolean expressions, this is sound. -/
-axiom normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e
+-- ============================================================================
+-- Helper lemmas for normalizeExpr_equiv
+-- ============================================================================
+
+/-- foldl with append singleton equals map -/
+private theorem foldl_append_singleton_eq_map {α β : Type} (f : α → β) (l : List α) :
+    l.foldl (fun acc e => acc ++ [f e]) [] = l.map f := by
+  suffices h : ∀ init, l.foldl (fun acc e => acc ++ [f e]) init = init ++ l.map f by
+    simp [h]
+  induction l with
+  | nil => intro init; simp
+  | cons a rest ih =>
+    intro init
+    simp only [List.foldl, List.map_cons]
+    rw [ih (init ++ [f a])]
+    simp [List.append_assoc]
+
+-- ============================================================================
+-- Congruence lemmas for ExprEquiv
+-- ============================================================================
+
+/-- evalCaseHelper is invariant when sub-expressions in branches evaluate the same -/
+private theorem evalCaseHelper_map_congr (f : Expr → Option Value)
+    (nc nr : Expr → Expr) (brs : List (Expr × Expr)) (ev : Option Value)
+    (hc : ∀ p ∈ brs, f (nc p.1) = f p.1)
+    (hr : ∀ p ∈ brs, f (nr p.2) = f p.2) :
+    evalCaseHelper f ev (brs.map fun p => (nc p.1, nr p.2)) =
+    evalCaseHelper f ev brs := by
+  induction brs with
+  | nil => simp [evalCaseHelper]
+  | cons p rest ih =>
+    simp only [List.map_cons, evalCaseHelper]
+    rw [hc p (List.mem_cons_self ..)]
+    split
+    · exact hr p (List.mem_cons_self ..)
+    · exact ih (fun p hp => hc p (List.mem_cons.mpr (Or.inr hp)))
+        (fun p hp => hr p (List.mem_cons.mpr (Or.inr hp)))
+    · exact ih (fun p hp => hc p (List.mem_cons.mpr (Or.inr hp)))
+        (fun p hp => hr p (List.mem_cons.mpr (Or.inr hp)))
+
+-- ============================================================================
+-- Main theorem: normalizeExpr_equiv
+-- ============================================================================
+
+/-- Helper: sizeOf subexpressions are strictly less than their parent. -/
+private theorem sizeOf_binOp_left (op : BinOp) (a b : Expr) :
+    sizeOf a < sizeOf (Expr.binOp op a b) := by simp_wf; omega
+private theorem sizeOf_binOp_right (op : BinOp) (a b : Expr) :
+    sizeOf b < sizeOf (Expr.binOp op a b) := by simp_wf; omega
+private theorem sizeOf_unaryOp_inner (op : UnaryOp) (e : Expr) :
+    sizeOf e < sizeOf (Expr.unaryOp op e) := by simp_wf; omega
+private theorem sizeOf_between_e (e lo hi : Expr) :
+    sizeOf e < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+private theorem sizeOf_between_lo (e lo hi : Expr) :
+    sizeOf lo < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+private theorem sizeOf_between_hi (e lo hi : Expr) :
+    sizeOf hi < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+private theorem sizeOf_inSubquery_e (e : Expr) (neg : Bool) (sel : SelectStmt) :
+    sizeOf e < sizeOf (Expr.inSubquery e neg sel) := by simp_wf; omega
+private theorem sizeOf_inList_e (e : Expr) (neg : Bool) (vals : List Expr) :
+    sizeOf e < sizeOf (Expr.inList e neg vals) := by simp_wf; omega
+
+/-- Normalized expressions are equivalent to originals. -/
+theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
+  -- Strong induction on sizeOf e
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n → normalizeExpr e ≃ₑ e by
+    exact key (sizeOf e + 1) e (by omega)
+  intro n; induction n with
+  | zero => intro _ hlt; exact absurd hlt (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt
+    cases e with
+    | lit v => intro row; simp
+    | col c => intro row; simp
+    | countStar => intro row; simp
+    | windowFn fn arg spec => intro row; simp
+    | «exists» neg sel => intro row; simp
+    | subquery sel => intro row; simp
+    | binOp op a b =>
+      have h_a_sz : sizeOf a < n := by
+        have := sizeOf_binOp_left op a b; omega
+      have h_b_sz : sizeOf b < n := by
+        have := sizeOf_binOp_right op a b; omega
+      have ha : normalizeExpr a ≃ₑ a := ih a h_a_sz
+      have hb : normalizeExpr b ≃ₑ b := ih b h_b_sz
+      -- Helper: for commutative ops, unfold normalizeExpr and split on ordering
+      cases op with
+      | and =>
+        rw [normalizeExpr_binOp_and]; split
+        · exact binOp_congr ha hb
+        · exact expr_equiv_trans (binOp_congr hb ha) (and_comm b a)
+      | or =>
+        rw [normalizeExpr_binOp_or]; split
+        · exact binOp_congr ha hb
+        · exact expr_equiv_trans (binOp_congr hb ha) (or_comm b a)
+      | add =>
+        rw [normalizeExpr_binOp_add]; split
+        · exact binOp_congr ha hb
+        · exact expr_equiv_trans (binOp_congr hb ha) (add_comm b a)
+      | mul =>
+        rw [normalizeExpr_binOp_mul]; split
+        · exact binOp_congr ha hb
+        · exact expr_equiv_trans (binOp_congr hb ha) (mul_comm b a)
+      | eq =>
+        have : normalizeExpr (.binOp .eq a b) = .binOp .eq (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | ne =>
+        have : normalizeExpr (.binOp .ne a b) = .binOp .ne (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | lt =>
+        have : normalizeExpr (.binOp .lt a b) = .binOp .lt (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | le =>
+        have : normalizeExpr (.binOp .le a b) = .binOp .le (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | gt =>
+        have : normalizeExpr (.binOp .gt a b) = .binOp .gt (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | ge =>
+        have : normalizeExpr (.binOp .ge a b) = .binOp .ge (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | sub =>
+        have : normalizeExpr (.binOp .sub a b) = .binOp .sub (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | div =>
+        have : normalizeExpr (.binOp .div a b) = .binOp .div (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | mod =>
+        have : normalizeExpr (.binOp .mod a b) = .binOp .mod (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | like =>
+        have : normalizeExpr (.binOp .like a b) = .binOp .like (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+      | concat =>
+        have : normalizeExpr (.binOp .concat a b) = .binOp .concat (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
+    | unaryOp op inner =>
+      have hi : normalizeExpr inner ≃ₑ inner :=
+        ih inner (by have := sizeOf_unaryOp_inner op inner; omega)
+      have h_unfold : normalizeExpr (.unaryOp op inner) = .unaryOp op (normalizeExpr inner) := by
+        simp
+      intro row; simp only [evalExpr]
+      rw [h_unfold, evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
+      exact congrArg (evalUnaryOp op) (by have := hi row; simp only [evalExpr] at this; exact this)
+    | func name args =>
+      have hargs : ∀ e ∈ args, normalizeExpr e ≃ₑ e := by
+        intro e hmem
+        have h_mem_sz := List.sizeOf_lt_of_mem hmem
+        have : sizeOf (Expr.func name args) = 1 + sizeOf name + sizeOf args := by
+          simp [Expr.func.sizeOf_spec]
+        exact ih e (by omega)
+      have h_unfold : normalizeExpr (.func name args) =
+          .func name (args.foldl (fun acc e => acc ++ [normalizeExpr e]) []) := by
+        simp [normalizeExpr]
+      intro row; simp only [evalExpr]
+      rw [h_unfold, foldl_append_singleton_eq_map, evalExprWithDb_func, evalExprWithDb_func]
+      congr 1
+      apply List.ext_getElem (by simp)
+      intro i hi hi'
+      simp only [List.getElem_map]
+      have hi_args : i < args.length := by simp [List.length_map] at hi'; exact hi'
+      have := hargs (args[i]) (List.getElem_mem hi_args) row
+      simp only [evalExpr] at this; exact this
+    | agg fn arg distinct =>
+      -- .agg returns none in basic expression context, so both sides are none
+      rw [normalizeExpr_agg]
+      intro row; simp only [evalExpr]
+      rw [evalExprWithDb_eq_evalExprCore, evalExprWithDb_eq_evalExprCore]
+      simp [evalExprCore]
+    | «case» branches else_ =>
+      -- Helper for branch congruence (shared between none/some cases)
+      have hbr_c : ∀ row, ∀ p ∈ branches,
+          evalExprWithDb (fun _ => []) row (normalizeExpr p.1) =
+          evalExprWithDb (fun _ => []) row p.1 := by
+        intro row p hp
+        have h_p_sz := List.sizeOf_lt_of_mem hp
+        have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
+          obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
+        have : sizeOf (Expr.case branches else_) = 1 + sizeOf branches + sizeOf else_ := by
+          simp [Expr.case.sizeOf_spec]
+        have := (ih p.1 (by omega)) row
+        simp only [evalExpr] at this; exact this
+      have hbr_r : ∀ row, ∀ p ∈ branches,
+          evalExprWithDb (fun _ => []) row (normalizeExpr p.2) =
+          evalExprWithDb (fun _ => []) row p.2 := by
+        intro row p hp
+        have h_p_sz := List.sizeOf_lt_of_mem hp
+        have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
+          obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
+        have : sizeOf (Expr.case branches else_) = 1 + sizeOf branches + sizeOf else_ := by
+          simp [Expr.case.sizeOf_spec]
+        have := (ih p.2 (by omega)) row
+        simp only [evalExpr] at this; exact this
+      cases else_ with
+      | none =>
+        intro row; simp only [evalExpr]
+        rw [normalizeExpr_case, evalExprWithDb_case, evalExprWithDb_case]
+        simp only [evalCase]
+        exact evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
+          normalizeExpr normalizeExpr branches _ (hbr_c row) (hbr_r row)
+      | some elseExpr =>
+        have helse : normalizeExpr elseExpr ≃ₑ elseExpr := ih elseExpr (by
+          have h1 : sizeOf (Expr.case branches (some elseExpr)) = 1 + sizeOf branches + sizeOf (some elseExpr) := by
+            simp [Expr.case.sizeOf_spec]
+          have h2 : sizeOf (some elseExpr) = 1 + sizeOf elseExpr := by simp [Option.some.sizeOf_spec]
+          omega)
+        intro row; simp only [evalExpr]
+        rw [normalizeExpr_case, evalExprWithDb_case, evalExprWithDb_case]
+        simp only [evalCase]
+        have helse_eq : evalExprWithDb (fun _ => []) row (normalizeExpr elseExpr) =
+            evalExprWithDb (fun _ => []) row elseExpr := by
+          have := helse row; simp only [evalExpr] at this; exact this
+        rw [helse_eq]
+        exact evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
+          normalizeExpr normalizeExpr branches _ (hbr_c row) (hbr_r row)
+    | inList e neg vals =>
+      have he : normalizeExpr e ≃ₑ e :=
+        ih e (by have := sizeOf_inList_e e neg vals; omega)
+      have hvals : ∀ v ∈ vals, normalizeExpr v ≃ₑ v := by
+        intro v hmem
+        have h_mem_sz := List.sizeOf_lt_of_mem hmem
+        have : sizeOf (Expr.inList e neg vals) = 1 + sizeOf e + sizeOf neg + sizeOf vals := by
+          simp [Expr.inList.sizeOf_spec]
+        exact ih v (by omega)
+      rw [normalizeExpr_inList]
+      intro row; simp only [evalExpr]
+      rw [foldl_append_singleton_eq_map, evalExprWithDb_inList, evalExprWithDb_inList]
+      -- Inline lets from evalExprWithDb_inList
+      dsimp only []
+      have he_eq : evalExprWithDb (fun _ => []) row (normalizeExpr e) =
+          evalExprWithDb (fun _ => []) row e := by
+        have := he row; simp only [evalExpr] at this; exact this
+      rw [he_eq]
+      -- Only difference: foldl over (vals.map normalizeExpr) vs foldl over vals
+      -- Prove foldl congruence using pointwise evaluation equality
+      have hvals_eval : ∀ v ∈ vals, evalExprWithDb (fun _ => []) row (normalizeExpr v) =
+          evalExprWithDb (fun _ => []) row v := by
+        intro v hmem
+        have := hvals v hmem row; simp only [evalExpr] at this; exact this
+      suffices hfoldl : ∀ init (vs : List Expr),
+          (∀ v ∈ vs, evalExprWithDb (fun _ => []) row (normalizeExpr v) =
+            evalExprWithDb (fun _ => []) row v) →
+          vs.foldl (fun acc vi =>
+            evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
+              (evalExprWithDb (fun _ => []) row (normalizeExpr vi))))
+            init =
+          vs.foldl (fun acc vi =>
+            evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
+              (evalExprWithDb (fun _ => []) row vi)))
+            init by
+        rw [List.foldl_map, hfoldl _ vals hvals_eval]
+      intro init vs hvs
+      induction vs generalizing init with
+      | nil => rfl
+      | cons v rest ih_vs =>
+        simp only [List.foldl]
+        rw [hvs v (List.mem_cons_self ..)]
+        exact ih_vs _ (fun v hv => hvs v (List.mem_cons.mpr (Or.inr hv)))
+    | between e lo hi =>
+      have he : normalizeExpr e ≃ₑ e :=
+        ih e (by have := sizeOf_between_e e lo hi; omega)
+      have hlo : normalizeExpr lo ≃ₑ lo :=
+        ih lo (by have := sizeOf_between_lo e lo hi; omega)
+      have hhi : normalizeExpr hi ≃ₑ hi :=
+        ih hi (by have := sizeOf_between_hi e lo hi; omega)
+      intro row; simp only [evalExpr]
+      rw [normalizeExpr_between, evalExprWithDb_between, evalExprWithDb_between]
+      have he' := he row; simp only [evalExpr] at he'
+      have hlo' := hlo row; simp only [evalExpr] at hlo'
+      have hhi' := hhi row; simp only [evalExpr] at hhi'
+      rw [he', hlo', hhi']
+    | inSubquery e neg sel =>
+      have he : normalizeExpr e ≃ₑ e :=
+        ih e (by have := sizeOf_inSubquery_e e neg sel; omega)
+      intro row; simp only [evalExpr]
+      rw [normalizeExpr_inSubquery, evalExprWithDb_inSubquery, evalExprWithDb_inSubquery]
+      have he' := he row; simp only [evalExpr] at he'
+      rw [he']
 
 /-- If normalized forms are syntactically equal, expressions are equivalent.
     Axiom: Follows from normalizeExpr_equiv - if two expressions normalize to
