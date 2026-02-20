@@ -2,7 +2,7 @@
 
 ## Status
 - Branch: `master` (current)
-- **1 axiom** across tracked `.lean` files (1 in `Equiv/`, 0 in infrastructure)
+- **0 axioms** across tracked `.lean` files (0 in `Equiv/`, 0 in infrastructure)
 - **561 theorems** proved (100.0%)
 - Axiom ratchet: 0 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`

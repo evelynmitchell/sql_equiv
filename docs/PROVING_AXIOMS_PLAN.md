@@ -403,11 +403,11 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 4 | Set operations | 13 | 0 (done) | -- |
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 0 (done) | -- |
 | 6 | Join axioms | ~19 | 0 (done) | -- |
-| 7 | Subquery / EXISTS / IN | ~16 | 2 (`in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`) | Hard |
+| 7 | Subquery / EXISTS / IN | ~16 | 0 (done) | -- |
 | 8 | Expression evaluation helpers | ~5 | 0 (done) | -- |
 | 9 | Filter pushdown through joins | 1 | 0 (done) | -- |
 | infra | Infrastructure (Semantics.lean) | 48 | 0 (done) | -- |
-| | **Total** | **535+** | **2** | |
+| | **Total** | **561** | **0** | |
 
 > **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
 > (8 optimizer axioms) were removed when the optimizer module was deleted.
@@ -420,7 +420,7 @@ been restored in PR #102.
 
 ## Final Seven Axioms — Proving Strategy and Order
 
-**Date:** 2026-02-20 | **Status:** 6 axioms remain (532 theorems proved, 98.9%)
+**Date:** 2026-02-20 | **Status:** All 7 proved (561 theorems, 0 axioms, 100%)
 
 This section gives a concrete plan for proving (or resolving) the final 7
 axioms. The order is chosen to maximize infrastructure reuse: each step
@@ -436,7 +436,7 @@ either unblocks later steps or builds proof patterns that transfer forward.
 | ~~4~~ | ~~`join_comm`~~ | ~~Equiv/ExprAxioms.lean~~ | ~~259–262~~ | ~~Join commutativity~~ ✅ PROVED |
 | ~~5~~ | ~~`join_assoc`~~ | ~~Equiv/Comparison.lean~~ | ~~55–58~~ | ~~Join associativity~~ ✅ PROVED |
 | ~~6~~ | ~~`in_subquery_unnest_to_join`~~ | ~~Equiv/StatementAxioms.lean~~ | ~~989–1012~~ | ~~Subquery unnesting~~ ✅ PROVED |
-| 7 | `not_in_subquery_unnest_to_antijoin` | Equiv/StatementAxioms.lean | 1023–1047 | Subquery unnesting |
+| ~~7~~ | ~~`not_in_subquery_unnest_to_antijoin`~~ | ~~Equiv/StatementAxioms.lean~~ | ~~1023–1047~~ | ~~Subquery unnesting~~ ✅ PROVED |
 
 ### Difficulty ranking (hardest last)
 
@@ -446,7 +446,7 @@ either unblocks later steps or builds proof patterns that transfer forward.
 4. ~~`join_comm` — needs added column-disjointness precondition; membership-based~~ ✅ DONE
 5. ~~`join_assoc` — needs disjointness + scope preconditions; different row scopes~~ ✅ DONE
 6. ~~`in_subquery_unnest_to_join` — full `evalSelect` equality; NULL + DISTINCT reasoning~~ ✅ DONE
-7. `not_in_subquery_unnest_to_antijoin` — LEFT JOIN + NOT IN NULL sensitivity; likely unsound as stated
+7. ~~`not_in_subquery_unnest_to_antijoin` — LEFT JOIN + NOT IN NULL sensitivity; fixed statement + proved~~ ✅ DONE
 
 ---
 
