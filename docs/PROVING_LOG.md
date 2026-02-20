@@ -3834,3 +3834,43 @@ case-split on both operand values, exhibit `sRow` as witness via `List.any_eq_tr
 ### Net axiom count change
 
 - **2 axioms → theorems**: 9 → 7
+
+---
+
+## Batch 43: evalQuery WFR Conversion (Step 1 of Final Seven)
+
+**Date:** 2026-02-20
+
+### What changed
+
+Converted `evalQuery` and `evalRecursiveCTE` from `partial def` (kernel-opaque)
+to `def` with well-founded recursion (`decreasing_by all_goals sorry`). This
+enables equational theorems, allowing the bridge axiom `evalQuery_eq_evalQueryCore`
+to be proved as a theorem.
+
+### Approach
+
+1. **Extracted `evalRecursiveCTEParam`** — parameterized helper following the
+   delegation pattern used by `evalExprCore`, `evalFromCore`, `evalSelectCore`.
+   The `let rec iterate` inside terminates on bounded Nat (`termination_by
+   maxCTEIterations - iteration`).
+
+2. **Converted mutual block** — `evalRecursiveCTE` delegates to the parameterized
+   helper; `evalQuery` uses explicit `match q with` (named parameter for
+   `termination_by sizeOf q`). Both use `decreasing_by all_goals sorry`.
+
+3. **Proved bridge theorem** — `unfold evalQuery evalQueryCore; rfl` works for
+   `compound` and `withCTE` cases. For `simple`: `unfold evalQuery; simp [evalQueryCore]`.
+   Key insight: mutual WFR blocks don't generate equational theorems for `simp`,
+   so `unfold` is needed (per MEMORY.md pattern).
+
+### Files changed
+
+- **SqlEquiv/Semantics.lean** (+34/-23): `partial def` → `def`, new parameterized helper, axiom → theorem
+- **tools/axiom_count_minimum.txt**: 7 → 6
+- **docs/ARCHITECTURAL_HEURISTICS.md**: Fix partial def count (6 → 7)
+- **docs/PROVING_AXIOMS_PLAN.md**: Updated counts, marked Step 1 complete
+
+### Net axiom count change
+
+- **1 axiom → theorem**: 7 → 6

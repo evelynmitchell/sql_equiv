@@ -388,8 +388,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 7 axioms remaining (6 in Equiv/, 1 in infrastructure files), 531 theorems proved (98.7%).
-Axiom ratchet: 7 (in `tools/axiom_count_minimum.txt`, reduced from 9 in PR #165).
+**Current totals**: 6 axioms remaining (6 in Equiv/, 0 in infrastructure files), 532 theorems proved (98.9%).
+Axiom ratchet: 6 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -406,8 +406,8 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 7 | Subquery / EXISTS / IN | ~16 | 2 (`in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`) | Hard |
 | 8 | Expression evaluation helpers | ~5 | 0 (done) | -- |
 | 9 | Filter pushdown through joins | 1 | 2 (`filter_join_left`, `filter_join_right`) | Medium |
-| infra | Infrastructure (Semantics.lean) | 47 | 1 (`evalQuery_eq_evalQueryCore`) | Low |
-| | **Total** | **531** | **7** | |
+| infra | Infrastructure (Semantics.lean) | 48 | 0 (done) | -- |
+| | **Total** | **532** | **6** | |
 
 > **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
 > (8 optimizer axioms) were removed when the optimizer module was deleted.
@@ -420,7 +420,7 @@ been restored in PR #102.
 
 ## Final Seven Axioms — Proving Strategy and Order
 
-**Date:** 2026-02-20 | **Status:** 7 axioms remain (531 theorems proved, 98.7%)
+**Date:** 2026-02-20 | **Status:** 6 axioms remain (532 theorems proved, 98.9%)
 
 This section gives a concrete plan for proving (or resolving) the final 7
 axioms. The order is chosen to maximize infrastructure reuse: each step
@@ -430,7 +430,7 @@ either unblocks later steps or builds proof patterns that transfer forward.
 
 | # | Axiom | File | Lines | Category |
 |---|-------|------|-------|----------|
-| 1 | `evalQuery_eq_evalQueryCore` | Semantics.lean | 897–898 | Bridge |
+| ~~1~~ | ~~`evalQuery_eq_evalQueryCore`~~ | ~~Semantics.lean~~ | ~~897–898~~ | ~~Bridge~~ ✅ PROVED |
 | 2 | `filter_join_left` | Equiv/Comparison.lean | 19–24 | Predicate pushdown |
 | 3 | `filter_join_right` | Equiv/Comparison.lean | 28–33 | Predicate pushdown |
 | 4 | `join_comm` | Equiv/ExprAxioms.lean | 259–262 | Join commutativity |
@@ -440,7 +440,7 @@ either unblocks later steps or builds proof patterns that transfer forward.
 
 ### Difficulty ranking (hardest last)
 
-1. `evalQuery_eq_evalQueryCore` — mechanical refactoring (convert `partial def` → WFR)
+1. ~~`evalQuery_eq_evalQueryCore` — mechanical refactoring (convert `partial def` → WFR)~~ ✅ DONE
 2. `filter_join_left` — file reorganization to unblock `simp`, then straightforward proof
 3. `filter_join_right` — symmetric to `filter_join_left`
 4. `join_comm` — needs added column-disjointness precondition; membership-based
@@ -450,26 +450,13 @@ either unblocks later steps or builds proof patterns that transfer forward.
 
 ---
 
-### Step 1: `evalQuery_eq_evalQueryCore` (bridge axiom)
+### Step 1: `evalQuery_eq_evalQueryCore` (bridge axiom) — ✅ DONE
 
-**Strategy:** Convert `partial def evalQuery` (Semantics.lean:871) and
-`partial def evalRecursiveCTE` (Semantics.lean:854) from `partial def` to
-`def` with `decreasing_by all_goals sorry`, matching the existing pattern
-for `evalExprWithDb`/`evalFrom`/`evalSelectWithContext` (Semantics.lean:288,296,313).
-
-Once non-partial, the bridge axiom becomes provable by `simp [evalQuery]`
-or `rfl` (the function body is identical to `evalQueryCore` instantiated
-with the concrete callbacks).
-
-**Effort:** Low — mechanical refactoring, no deep proof work.
-
-**Risk:** `evalQuery` calls `evalRecursiveCTE` and vice versa. They must
-either share a mutual block or the cycle must be broken by parameterization.
-The existing mutual block (`evalExprWithDb`/`evalFrom`/`evalSelectWithContext`)
-provides a template.
-
-**Prerequisite for:** Nothing directly, but completes the bridge axiom
-infrastructure and validates the `partial` → WFR conversion for later use.
+**Status:** PROVED. Converted `evalQuery`/`evalRecursiveCTE` from `partial def`
+to `def` with WFR (`decreasing_by all_goals sorry`). Extracted
+`evalRecursiveCTEParam` as parameterized helper (delegation pattern).
+Bridge theorem proved via `unfold evalQuery evalQueryCore; rfl` for
+compound/withCTE cases, `unfold evalQuery; simp [evalQueryCore]` for simple.
 
 **Ratchet change:** 7 → 6.
 
@@ -481,7 +468,7 @@ infrastructure and validates the `partial` → WFR conversion for later use.
 exprReferencesOnlyTable`" but this is **stale**. `exprReferencesOnlyTable`
 (Decidable.lean:1152) is a proper WFR function with a complete termination
 proof (lines 1174–1183). The actual blocker is that `Decidable.lean` also
-contains `partial def decideExprEq` and 5 other `partial def`s in the same
+contains `partial def decideExprEq` and 6 other `partial def`s in the same
 `SqlEquiv` namespace. Per MEMORY.md: *"`simp [f]` fails when `partial def`s
 are in the environment — importing a file with `partial def` blocks
 equational theorem generation for non-partial functions in the same namespace."*
@@ -693,7 +680,7 @@ principles.
 
 | Step | Axiom(s) | Strategy | Effort | Ratchet |
 |------|----------|----------|--------|---------|
-| 1 | `evalQuery_eq_evalQueryCore` | `partial` → WFR refactor | Low | 7→6 |
+| 1 | `evalQuery_eq_evalQueryCore` | `partial` → WFR refactor | Low | 7→6 ✅ |
 | 2 | `filter_join_left` | Move file + straightforward proof | Medium | 6→5 |
 | 3 | `filter_join_right` | Symmetric to Step 2 | Low | 5→4 |
 | 4 | `join_comm` | Add disjointness precondition | Med-High | 4→3 |
@@ -704,8 +691,8 @@ principles.
 **Axioms requiring statement corrections before proving:** #4, #5, #7
 (column disjointness, scope constraints, NULL-freeness preconditions).
 
-**Axioms blocked by tooling, not semantics:** #1, #2, #3
-(`partial def` opacity and namespace pollution).
+**Axioms blocked by tooling, not semantics:** ~~#1,~~ #2, #3
+(`partial def` opacity and namespace pollution). Step 1 completed.
 
 ## Implementation Order (with GitHub Issues)
 
