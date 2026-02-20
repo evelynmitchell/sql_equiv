@@ -1059,8 +1059,9 @@ axiom not_in_subquery_unnest_to_antijoin (db : Database)
     extra columns appended (holds for ground expressions or expressions
     referencing only outer-table columns).
 
-    The hNoAgg/hNoWin preconditions are needed because hasAggregate/exprHasWindowFn
-    are partial functions. For concrete items (.col), use `native_decide`. -/
+    The hNoAgg/hNoWin preconditions are needed because selectHasAggregate/selectHasWindowFn
+    depend on partial functions (hasAggregate/exprHasWindowFn respectively), so the kernel
+    cannot reduce them. For concrete items (.col), use `native_decide`. -/
 theorem in_subquery_implies_join_match (db : Database) (row : Row)
     (x : Expr) (sName yCol : String)
     (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
