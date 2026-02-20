@@ -968,28 +968,163 @@ theorem in_singleton_subquery (db : Database) (row : Row) (e : Expr) (sel : Sele
     obtain ⟨b, hb⟩ := hCompat val hev
     cases val <;> cases v <;> simp_all [evalBinOp, Value.eq]
 
+-- ============================================================================
+-- Helper lemmas for anti-join proof
+-- ============================================================================
+
+/-- filter-then-map equals flatMap with conditional -/
+private theorem list_filter_map_eq_flatMap {α β : Type} (l : List α) (p : α → Bool) (f : α → β) :
+    (l.filter p).map f = l.flatMap (fun x => if p x then [f x] else []) := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.flatMap_cons]
+    cases hp : p a <;> simp [List.filter, hp, ih]
+
+/-- filter-then-map distributes through flatMap -/
+private theorem list_filter_map_of_flatMap {α β γ : Type} (l : List α) (g : α → List β)
+    (p : β → Bool) (f : β → γ) :
+    ((l.flatMap g).filter p).map f = l.flatMap (fun x => ((g x).filter p).map f) := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.flatMap_cons, List.filter_append, List.map_append, ih]
+
+/-- flatMap congruence with membership -/
+private theorem list_flatMap_congr_mem {α β : Type} {l : List α} {f g : α → List β}
+    (h : ∀ x ∈ l, f x = g x) : l.flatMap f = l.flatMap g := by
+  induction l with
+  | nil => rfl
+  | cons a rest ih =>
+    simp only [List.flatMap_cons]
+    rw [h a List.mem_cons_self]
+    exact congrArg _ (ih (fun x hx => h x (List.mem_cons_of_mem a hx)))
+
+/-- lookup on l₁ ++ l₂: if l₁.lookup = none, falls through to l₂ -/
+private theorem lookup_append_none_left :
+    ∀ (l₁ l₂ : List (String × Value)) (key : String),
+    l₁.lookup key = none → (l₁ ++ l₂).lookup key = l₂.lookup key
+  | [], _, _, _ => by simp
+  | (_k, _v) :: rest, l₂, key, h => by
+    simp only [List.cons_append, List.lookup] at h ⊢
+    split
+    · rename_i heq; simp only [heq, ↓reduceIte] at h; exact nomatch h
+    · rename_i hne
+      simp only [hne, ↓reduceIte] at h
+      exact lookup_append_none_left rest l₂ key h
+
+/-- isNullValue of any lookup on a null-padded list is true -/
+private theorem isNullValue_lookup_nullPad :
+    ∀ (l : List (String × Value)) (key : String),
+    isNullValue ((l.map (fun (k, _) => (k, Value.null none))).lookup key) = true
+  | [], _ => by simp [isNullValue]
+  | (_k, _v) :: rest, key => by
+    simp only [List.map_cons, List.lookup]
+    split
+    · simp [isNullValue]
+    · exact isNullValue_lookup_nullPad rest key
+
+/-- filter_append + showing null-padded right side filters to empty -/
+private theorem filter_null_pad_empty (lr : List (String × Value))
+    (rr : List (String × Value)) (tName : String)
+    (hProj : (lr ++ rr).filter (fun (k, _) => k.startsWith s!"{tName}.") =
+             lr.filter (fun (k, _) => k.startsWith s!"{tName}.")) :
+    (List.map (fun (k, _) => (k, Value.null none)) rr).filter
+      (fun (k, _) => k.startsWith s!"{tName}.") = [] := by
+  -- From hProj: lr.filter P ++ rr.filter P = lr.filter P, so rr.filter P = []
+  rw [List.filter_append] at hProj
+  have hRrEmpty : rr.filter (fun (k, _) => k.startsWith s!"{tName}.") = [] := by
+    have : (lr.filter (fun (k, _) => k.startsWith s!"{tName}.") ++
+            rr.filter (fun (k, _) => k.startsWith s!"{tName}.")).length =
+           (lr.filter (fun (k, _) => k.startsWith s!"{tName}.")).length := by
+      rw [hProj]
+    rw [List.length_append] at this
+    have hlen : (rr.filter (fun (k, _) => k.startsWith s!"{tName}.")).length = 0 := by omega
+    exact List.eq_nil_of_length_eq_zero hlen
+  -- The null-padded list has the same keys as rr, so its filter is also []
+  rw [List.filter_eq_nil_iff] at hRrEmpty ⊢
+  intro ⟨k, v⟩ hMem
+  simp only [List.mem_map] at hMem
+  obtain ⟨⟨k', v'⟩, hk'Mem, hEq⟩ := hMem
+  simp only [Prod.mk.injEq] at hEq
+  obtain ⟨rfl, _⟩ := hEq
+  exact hRrEmpty ⟨k', v'⟩ hk'Mem
+
+/-- If a join match exists with a qualified row from s,
+    then the IN subquery returns true. -/
+theorem join_match_implies_in_subquery (db : Database) (row : Row)
+    (x : Expr) (sName yCol : String) (sRow : Row)
+    (hMem : sRow ∈ evalFrom db (.table ⟨sName, some sName⟩))
+    (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
+    (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hMatch : evalExprWithDb db (row ++ sRow)
+                (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)) :
+    evalExprWithDb db row (Expr.inSubquery x false
+      (SelectStmt.mk false
+        [.exprItem (.col ⟨some sName, yCol⟩) none]
+        (some (.table ⟨sName, some sName⟩))
+        none [] none [] none none)) = some (.bool true) := by
+  rw [evalExprWithDb_binOp] at hMatch
+  rw [← hStable sRow] at hMatch
+  generalize hv : evalExprWithDb db row x = valX at hMatch
+  generalize hw : evalExprWithDb db (row ++ sRow) (.col ⟨some sName, yCol⟩) = valY at hMatch
+  cases valX with
+  | none => simp [evalBinOp] at hMatch
+  | some v =>
+    cases valY with
+    | none => simp [evalBinOp] at hMatch
+    | some w =>
+      have heq := eq_true_of_evalBinOp_eq hMatch
+      rw [evalExprWithDb_inSubquery, hv]
+      simp only [Bool.false_eq_true, ↓reduceIte]
+      rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin]
+      rw [List.any_map, List.any_map]
+      congr 1; congr 1
+      rw [List.any_eq_true]
+      refine ⟨sRow, hMem, ?_⟩
+      simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem, hw,
+        List.head?_cons]
+      rw [Option.beq_some_true_iff]
+      exact heq
 
 /-- NOT IN subquery can be unnested to an anti-join pattern.
-    SELECT * FROM t WHERE x NOT IN (SELECT y FROM s)
+    SELECT t.* FROM t WHERE t.x NOT IN (SELECT s.y FROM s)
     ≡ SELECT t.* FROM t LEFT JOIN s ON t.x = s.y WHERE s.y IS NULL
 
     The anti-join returns rows from t that have no matching rows in s.
 
-    Note: This transformation assumes s.y contains no NULL values.
-    When s.y can be NULL, NOT IN has different semantics (returns NULL
-    when x matches no values but s contains NULL). -/
-axiom not_in_subquery_unnest_to_antijoin (db : Database)
-    (tName sName : String) (xCol yCol : String) :
-    let notInSubqueryForm := SelectStmt.mk false
+    Preconditions:
+    - hStable: t.xCol eval is stable when extra columns are appended
+    - hEvalSome: t.xCol always evaluates to some value (not none/error)
+    - hNoAgg/hNoWin: subquery items have no aggregates/window functions
+    - hProjT: t.* projection on combined row equals projection on t row alone
+    - hNotInLeft: s.yCol is not present in left table rows -/
+theorem not_in_subquery_unnest_to_antijoin (db : Database)
+    (tName sName : String) (xCol yCol : String)
+    (hStable : ∀ row ∈ evalFrom db (.table ⟨tName, some tName⟩), ∀ extra : Row,
+      evalExprWithDb db row (.col ⟨some tName, xCol⟩) =
+      evalExprWithDb db (row ++ extra) (.col ⟨some tName, xCol⟩))
+    (hEvalSome : ∀ row ∈ evalFrom db (.table ⟨tName, some tName⟩),
+      ∃ v, evalExprWithDb db row (.col ⟨some tName, xCol⟩) = some v)
+    (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
+    (hProjT : ∀ tRow ∈ evalFrom db (.table ⟨tName, some tName⟩),
+      ∀ sRow ∈ evalFrom db (.table ⟨sName, some sName⟩),
+      (tRow ++ sRow).filter (fun (k, _) => k.startsWith s!"{tName}.") =
+      tRow.filter (fun (k, _) => k.startsWith s!"{tName}."))
+    (hNotInLeft : ∀ lr ∈ evalFrom db (.table ⟨tName, some tName⟩),
+      lr.getQualified (some sName) yCol = none) :
+    let notInForm := SelectStmt.mk false
         [.star (some tName)]  -- SELECT t.*
         (some (.table ⟨tName, some tName⟩))  -- FROM t
         (some (.inSubquery
           (.col ⟨some tName, xCol⟩)
           true  -- negated (NOT IN)
           (SelectStmt.mk false
-            [.exprItem (.col ⟨none, yCol⟩) none]
+            [.exprItem (.col ⟨some sName, yCol⟩) none]
             (some (.table ⟨sName, some sName⟩))
-            none [] none [] none none)))  -- WHERE x NOT IN (SELECT y FROM s)
+            none [] none [] none none)))  -- WHERE t.x NOT IN (SELECT s.y FROM s)
         [] none [] none none
     let antijoinForm := SelectStmt.mk false
         [.star (some tName)]  -- SELECT t.*
@@ -1002,7 +1137,257 @@ axiom not_in_subquery_unnest_to_antijoin (db : Database)
             (.col ⟨some sName, yCol⟩)))))  -- LEFT JOIN s ON t.x = s.y
         (some (.unaryOp .isNull (.col ⟨some sName, yCol⟩)))  -- WHERE s.y IS NULL
         [] none [] none none
-    evalSelect db notInSubqueryForm = evalSelect db antijoinForm
+    evalSelect db notInForm = evalSelect db antijoinForm := by
+  simp only []
+  -- Decompose LHS: SELECT t.* FROM t WHERE NOT IN(...)
+  rw [evalSelect_nondistinct_project_where db [.star (some tName)]
+    (.table ⟨tName, some tName⟩)
+    (Expr.inSubquery (.col ⟨some tName, xCol⟩) true
+      (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+        (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+    (selectHasAggregate_qualified_star tName) (selectHasWindowFn_qualified_star tName)]
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem_qualified_star]
+  -- Decompose RHS: SELECT t.* FROM t LEFT JOIN s ON ... WHERE IS NULL(...)
+  rw [evalSelect_nondistinct_project_where db [.star (some tName)]
+    (.join (.table ⟨tName, some tName⟩) .left (.table ⟨sName, some sName⟩)
+      (some (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩))))
+    (.unaryOp .isNull (.col ⟨some sName, yCol⟩))
+    (selectHasAggregate_qualified_star tName) (selectHasWindowFn_qualified_star tName)]
+  simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem_qualified_star]
+  -- Expand LEFT JOIN
+  rw [evalFrom_left_join]
+  dsimp only []
+  -- Goal: (tRows.filter notInPred).map proj = ((tRows.flatMap ljBody).filter isNullPred).map proj
+  -- Convert LHS to flatMap form
+  rw [list_filter_map_eq_flatMap]
+  -- Convert RHS: push filter/map into flatMap
+  rw [list_filter_map_of_flatMap]
+  -- Both sides: tRows.flatMap (...)
+  -- Show per-element equality
+  apply list_flatMap_congr_mem
+  intro lr hlr
+  -- Goal: (if notInPred lr then [proj lr] else []) =
+  --        ((ljBody lr).filter isNullPred).map proj
+  -- Define matchingRows - use generalize since set requires Mathlib
+  -- Goal: (if notInPred lr then [proj lr] else []) =
+  --       ((ljBody lr).filter isNullPred).map proj
+  -- Use 'show' to restate goal with a 'let' binding for matchingRows
+  -- This bridges the compiled match form via definitional equality
+  show (if (evalExprWithDb db lr
+      (Expr.inSubquery (.col ⟨some tName, xCol⟩) true
+        (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+          (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+      == some (Value.bool true)) = true
+    then [lr.filter (fun x => x.fst.startsWith s!"{tName}.")] else []) =
+    (let matchingRows := (evalFrom db (.table ⟨sName, some sName⟩)).filterMap (fun rr =>
+      match evalExprWithDb db (lr ++ rr)
+          (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩)) with
+      | some (.bool true) => some (lr ++ rr)
+      | _ => none)
+    ((if matchingRows.isEmpty then
+      match (evalFrom db (.table ⟨sName, some sName⟩)).head? with
+      | some rightRow => [lr ++ rightRow.map (fun (k, _) => (k, Value.null none))]
+      | none => [lr]
+    else matchingRows).filter (fun row =>
+      evalExprWithDb db row (.unaryOp .isNull (.col ⟨some sName, yCol⟩))
+      == some (Value.bool true))).map (fun row =>
+      row.filter (fun x => x.fst.startsWith s!"{tName}.")))
+  -- Now generalize the fresh filterMap (which matches because show restated the goal)
+  generalize hMatchDef : (evalFrom db (.table ⟨sName, some sName⟩)).filterMap (fun rr =>
+    match evalExprWithDb db (lr ++ rr)
+        (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩)) with
+    | some (.bool true) => some (lr ++ rr)
+    | _ => none) = matchingRows
+  -- Case split on whether matchingRows is empty
+  by_cases hEmpty : matchingRows = []
+  · -- Case: no matching rows (anti-join keeps this row)
+    -- First show NOT IN returns true
+    have hNotInTrue : evalExprWithDb db lr
+        (.inSubquery (.col ⟨some tName, xCol⟩) true
+          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+        = some (.bool true) := by
+      rw [evalExprWithDb_inSubquery]
+      obtain ⟨v, hv⟩ := hEvalSome lr hlr
+      rw [hv]
+      simp only [↓reduceIte]
+      congr 1; congr 1
+      rw [Bool.not_eq_true']
+      -- Show hasMatch = false by contradiction
+      rw [evalSelectWithContext_simple_project db lr _ _ hNoAgg hNoWin]
+      rw [List.any_map, List.any_map]
+      -- Goal: (sRows.any f) = false — prove via cases
+      cases hAny : (evalFrom db (.table ⟨sName, some sName⟩)).any _ with
+      | false => rfl
+      | true =>
+        exfalso
+        obtain ⟨sRow, hsMem, hTrue⟩ := List.any_eq_true.mp hAny
+        simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem] at hTrue
+        generalize hcol : evalExprWithDb db (lr ++ sRow) (.col ⟨some sName, yCol⟩) = colResult at hTrue
+        cases colResult with
+        | none => simp [List.head?] at hTrue; cases v <;> simp [Value.eq] at hTrue
+        | some colVal =>
+          simp only [List.head?_cons] at hTrue
+          rw [beq_iff_eq] at hTrue
+          have hEqMatch := evalBinOp_eq_of_eq_true hTrue
+          have hJoinMatch : evalExprWithDb db (lr ++ sRow)
+              (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩))
+              = some (.bool true) := by
+            rw [evalExprWithDb_binOp, ← hStable lr hlr sRow, hv, hcol]
+            exact hEqMatch
+          -- But matchingRows is empty, so filterMap returns none for sRow
+          have hFM : (fun rr => match evalExprWithDb db (lr ++ rr)
+                (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩)) with
+              | some (.bool true) => some (lr ++ rr)
+              | _ => none) sRow = none := by
+            have := List.filterMap_eq_nil_iff.mp (hMatchDef.trans hEmpty) sRow hsMem
+            exact this
+          simp [hJoinMatch] at hFM
+    -- LHS: if notInPred lr then [proj lr] else []
+    rw [show (evalExprWithDb db lr
+        (.inSubquery (.col ⟨some tName, xCol⟩) true
+          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+        == some (Value.bool true)) = true from by rw [beq_iff_eq]; exact hNotInTrue]
+    simp only [↓reduceIte]
+    -- RHS: matchingRows = [] → isEmpty = true
+    rw [show matchingRows.isEmpty = true from by rw [hEmpty]; rfl]
+    simp only [↓reduceIte]
+    -- Case split on sRows.head?
+    cases hsHead : (evalFrom db (.table ⟨sName, some sName⟩)).head? with
+    | none =>
+      -- s is empty: ljBody = [lr]
+      simp only [List.filter_cons, List.filter_nil]
+      rw [show (evalExprWithDb db lr (.unaryOp .isNull (.col ⟨some sName, yCol⟩))
+          == some (Value.bool true)) = true from by
+        rw [beq_iff_eq, evalExprWithDb_unaryOp, evalExprWithDb_col]
+        rw [hNotInLeft lr hlr]
+        simp [evalUnaryOp, isNullValue]]
+      simp
+    | some rightRow =>
+      -- s is non-empty: ljBody = [lr ++ nullPad(rightRow)]
+      simp only [List.filter_cons, List.filter_nil]
+      rw [show (evalExprWithDb db (lr ++ List.map (fun x => (x.1, Value.null none)) rightRow)
+          (.unaryOp .isNull (.col ⟨some sName, yCol⟩))
+          == some (Value.bool true)) = true from by
+        rw [beq_iff_eq, evalExprWithDb_unaryOp, evalExprWithDb_col]
+        simp only [Row.getQualified]
+        have hLrNone : lr.lookup s!"{sName}.{yCol}" = none := by
+          have := hNotInLeft lr hlr; simp only [Row.getQualified] at this; exact this
+        rw [lookup_append_none_left _ _ _ hLrNone]
+        simp [evalUnaryOp, isNullValue_lookup_nullPad]]
+      simp only [↓reduceIte]
+      -- Show proj(lr ++ nullPad(rightRow)) = proj(lr)
+      congr 1
+      dsimp only []
+      rw [List.filter_append]
+      have hRightMem := List.mem_of_head? hsHead
+      rw [filter_null_pad_empty lr rightRow tName (hProjT lr hlr rightRow hRightMem)]
+      simp
+  · -- Case: matchingRows non-empty (anti-join filters this row out)
+    have hMatchNE : ∃ x, x ∈ matchingRows := by
+      cases hne : matchingRows with
+      | nil => exact absurd hne hEmpty
+      | cons a _ => exact ⟨a, List.mem_cons_self⟩
+    obtain ⟨matchRow, hMatchMem⟩ := hMatchNE
+    rw [← hMatchDef] at hMatchMem
+    simp only [List.mem_filterMap] at hMatchMem
+    obtain ⟨sRow, hsMem, hFM⟩ := hMatchMem
+    -- Extract the eval condition: eval must be some (.bool true) for filterMap to return some
+    have hEqTrue : evalExprWithDb db (lr ++ sRow)
+        (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩))
+        = some (.bool true) := by
+      generalize heval : evalExprWithDb db (lr ++ sRow)
+        (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩)) = r at hFM
+      cases r with
+      | none => exact nomatch hFM
+      | some v => cases v with
+        | bool b => cases b with
+          | true => rfl
+          | false => exact nomatch hFM
+        | null _ => exact nomatch hFM
+        | int _ => exact nomatch hFM
+        | string _ => exact nomatch hFM
+    simp only [hEqTrue] at hFM
+    simp only [Option.some.injEq] at hFM
+    -- Use join_match_implies_in_subquery for IN = true
+    have hINTrue := join_match_implies_in_subquery db lr
+      (.col ⟨some tName, xCol⟩) sName yCol sRow hsMem
+      (hStable lr hlr) hNoAgg hNoWin hEqTrue
+    -- NOT IN = !(IN) = false
+    have hNotInFalse : evalExprWithDb db lr
+        (.inSubquery (.col ⟨some tName, xCol⟩) true
+          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+        = some (.bool false) := by
+      rw [evalExprWithDb_inSubquery]
+      obtain ⟨v, hv⟩ := hEvalSome lr hlr
+      rw [hv]; simp only [↓reduceIte]
+      rw [evalExprWithDb_inSubquery] at hINTrue
+      rw [hv] at hINTrue
+      simp only [Bool.false_eq_true, ↓reduceIte] at hINTrue
+      have := Option.some.inj hINTrue
+      have := Value.bool.inj this
+      rw [this]; decide
+    -- LHS: if false then [proj lr] else [] = []
+    rw [show (evalExprWithDb db lr
+        (.inSubquery (.col ⟨some tName, xCol⟩) true
+          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+        == some (Value.bool true)) = false from by rw [hNotInFalse]; decide]
+    simp only [↓reduceIte]
+    -- RHS: matchingRows non-empty, so ljBody = matchingRows
+    rw [show matchingRows.isEmpty = false from by
+      cases matchingRows with
+      | nil => exact absurd rfl hEmpty
+      | cons _ _ => rfl]
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    -- Show: (matchingRows.filter isNullPred).map proj = []
+    rw [show matchingRows.filter (fun row =>
+        evalExprWithDb db row (.unaryOp .isNull (.col ⟨some sName, yCol⟩))
+        == some (Value.bool true)) = [] from by
+      rw [List.filter_eq_nil_iff]
+      intro joinRow hjMem
+      rw [← hMatchDef] at hjMem
+      simp only [List.mem_filterMap] at hjMem
+      obtain ⟨sRow', hsMem', hFM'⟩ := hjMem
+      -- Extract eval condition from the filterMap match
+      have hEqTrue' : evalExprWithDb db (lr ++ sRow')
+          (.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩))
+          = some (.bool true) := by
+        generalize evalExprWithDb db (lr ++ sRow') _ = r at hFM'
+        cases r with
+        | none => exact nomatch hFM'
+        | some v => cases v with
+          | bool b => cases b with | true => rfl | false => exact nomatch hFM'
+          | null _ => exact nomatch hFM'
+          | int _ => exact nomatch hFM'
+          | string _ => exact nomatch hFM'
+      simp only [hEqTrue'] at hFM'
+      simp only [Option.some.injEq] at hFM'
+      -- hFM' : lr ++ sRow' = joinRow; substitute
+      rw [← hFM']
+      -- Goal: (eval isNull (lr ++ sRow') == some (bool true)) = false
+      rw [evalExprWithDb_binOp, ← hStable lr hlr sRow'] at hEqTrue'
+      obtain ⟨vx, hvx⟩ := hEvalSome lr hlr
+      rw [hvx] at hEqTrue'
+      generalize hw : evalExprWithDb db (lr ++ sRow')
+        (.col ⟨some sName, yCol⟩) = yResult at hEqTrue'
+      cases yResult with
+      | none => simp [evalBinOp] at hEqTrue'
+      | some yVal =>
+        rw [show (evalExprWithDb db (lr ++ sRow')
+            (.unaryOp .isNull (.col ⟨some sName, yCol⟩))
+            == some (Value.bool true)) = false from by
+          rw [evalExprWithDb_unaryOp, hw]
+          have hNotNull := Value.eq_some_true_not_null_right (eq_true_of_evalBinOp_eq hEqTrue')
+          cases yVal with
+          | null t => exact absurd rfl (hNotNull t)
+          | int n => simp [evalUnaryOp, isNullValue]
+          | string s => simp [evalUnaryOp, isNullValue]
+          | bool b => simp [evalUnaryOp, isNullValue]]
+        decide]
+    simp
 
 /-- At the expression level: if x IN (SELECT s.y FROM s) evaluates to true,
     then there exists a matching row in s such that x = s.y in the join.
@@ -1072,58 +1457,6 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
       simp [List.head?] at hqMatch
       -- hqMatch is now v.eq colVal = some true (simp simplified == to =)
       exact evalBinOp_eq_of_eq_true hqMatch
-
-/-- The converse: if a join match exists with a qualified row from s,
-    then the IN subquery returns true.
-
-    See in_subquery_implies_join_match for documentation of preconditions. -/
-theorem join_match_implies_in_subquery (db : Database) (row : Row)
-    (x : Expr) (sName yCol : String) (sRow : Row)
-    (hMem : sRow ∈ evalFrom db (.table ⟨sName, some sName⟩))
-    (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
-    (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
-    (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
-    (hMatch : evalExprWithDb db (row ++ sRow)
-                (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)) :
-    evalExprWithDb db row (Expr.inSubquery x false
-      (SelectStmt.mk false
-        [.exprItem (.col ⟨some sName, yCol⟩) none]
-        (some (.table ⟨sName, some sName⟩))
-        none [] none [] none none)) = some (.bool true) := by
-  -- Extract v and w from hMatch
-  rw [evalExprWithDb_binOp] at hMatch
-  -- hMatch : evalBinOp .eq (evalExprWithDb db (row ++ sRow) x) (evalExprWithDb db (row ++ sRow) (.col ...)) = some (.bool true)
-  -- Use stability: evalExprWithDb db (row ++ sRow) x = evalExprWithDb db row x
-  rw [← hStable sRow] at hMatch
-  -- hMatch : evalBinOp .eq (evalExprWithDb db row x) (evalExprWithDb db (row ++ sRow) (.col ...)) = some (.bool true)
-  generalize hv : evalExprWithDb db row x = valX at hMatch
-  generalize hw : evalExprWithDb db (row ++ sRow) (.col ⟨some sName, yCol⟩) = valY at hMatch
-  -- Case split on valX, valY
-  cases valX with
-  | none => simp [evalBinOp] at hMatch
-  | some v =>
-    cases valY with
-    | none => simp [evalBinOp] at hMatch
-    | some w =>
-      -- hMatch : evalBinOp .eq (some v) (some w) = some (.bool true)
-      have heq := eq_true_of_evalBinOp_eq hMatch
-      -- Unfold the IN subquery
-      rw [evalExprWithDb_inSubquery, hv]
-      simp only [Bool.false_eq_true, ↓reduceIte]
-      -- Need to show hasMatch = true
-      rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin]
-      -- Transform any on composed maps to any on base rows
-      rw [List.any_map, List.any_map]
-      -- Goal: some (Value.bool (baseRows.any f)) = some (Value.bool true)
-      -- Suffices to show baseRows.any f = true
-      congr 1; congr 1
-      rw [List.any_eq_true]
-      refine ⟨sRow, hMem, ?_⟩
-      -- Need to show the predicate holds for sRow
-      simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem, hw,
-        List.head?_cons]
-      rw [Option.beq_some_true_iff]
-      exact heq
 
 -- ============================================================================
 -- Subquery Unnesting Theorems

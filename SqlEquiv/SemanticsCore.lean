@@ -199,6 +199,11 @@ theorem evalExprCore_lit (db : Database) (row : Row)
     evalExprCore db row sqe (.lit v) = some v := by
   simp [evalExprCore]
 
+theorem evalExprCore_col (db : Database) (row : Row)
+    (sqe : Database → Row → SelectStmt → Table) (c : ColumnRef) :
+    evalExprCore db row sqe (.col c) = row.getQualified c.table c.column := by
+  simp [evalExprCore]
+
 theorem evalExprCore_binOp (db : Database) (row : Row)
     (sqe : Database → Row → SelectStmt → Table) (op : BinOp) (l r : Expr) :
     evalExprCore db row sqe (.binOp op l r) =

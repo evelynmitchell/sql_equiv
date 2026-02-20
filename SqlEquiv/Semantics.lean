@@ -596,6 +596,11 @@ theorem evalExprWithDb_lit (db : Database) (row : Row) (v : Value) :
   evalExprWithDb db row (Expr.lit v) = some v := by
   rw [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_lit ..
 
+/-- evalExprWithDb unfolds for column references -/
+theorem evalExprWithDb_col (db : Database) (row : Row) (c : ColumnRef) :
+  evalExprWithDb db row (Expr.col c) = row.getQualified c.table c.column := by
+  rw [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_col ..
+
 /-- evalExprWithDb unfolds for binOp -/
 theorem evalExprWithDb_binOp (db : Database) (row : Row) (op : BinOp) (l r : Expr) :
   evalExprWithDb db row (Expr.binOp op l r) = evalBinOp op (evalExprWithDb db row l) (evalExprWithDb db row r) := by
@@ -1154,6 +1159,36 @@ theorem evalSelect_distinct_project_where (db : Database)
         (List.map ([] ++ ·) (evalFrom db from_)))).eraseDups := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_distinct_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
+  rw [raw, list_map_nil_append_eq]
+
+/-- SELECT items FROM from_ (non-distinct) = project base rows -/
+theorem evalSelect_nondistinct_project (db : Database)
+    (items : List SelectItem) (from_ : FromClause)
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWin : selectHasWindowFn items = false) :
+    evalSelect db (SelectStmt.mk false items (some from_) none [] none [] none none) =
+    (evalFrom db from_).map (fun row => items.flatMap (evalSelectItem db row)) := by
+  have raw : evalSelect db (SelectStmt.mk false items (some from_) none [] none [] none none) =
+    List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.map ([] ++ ·) (evalFrom db from_)) := by
+    rw [evalSelect_eq_evalSelectCore]
+    exact evalSelectCore_simple_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
+  rw [raw, list_map_nil_append_eq]
+
+/-- SELECT items FROM from_ WHERE cond (non-distinct) = filter then project -/
+theorem evalSelect_nondistinct_project_where (db : Database)
+    (items : List SelectItem) (from_ : FromClause) (cond : Expr)
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWin : selectHasWindowFn items = false) :
+    evalSelect db (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
+    ((evalFrom db from_).filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
+      |>.map (fun row => items.flatMap (evalSelectItem db row))) := by
+  have raw : evalSelect db (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
+    List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
+        (List.map ([] ++ ·) (evalFrom db from_))) := by
+    rw [evalSelect_eq_evalSelectCore]
+    exact evalSelectCore_simple_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
 
 /-- Bridge: evalFrom_subquery connects to evalSelectCore for subqueries. -/

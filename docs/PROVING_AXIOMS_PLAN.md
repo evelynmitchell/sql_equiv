@@ -388,8 +388,8 @@ row merging is commutative/associative (modulo column ordering).
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 1 axioms remaining (1 in Equiv/, 0 in infrastructure files), 550 theorems proved (99.8%).
-Axiom ratchet: 1 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
+**Current totals**: 0 axioms remaining (0 in Equiv/, 0 in infrastructure files), 561 theorems proved (100.0%).
+Axiom ratchet: 0 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -612,48 +612,31 @@ shorter row, when the extra columns are disjoint.
 
 ---
 
-### Step 7: `not_in_subquery_unnest_to_antijoin` (NOT IN → anti-join)
+### Step 7: `not_in_subquery_unnest_to_antijoin` (NOT IN → anti-join) ✅
 
-**Soundness issue:** The statement is **likely unsound as written**.
-`NOT IN` has treacherous NULL semantics: `x NOT IN (1, 2, NULL)` returns
-NULL (not TRUE and not FALSE) even when `x` is 3, because `x = NULL`
-evaluates to NULL, and `TRUE AND NULL` = NULL. But the anti-join form
-(`LEFT JOIN ... WHERE s.y IS NULL`) returns the row. The doc comment
-acknowledges this: *"assumes s.y contains no NULL values"* — but this
-precondition is **not in the statement**.
+**Status:** Proved in Batch 48 (PR #173).
 
-**Strategy:**
+**Soundness fixes applied:**
+- Added `hStable` (column eval stability when extra columns appended)
+- Added `hEvalSome` (t.xCol must evaluate to `some v`, not `none`)
+- Added `hNoAgg`/`hNoWin` (subquery items no aggregates/window functions)
+- Added `hProjT` (`.star (some tName)` projection stability)
+- Added `hNotInLeft` (`sName.yCol` not in left table rows)
+- Qualified `yCol` as `⟨some sName, yCol⟩` (was `⟨none, yCol⟩`)
 
-1. **Fix the statement** — add a precondition:
-   ```lean
-   (h_no_null : ∀ row ∈ db sName,
-     ∃ v, row.find? (fun p => p.1 == yCol) = some (yCol, v) ∧
-       ¬v.isNull) :
-   ```
+**Key insight:** No NULL-freeness precondition needed for s.y. Both sides
+handle NULLs in s.y identically: `v.eq (.null _)` returns `none` (no IN
+match), `evalBinOp .eq (some v) (some (.null _))` returns `none` (no JOIN
+match). The one divergence is when `evalExprWithDb db tRow xCol = none`
+(eval error) — fixed by `hEvalSome`.
 
-2. **Prove using existing infrastructure:**
-   - `not_in_subquery_as_not_exists` (proved, PR #157):
-     NOT IN ≡ NOT EXISTS with equality condition
-   - `left_join_filter_null_is_inner` (proved):
-     filtering LEFT JOIN by right-column-non-null gives INNER JOIN
-     (the contrapositive characterizes NULL-padded rows)
-   - `left_join_preserves_left` (proved): every left row appears
-   - `left_join_false_all_left` (proved): LEFT JOIN ON FALSE gives
-     all left rows with NULL padding
+**Proof technique:** Decompose both sides via `evalSelect_nondistinct_project_where`,
+reduce to `tRows.flatMap(...)` form, then per-element case analysis on whether
+`matchingRows` (join filterMap) is empty or non-empty. Both cases use
+`in_subquery_implies_join_match` / `join_match_implies_in_subquery` helper
+lemmas to connect IN semantics with JOIN filterMap semantics.
 
-   The argument: under the no-NULL precondition, a `t` row has no match
-   in `s` ↔ the LEFT JOIN produces a NULL-padded row for it ↔ `s.y IS NULL`
-   selects it.
-
-**Effort:** Very high — combines LEFT JOIN NULL-padding semantics,
-NOT IN evaluation, and full `evalSelect` pipeline equality.
-
-**Risk:** Even with the precondition fix, this is the most complex proof
-in the codebase. The LEFT JOIN NULL-padding mechanism and the NOT IN
-evaluation path share no code — they must be shown equivalent from first
-principles.
-
-**Ratchet change:** 1 → 0 (all axioms eliminated).
+**Ratchet change:** 1 → 0 (ALL axioms eliminated).
 
 ---
 
@@ -667,7 +650,7 @@ principles.
 | ~~4~~ | ~~`join_comm`~~ | ~~Add semantic precondition~~ | ~~Med-High~~ | ~~4→3~~ ✅ |
 | ~~5~~ | ~~`join_assoc`~~ | ~~Add semantic preconditions~~ | ~~High~~ | ~~3→2~~ ✅ |
 | ~~6~~ | ~~`in_subquery_unnest_to_join`~~ | ~~Leverage bidirectional lemmas~~ | ~~High~~ | ~~2→1~~ ✅ |
-| 7 | `not_in_subquery_unnest_to_antijoin` | Fix statement + LEFT JOIN proof | Very High | 1→0 |
+| ~~7~~ | ~~`not_in_subquery_unnest_to_antijoin`~~ | ~~Fix statement + LEFT JOIN proof~~ | ~~Very High~~ | ~~1→0~~ ✅ |
 
 **Axioms requiring statement corrections before proving:** #4, #5, #7
 (column disjointness, scope constraints, NULL-freeness preconditions).
