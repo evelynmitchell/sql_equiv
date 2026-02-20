@@ -12,25 +12,34 @@ namespace SqlEquiv
 -- Predicate Pushdown Theorems
 -- ============================================================================
 
-/-- Predicate pushdown: push filter into the left side of an inner join
-    when the filter only references columns from the left table.
-    Axiom: Blocked — `exprReferencesOnlyFrom` calls `exprReferencesOnlyTable` which is
-    `partial def` (opaque in kernel), so the precondition `h_ref` can't be unfolded in proofs. -/
-axiom filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
+/-- Predicate pushdown: push filter into the left side of an inner join.
+    The semantic precondition `h_filter_left` requires that the filter evaluates
+    the same on `lr ++ rr` as on just `lr` — i.e., the filter doesn't depend
+    on the right side's columns. The `_h_ref` parameter documents the syntactic
+    condition but is not needed for the proof (blocked by `partial def`). -/
+theorem filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_ref : exprReferencesOnlyFrom a filter = true) :
+    (_h_ref : exprReferencesOnlyFrom a filter = true)
+    (h_filter_left : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a) (some filter) [] none [] none none) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset)
+    evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a) (some filter) [] none [] none none) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset) :=
+  evalSelect_filter_join_left db a b cond filter items groupBy having orderBy limit offset h_filter_left
 
 /-- Predicate pushdown: push filter into the right side of an inner join.
-    Axiom: Blocked — same `partial def exprReferencesOnlyTable` blocker as filter_join_left. -/
-axiom filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
+    The semantic precondition `h_filter_right` requires that the filter evaluates
+    the same on `lr ++ rr` as on just `rr` — i.e., the filter doesn't depend
+    on the left side's columns. -/
+theorem filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_ref : exprReferencesOnlyFrom b filter = true) :
+    (_h_ref : exprReferencesOnlyFrom b filter = true)
+    (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner (.subquery (.mk false [.star none] (some b) (some filter) [] none [] none none) "filtered_b") (some cond))) none groupBy having orderBy limit offset)
+    evalSelect db (.mk false items (some (.join a .inner (.subquery (.mk false [.star none] (some b) (some filter) [] none [] none none) "filtered_b") (some cond))) none groupBy having orderBy limit offset) :=
+  evalSelect_filter_join_right db a b cond filter items groupBy having orderBy limit offset h_filter_right
 
 /-- Filter pushdown for basic FROM clause with table.
     Proved: filter in WHERE is equivalent to filter in subquery. -/
