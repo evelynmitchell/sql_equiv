@@ -353,13 +353,13 @@ row merging is commutative/associative (modulo column ordering).
 **Goal:** Prove helper properties needed by harder axioms in Phases 6-7.
 
 **Target lemmas:**
-- `normalizeExpr_equiv` -- normalization preserves semantics
-- `syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic
+- ~~`normalizeExpr_equiv` -- normalization preserves semantics~~ **PROVED** (PR #162, Batch 40) via WFR conversion + strong induction on sizeOf
+- `syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic (blocked: `Expr.beq` is `partial def`)
 - ~~`ground_expr_eval_independent` -- ground expressions don't depend on row~~ **PROVED** (PR #150, Batch 36) via `isGroundCore` WFR mirror + bridge axioms
 - ~~`isGround_eq_isGroundCore` -- bridge axiom for isGround~~ **PROVED** (PR #151, Batch 37) via converting `isGround` mutual block from `partial` to WFR
 - `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound (already a theorem, uses `ground_expr_eval_independent`)
 
-**Approach:** Structural induction on `Expr`. `normalizeExpr_equiv` and `syntacticEquiv_implies_equiv` remain blocked by `normalizeExpr` using `toString (repr ...)` (opaque) for comparison and `Expr.beq` being `partial def`.
+**Approach:** `syntacticEquiv_implies_equiv` remains blocked by `Expr.beq` being `partial def` (opaque). Would need WFR conversion of the mutual `decideExprEq`/`decideSelectStmtEq`/etc. block + correctness proof.
 
 **Estimated complexity:** Medium-High.
 
@@ -403,7 +403,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 2 | ~19 | Medium-Hard |
 | 7 | Subquery / EXISTS / IN | 16 | ~1 | Medium-Hard |
-| 8 | Expression evaluation helpers | 1 | ~3 | Medium-High |
+| 8 | Expression evaluation helpers | 2 | ~2 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | infra | Infrastructure (Semantics.lean) | 21 | 6 (6 bridge axioms — irreducible) | N/A |
 | | **Total** | **~106** | **~75** | |
@@ -747,7 +747,7 @@ counts would catch this automatically.
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
 2. ~~**NULL handling:** Three-valued logic adds complexity - start with two-valued subset?~~ **Resolved** — Option 3 null semantics adopted (PR #92).
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
-4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Partially resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. PR #150 proved `ground_expr_eval_independent` via `isGroundCore` WFR mirror. Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus bridge axioms. `normalizeExpr_equiv` and `syntacticEquiv_implies_equiv` still blocked (opaque `toString (repr ...)` + `partial def beq`).
+4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Mostly resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. PR #150 proved `ground_expr_eval_independent` via `isGroundCore` WFR mirror. PR #162 proved `normalizeExpr_equiv` via WFR conversion. Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus bridge axioms. `syntacticEquiv_implies_equiv` still blocked (`partial def beq`).
 5. ~~**Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion.~~ **Partially resolved** — Option 3 fixes `none` vs `some (.null _)` conflation. The `/audit` tool (PR #99) now catches unsound optimizer rewrites. Remaining unsound axioms are documented in PROVING_LOG.md.
 
 ---

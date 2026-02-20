@@ -3620,3 +3620,73 @@ partition context (partition rows, sorted partition, row index), so they can nev
    partition/sort/index context differs between evaluation sites.
 
 Axiom ratchet updated: 12 → 11.
+
+---
+
+## Batch 40: normalizeExpr_equiv (#162)
+
+**Branch**: `claude/normalizeExpr-equiv` | **PR**: #162
+**Axiom count**: 11 → 10
+
+### What was proved
+
+`normalizeExpr_equiv` — normalized expressions are semantically equivalent to originals.
+
+Previously `normalizeExpr` was `partial def` (opaque to the kernel), making the axiom
+unprovable. Two changes enabled the proof:
+
+1. **WFR conversion**: `normalizeExpr` converted from `partial def` to `def` with
+   `termination_by sizeOf e`. Required replacing `List.map` with `List.foldl` (for
+   termination) and adding `match h : item with` for sizeOf proofs on list elements.
+
+2. **Equational lemmas**: Added `@[simp]` lemmas for each constructor case
+   (`normalizeExpr_lit`, `normalizeExpr_binOp_and`, etc.) since WFR functions don't
+   reduce by `rfl`.
+
+### Proof structure
+
+Strong induction on `sizeOf e`, case-splitting on all 14 `Expr` constructors:
+
+- **Leaf cases** (`lit`, `col`, `countStar`, `windowFn`, `exists`, `subquery`):
+  Trivial — `intro row; simp` using `@[simp]` equational lemmas.
+- **binOp**: Split on operator. Commutative ops (`and`, `or`, `add`, `mul`) use
+  `binOp_congr` + commutativity axiom with `split` on the ordering `if`. Non-commutative
+  ops use `binOp_congr` directly.
+- **unaryOp**: `congrArg (evalUnaryOp op)` after rewriting with equational lemma.
+- **func**: `List.ext_getElem` with pointwise IH application.
+- **agg**: Both sides return `none` in basic expression context (agg needs table context).
+- **case**: Case-split on `else_` first (see key lesson below), then
+  `evalCaseHelper_map_congr` for branches.
+- **inList**: `List.foldl_map` + custom foldl congruence by inner induction.
+- **between**, **inSubquery**: Direct `rw` with IH.
+
+### Key lesson: WFR compiled matches block pattern matching
+
+WFR functions produce compiled match forms with extra proof arguments:
+```
+-- Source: match else_ with | none => none | some e => some (normalizeExpr e)
+-- Compiled: match else_, ⋯ with | none, h => none | some e, h => some (normalizeExpr e)
+```
+
+These are definitionally equal but NOT syntactically matchable by `rw`/`simp`/`apply`.
+Five approaches failed before diagnosing this:
+
+| Attempt | Result |
+|---------|--------|
+| `simp only [helse_combined]` | "made no progress" — simp reduced the nested match away |
+| `rw [helse_combined]` | "pattern not found" — compiled match has extra args |
+| `unfold evalCase` + `rw` | Same pattern-not-found |
+| Helper lemma `evalCase_normalize_congr` | `apply` failed: compiled match in goal |
+| Case-split `else_` first | **Works** — concrete `none`/`some` eliminates the match |
+
+**General rule**: When a WFR function produces a `match` in the goal, case-split the
+scrutinee variable *before* the WFR form appears, so the match reduces to concrete
+constructors.
+
+### Files changed
+
+- **ExprAxioms.lean** (+139/-10): WFR conversion + equational lemmas
+- **Decidable.lean** (+341/-1): `normalizeExpr_equiv` theorem + helpers
+- **tools/axiom_count_minimum.txt**: 11 → 10
+
+Axiom ratchet updated: 11 → 10.
