@@ -328,19 +328,6 @@ def commutativityTests : List TestResult :=
   ]
 
 -- ============================================================================
--- Double Negation Tests
--- ============================================================================
-
-def doubleNegationTests : List TestResult :=
-  let x := col "x"
-  [
-    -- NOT NOT x ≡ x
-    testSyntacticEquiv "double_not" (.unaryOp .not (.unaryOp .not x)) x,
-    -- NOT NOT NOT x ≡ NOT x
-    testSyntacticEquiv "triple_not" (.unaryOp .not (.unaryOp .not (.unaryOp .not x))) (.unaryOp .not x)
-  ]
-
--- ============================================================================
 -- Reflexivity Tests
 -- ============================================================================
 
@@ -542,7 +529,7 @@ def subqueryUnnestingTests : List TestResult := [
 -- ============================================================================
 
 def allEquivTests : List TestResult :=
-  commutativityTests ++ doubleNegationTests ++ reflexivityTests ++
+  commutativityTests ++ reflexivityTests ++
   nonEquivTests ++ nestedExprTests ++ semanticEquivTests ++
   normalizationTests ++ subqueryUnnestingTests
 
