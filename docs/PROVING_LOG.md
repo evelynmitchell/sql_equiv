@@ -3981,3 +3981,43 @@ No new helper lemmas needed — proof is ~20 lines, self-contained.
 
 - **1 axiom → theorem**: 4 → 3
 - **Remaining 3 axioms**: `join_assoc`, `in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`
+
+---
+
+## Batch 46: Prove `join_assoc` (PR #171)
+
+**Branch**: `claude/prove-join-assoc` | **Date**: 2026-02-20
+
+### Strategy
+
+Inner join associativity: every row in `(a ⋈₁ b) ⋈₂ c` has a corresponding row in
+`a ⋈₁ (b ⋈₂ c)` with the same elements. The obstruction is that ON predicates
+evaluate in different row scopes between the two association orders:
+- LHS: `cond1` on `lr ++ rr`, `cond2` on `(lr ++ rr) ++ cr`
+- RHS: `cond2` on `rr ++ cr`, `cond1` on `lr ++ (rr ++ cr)`
+
+**Solution**: Add two semantic preconditions (same pattern as `join_comm` Batch 45):
+- `h_cond1`: `cond1` evaluates the same on `lr ++ rr` and `lr ++ (rr ++ cr)` (doesn't depend on c's columns)
+- `h_cond2`: `cond2` evaluates the same on `(lr ++ rr) ++ cr` and `rr ++ cr` (doesn't depend on a's columns)
+
+### Proof structure (~40 lines)
+
+1. **Two-level decomposition**: outer join gives `ab_row, cr`; inner join gives `lr, rr`
+2. **Two `split at` calls**: each join condition match produces 1 success + 1 contradiction
+3. **Witness construction**: `lr ++ (rr ++ cr)` in `a ⋈₁ (b ⋈₂ c)`
+4. **Scope bridging**: `← h_cond1`/`← h_cond2` transfer condition truths between scopes
+5. **Element inclusion**: `List.append_assoc` gives `(lr ++ rr) ++ cr = lr ++ (rr ++ cr)`
+
+No new helper lemmas needed — entirely self-contained, extending the `join_comm` pattern.
+
+### Files changed
+
+- **SqlEquiv/Equiv/Comparison.lean** (+40/-5): `axiom join_assoc` → `theorem join_assoc` with semantic preconditions
+- **tools/axiom_count_minimum.txt**: 3 → 2
+- **docs/PROVING_LOG.md**: This entry
+- **docs/PROVING_AXIOMS_PLAN.md**: Updated step 5 status
+
+### Net axiom count change
+
+- **1 axiom → theorem**: 3 → 2
+- **Remaining 2 axioms**: `in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`
