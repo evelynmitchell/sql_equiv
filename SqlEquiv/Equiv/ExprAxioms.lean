@@ -404,6 +404,10 @@ theorem normalizeExpr_inList (e : Expr) (neg : Bool) (vals : List Expr) :
     .inList (normalizeExpr e) neg (vals.foldl (fun acc v => acc ++ [normalizeExpr v]) []) := by
   simp only [normalizeExpr]
 
+/-- Decide expression equivalence by comparing normalized forms.
+    Uses `decide` (via `DecidableEq Expr`) rather than `BEq.beq` so that
+    `of_decide_eq_true` can extract the equality proof in `syntacticEquiv_implies_equiv`.
+    At runtime, `native_decide` resolves through `@[implemented_by]` to the BEq instance. -/
 def syntacticEquiv (e1 e2 : Expr) : Bool := decide (normalizeExpr e1 = normalizeExpr e2)
 
 theorem expr_equiv_subst {e1 e2 : Expr} (h : e1 ≃ₑ e2) (row : Row) : evalExpr row e1 = evalExpr row e2 := h row

@@ -301,7 +301,16 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
       rw [he']
 
 /-- If normalized forms are syntactically equal, expressions are equivalent.
-    Uses normalizeExpr_equiv and DecidableEq Expr (via of_decide_eq_true). -/
+
+    Proof strategy: `syntacticEquiv` uses `decide` with the `DecidableEq Expr` instance,
+    so `of_decide_eq_true` extracts `normalizeExpr e1 = normalizeExpr e2`. Then
+    `normalizeExpr_equiv` (a fully verified theorem) provides the semantic equivalence.
+
+    Note: The `DecidableEq Expr` instance uses `opaque` + `@[implemented_by]` with an
+    `unsafe` BEq wrapper (see Ast.lean). This means the proof assumes BEq correctness
+    for Expr — a structural property of the BEq implementation, not a semantic claim.
+    See Ast.lean for details on why standard approaches (deriving, Classical.decEq,
+    manual WFR) are not viable. -/
 theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
     e1 ≃ₑ e2 := by
   simp only [syntacticEquiv] at h
