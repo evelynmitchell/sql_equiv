@@ -7,25 +7,37 @@ import Test.EquivTest
 import Test.PropertyTest
 import Test.AxiomCoverageTest
 
-def main : IO Unit := do
+def main : IO UInt32 := do
   IO.println "╔═══════════════════════════════════╗"
   IO.println "║     SQL Equiv Test Suite          ║"
   IO.println "╚═══════════════════════════════════╝\n"
 
-  let _ ← ParserTest.runParserTests
+  let mut totalFailed : Nat := 0
+
+  let (_, failed) ← ParserTest.runParserTests
+  totalFailed := totalFailed + failed
   IO.println ""
 
-  let _ ← SemanticsTest.runSemanticsTests
+  let (_, failed) ← SemanticsTest.runSemanticsTests
+  totalFailed := totalFailed + failed
   IO.println ""
 
-  EquivTest.runEquivTests
+  let (_, failed) ← EquivTest.runEquivTests
+  totalFailed := totalFailed + failed
   IO.println ""
 
-  let _ ← PropertyTest.runPropertyTests
+  let (_, failed) ← PropertyTest.runPropertyTests
+  totalFailed := totalFailed + failed
   IO.println ""
 
-  let _ ← AxiomCoverageTest.runAxiomCoverageTests
+  let (_, failed) ← AxiomCoverageTest.runAxiomCoverageTests
+  totalFailed := totalFailed + failed
   IO.println ""
 
   IO.println "═══════════════════════════════════"
-  IO.println "All test suites completed!"
+  if totalFailed > 0 then
+    IO.println s!"FAILED: {totalFailed} test(s) failed across all suites"
+    return 1
+  else
+    IO.println "All test suites completed — all tests passed!"
+    return 0

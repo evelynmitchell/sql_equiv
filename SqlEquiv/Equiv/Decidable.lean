@@ -301,10 +301,21 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
       rw [he']
 
 /-- If normalized forms are syntactically equal, expressions are equivalent.
-    Axiom: Follows from normalizeExpr_equiv - if two expressions normalize to
-    the same syntactic form, they must be semantically equivalent. -/
-axiom syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
-    e1 ≃ₑ e2
+
+    Proof strategy: `syntacticEquiv` uses `decide` with the `DecidableEq Expr` instance,
+    so `of_decide_eq_true` extracts `normalizeExpr e1 = normalizeExpr e2`. Then
+    `normalizeExpr_equiv` (a fully verified theorem) provides the semantic equivalence.
+
+    Note: The `DecidableEq Expr` instance uses `opaque` + `@[implemented_by]` with an
+    `unsafe` BEq wrapper (see Ast.lean). This means the proof assumes BEq correctness
+    for Expr — a structural property of the BEq implementation, not a semantic claim.
+    See Ast.lean for details on why standard approaches (deriving, Classical.decEq,
+    manual WFR) are not viable. -/
+theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
+    e1 ≃ₑ e2 := by
+  have heq : normalizeExpr e1 = normalizeExpr e2 := by simpa [syntacticEquiv] using h
+  intro row
+  rw [← normalizeExpr_equiv e1 row, ← normalizeExpr_equiv e2 row, heq]
 
 -- ============================================================================
 -- DecidableEq instances for AST types (mutual types need manual instances)
@@ -974,15 +985,12 @@ theorem selectStmtGround_eval_independent (sel : SelectStmt)
 -- ============================================================================
 
 /-- Decide expression equivalence by comparing normalized forms -/
-def decideExprEquiv (e1 e2 : Expr) : Bool :=
-  normalizeExpr e1 == normalizeExpr e2
+def decideExprEquiv (e1 e2 : Expr) : Bool := syntacticEquiv e1 e2
 
 /-- Soundness: if decideExprEquiv returns true, expressions are equivalent -/
 theorem decideExprEquiv_sound {e1 e2 : Expr} :
-    decideExprEquiv e1 e2 = true → e1 ≃ₑ e2 := by
-  intro h
-  unfold decideExprEquiv at h
-  exact syntacticEquiv_implies_equiv h
+    decideExprEquiv e1 e2 = true → e1 ≃ₑ e2 :=
+  syntacticEquiv_implies_equiv
 
 -- ============================================================================
 -- Decidable Instance for Ground Expression Equivalence

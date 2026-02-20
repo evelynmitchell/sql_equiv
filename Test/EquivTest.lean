@@ -546,7 +546,7 @@ def allEquivTests : List TestResult :=
   nonEquivTests ++ nestedExprTests ++ semanticEquivTests ++
   normalizationTests ++ subqueryUnnestingTests
 
-def runEquivTests : IO Unit := do
+def runEquivTests : IO (Nat × Nat) := do
   IO.println "═══════════════════════════════════"
   IO.println "Equivalence Tests"
   IO.println "═══════════════════════════════════"
@@ -568,25 +568,7 @@ def runEquivTests : IO Unit := do
   IO.println "(These are verified at compile time by #check)"
 
   IO.println "\n[Runtime Tests]"
-  let mut passed := 0
-  let mut failed := 0
-
-  for result in allEquivTests do
-    match result with
-    | .pass name =>
-      IO.println s!"✓ {name}"
-      passed := passed + 1
-    | .fail name msg =>
-      IO.println s!"✗ {name}"
-      IO.println s!"  {msg}"
-      failed := failed + 1
-
-  IO.println "───────────────────────────────────"
-  IO.println s!"Passed: {passed}, Failed: {failed}"
-
-  if failed > 0 then
-    IO.println "TESTS FAILED"
-  else
-    IO.println "ALL TESTS PASSED"
+  let (passed, failed) ← runTests "Equivalence Runtime Tests" allEquivTests
+  return (passed, failed)
 
 end EquivTest

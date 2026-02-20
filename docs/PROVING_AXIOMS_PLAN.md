@@ -354,12 +354,12 @@ row merging is commutative/associative (modulo column ordering).
 
 **Target lemmas:**
 - ~~`normalizeExpr_equiv` -- normalization preserves semantics~~ **PROVED** (PR #162, Batch 40) via WFR conversion + strong induction on sizeOf
-- `syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic (blocked: `Expr.beq` is `partial def`)
+- ~~`syntacticEquiv_implies_equiv` -- syntactic equivalence implies semantic~~ **PROVED** (PR #163, Batch 41) via `opaque + @[implemented_by]` DecidableEq + `of_decide_eq_true`
 - ~~`ground_expr_eval_independent` -- ground expressions don't depend on row~~ **PROVED** (PR #150, Batch 36) via `isGroundCore` WFR mirror + bridge axioms
 - ~~`isGround_eq_isGroundCore` -- bridge axiom for isGround~~ **PROVED** (PR #151, Batch 37) via converting `isGround` mutual block from `partial` to WFR
 - `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound (already a theorem, uses `ground_expr_eval_independent`)
 
-**Approach:** `syntacticEquiv_implies_equiv` remains blocked by `Expr.beq` being `partial def` (opaque). Would need WFR conversion of the mutual `decideExprEq`/`decideSelectStmtEq`/etc. block + correctness proof.
+**Approach:** `syntacticEquiv_implies_equiv` was proved by providing `DecidableEq Expr` via `opaque + @[implemented_by unsafe]` (manual WFR and `deriving` both fail for mutual inductives; `Classical.decEq` is noncomputable, breaking `native_decide`). Changed `syntacticEquiv` to use `decide` instead of `BEq.beq`. Soundness assumption: BEq is lawful.
 
 **Estimated complexity:** Medium-High.
 
@@ -387,8 +387,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 10 axioms remaining (9 in Equiv/, 1 in infrastructure files), 523 theorems proved (98.1%).
-Axiom ratchet: 10 (in `tools/axiom_count_minimum.txt`, reduced from 14 in PR #157).
+**Current totals**: 9 axioms remaining (8 in Equiv/, 1 in infrastructure files), 524 theorems proved (98.3%).
+Axiom ratchet: 9 (in `tools/axiom_count_minimum.txt`, reduced from 14 in PR #157).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -403,7 +403,7 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 5 | ORDER BY / LIMIT / OFFSET | 16 | 2 | Easy-Medium |
 | 6 | Join axioms | 2 | ~19 | Medium-Hard |
 | 7 | Subquery / EXISTS / IN | 16 | ~1 | Medium-Hard |
-| 8 | Expression evaluation helpers | 2 | ~2 | Medium-High |
+| 8 | Expression evaluation helpers | 3 | ~1 | Medium-High |
 | 9 | Filter pushdown through joins | 0 | ~3 | High |
 | infra | Infrastructure (Semantics.lean) | 21 | 6 (6 bridge axioms — irreducible) | N/A |
 | | **Total** | **~106** | **~75** | |
@@ -747,7 +747,7 @@ counts would catch this automatically.
 1. **Row representation:** Should we use `List (String × Value)` or a more structured type?
 2. ~~**NULL handling:** Three-valued logic adds complexity - start with two-valued subset?~~ **Resolved** — Option 3 null semantics adopted (PR #92).
 3. **Column ordering:** Do we need to prove rows are equal as sets or as ordered lists?
-4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Mostly resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. PR #150 proved `ground_expr_eval_independent` via `isGroundCore` WFR mirror. PR #162 proved `normalizeExpr_equiv` via WFR conversion. Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus bridge axioms. `syntacticEquiv_implies_equiv` still blocked (`partial def beq`).
+4. **Termination:** ~~Some proofs may need well-founded recursion arguments. The `partial def` limitation blocks `ground_expr_eval_independent`.~~ **Mostly resolved** — PR #130 introduced non-partial core evaluators (`evalExprCore`, `evalFromCore`) with WFR termination proofs. 10 infrastructure axioms converted to theorems. PR #150 proved `ground_expr_eval_independent` via `isGroundCore` WFR mirror. PR #162 proved `normalizeExpr_equiv` via WFR conversion. PR #163 proved `syntacticEquiv_implies_equiv` via `opaque + @[implemented_by]` DecidableEq (manual WFR hits eq_def size limit). Remaining `partial def` limitations: evalSelect axioms (4), evalQuery axioms (2), plus bridge axioms.
 5. ~~**Option Value soundness audit:** The unsound `coalesce_null_left` axiom has been removed, but other axioms quantifying over `Option Value` may have similar `none` vs `some (.null _)` confusion.~~ **Partially resolved** — Option 3 fixes `none` vs `some (.null _)` conflation. The `/audit` tool (PR #99) now catches unsound optimizer rewrites. Remaining unsound axioms are documented in PROVING_LOG.md.
 
 ---

@@ -607,6 +607,43 @@ instance : BEq Stmt where
     | _, _ => false
 
 -- ============================================================================
+-- DecidableEq instance for Expr
+-- ============================================================================
+--
+-- Why this is needed:
+--   `syntacticEquiv_implies_equiv` needs to derive `normalizeExpr e1 = normalizeExpr e2`
+--   from `syntacticEquiv e1 e2 = true`. This requires `DecidableEq Expr`.
+--
+-- Why we can't use standard approaches:
+--   1. `deriving instance DecidableEq` — unsupported for Lean 4 mutual inductives
+--   2. Manual WFR mutual block — fails with "Cannot derive unfold equation" even at
+--      maxHeartbeats 4000000 (it's a structural rfl failure, not a timeout)
+--   3. `noncomputable instance : DecidableEq Expr := Classical.decEq _` — sound, but
+--      makes `syntacticEquiv` noncomputable, breaking `native_decide` in the
+--      `sql_equiv!` tactic (Tactics.lean) which is the main user-facing API
+--
+-- Soundness assumption:
+--   The `unsafe` impl assumes `Expr.BEq` is lawful: `(a == b) = true ↔ a = b`.
+--   The BEq instance (lines 476-567) is a structural recursive comparison over all
+--   14 Expr constructors and 5 mutual types. It is `partial def` only because Lean 4
+--   can't verify termination for the mutual block — NOT because it's non-terminating.
+--   Converting BEq to WFR would eliminate this assumption but hits the same eq_def
+--   size limit.
+--
+-- What would eliminate the unsafe code:
+--   - Lean adding `deriving DecidableEq` support for mutual inductives, OR
+--   - Lean raising the eq_def size limit for mutual WFR blocks, OR
+--   - Proving `LawfulBEq Expr` (requires non-partial BEq first)
+
+private unsafe def Expr.decEqUnsafe (a b : Expr) : Decidable (a = b) :=
+  if a == b then .isTrue lcProof else .isFalse lcProof
+
+@[implemented_by Expr.decEqUnsafe]
+opaque Expr.decEqOpaque (a b : Expr) : Decidable (a = b)
+
+instance : DecidableEq Expr := Expr.decEqOpaque
+
+-- ============================================================================
 -- Inhabited instances
 -- ============================================================================
 
