@@ -1224,6 +1224,107 @@ theorem evalSelect_predicate_pushdown (db : Database) (t : String) (p q : Expr) 
   congr 1; funext row
   exact (evalExprWithDb_and_true_iff db row p q).symm
 
+/-- Infrastructure: filter pushdown through an inner join to the left side.
+    When a filter evaluates the same on `lr ++ rr` as on just `lr`, we can
+    push the filter into a subquery wrapping the left side of the join. -/
+theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_filter_left : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
+    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
+      groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a)
+      (some filter) [] none [] none none) "filtered_a") .inner b (some cond)))
+      none groupBy having orderBy limit offset) := by
+  -- Step 1: Push filter into subquery around whole join (filter_pushdown_table)
+  rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
+      "filtered_a" filter groupBy having orderBy limit offset]
+  -- Now: SELECT items FROM (SELECT * FROM (a JOIN b ON cond) WHERE filter) AS filtered_a
+  --    = SELECT items FROM (filtered_a JOIN b ON cond)
+  -- Both have where_ = none, so reduce to FROM clause equality
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  -- Goal: filteredRows equality (both with where_ = none → just mapped baseRows)
+  simp only [List.nil_append, List.map_id']
+  -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_a")
+  -- RHS: evalFrom db (.join (.subquery (SELECT * FROM a WHERE filter) "filtered_a") .inner b (some cond))
+  rw [evalFrom_subquery]
+  rw [evalSelect_star_where_eq_filter]
+  simp only [List.nil_append, List.map_id']
+  -- LHS: (evalFrom db (.join a .inner b (some cond))).filter P
+  rw [evalFrom_inner_join]
+  -- LHS: ((evalFrom db a).flatMap F).filter P
+  -- RHS: evalFrom db (.join (.subquery ...) .inner b (some cond))
+  rw [evalFrom_inner_join (db := db) (left := .subquery _ _)]
+  rw [evalFrom_subquery, evalSelect_star_where_eq_filter]
+  simp only [List.nil_append, List.map_id']
+  -- RHS: ((evalFrom db a).filter Q).flatMap F
+  -- Now apply list algebra: flatMap/filter commutation
+  apply list_flatMap_filter_comm
+  -- Discharge: ∀ lr ∈ evalFrom db a, ∀ combined ∈ F lr, P combined = Q lr
+  intro lr hlr combined hcombined
+  -- combined ∈ filterMap, so combined = lr ++ rr for some rr
+  simp only [List.mem_filterMap] at hcombined
+  obtain ⟨rr, hrr, hfm⟩ := hcombined
+  -- Case split on the match in the filterMap body
+  split at hfm
+  · -- evalExprWithDb db (lr ++ rr) cond = some (.bool true) → combined = lr ++ rr
+    simp only [Option.some.injEq] at hfm; subst hfm
+    congr 1
+    exact h_filter_left lr hlr rr hrr
+  · -- other cases: none = some combined → contradiction
+    simp at hfm
+
+/-- Infrastructure: filter pushdown through an inner join to the right side.
+    When a filter evaluates the same on `lr ++ rr` as on just `rr`, we can
+    push the filter into a subquery wrapping the right side of the join. -/
+theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
+    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
+      groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.join a .inner (.subquery (.mk false [.star none] (some b)
+      (some filter) [] none [] none none) "filtered_b") (some cond)))
+      none groupBy having orderBy limit offset) := by
+  -- Step 1: Push filter into subquery around whole join
+  rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
+      "filtered_b" filter groupBy having orderBy limit offset]
+  -- Reduce to FROM clause equality
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  simp only [evalSelectCore_eq_afterFilter]
+  congr 1
+  simp only [List.nil_append, List.map_id']
+  -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_b")
+  -- RHS: evalFrom db (.join a .inner (.subquery (SELECT * FROM b WHERE filter) "filtered_b") (some cond))
+  rw [evalFrom_subquery, evalSelect_star_where_eq_filter]
+  simp only [List.nil_append, List.map_id']
+  rw [evalFrom_inner_join]
+  rw [evalFrom_inner_join (db := db) (right := .subquery _ _)]
+  rw [evalFrom_subquery, evalSelect_star_where_eq_filter]
+  simp only [List.nil_append, List.map_id']
+  -- LHS: ((evalFrom db a).flatMap F_orig).filter P
+  -- RHS: (evalFrom db a).flatMap F_filtered
+  -- where F_filtered uses (evalFrom db b).filter Q instead of evalFrom db b
+  -- Distribute filter inside flatMap, then commute filter with filterMap per-element
+  rw [List.filter_flatMap]
+  apply flatMap_congr_mem
+  intro lr hlr
+  apply list_filter_filterMap_comm
+  -- Discharge: ∀ rr ∈ evalFrom db b, ∀ combined, filterMap_body rr = some combined → P combined = Q rr
+  intro rr hrr combined hfm
+  -- Case split on the match in the filterMap body
+  split at hfm
+  · -- evalExprWithDb db (lr ++ rr) cond = some (.bool true) → combined = lr ++ rr
+    simp only [Option.some.injEq] at hfm; subst hfm
+    congr 1
+    exact h_filter_right lr hlr rr hrr
+  · -- other cases: none = some combined → contradiction
+    simp at hfm
+
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table
   | .query q => (db, some (evalQuery db q))

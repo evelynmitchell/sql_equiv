@@ -3874,3 +3874,62 @@ to be proved as a theorem.
 ### Net axiom count change
 
 - **1 axiom → theorem**: 7 → 6
+
+## Batch 44: Prove filter_join_left/right (Steps 2-3 of Final Seven)
+
+**Date:** 2026-02-20
+
+### What changed
+
+Converted `filter_join_left` and `filter_join_right` from axioms to theorems.
+These express predicate pushdown through inner joins: when a WHERE filter only
+depends on one side of a join, it can be pushed into a subquery wrapping that side.
+
+### Soundness fix
+
+The old axiom signatures used only `exprReferencesOnlyFrom a filter = true` as
+precondition. This is unsound when both join sides share a table alias — both
+sides produce columns with the same qualifier, so the filter may evaluate
+differently on `lr ++ rr` vs `lr`. Fixed by adding a semantic precondition:
+`∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b, evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter`.
+
+The `_h_ref` parameter is kept for documentation but unused in the proof.
+
+### Approach
+
+1. **List algebra helpers (SemanticsCore.lean)**: Added three lemmas:
+   - `list_filter_false`: filter with all-false predicate gives `[]`
+   - `list_flatMap_filter_comm`: commute filter past flatMap when filter result
+     is constant per outer element
+   - `list_filter_filterMap_comm`: commute filter past filterMap when filter
+     result corresponds to a pre-filter
+
+2. **filter_join_left proof**: Use `evalSelect_filter_pushdown_table` to first
+   push the filter into a subquery wrapping the whole join. Then reduce to
+   `evalFrom` equality. Expand both sides via `evalFrom_inner_join` and
+   `evalFrom_subquery` + `evalSelect_star_where_eq_filter`. Apply
+   `list_flatMap_filter_comm` to commute the filter past the flatMap.
+
+3. **filter_join_right proof**: Similar structure but uses `List.filter_flatMap`
+   + `flatMap_congr_mem` to distribute filter into the per-left-row filterMap,
+   then `list_filter_filterMap_comm` to commute with the right-side filterMap.
+
+### Key insight
+
+Both proofs reuse `evalSelect_filter_pushdown_table` as a first step,
+converting `FROM (join) WHERE filter` to `FROM (SELECT * FROM (join) WHERE filter)`.
+This reduces the problem to showing that filtering the whole join equals joining
+with a pre-filtered side — pure list algebra.
+
+### Files changed
+
+- **SqlEquiv/SemanticsCore.lean** (+40): Three list algebra helper lemmas
+- **SqlEquiv/Semantics.lean** (+92): Infrastructure theorems `evalSelect_filter_join_left/right`
+- **SqlEquiv/Equiv/Comparison.lean** (+14/-8): Axioms → theorems with new signatures
+- **tools/axiom_count_minimum.txt**: 6 → 4
+- **docs/PROVING_LOG.md**: This entry
+
+### Net axiom count change
+
+- **2 axioms → theorems**: 6 → 4
+- **Remaining 4 axioms**: `join_comm`, `join_assoc`, `in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`

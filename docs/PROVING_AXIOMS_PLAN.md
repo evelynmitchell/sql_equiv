@@ -34,8 +34,8 @@ axiom join_reorder_preserves_backward (db : Database) (from_ : FromClause) :
 
 ```
 Level 3: Filter/Projection Axioms
-├── filter_join_left
-├── filter_join_right
+├── filter_join_left ✓ (Batch 44)
+├── filter_join_right ✓ (Batch 44)
 ├── filter_pushdown_table ✓ (Batch 22)
 └── filter_and ✓ (PR #147)
          ↓ depends on
@@ -371,10 +371,9 @@ row merging is commutative/associative (modulo column ordering).
 **Goal:** Prove predicates can be pushed into join operands.
 
 **Target axioms:**
-- `filter_join_left`, `filter_join_right`, ~~`filter_pushdown_table`~~ ✓ (Batch 22)
+- ~~`filter_join_left`~~ ✓ (Batch 44), ~~`filter_join_right`~~ ✓ (Batch 44), ~~`filter_pushdown_table`~~ ✓ (Batch 22)
 
-**Approach:** `filter_join_left`/`filter_join_right` blocked — `exprReferencesOnlyFrom`
-is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
+**All proved.** `filter_join_left`/`filter_join_right` proved with semantic preconditions (Batch 44).
 
 **Estimated complexity:** High.
 
@@ -388,8 +387,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 6 axioms remaining (6 in Equiv/, 0 in infrastructure files), 532 theorems proved (98.9%).
-Axiom ratchet: 6 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
+**Current totals**: 4 axioms remaining (4 in Equiv/, 0 in infrastructure files), 539 theorems proved (99.3%).
+Axiom ratchet: 4 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -405,9 +404,9 @@ Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (i
 | 6 | Join axioms | ~17 | 2 (`join_comm`, `join_assoc`) | Hard |
 | 7 | Subquery / EXISTS / IN | ~16 | 2 (`in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`) | Hard |
 | 8 | Expression evaluation helpers | ~5 | 0 (done) | -- |
-| 9 | Filter pushdown through joins | 1 | 2 (`filter_join_left`, `filter_join_right`) | Medium |
+| 9 | Filter pushdown through joins | 1 | 0 (done) | -- |
 | infra | Infrastructure (Semantics.lean) | 48 | 0 (done) | -- |
-| | **Total** | **532** | **6** | |
+| | **Total** | **532+** | **4** | |
 
 > **Note (PR #156):** Phase 10 "Optimizer correctness" and the "runtime" row
 > (8 optimizer axioms) were removed when the optimizer module was deleted.
@@ -431,8 +430,8 @@ either unblocks later steps or builds proof patterns that transfer forward.
 | # | Axiom | File | Lines | Category |
 |---|-------|------|-------|----------|
 | ~~1~~ | ~~`evalQuery_eq_evalQueryCore`~~ | ~~Semantics.lean~~ | ~~897–898~~ | ~~Bridge~~ ✅ PROVED |
-| 2 | `filter_join_left` | Equiv/Comparison.lean | 19–24 | Predicate pushdown |
-| 3 | `filter_join_right` | Equiv/Comparison.lean | 28–33 | Predicate pushdown |
+| ~~2~~ | ~~`filter_join_left`~~ | ~~Equiv/Comparison.lean~~ | ~~19–24~~ | ~~Predicate pushdown~~ ✅ PROVED |
+| ~~3~~ | ~~`filter_join_right`~~ | ~~Equiv/Comparison.lean~~ | ~~28–33~~ | ~~Predicate pushdown~~ ✅ PROVED |
 | 4 | `join_comm` | Equiv/ExprAxioms.lean | 259–262 | Join commutativity |
 | 5 | `join_assoc` | Equiv/Comparison.lean | 55–58 | Join associativity |
 | 6 | `in_subquery_unnest_to_join` | Equiv/StatementAxioms.lean | 989–1012 | Subquery unnesting |
@@ -441,8 +440,8 @@ either unblocks later steps or builds proof patterns that transfer forward.
 ### Difficulty ranking (hardest last)
 
 1. ~~`evalQuery_eq_evalQueryCore` — mechanical refactoring (convert `partial def` → WFR)~~ ✅ DONE
-2. `filter_join_left` — file reorganization to unblock `simp`, then straightforward proof
-3. `filter_join_right` — symmetric to `filter_join_left`
+2. ~~`filter_join_left` — added semantic precondition, proved via list algebra~~ ✅ DONE
+3. ~~`filter_join_right` — symmetric to `filter_join_left`~~ ✅ DONE
 4. `join_comm` — needs added column-disjointness precondition; membership-based
 5. `join_assoc` — needs disjointness + scope preconditions; different row scopes
 6. `in_subquery_unnest_to_join` — full `evalSelect` equality; NULL + DISTINCT reasoning
@@ -462,38 +461,24 @@ compound/withCTE cases, `unfold evalQuery; simp [evalQueryCore]` for simple.
 
 ---
 
-### Step 2–3: `filter_join_left` + `filter_join_right` (predicate pushdown)
+### Step 2–3: `filter_join_left` + `filter_join_right` (predicate pushdown) — ✅ DONE
 
-**Blocker diagnosis:** The doc comments say "blocked by `partial def
-exprReferencesOnlyTable`" but this is **stale**. `exprReferencesOnlyTable`
-(Decidable.lean:1152) is a proper WFR function with a complete termination
-proof (lines 1174–1183). The actual blocker is that `Decidable.lean` also
-contains `partial def decideExprEq` and 6 other `partial def`s in the same
-`SqlEquiv` namespace. Per MEMORY.md: *"`simp [f]` fails when `partial def`s
-are in the environment — importing a file with `partial def` blocks
-equational theorem generation for non-partial functions in the same namespace."*
+**Status:** PROVED. Changed approach from the original plan — instead of
+moving files to unblock `exprReferencesOnlyFrom`, we added a semantic
+precondition (`h_filter_left`/`h_filter_right`) that the filter evaluates
+the same with or without the other side's columns. This is stronger than
+`exprReferencesOnlyFrom` and avoids the `partial def` blocker entirely.
 
-**Strategy:**
+**Soundness fix:** The old axiom signature only required `exprReferencesOnlyFrom a filter = true`,
+which is unsound when both join sides share a table alias. The new signature requires
+the semantic evaluation invariance directly.
 
-1. **Move** `exprReferencesOnlyTable`, `getFromClauseTableNames`, and
-   `exprReferencesOnlyFrom` out of `Decidable.lean` into a new file
-   (e.g., `Equiv/ExprReferences.lean`) that imports no `partial def`s.
-
-2. **Prove equational lemmas** for `exprReferencesOnlyTable` via
-   `simp [exprReferencesOnlyTable]` or `.eq_def` — now possible because
-   no `partial def`s pollute the namespace.
-
-3. **Prove the axiom:** When `exprReferencesOnlyFrom a filter = true`,
-   show that filtering before the join equals filtering after.
-   The core argument: the filter evaluates identically on joined rows
-   vs. pre-join rows because it only references columns from one side.
-   The already-proved `evalSelect_filter_pushdown_table` (Comparison.lean:37)
-   and `evalSelect_star_where_eq_filter` provide templates.
-
-4. `filter_join_right` follows by symmetry (swap `a`/`b` in the proof).
-
-**Effort:** Medium (file reorganization + moderate proof).
-**Risk:** Low — the SQL equivalence is textbook predicate pushdown.
+**Proof approach:**
+1. `evalSelect_filter_pushdown_table` first pushes filter into a subquery around the whole join
+2. Both sides reduce to `evalFrom` equality (same items, groupBy, etc. with no WHERE)
+3. Expand joins via `evalFrom_inner_join` and subqueries via `evalFrom_subquery` + `evalSelect_star_where_eq_filter`
+4. Apply `list_flatMap_filter_comm` (left) or `List.filter_flatMap` + `flatMap_congr_mem` + `list_filter_filterMap_comm` (right)
+5. Membership hypothesis from `List.mem_filterMap` gives `combined = lr ++ rr`, connecting to `h_filter_left`/`h_filter_right`
 
 **Existing infrastructure to leverage:**
 - `evalSelect_filter_pushdown_table` — proved analogue for single-table case
@@ -681,8 +666,8 @@ principles.
 | Step | Axiom(s) | Strategy | Effort | Ratchet |
 |------|----------|----------|--------|---------|
 | 1 | `evalQuery_eq_evalQueryCore` | `partial` → WFR refactor | Low | 7→6 ✅ |
-| 2 | `filter_join_left` | Move file + straightforward proof | Medium | 6→5 |
-| 3 | `filter_join_right` | Symmetric to Step 2 | Low | 5→4 |
+| ~~2~~ | ~~`filter_join_left`~~ | ~~Semantic precondition + list algebra~~ | ~~Medium~~ | ~~6→5~~ ✅ |
+| ~~3~~ | ~~`filter_join_right`~~ | ~~Symmetric to Step 2~~ | ~~Low~~ | ~~5→4~~ ✅ |
 | 4 | `join_comm` | Add disjointness precondition | Med-High | 4→3 |
 | 5 | `join_assoc` | Add disjointness + scope preconditions | High | 3→2 |
 | 6 | `in_subquery_unnest_to_join` | Leverage bidirectional lemmas | High | 2→1 |

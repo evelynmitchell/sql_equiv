@@ -953,6 +953,61 @@ private theorem list_filter_comm {α : Type} (f g : α → Bool) (l : List α) :
   congr 1; ext r; exact Bool.and_comm (f r) (g r)
 
 -- ============================================================================
+-- List algebra: flatMap/filterMap + filter commutation
+-- ============================================================================
+
+/-- Filter where all elements fail the predicate gives empty list. -/
+private theorem list_filter_false {α : Type} (p : α → Bool) (l : List α)
+    (h : ∀ a ∈ l, p a = false) : l.filter p = [] := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    simp [List.filter_cons, h x List.mem_cons_self,
+          ih (fun a ha => h a (List.mem_cons_of_mem x ha))]
+
+/-- When a filter on flatMap results is constant per-outer-element,
+    it can be pulled outside as a filter on the outer list. -/
+theorem list_flatMap_filter_comm {α β : Type} (xs : List α)
+    (f : α → List β) (p : β → Bool) (q : α → Bool)
+    (h : ∀ a ∈ xs, ∀ b ∈ f a, p b = q a) :
+    (xs.flatMap f).filter p = (xs.filter q).flatMap f := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    have hx := h x List.mem_cons_self
+    have ih' := ih (fun a ha => h a (List.mem_cons_of_mem x ha))
+    simp only [List.flatMap_cons, List.filter_append, List.filter_cons]
+    cases hq : q x with
+    | true =>
+      have hself : (f x).filter p = f x :=
+        List.filter_eq_self.mpr (fun b hb => (hx b hb).trans hq)
+      simp [hself, ih']
+    | false =>
+      have hnil : (f x).filter p = [] :=
+        list_filter_false p (f x) (fun b hb => (hx b hb).trans hq)
+      simp [hnil, ih']
+
+/-- When a filter on filterMap results corresponds to a pre-filter
+    on the input, the filter can be moved before the filterMap. -/
+theorem list_filter_filterMap_comm {α β : Type} (xs : List α)
+    (f : α → Option β) (p : β → Bool) (q : α → Bool)
+    (h : ∀ a ∈ xs, ∀ b, f a = some b → p b = q a) :
+    (xs.filterMap f).filter p = (xs.filter q).filterMap f := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    have ih' := ih (fun a ha => h a (List.mem_cons_of_mem x ha))
+    simp only [List.filterMap_cons, List.filter_cons]
+    cases hfx : f x with
+    | none =>
+      cases q x <;> simp [List.filterMap_cons, hfx, ih']
+    | some b =>
+      have hpb := h x List.mem_cons_self b hfx
+      cases hq : q x with
+      | true => simp [hfx, hpb, hq, ih']
+      | false => simp [hpb, hq, ih']
+
+-- ============================================================================
 -- SELECT * WHERE p = filter (infrastructure for filter_and / filter_commute / etc.)
 -- ============================================================================
 
