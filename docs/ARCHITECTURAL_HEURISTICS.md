@@ -37,7 +37,7 @@ well-founded functions sharing that namespace.
 
 ### How it manifested
 
-`Decidable.lean` contains 6 `partial def`s (e.g., `decideExprEq`). The
+`Decidable.lean` contains 7 `partial def`s (e.g., `decideExprEq`). The
 function `exprReferencesOnlyTable` in the same file is a proper WFR
 function with a complete termination proof — but `simp` couldn't reduce it.
 This silently blocked `filter_join_left` and `filter_join_right` for weeks.

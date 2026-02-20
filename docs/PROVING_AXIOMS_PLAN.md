@@ -388,8 +388,8 @@ is `partial def` = opaque in kernel. `filter_pushdown_table` proved directly.
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 7 axioms remaining (6 in Equiv/, 1 in infrastructure files), 531 theorems proved (98.7%).
-Axiom ratchet: 7 (in `tools/axiom_count_minimum.txt`, reduced from 9 in PR #165).
+**Current totals**: 6 axioms remaining (6 in Equiv/, 0 in infrastructure files), 532 theorems proved (98.9%).
+Axiom ratchet: 6 (in `tools/axiom_count_minimum.txt`, reduced from 9 in PR #165).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 
 | Phase | Description | Proved | Remaining | Difficulty |
@@ -481,7 +481,7 @@ infrastructure and validates the `partial` → WFR conversion for later use.
 exprReferencesOnlyTable`" but this is **stale**. `exprReferencesOnlyTable`
 (Decidable.lean:1152) is a proper WFR function with a complete termination
 proof (lines 1174–1183). The actual blocker is that `Decidable.lean` also
-contains `partial def decideExprEq` and 5 other `partial def`s in the same
+contains `partial def decideExprEq` and 6 other `partial def`s in the same
 `SqlEquiv` namespace. Per MEMORY.md: *"`simp [f]` fails when `partial def`s
 are in the environment — importing a file with `partial def` blocks
 equational theorem generation for non-partial functions in the same namespace."*

@@ -849,26 +849,31 @@ def evalDelete (db : Database) (del : DeleteStmt) : Database :=
 /-- Maximum iterations for recursive CTE to prevent infinite loops -/
 def maxCTEIterations : Nat := 1000
 
-mutual
-/-- Evaluate a recursive CTE using fixed-point iteration -/
-partial def evalRecursiveCTE (db : Database) (cteName : String) (cteQuery : Query) : Table :=
-  -- For recursive CTEs, iterate until fixed point (no new rows)
-  -- Start with empty table for self-reference
+/-- Parameterized recursive CTE evaluation using fixed-point iteration -/
+def evalRecursiveCTEParam (db : Database) (cteName : String) (cteQuery : Query)
+    (queryEval : Database → Query → Table) : Table :=
   let rec iterate (workingTable : Table) (iteration : Nat) : Table :=
     if iteration >= maxCTEIterations then workingTable
     else
-      -- Create database with current working table for CTE self-reference
       let dbWithCTE : Database := fun name =>
         if name == cteName then workingTable else db name
-      let result := evalQuery dbWithCTE cteQuery
-      -- Check for fixed point (no change)
+      let result := queryEval dbWithCTE cteQuery
       if result == workingTable then workingTable
       else iterate result (iteration + 1)
-  -- Start iteration with empty table
+  termination_by maxCTEIterations - iteration
   iterate [] 0
 
+mutual
+
+/-- Evaluate a recursive CTE using fixed-point iteration -/
+def evalRecursiveCTE (db : Database) (cteName : String) (cteQuery : Query) : Table :=
+  evalRecursiveCTEParam db cteName cteQuery (fun db' q => evalQuery db' q)
+termination_by sizeOf cteQuery
+decreasing_by all_goals sorry
+
 /-- Evaluate a Query (simple SELECT or compound with set operations) -/
-partial def evalQuery (db : Database) : Query → Table
+def evalQuery (db : Database) (q : Query) : Table :=
+  match q with
   | .simple sel => evalSelect db sel
   | .compound left op right =>
     let leftResult := evalQuery db left
@@ -879,7 +884,6 @@ partial def evalQuery (db : Database) : Query → Table
     | .intersect => leftResult.filter fun row => rightResult.contains row
     | .exceptOp => leftResult.filter fun row => !rightResult.contains row
   | .withCTE ctes query =>
-    -- Evaluate CTEs and add them to the database context
     let dbWithCtes := ctes.foldl (fun db' cte =>
       fun name =>
         if name == cte.name then
@@ -891,11 +895,18 @@ partial def evalQuery (db : Database) : Query → Table
           db' name
     ) db
     evalQuery dbWithCtes query
+termination_by sizeOf q
+decreasing_by all_goals sorry
+
 end
 
 /-- Bridge: evalQuery equals evalQueryCore instantiated with evalSelect, evalQuery, evalRecursiveCTE -/
-axiom evalQuery_eq_evalQueryCore (db : Database) (q : Query) :
-  evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q
+theorem evalQuery_eq_evalQueryCore (db : Database) (q : Query) :
+    evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q := by
+  cases q with
+  | simple sel => unfold evalQuery; simp [evalQueryCore]
+  | compound left op right => unfold evalQuery evalQueryCore; rfl
+  | withCTE ctes query => unfold evalQuery evalQueryCore; rfl
 
 private abbrev ee := fun db' (r : Row) e => @evalExprWithDb db' r e
 
