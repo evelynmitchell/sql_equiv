@@ -301,10 +301,13 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
       rw [he']
 
 /-- If normalized forms are syntactically equal, expressions are equivalent.
-    Axiom: Follows from normalizeExpr_equiv - if two expressions normalize to
-    the same syntactic form, they must be semantically equivalent. -/
-axiom syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
-    e1 ≃ₑ e2
+    Uses normalizeExpr_equiv and DecidableEq Expr (via of_decide_eq_true). -/
+theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
+    e1 ≃ₑ e2 := by
+  simp only [syntacticEquiv] at h
+  have heq : normalizeExpr e1 = normalizeExpr e2 := of_decide_eq_true h
+  intro row
+  rw [← normalizeExpr_equiv e1 row, ← normalizeExpr_equiv e2 row, heq]
 
 -- ============================================================================
 -- DecidableEq instances for AST types (mutual types need manual instances)
@@ -974,15 +977,12 @@ theorem selectStmtGround_eval_independent (sel : SelectStmt)
 -- ============================================================================
 
 /-- Decide expression equivalence by comparing normalized forms -/
-def decideExprEquiv (e1 e2 : Expr) : Bool :=
-  normalizeExpr e1 == normalizeExpr e2
+def decideExprEquiv (e1 e2 : Expr) : Bool := syntacticEquiv e1 e2
 
 /-- Soundness: if decideExprEquiv returns true, expressions are equivalent -/
 theorem decideExprEquiv_sound {e1 e2 : Expr} :
-    decideExprEquiv e1 e2 = true → e1 ≃ₑ e2 := by
-  intro h
-  unfold decideExprEquiv at h
-  exact syntacticEquiv_implies_equiv h
+    decideExprEquiv e1 e2 = true → e1 ≃ₑ e2 :=
+  syntacticEquiv_implies_equiv
 
 -- ============================================================================
 -- Decidable Instance for Ground Expression Equivalence

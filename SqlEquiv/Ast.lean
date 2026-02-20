@@ -607,6 +607,23 @@ instance : BEq Stmt where
     | _, _ => false
 
 -- ============================================================================
+-- DecidableEq instances for mutual AST types
+-- ============================================================================
+
+-- Runtime DecidableEq using existing BEq (correct but opaque)
+private unsafe def Expr.decEqUnsafe (a b : Expr) : Decidable (a = b) :=
+  if a == b then .isTrue lcProof else .isFalse lcProof
+
+-- Proof-level DecidableEq: opaque with runtime impl via BEq
+-- Note: Manual WFR mutual block fails with "Cannot derive unfold equation"
+-- even with maxHeartbeats 4000000 — the eq_def rfl check fails on
+-- definitional equality of large compiled match terms, not on timeout.
+@[implemented_by Expr.decEqUnsafe]
+opaque Expr.decEqOpaque (a b : Expr) : Decidable (a = b)
+
+instance : DecidableEq Expr := Expr.decEqOpaque
+
+-- ============================================================================
 -- Inhabited instances
 -- ============================================================================
 

@@ -404,7 +404,7 @@ theorem normalizeExpr_inList (e : Expr) (neg : Bool) (vals : List Expr) :
     .inList (normalizeExpr e) neg (vals.foldl (fun acc v => acc ++ [normalizeExpr v]) []) := by
   simp only [normalizeExpr]
 
-def syntacticEquiv (e1 e2 : Expr) : Bool := normalizeExpr e1 == normalizeExpr e2
+def syntacticEquiv (e1 e2 : Expr) : Bool := decide (normalizeExpr e1 = normalizeExpr e2)
 
 theorem expr_equiv_subst {e1 e2 : Expr} (h : e1 ≃ₑ e2) (row : Row) : evalExpr row e1 = evalExpr row e2 := h row
 
