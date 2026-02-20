@@ -1,9 +1,29 @@
 #!/bin/sh
 #
-# Pre-commit hook: warn if evaluator/equiv files are being committed
-# without running /audit for soundness checking.
+# Pre-commit hook:
+# 1. Block commits on branches whose PR is already merged
+# 2. Warn if evaluator/equiv files are being committed without /audit
+# 3. Check for unused private declarations
+# 4. Auto-update axiom/theorem counts in docs
 #
 # Install: ln -sf ../../tools/pre-commit .git/hooks/pre-commit
+
+# --- Block commits on branches with merged PRs ---
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+case "$branch" in
+  master|main) ;;
+  *)
+    if command -v gh >/dev/null 2>&1; then
+      merged=$(gh pr list --head "$branch" --state merged --json number --jq '.[0].number' 2>/dev/null)
+      if [ -n "$merged" ]; then
+        printf >&2 "\n\033[1;31m✘ Branch '%s' already has a merged PR (#%s).\033[0m\n" "$branch" "$merged"
+        printf >&2 "  Create a new branch from master:\n"
+        printf >&2 "    git checkout master && git pull && git checkout -b claude/<new-task>\n\n"
+        exit 1
+      fi
+    fi
+    ;;
+esac
 
 AUDIT_FILES="
 SqlEquiv/Semantics.lean
