@@ -4021,3 +4021,55 @@ No new helper lemmas needed — entirely self-contained, extending the `join_com
 
 - **1 axiom → theorem**: 3 → 2
 - **Remaining 2 axioms**: `in_subquery_unnest_to_join`, `not_in_subquery_unnest_to_antijoin`
+
+---
+
+## Batch 47: `in_subquery_unnest_to_join` (2→1 axioms)
+
+### Goal
+
+Prove `in_subquery_unnest_to_join`: `SELECT DISTINCT t.* FROM t WHERE t.x IN (SELECT s.y FROM s)` is equivalent to `SELECT DISTINCT t.* FROM t JOIN s ON t.x = s.y`, as a `List.Perm` (permutation).
+
+### Changes from original axiom
+
+1. **Added DISTINCT to LHS** (`distinct=true`, was `false`) — without DISTINCT, duplicate matching rows in t would be preserved on LHS but deduplicated on RHS.
+2. **Qualified yCol in subquery** (`⟨some sName, yCol⟩`, was `⟨none, yCol⟩`) — avoids column shadowing when `evalSelectWithContext` prepends the outer row.
+3. **Changed conclusion from `=` to `List.Perm`** — both sides apply `eraseDups`, and the underlying lists may differ in order.
+4. **Added semantic preconditions**:
+   - `hStable`: `t.xCol` eval is stable when extra columns are appended
+   - `hNoAgg`/`hNoWin`: subquery items have no aggregates/window functions (needed because `selectHasAggregate`/`selectHasWindowFn` depend on partial functions)
+   - `hProjT`: `.star (some tName)` projection on `tRow ++ sRow` = projection on `tRow` alone (needed because `String.startsWith` is kernel-opaque)
+
+### Proof technique
+
+1. **Decompose both sides** via new bridge theorems `evalSelect_distinct_project_where` (LHS) and `evalSelect_distinct_project` (RHS), which reduce `evalSelect` for DISTINCT queries with no GROUP BY/HAVING/ORDER BY/LIMIT/OFFSET to `(rows.map proj).eraseDups`.
+2. **Simplify** `[.star (some tName)].flatMap (evalSelectItem db row)` to `row.filter (startsWith tName.)` via `evalSelectItem_qualified_star`.
+3. **Apply Perm reasoning** via `perm_ext_iff_of_nodup` + `nodup_eraseDups` + `mem_eraseDups`, reducing to bidirectional membership proof.
+4. **Forward** (IN → join): Extract `tRow` from filtered list, use `in_subquery_implies_join_match` to find matching `sRow`, construct join row `tRow ++ sRow`, use `hProjT` to show projection equality.
+5. **Backward** (join → IN): Decompose join row via `evalFrom_inner_join` + `List.mem_flatMap`/`List.mem_filterMap`, use `join_match_implies_in_subquery` to show IN = true.
+
+### Infrastructure added
+
+- **SemanticsCore.lean**: `evalSelectCore_distinct_project`, `evalSelectCore_distinct_project_where` — parameterized decomposition of DISTINCT queries
+- **Semantics.lean**: `evalSelect_distinct_project`, `evalSelect_distinct_project_where` (bridge theorems), `selectHasAggregate_qualified_star`, `selectHasWindowFn_qualified_star`, `evalSelectItem_qualified_star`, `list_map_nil_append_eq`
+
+### Key challenges
+
+- **`evalSelectItemParam ee` vs `evalSelectItem` gap**: The WFR bridge creates a definitional equality gap between the parameterized and concrete versions. Solved with `have raw` + `exact` (uses full definitional equality) + `rw [raw, list_map_nil_append_eq]` pattern.
+- **`List.map ([] ++ ·)` simplification**: `simp [List.nil_append]` leaves `List.map (fun x => x) l` which `List.map_id` can't match. Solved with custom `list_map_nil_append_eq` lemma.
+- **`Option.beq_some_true_iff` type mismatch**: Lemma takes `Option Bool` but filter predicate uses `Option Value`. Used `beq_iff_eq` (via `LawfulBEq Value`) instead.
+- **Theorem ordering**: The theorem depends on `in_subquery_implies_join_match` and `join_match_implies_in_subquery` which were defined later in the file. Moved theorem to after both helpers.
+
+### Files changed
+
+- **SqlEquiv/SemanticsCore.lean** (+45): Added DISTINCT project infrastructure theorems
+- **SqlEquiv/Semantics.lean** (+55): Added bridge theorems, helpers, `list_map_nil_append_eq`
+- **SqlEquiv/Equiv/StatementAxioms.lean** (+90/-25): `axiom in_subquery_unnest_to_join` → `theorem` with new signature and proof
+- **tools/axiom_count_minimum.txt**: 2 → 1
+- **docs/PROVING_LOG.md**: This entry
+- **docs/PROVING_AXIOMS_PLAN.md**: Updated step 6 status
+
+### Net axiom count change
+
+- **1 axiom → theorem**: 2 → 1
+- **Remaining 1 axiom**: `not_in_subquery_unnest_to_antijoin`

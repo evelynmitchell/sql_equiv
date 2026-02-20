@@ -1106,6 +1106,56 @@ theorem evalSelectItem_star (db : Database) (row : Row) :
     evalSelectItem db row (.star none) = row := by
   simp [evalSelectItem]
 
+/-- selectHasAggregate returns false for [.star (some t)]. -/
+theorem selectHasAggregate_qualified_star (t : String) :
+    selectHasAggregate [.star (some t)] = false := by rfl
+
+/-- selectHasWindowFn returns false for [.star (some t)]. -/
+theorem selectHasWindowFn_qualified_star (t : String) :
+    selectHasWindowFn [.star (some t)] = false := by rfl
+
+/-- evalSelectItem on .star (some t) filters to t-prefixed columns. -/
+theorem evalSelectItem_qualified_star (db : Database) (row : Row) (t : String) :
+    evalSelectItem db row (.star (some t)) =
+    row.filter fun (k, _) => k.startsWith s!"{t}." := by
+  simp [evalSelectItem]
+
+/-- Helper: List.map ([] ++ ·) l = l (avoids simp/map_id matching issues). -/
+private theorem list_map_nil_append_eq (l : Table) : l.map ([] ++ ·) = l := by
+  induction l with
+  | nil => rfl
+  | cons h t ih => simp only [List.map_cons, List.nil_append]; exact congrArg _ ih
+
+/-- SELECT DISTINCT items FROM from_ = (project base rows).eraseDups -/
+theorem evalSelect_distinct_project (db : Database)
+    (items : List SelectItem) (from_ : FromClause)
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWin : selectHasWindowFn items = false) :
+    evalSelect db (SelectStmt.mk true items (some from_) none [] none [] none none) =
+    ((evalFrom db from_).map (fun row => items.flatMap (evalSelectItem db row))).eraseDups := by
+  have raw : evalSelect db (SelectStmt.mk true items (some from_) none [] none [] none none) =
+    (List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.map ([] ++ ·) (evalFrom db from_))).eraseDups := by
+    rw [evalSelect_eq_evalSelectCore]
+    exact evalSelectCore_distinct_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
+  rw [raw, list_map_nil_append_eq]
+
+/-- SELECT DISTINCT items FROM from_ WHERE cond = (filter then project).eraseDups -/
+theorem evalSelect_distinct_project_where (db : Database)
+    (items : List SelectItem) (from_ : FromClause) (cond : Expr)
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWin : selectHasWindowFn items = false) :
+    evalSelect db (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
+    ((evalFrom db from_).filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
+      |>.map (fun row => items.flatMap (evalSelectItem db row))).eraseDups := by
+  have raw : evalSelect db (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
+    (List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
+        (List.map ([] ++ ·) (evalFrom db from_)))).eraseDups := by
+    rw [evalSelect_eq_evalSelectCore]
+    exact evalSelectCore_distinct_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
+  rw [raw, list_map_nil_append_eq]
+
 /-- Bridge: evalFrom_subquery connects to evalSelectCore for subqueries. -/
 private theorem evalFrom_subquery_core (db : Database) (sel : SelectStmt) (alias : String) :
     evalFrom db (.subquery sel alias) =

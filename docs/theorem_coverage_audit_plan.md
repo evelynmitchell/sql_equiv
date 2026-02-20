@@ -2,9 +2,9 @@
 
 ## Status
 - Branch: `master` (current)
-- **2 axioms** across tracked `.lean` files (2 in `Equiv/`, 0 in infrastructure)
-- **542 theorems** proved (99.6%)
-- Axiom ratchet: 2 (`tools/axiom_count_minimum.txt`)
+- **1 axiom** across tracked `.lean` files (1 in `Equiv/`, 0 in infrastructure)
+- **550 theorems** proved (99.8%)
+- Axiom ratchet: 1 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
 
@@ -36,20 +36,20 @@ Run with `--runtime` flag for full analysis. No build required.
 | `Defs.lean` | 0 | 20 | Core definitions (ExprEquiv, StmtEquiv) |
 | `ExprAxioms.lean` | 0 | 51 | Expression-level axioms and theorems |
 | `SetBagLemmas.lean` | 0 | 6 | Set/bag equivalence lemmas |
-| `StatementAxioms.lean` | 2 | 86 | Statement-level axioms (joins, subqueries, set ops) |
+| `StatementAxioms.lean` | 1 | 87 | Statement-level axioms (joins, subqueries, set ops) |
 | `ValueLemmas.lean` | 0 | 43 | Value-level helper lemmas |
-| **Subtotal** | **2** | **425** | |
+| **Subtotal** | **1** | **426** | |
 
 ### Infrastructure Axioms
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Semantics.lean` | 0 | 50 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
+| `Semantics.lean` | 0 | 56 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
 | `SemanticsBase.lean` | 0 | 1 |  |
-| `SemanticsCore.lean` | 0 | 65 |  |
-| **Subtotal** | **0** | **116** | |
+| `SemanticsCore.lean` | 0 | 67 |  |
+| **Subtotal** | **0** | **124** | |
 
-### Grand Total: 3 axioms, 540 theorems (99.4% proved)
+### Grand Total: 1 axioms, 550 theorems (99.8% proved)
 
 > **Note:** `Semantics_test.lean` is an untracked scratch file (7 axioms, 38
 > theorems) not included in these counts. The ratchet tracks only committed files.
