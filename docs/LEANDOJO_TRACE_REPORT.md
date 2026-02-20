@@ -1,7 +1,7 @@
 # LeanDojo Trace Report
 
 **Date:** 2026-02-19
-**Commit:** `bc5c584` (branch `claude/selectStmtGround-redo`)
+**Commit:** `bc5c584`
 **Tooling:** LeanDojo-v2 1.0.0, Lean 4.27.0
 
 ## Overview
@@ -21,7 +21,14 @@ LeanDojo v1 (4.20.0) is deprecated and incompatible with Lean 4.27.0 due to univ
 ### Running the Trace
 
 ```bash
-GITHUB_ACCESS_TOKEN=$(gh auth token) python3 tools/leandojo_trace.py
+python3 tools/leandojo_trace.py              # uses project root, HEAD, auto-detects token
+python3 tools/leandojo_trace.py --commit abc123 --dst /tmp/trace
+```
+
+The scripts auto-detect `GITHUB_ACCESS_TOKEN` via `gh auth token` if not already set. You can also export it explicitly:
+
+```bash
+export GITHUB_ACCESS_TOKEN=$(gh auth token)
 ```
 
 Key configuration:
@@ -186,10 +193,10 @@ Ast.lean
 
 | Script | Purpose |
 |--------|---------|
-| `tools/leandojo_trace.py` | Run the full trace (builds repo, extracts data) |
-| `tools/leandojo_explore.py` | Load cached trace and generate `trace_summary.json` |
+| `tools/leandojo_trace.py` | Run the full trace (builds repo, extracts data). Args: `--repo`, `--commit`, `--dst` |
+| `tools/leandojo_explore.py` | Load cached trace and generate `trace_summary.json`. Args: `--cache-dir`, `--output-dir` |
 
-Both require `GITHUB_ACCESS_TOKEN` set (for LeanDojo-v2's GitHub client) and `lean-dojo-v2` installed.
+Both require `lean-dojo-v2` installed. `GITHUB_ACCESS_TOKEN` is auto-detected via `gh auth token` if not set.
 
 ## Recommendations
 

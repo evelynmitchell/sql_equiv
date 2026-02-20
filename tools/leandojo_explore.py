@@ -1,21 +1,72 @@
 """Explore the LeanDojo trace output from the cache."""
 
-import os
 import json
+import os
+import subprocess
 from pathlib import Path
 
-os.environ["GITHUB_ACCESS_TOKEN"] = os.popen("gh auth token").read().strip()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / ".leandojo_trace"
 
-from lean_dojo_v2.lean_dojo.data_extraction.traced_data import TracedRepo
 
-CACHE_DIR = Path(os.path.expanduser(
-    "~/.cache/lean_dojo/gitpython-sql_equiv-bc5c5847b3c8fb45b5878fd761a5bb4556108a9a/sql_equiv"
-))
-OUTPUT_DIR = Path("/workspaces/sql_equiv/.leandojo_trace")
+def _ensure_github_token() -> None:
+    """Set GITHUB_ACCESS_TOKEN if not already provided."""
+    if os.environ.get("GITHUB_ACCESS_TOKEN"):
+        return
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            check=True, capture_output=True, text=True,
+        )
+        os.environ["GITHUB_ACCESS_TOKEN"] = result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        raise RuntimeError(
+            "GITHUB_ACCESS_TOKEN not set and `gh auth token` failed. "
+            "Set GITHUB_ACCESS_TOKEN or install/configure the GitHub CLI."
+        ) from e
+
+
+def _find_latest_cache_dir() -> Path:
+    """Auto-detect the newest LeanDojo cache directory for sql_equiv."""
+    cache_base = Path(os.path.expanduser("~/.cache/lean_dojo"))
+    if not cache_base.exists():
+        raise FileNotFoundError(f"LeanDojo cache not found at {cache_base}")
+    candidates = sorted(
+        cache_base.glob("gitpython-sql_equiv-*/sql_equiv"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise FileNotFoundError(
+            f"No sql_equiv cache entries found in {cache_base}. "
+            "Run leandojo_trace.py first."
+        )
+    return candidates[0]
+
 
 def main():
-    print(f"Loading traced repo from {CACHE_DIR}...")
-    traced_repo = TracedRepo.load_from_disk(CACHE_DIR, build_deps=False)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Explore LeanDojo trace cache")
+    parser.add_argument(
+        "--cache-dir",
+        help="Path to the LeanDojo cache directory (default: auto-detect newest)",
+    )
+    parser.add_argument(
+        "--output-dir", default=str(DEFAULT_OUTPUT_DIR),
+        help="Output directory for trace_summary.json (default: .leandojo_trace/)",
+    )
+    args = parser.parse_args()
+
+    _ensure_github_token()
+
+    from lean_dojo_v2.lean_dojo.data_extraction.traced_data import TracedRepo
+
+    cache_dir = Path(args.cache_dir) if args.cache_dir else _find_latest_cache_dir()
+    output_dir = Path(args.output_dir)
+
+    print(f"Loading traced repo from {cache_dir}...")
+    traced_repo = TracedRepo.load_from_disk(cache_dir, build_deps=False)
 
     print(f"Number of traced files: {len(traced_repo.traced_files)}")
 
@@ -92,7 +143,7 @@ def main():
     summary["total_theorems"] = total_theorems
     summary["total_tactics"] = total_tactics
 
-    summary_path = OUTPUT_DIR / "trace_summary.json"
+    summary_path = output_dir / "trace_summary.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
@@ -100,6 +151,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"TOTALS: {total_theorems} theorems, {total_tactics} tactics across {len(traced_repo.traced_files)} files")
     print(f"Summary saved to {summary_path}")
+
 
 if __name__ == "__main__":
     main()
