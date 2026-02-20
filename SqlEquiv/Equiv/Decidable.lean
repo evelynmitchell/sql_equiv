@@ -313,8 +313,7 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
     manual WFR) are not viable. -/
 theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
     e1 ≃ₑ e2 := by
-  simp only [syntacticEquiv] at h
-  have heq : normalizeExpr e1 = normalizeExpr e2 := of_decide_eq_true h
+  have heq : normalizeExpr e1 = normalizeExpr e2 := by simpa [syntacticEquiv] using h
   intro row
   rw [← normalizeExpr_equiv e1 row, ← normalizeExpr_equiv e2 row, heq]
 
