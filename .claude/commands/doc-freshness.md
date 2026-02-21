@@ -13,34 +13,32 @@ Check documentation for stale counts, outdated references, and inconsistencies w
 1. **Collect ground truth from the codebase:**
 
    ```bash
-   # Axiom count
-   grep -rn "^axiom " SqlEquiv/ --include="*.lean" | wc -l
+   # Axiom/theorem counts (authoritative)
+   python3 tools/count_axioms_theorems.py -v
 
-   # Theorem count
-   grep -rn "^theorem " SqlEquiv/ --include="*.lean" | wc -l
-
-   # Sorry count
-   grep -rn "sorry" SqlEquiv/ --include="*.lean" | wc -l
+   # Sorry count (approximate — may include commented-out occurrences)
+   grep -rn "sorry" SqlEquiv/ --include="*.lean"
 
    # Axiom ratchet
    cat tools/axiom_count_minimum.txt
    ```
 
+   Note: the sorry grep may match occurrences inside block comments (`/- ... -/`). Manually inspect each hit to confirm it's active code, not commented out.
+
+   Use `tools/count_axioms_theorems.py` as the authoritative source for axiom/theorem totals — raw `grep "^axiom "` misses `private axiom` and indented declarations.
+
 2. **Scan documentation files for numeric claims:**
 
-   Files to check:
-   - `docs/PROVING_AXIOMS_PLAN.md`
-   - `docs/PROVING_LOG.md`
-   - `docs/theorem_coverage_audit_plan.md`
-   - `docs/ARCHITECTURAL_HEURISTICS.md`
-   - `README.md` (if it exists)
+   Files to check (recursive scan — includes subdirectories):
+   - `docs/` and all subdirectories (`docs/specs/`, `docs/proposals/`, `docs/tutorials/`, etc.)
+   - `README.md`
 
    Look for patterns:
    ```bash
-   grep -n "[0-9]* axiom" docs/*.md
-   grep -n "[0-9]* theorem" docs/*.md
-   grep -n "[0-9]* sorry" docs/*.md
-   grep -n "PR #[0-9]*" docs/*.md
+   grep -rn "[0-9]* axiom" docs/
+   grep -rn "[0-9]* theorem" docs/
+   grep -rn "[0-9]* sorry" docs/
+   grep -rn "PR #[0-9]*" docs/
    ```
 
 3. **Cross-check each claim against ground truth.** Flag any mismatch.
@@ -49,7 +47,7 @@ Check documentation for stale counts, outdated references, and inconsistencies w
    - The optimizer module was removed in PR #156. Any doc mentioning `Optimizer/`, `optimizeExpr`, `simplifyArithmetic`, `applyIdentityLaws` etc. is stale.
    - Grep for these:
      ```bash
-     grep -rn "optimiz\|Optimizer\|simplifyArith\|applyIdentity\|constantFold" docs/*.md
+     grep -rn "optimiz\|Optimizer\|simplifyArith\|applyIdentity\|constantFold" docs/
      ```
 
 5. **Check PR references still make sense** — a doc saying "PR #120 added X" is fine (historical), but "PR #120 will add X" (future tense for a merged PR) is stale.
@@ -71,7 +69,7 @@ docs/PROVING_LOG.md:
   line 5: "4→3 axioms" — ✓ historical (correct at time of writing)
 
 tools/axiom_count_minimum.txt:
-  value: 0 — ✓ matches grep
+  value: 0 — ✓ matches
 
 Summary: 3 stale references found across 2 files.
 ```

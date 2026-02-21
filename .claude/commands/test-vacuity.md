@@ -17,11 +17,11 @@ A vacuous test compares two expressions that both evaluate to `[]` (empty table)
 
 1. **Read each test file** under `Test/`:
    ```
-   Test/EvalTest.lean
+   Test/SemanticsTest.lean
    Test/EquivTest.lean
    Test/AxiomCoverageTest.lean
-   Test/InfraAxiomTest.lean
-   Test/SubqueryTest.lean
+   Test/PropertyTest.lean
+   Test/ParserTest.lean
    ```
 
 2. **For each test assertion**, identify the pattern:
@@ -52,7 +52,7 @@ A vacuous test compares two expressions that both evaluate to `[]` (empty table)
 ```
 Test Vacuity Audit
 ==================
-Test/EvalTest.lean:
+Test/SemanticsTest.lean:
   line 45: "cross join produces rows"
     ✓ Anti-vacuity: testLengthGe result 2
   line 82: "left join null column"

@@ -19,12 +19,13 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
    grep -rn "sorry" Test/ --include="*.lean"
    ```
 
-2. **For each sorry, classify it:**
+   Note: `grep` will match `sorry` inside block comments (`/- ... -/`). Treat the raw output as an over-approximation: manually inspect each hit and ignore `sorry` that appears only inside commented-out code when counting active sorries.
+
+2. **For each active sorry, classify it:**
 
    | Category | Description | Example |
    |----------|-------------|---------|
    | **Termination** | `decreasing_by` obligation | `decreasing_by all_goals sorry` |
-   | **DecidableEq** | Opaque decidability instance | `unsafe def ... lcProof` |
    | **Proof gap** | Incomplete theorem proof | `theorem foo : ... := by sorry` |
    | **Test placeholder** | Placeholder in test code | Should not exist |
 
@@ -40,7 +41,7 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 ### Expected State (as of PR #174)
 
 - **3 sorry** in `SqlEquiv/Semantics.lean` — Block 1 `decreasing_by` (lambda callbacks in mutual WFR, Lean 4.27.0 limitation)
-- **1 sorry** in `SqlEquiv/Equiv/Decidable.lean` — opaque `DecidableEq` via `lcProof` (by design)
+- **1 sorry** in `SqlEquiv/Equiv/Decidable.lean` — proof gap in `checkEquivFull` notEquiv branch (requires `LawfulBEq Value`)
 - **0 sorry** elsewhere
 
 ### Output Format
@@ -48,7 +49,7 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 ```
 Sorry Audit
 ===========
-Found: 4 sorry across 2 files
+Found: 4 active sorry across 2 files
 
 SqlEquiv/Semantics.lean:
   line 288: decreasing_by all_goals sorry  [Termination] [HAS COMMENT]
@@ -56,7 +57,7 @@ SqlEquiv/Semantics.lean:
   line 317: decreasing_by all_goals sorry  [Termination] [HAS COMMENT]
 
 SqlEquiv/Equiv/Decidable.lean:
-  line 1103: sorry  [DecidableEq] [HAS COMMENT / MISSING COMMENT]
+  line 1103: sorry  [Proof gap] [HAS COMMENT: "This requires BEq to be lawful"]
 
 Documentation cross-check:
   MEMORY.md says 3+1 sorry  ✓ matches

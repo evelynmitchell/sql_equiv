@@ -21,9 +21,11 @@ Find unused private declarations across the SqlEquiv codebase.
 3. **Count occurrences of each name** in the same file. A private declaration is "used" if its name appears at least **twice** in the file (once for the definition, once or more for usage).
 
    ```bash
-   # For each name, count occurrences in its file:
-   grep -c "name_here" <file>
+   # For each name, count literal occurrences in its file:
+   grep -F -c "name_here" <file>
    ```
+
+   Use `-F` (fixed-string) because Lean names like `List.filterMap_none` contain `.` which is a regex metacharacter.
 
 4. **Report unused declarations** — any private name appearing exactly once (definition only, no usage).
 
