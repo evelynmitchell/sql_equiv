@@ -1,0 +1,597 @@
+# sql_equiv Theorem Report
+# Generated: 2026-02-21
+# Total: 562 theorems across 10 files, 0 axioms, 0 admit, 3 sorry
+#
+# Summary by file:
+#   193  Equiv/Comparison.lean
+#    94  Equiv/StatementAxioms.lean
+#    68  SemanticsCore.lean
+#    60  Semantics.lean
+#    51  Equiv/ExprAxioms.lean
+#    43  Equiv/ValueLemmas.lean
+#    26  Equiv/Decidable.lean
+#    20  Equiv/Defs.lean
+#     6  Equiv/SetBagLemmas.lean
+#     1  SemanticsBase.lean
+
+## Equiv/Comparison.lean (193 theorems)
+filter_join_left
+filter_join_right
+filter_pushdown_table
+join_assoc
+cross_join_assoc
+join_comm
+cross_join_comm
+project_join
+project_star_identity
+filter_and
+filter_commute
+filter_idempotent
+filter_true_elim'
+filter_false_empty'
+filter_project_commute
+push_filter_project_through_join
+is_null_on_null
+is_null_on_none
+is_null_on_int
+is_null_on_string
+is_null_on_bool
+is_not_null_on_null
+is_not_null_on_none
+is_not_null_on_int
+is_not_null_on_string
+is_not_null_on_bool
+is_null_is_not_null_complement
+null_add_left
+null_add_right
+null_sub_left
+null_sub_right
+null_mul_left
+null_mul_right
+null_div_left
+null_div_right
+null_eq_left
+null_eq_right
+null_ne_left
+null_ne_right
+null_lt_left
+null_lt_right
+false_and_null
+null_and_false
+true_and_null
+null_and_true
+true_or_null
+null_or_true
+false_or_null
+null_or_false
+null_and_null
+null_or_null
+trilean_not_not
+trilean_and_comm
+trilean_or_comm
+trilean_and_true
+trilean_or_false
+trilean_and_false
+trilean_or_true
+trilean_de_morgan_and
+trilean_de_morgan_or
+isNullValue_none
+isNullValue_null
+isNullValue_int
+isNullValue_string
+isNullValue_bool
+(private) coalesce_toUpper
+(private) nullif_toUpper
+coalesce_null_left_nonnull
+coalesce_int_left
+coalesce_string_left
+coalesce_bool_left
+coalesce_single_int
+coalesce_single_string
+coalesce_single_bool
+coalesce_single_null
+coalesce_empty
+nullif_same_int
+nullif_diff_int
+value_null_or_not_null
+value_is_null_complement
+typed_null_same_nullness
+count_star_nonneg
+count_star_empty
+count_star_singleton
+count_after_filter_le
+sum_empty
+sum_singleton
+sum_add_zero
+min_singleton
+max_singleton
+(private) foldl_min_le_init
+(private) foldl_min_le_of_mem
+(private) init_le_foldl_max
+(private) le_foldl_max_of_mem
+min_le_elem
+max_ge_elem
+distinct_count_le
+(private) nodup_implies_eraseDups_eq
+distinct_idempotent
+count_distinct_le_count
+case_when_true
+case_when_false
+case_when_false_no_else
+case_empty_else
+case_empty_no_else
+filter_and_eq_filter_filter
+filter_comm
+predicate_pushdown
+expr_add_zero
+expr_zero_add
+expr_mul_one
+expr_one_mul
+expr_mul_zero
+expr_zero_mul
+expr_sub_zero
+(private) not_map_bool_eq
+(private) evalUnaryOp_not_eq
+in_empty_false
+not_in_empty_true
+(private) or_false_map_bool
+(private) evalBinOp_or_false_left_eq
+(private) eval_foldl_or_eq
+(private) not_foldl_or_eq_is_foldl_and_ne
+in_singleton
+not_in_singleton
+in_pair
+not_in_pair
+in_list_or_expansion
+not_in_list_and_expansion
+between_expansion
+between_reflexive
+(private) simpleLike_pct
+like_match_all
+(private) simpleLike_empty
+(private) evalBinOp_like_empty_eq_eq
+like_empty_pattern
+(private) isPrefixOf_append
+(private) dropLast_isPrefixOf
+(private) stringContains_go_of_prefix_at
+(private) simpleLike_self
+like_self
+(private) evalFunc_concat_empty_left
+(private) evalFunc_concat_empty_right
+concat_empty_left
+concat_empty_right
+(private) evalFunc_length_concat
+length_concat
+(private) toNat_ofNat_of_isValid
+(private) char_toUpper_toLower_toUpper
+(private) char_toLower_toUpper_toLower
+(private) char_toUpper_idem
+(private) char_toLower_idem
+(private) string_toUpper_idem
+(private) string_toLower_idem
+(private) evalFunc_upper_idem
+(private) evalFunc_lower_idem
+upper_idempotent
+lower_idempotent
+(private) string_toUpper_toLower_toUpper
+(private) string_toLower_toUpper_toLower
+(private) evalFunc_upper_lower_upper
+(private) evalFunc_lower_upper_lower
+upper_lower_upper
+lower_upper_lower
+length_empty
+eq_reflexive
+ne_irreflexive
+(private) not_map_bool_cancel
+(private) not_map_ordering_eq_lt
+(private) not_map_ordering_ne_gt
+(private) not_map_ordering_eq_gt
+(private) not_map_ordering_ne_lt
+(private) evalUnaryOp_not_ne
+(private) evalUnaryOp_not_lt
+(private) evalUnaryOp_not_le
+(private) evalUnaryOp_not_gt
+(private) evalUnaryOp_not_ge
+not_eq_is_ne
+not_ne_is_eq
+not_lt_is_ge
+not_le_is_gt
+not_gt_is_le
+not_ge_is_lt
+not_between_expansion
+(private) compare_swap_gen
+(private) ordering_lt_eq_swap_gt
+(private) ordering_ne_gt_eq_swap_ne_lt
+(private) evalBinOp_lt_eq_gt_flip
+(private) evalBinOp_le_eq_ge_flip
+lt_flip
+le_flip
+gt_flip
+ge_flip
+
+## Equiv/Decidable.lean (26 theorems)
+(private) foldl_append_singleton_eq_map
+(private) evalCaseHelper_map_congr
+(private) sizeOf_binOp_left
+(private) sizeOf_binOp_right
+(private) sizeOf_unaryOp_inner
+(private) sizeOf_between_e
+(private) sizeOf_between_lo
+(private) sizeOf_between_hi
+(private) sizeOf_inSubquery_e
+(private) sizeOf_inList_e
+normalizeExpr_equiv
+syntacticEquiv_implies_equiv
+(private) foldl_and_congr_bridge
+(private) foldl_double_and_congr_bridge
+isGround_eq_isGroundCore
+(private) foldl_and_false_local
+(private) foldl_and_true_forall_local
+(private) filterMap_const_eq
+(private) evalAggOverTableParam_ground_eq
+(private) evalExprWithAggParam_ground_eq
+(private) evalExprWithWindowParam_ground_eq
+(private) evalSelectCore_ground_outerRow_eq
+selectStmtGround_eval_independent
+decideExprEquiv_sound
+ground_expr_eval_independent
+decideGroundExprEquiv_sound
+
+## Equiv/Defs.lean (20 theorems)
+expr_equiv_refl
+expr_equiv_symm
+expr_equiv_trans
+select_equiv_refl
+select_equiv_symm
+select_equiv_trans
+query_equiv_refl
+query_equiv_symm
+query_equiv_trans
+query_bag_equiv_refl
+query_bag_equiv_symm
+query_bag_equiv_trans
+query_set_equiv_refl
+query_set_equiv_symm
+query_set_equiv_trans
+QueryEquiv.toBagEquiv
+QueryBagEquiv.toSetEquiv
+stmt_equiv_refl
+stmt_equiv_symm
+stmt_equiv_trans
+
+## Equiv/ExprAxioms.lean (51 theorems)
+and_comm
+or_comm
+add_comm
+mul_comm
+not_not_bool
+not_not
+eq_comm
+and_assoc
+or_assoc
+not_and
+not_or
+and_or_distrib_left
+and_or_distrib_right
+or_and_distrib_left
+or_and_distrib_right
+and_absorb_or
+or_absorb_and
+and_true
+or_false
+and_false
+or_true
+where_true_elim
+where_false_empty
+normalizeExpr_binOp_other
+normalizeExpr_binOp_and
+normalizeExpr_binOp_or
+normalizeExpr_binOp_add
+normalizeExpr_binOp_mul
+normalizeExpr_func
+normalizeExpr_agg
+normalizeExpr_case
+normalizeExpr_inList
+expr_equiv_subst
+true_and
+false_or
+false_and
+true_or
+and_self
+or_self
+and_not_self
+or_not_self
+not_self_and
+not_self_or
+or_not_not
+and_not_not
+or_and_factor_left
+and_or_factor_left
+binOp_congr
+unaryOp_congr
+binOp_congr_left
+binOp_congr_right
+
+## Equiv/SetBagLemmas.lean (6 theorems)
+perm_ext_iff_of_nodup
+mem_eraseDups
+nodup_eraseDups
+Perm_eraseDups
+mem_filter_contains
+mem_eraseDups_append
+
+## Equiv/StatementAxioms.lean (94 theorems)
+union_all_length
+except_self_empty
+intersect_empty_right
+intersect_idempotent
+union_all_comm
+union_comm
+union_assoc
+intersect_assoc
+intersect_comm
+union_idempotent
+union_empty_right
+union_intersect_distrib
+intersect_union_distrib
+(private) List.filterMap_none
+(private) List.flatMap_const_nil
+(private) List.filterMap_some_comp
+(private) List.length_flatMap_const
+(private) List.length_flatMap_le
+(private) List.length_flatMap_ge_length
+(private) left_join_body_length_ge_one
+(private) right_join_body_length_ge_one
+(private) exists_mem_flatMap_of_length_ge_one
+inner_join_true_is_cross
+inner_join_false_empty
+left_join_false_all_left
+cross_join_cardinality
+cross_join_cardinality_comm
+inner_join_cardinality_le
+left_join_cardinality_ge
+right_join_cardinality_ge
+inner_join_empty_left
+inner_join_empty_right
+cross_join_empty_left
+cross_join_empty_right
+cross_join_assoc_cardinality
+inner_join_to_where
+left_join_preserves_left
+right_join_preserves_right
+inner_subset_cross
+(private) flatMap_length_eq_of_forall
+(private) filter_pred_false_on_null_mapped
+left_join_filter_null_is_inner
+exists_empty_false
+not_exists_empty_true
+exists_nonempty_true
+not_exists_nonempty_false
+not_not_exists
+in_empty_subquery_false
+not_in_empty_subquery_true
+scalar_subquery_empty_null
+exists_as_count_gt_zero
+not_exists_as_count_eq_zero
+(private) List.any_eq_not_isEmpty_filter
+(private) List.isEmpty_map
+(private) List.any_map
+in_subquery_as_exists
+not_in_subquery_as_not_exists
+subquery_limit_one
+scalar_subquery_is_first
+exists_monotonic
+subquery_where_true
+subquery_where_false
+in_singleton_subquery
+(private) list_filter_map_eq_flatMap
+(private) list_filter_map_of_flatMap
+(private) list_flatMap_congr_mem
+(private) lookup_append_none_left
+(private) isNullValue_lookup_nullPad
+(private) filter_null_pad_empty
+join_match_implies_in_subquery
+not_in_subquery_unnest_to_antijoin
+in_subquery_implies_join_match
+in_subquery_unnest_to_join
+order_by_preserves_count
+order_by_length_invariant
+limit_zero_empty
+limit_upper_bound
+limit_none_all_rows
+limit_monotonic
+limit_one_singleton
+(private) evalSelect_SN
+(private) evalSelect_S0
+(private) evalSelect_0N
+offset_zero_identity
+offset_too_large_empty
+offset_reduces_count
+offset_monotonic
+(private) take_add_eq
+limit_offset_compose
+offset_limit_zero_empty
+pagination_upper_bound
+pagination_identity
+consecutive_pages
+order_limit_deterministic
+
+## Equiv/ValueLemmas.lean (43 theorems)
+evalBinOp_and_comm
+evalBinOp_or_comm
+evalBinOp_add_comm
+evalBinOp_mul_comm
+Int.beq_comm
+String.beq_comm
+Bool.beq_comm
+evalBinOp_eq_comm
+evalBinOp_and_false_right
+evalBinOp_and_false_left
+evalBinOp_or_true_right
+evalBinOp_or_true_left
+evalBinOp_and_true_right
+evalBinOp_or_false_right
+evalBinOp_and_idem
+evalBinOp_or_idem
+evalUnaryOp_not_bool
+evalBinOp_and_not_self
+evalBinOp_or_not_self
+evalBinOp_and_true_left
+evalBinOp_or_false_left
+evalBinOp_and_assoc
+evalBinOp_or_assoc
+evalBinOp_and_absorb_or
+evalBinOp_or_absorb_and
+evalUnaryOp_not_and
+evalUnaryOp_not_or
+evalUnaryOp_not_or_bnn
+evalUnaryOp_not_and_bnn
+evalBinOp_eq_isBoolOrNullOrNone
+evalBinOp_ge_isBoolOrNullOrNone
+evalBinOp_le_isBoolOrNullOrNone
+evalBinOp_or_preserves_bnn
+evalBinOp_and_or_distrib
+evalBinOp_and_or_distrib_right
+evalBinOp_or_and_distrib
+evalBinOp_or_and_distrib_right
+Value.eq_comm
+eq_true_of_evalBinOp_eq
+evalBinOp_eq_of_eq_true
+Value.eq_some_true_not_null_left
+Value.eq_some_true_not_null_right
+Option.beq_some_true_iff
+
+## Semantics.lean (60 theorems)
+evalExprWithDb_eq_evalExprCore
+evalCase_eq_evalCaseHelper
+evalFrom_eq_evalFromCore
+evalExprWithDb_lit
+evalExprWithDb_col
+evalExprWithDb_binOp
+evalExprWithDb_unaryOp
+evalExprWithDb_exists
+evalExprWithDb_subquery
+evalExprWithDb_inSubquery
+evalExprWithDb_case
+evalCase_nil_some
+evalCase_nil_none
+evalCase_cons_true
+evalCase_cons_false
+evalExprWithDb_func
+evalExprWithDb_between
+evalExprWithDb_inList
+evalFrom_table
+evalFrom_subquery
+evalFrom_cross_join
+evalFrom_inner_join
+evalFrom_left_join
+evalFrom_right_join
+evalQuery_eq_evalQueryCore_simple
+evalQuery_eq_evalQueryCore_compound
+evalSelect_eq_evalSelectCore
+evalSelectWithContext_eq_evalSelectCore
+evalSelect_limit_offset
+evalSelect_orderBy_length
+evalSelect_where_congr
+evalSelect_filter_all_false
+evalSelectWithContext_where_congr
+evalSelectWithContext_filter_all_false
+evalSelectWithContext_limit_offset
+evalQuery_simple
+evalQuery_compound
+evalSelectWithContext_simple_project
+evalSelectWithContext_simple_project_where
+(private) selectHasAggregate_star
+(private) selectHasWindowFn_star
+evalSelectItem_star
+selectHasAggregate_qualified_star
+selectHasWindowFn_qualified_star
+evalSelectItem_qualified_star
+(private) list_map_nil_append_eq
+evalSelect_distinct_project
+evalSelect_distinct_project_where
+evalSelect_nondistinct_project
+evalSelect_nondistinct_project_where
+(private) evalFrom_subquery_core
+(private) evalExprWithDb_and_true_iff
+evalSelect_filter_and
+evalSelect_filter_commute
+evalSelect_filter_idempotent
+evalSelect_filter_pushdown_table
+evalSelect_star_where_eq_filter
+evalSelect_predicate_pushdown
+evalSelect_filter_join_left
+evalSelect_filter_join_right
+
+## SemanticsBase.lean (1 theorem)
+evalBinOp_and_true_iff
+
+## SemanticsCore.lean (68 theorems)
+evalExprCore_lit
+evalExprCore_col
+evalExprCore_binOp
+evalExprCore_unaryOp
+evalExprCore_func
+evalExprCore_between
+evalExprCore_inList
+evalExprCore_exists
+evalExprCore_subquery
+evalExprCore_inSubquery
+(private) case_foldl_found_invariant
+(private) case_foldl_eq_evalCaseHelper
+evalExprCore_case
+evalCaseHelper_nil
+evalCaseHelper_cons_true
+evalCaseHelper_cons_false
+evalFromCore_table
+evalFromCore_subquery
+evalFromCore_cross_join
+evalFromCore_inner_join
+evalFromCore_left_join
+evalFromCore_right_join
+evalQueryCore_simple
+evalQueryCore_compound
+applyOrderByLimitOffset_length_eq
+applyOrderByLimitOffset_nil
+evalSelectProjectDistinct_nil
+evalSelectCore_eq_afterFilter
+evalSelectCore_limit_offset
+evalSelectCore_orderBy_length
+evalSelectCore_where_congr
+(private) filter_eq_nil_of_false
+evalSelectCore_filter_all_false
+list_filter_and_eq
+(private) list_filter_comm
+(private) list_filter_false
+list_flatMap_filter_comm
+list_filter_filterMap_comm
+(private) evalSelectAfterFilter_star_identity
+evalSelectCore_star_where_eq_filter
+evalSelectCore_filter_and
+evalSelectCore_filter_commute
+evalSelectCore_filter_idempotent
+evalSelectCore_filter_pushdown_table
+evalSelectCore_simple_project
+evalSelectCore_simple_project_where
+evalSelectCore_distinct_project
+evalSelectCore_distinct_project_where
+(private) foldl_and_false_init
+(private) foldl_and_true_forall
+(private) case_foldl_false_init
+(private) case_foldl_true_forall
+(private) evalCaseHelper_congr
+(private) inList_foldl_eval_independent
+(private) isGroundCore_case_branches
+(private) isGroundCore_case_else
+(private) isGroundCore_inList_expr
+(private) isGroundCore_inList_vals
+isGroundCore_eval_independent
+evalExprCore_sqe_congr
+(private) map_const_length_eq'
+(private) filter_const_length_eq'
+flatMap_congr_mem
+(private) map_zip_congr_snd
+(private) foldl_addToGroupsByKey_const_key_acc
+(private) foldl_addToGroupsByKey_const_key
+evalSelectProjectDistinct_eq_of_length_eq
+evalSelectCore_outerRow_congr
