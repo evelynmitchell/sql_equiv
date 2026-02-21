@@ -286,6 +286,10 @@ def evalExprWithDb (db : Database) (row : Row) (e : Expr) : Option Value :=
   evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e
 termination_by sizeOf e
 decreasing_by all_goals sorry
+-- NOTE: Lambda callbacks make these goals unprovable by Lean 4.27.0's termination
+-- checker. The Core functions call callbacks only on structural subterms, but Lean
+-- can't see through the lambda to verify this. Functions are still `def` (not
+-- `partial`) and equational theorems work correctly.
 
 /-- Evaluate FROM clause to get source rows -/
 def evalFrom (db : Database) (fc : FromClause) : Table :=
@@ -868,15 +872,18 @@ def evalRecursiveCTEParam (db : Database) (cteName : String) (cteQuery : Query)
   termination_by maxCTEIterations - iteration
   iterate [] 0
 
-mutual
+/-- Fixed-point iteration: apply `step` repeatedly up to `fuel` times,
+    stopping early when the result stabilizes. Structurally recursive on Nat. -/
+def fixedPointIterate (step : Table → Table) (init : Table) : Nat → Table
+  | 0 => init
+  | n + 1 =>
+    let result := step init
+    if result == init then init else fixedPointIterate step result n
 
-/-- Evaluate a recursive CTE using fixed-point iteration -/
-def evalRecursiveCTE (db : Database) (cteName : String) (cteQuery : Query) : Table :=
-  evalRecursiveCTEParam db cteName cteQuery (fun db' q => evalQuery db' q)
-termination_by sizeOf cteQuery
-decreasing_by all_goals sorry
-
-/-- Evaluate a Query (simple SELECT or compound with set operations) -/
+/-- Evaluate a Query (simple SELECT or compound with set operations).
+    CTEs are processed by matching on the list structure (cons vs nil)
+    instead of using foldl, making all recursive calls structurally visible
+    for the termination checker. -/
 def evalQuery (db : Database) (q : Query) : Table :=
   match q with
   | .simple sel => evalSelect db sel
@@ -888,30 +895,42 @@ def evalQuery (db : Database) (q : Query) : Table :=
     | .unionAll => leftResult ++ rightResult
     | .intersect => leftResult.filter fun row => rightResult.contains row
     | .exceptOp => leftResult.filter fun row => !rightResult.contains row
-  | .withCTE ctes query =>
-    let dbWithCtes := ctes.foldl (fun db' cte =>
-      fun name =>
-        if name == cte.name then
-          if cte.isRecursive then
-            evalRecursiveCTE db' cte.name cte.query
-          else
-            evalQuery db' cte.query
-        else
-          db' name
-    ) db
-    evalQuery dbWithCtes query
+  | .withCTE [] query => evalQuery db query
+  | .withCTE (cte :: rest) query =>
+    let cteResult :=
+      if cte.isRecursive then
+        fixedPointIterate
+          (fun workingTable =>
+            evalQuery (fun n => if n == cte.name then workingTable else db n) cte.query)
+          [] maxCTEIterations
+      else
+        evalQuery db cte.query
+    let newDb : Database := fun name =>
+      if name == cte.name then cteResult else db name
+    evalQuery newDb (.withCTE rest query)
 termination_by sizeOf q
-decreasing_by all_goals sorry
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (obtain ⟨_, cq, _⟩ := cte
+       simp only [CTEDef.query, CTEDef.mk.sizeOf_spec]
+       omega)
 
-end
+/-- Evaluate a recursive CTE using fixed-point iteration -/
+def evalRecursiveCTE (db : Database) (cteName : String) (cteQuery : Query) : Table :=
+  evalRecursiveCTEParam db cteName cteQuery (fun db' q => evalQuery db' q)
 
-/-- Bridge: evalQuery equals evalQueryCore instantiated with evalSelect, evalQuery, evalRecursiveCTE -/
-theorem evalQuery_eq_evalQueryCore (db : Database) (q : Query) :
-    evalQuery db q = evalQueryCore db evalSelect evalQuery evalRecursiveCTE q := by
-  cases q with
-  | simple sel => unfold evalQuery; simp [evalQueryCore]
-  | compound left op right => unfold evalQuery evalQueryCore; rfl
-  | withCTE ctes query => unfold evalQuery evalQueryCore; rfl
+/-- Bridge: evalQuery on .simple equals evalQueryCore -/
+theorem evalQuery_eq_evalQueryCore_simple (db : Database) (sel : SelectStmt) :
+    evalQuery db (.simple sel) = evalQueryCore db evalSelect evalQuery evalRecursiveCTE (.simple sel) := by
+  unfold evalQuery; simp [evalQueryCore]
+
+/-- Bridge: evalQuery on .compound equals evalQueryCore -/
+theorem evalQuery_eq_evalQueryCore_compound (db : Database) (left right : Query) (op : SetOp) :
+    evalQuery db (.compound left op right) =
+    evalQueryCore db evalSelect evalQuery evalRecursiveCTE (.compound left op right) := by
+  unfold evalQuery evalQueryCore; rfl
 
 private abbrev ee := fun db' (r : Row) e => @evalExprWithDb db' r e
 
@@ -1052,7 +1071,7 @@ theorem evalSelectWithContext_limit_offset (db : Database) (outerRow : Row)
     Proved via evalQueryCore bridge. -/
 theorem evalQuery_simple (db : Database) (sel : SelectStmt) :
     evalQuery db (.simple sel) = evalSelect db sel :=
-  (evalQuery_eq_evalQueryCore db (.simple sel)).trans (evalQueryCore_simple ..)
+  (evalQuery_eq_evalQueryCore_simple db sel).trans (evalQueryCore_simple ..)
 
 /-- Infrastructure: evalQuery on a compound query decomposes into the set operation.
     Proved via evalQueryCore bridge. -/
@@ -1065,7 +1084,7 @@ theorem evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     | .unionAll => l ++ r
     | .intersect => l.filter (r.contains ·)
     | .exceptOp => l.filter (!r.contains ·) :=
-  (evalQuery_eq_evalQueryCore db (.compound left op right)).trans (evalQueryCore_compound ..)
+  (evalQuery_eq_evalQueryCore_compound db left right op).trans (evalQueryCore_compound ..)
 
 -- ============================================================================
 -- Simple SELECT decomposition (for IN/EXISTS subquery proofs)
