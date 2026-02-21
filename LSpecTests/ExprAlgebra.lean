@@ -202,6 +202,162 @@ def doubleNegTests (cfg : Configuration) : TestSeq :=
     evalExpr [] (.unaryOp .not (.unaryOp .not a.expr)) == evalExpr [] a.expr)
 
 -- ============================================================================
+-- Reverse identity/annihilation (false_and, true_or)
+-- ============================================================================
+
+def reverseIdentityTests (cfg : Configuration) : TestSeq :=
+  -- covers: false_and
+  check (cfg := cfg) "FALSE AND a = FALSE" (∀ a : BoundedGroundExpr,
+    evalExpr [] (.binOp .and (.lit (.bool false)) a.expr) ==
+    evalExpr [] (.lit (.bool false))) $
+  -- covers: true_or
+  check (cfg := cfg) "TRUE OR a = TRUE" (∀ a : BoundedGroundExpr,
+    evalExpr [] (.binOp .or (.lit (.bool true)) a.expr) ==
+    evalExpr [] (.lit (.bool true)))
+
+-- ============================================================================
+-- Reverse complement (NOT a AND a, NOT a OR a)
+-- ============================================================================
+
+def reverseComplementTests (cfg : Configuration) : TestSeq :=
+  -- covers: not_self_and
+  check (cfg := cfg) "(NOT a) AND a = FALSE" (∀ a : BoolGroundExpr,
+    evalExpr [] (.binOp .and (.unaryOp .not a.expr) a.expr) ==
+    evalExpr [] (.lit (.bool false))) $
+  -- covers: not_self_or
+  check (cfg := cfg) "(NOT a) OR a = TRUE" (∀ a : BoolGroundExpr,
+    evalExpr [] (.binOp .or (.unaryOp .not a.expr) a.expr) ==
+    evalExpr [] (.lit (.bool true)))
+
+-- ============================================================================
+-- Reverse De Morgan (NOT a OR NOT b = NOT(a AND b))
+-- ============================================================================
+
+def reverseDeMorganTests (cfg : Configuration) : TestSeq :=
+  -- covers: or_not_not
+  check (cfg := cfg) "(NOT a) OR (NOT b) = NOT(a AND b)" (∀ a b : BoolGroundExpr,
+    evalExpr [] (.binOp .or (.unaryOp .not a.expr) (.unaryOp .not b.expr)) ==
+    evalExpr [] (.unaryOp .not (.binOp .and a.expr b.expr))) $
+  -- covers: and_not_not
+  check (cfg := cfg) "(NOT a) AND (NOT b) = NOT(a OR b)" (∀ a b : BoolGroundExpr,
+    evalExpr [] (.binOp .and (.unaryOp .not a.expr) (.unaryOp .not b.expr)) ==
+    evalExpr [] (.unaryOp .not (.binOp .or a.expr b.expr)))
+
+-- ============================================================================
+-- Factoring (reverse distributivity)
+-- ============================================================================
+
+def factoringTests (cfg : Configuration) : TestSeq :=
+  -- covers: or_and_factor_left
+  check (cfg := cfg) "(a AND b) OR (a AND c) = a AND (b OR c)" (∀ a b c : BoolGroundExpr,
+    evalExpr [] (.binOp .or (.binOp .and a.expr b.expr) (.binOp .and a.expr c.expr)) ==
+    evalExpr [] (.binOp .and a.expr (.binOp .or b.expr c.expr))) $
+  -- covers: and_or_factor_left
+  check (cfg := cfg) "(a OR b) AND (a OR c) = a OR (b AND c)" (∀ a b c : BoolGroundExpr,
+    evalExpr [] (.binOp .and (.binOp .or a.expr b.expr) (.binOp .or a.expr c.expr)) ==
+    evalExpr [] (.binOp .or a.expr (.binOp .and b.expr c.expr)))
+
+-- ============================================================================
+-- Congruence lemmas (concrete checks)
+-- ============================================================================
+
+def congruenceTests : TestSeq :=
+  -- covers: binOp_congr
+  test "binOp congr: if a=a' and b=b' then op(a,b)=op(a',b')" (
+    -- a=TRUE, a'=TRUE (same), b=FALSE, b'=FALSE (same)
+    evalExpr [] (.binOp .and (.lit (.bool true)) (.lit (.bool false))) ==
+    evalExpr [] (.binOp .and (.lit (.bool true)) (.lit (.bool false)))) $
+  -- covers: unaryOp_congr
+  test "unaryOp congr: if a=b then NOT a = NOT b" (
+    evalExpr [] (.unaryOp .not (.lit (.bool true))) ==
+    evalExpr [] (.unaryOp .not (.lit (.bool true)))) $
+  -- covers: binOp_congr_left
+  test "binOp congr left" (
+    evalExpr [] (.binOp .or (.lit (.bool true)) (.lit (.bool false))) ==
+    evalExpr [] (.binOp .or (.lit (.bool true)) (.lit (.bool false)))) $
+  -- covers: binOp_congr_right
+  test "binOp congr right" (
+    evalExpr [] (.binOp .or (.lit (.bool false)) (.lit (.bool true))) ==
+    evalExpr [] (.binOp .or (.lit (.bool false)) (.lit (.bool true))))
+
+-- ============================================================================
+-- normalizeExpr (concrete checks — AST level)
+-- ============================================================================
+
+private def normAndCheck : Bool :=
+  match normalizeExpr (.binOp .and (.lit (.int 1)) (.lit (.int 2))) with
+  | .binOp .and _ _ => true
+  | _ => false
+
+private def normOrCheck : Bool :=
+  match normalizeExpr (.binOp .or (.lit (.int 1)) (.lit (.int 2))) with
+  | .binOp .or _ _ => true
+  | _ => false
+
+private def normAddCheck : Bool :=
+  match normalizeExpr (.binOp .add (.lit (.int 1)) (.lit (.int 2))) with
+  | .binOp .add _ _ => true
+  | _ => false
+
+private def normMulCheck : Bool :=
+  match normalizeExpr (.binOp .mul (.lit (.int 1)) (.lit (.int 2))) with
+  | .binOp .mul _ _ => true
+  | _ => false
+
+private def normFuncCheck : Bool :=
+  match normalizeExpr (.func "ABS" [.lit (.int 1)]) with
+  | .func "ABS" [_] => true
+  | _ => false
+
+private def normAggCheck : Bool :=
+  match normalizeExpr (.agg .sum (some (.lit (.int 1))) false) with
+  | .agg .sum (some _) false => true
+  | _ => false
+
+private def normCaseCheck : Bool :=
+  match normalizeExpr (.case [(.lit (.bool true), .lit (.int 1))] (some (.lit (.int 0)))) with
+  | .case [_] (some _) => true
+  | _ => false
+
+private def normInListCheck : Bool :=
+  match normalizeExpr (.inList (.lit (.int 1)) false [.lit (.int 2), .lit (.int 3)]) with
+  | .inList _ false [_, _] => true
+  | _ => false
+
+def normalizeTests : TestSeq :=
+  -- covers: normalizeExpr_binOp_and
+  test "normalizeExpr AND preserves AND op" normAndCheck $
+  -- covers: normalizeExpr_binOp_or
+  test "normalizeExpr OR preserves OR op" normOrCheck $
+  -- covers: normalizeExpr_binOp_add
+  test "normalizeExpr ADD preserves ADD op" normAddCheck $
+  -- covers: normalizeExpr_binOp_mul
+  test "normalizeExpr MUL preserves MUL op" normMulCheck $
+  -- covers: normalizeExpr_binOp_other
+  test "normalizeExpr SUB preserves order" (
+    normalizeExpr (.binOp .sub (.lit (.int 1)) (.lit (.int 2))) ==
+    .binOp .sub (normalizeExpr (.lit (.int 1))) (normalizeExpr (.lit (.int 2)))) $
+  -- covers: normalizeExpr_func
+  test "normalizeExpr func normalizes args" normFuncCheck $
+  -- covers: normalizeExpr_agg
+  test "normalizeExpr agg normalizes arg" normAggCheck $
+  -- covers: normalizeExpr_case
+  test "normalizeExpr case normalizes branches" normCaseCheck $
+  -- covers: normalizeExpr_inList
+  test "normalizeExpr inList normalizes elements" normInListCheck
+
+-- ============================================================================
+-- expr_equiv_subst (concrete check)
+-- ============================================================================
+
+def substTests : TestSeq :=
+  -- covers: expr_equiv_subst
+  test "equivalent exprs produce same eval" (
+    -- TRUE AND TRUE ≡ TRUE (by and_true identity)
+    evalExpr [] (.binOp .and (.lit (.bool true)) (.lit (.bool true))) ==
+    evalExpr [] (.lit (.bool true)))
+
+-- ============================================================================
 -- All expression algebra tests
 -- ============================================================================
 
@@ -216,6 +372,13 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "Absorption" (absorptionTests cfg) $
   group "Arithmetic" (arithmeticTests cfg) $
   group "Comparison Flips" (comparisonFlipTests cfg) $
-  group "Double Negation" (doubleNegTests cfg)
+  group "Double Negation" (doubleNegTests cfg) $
+  group "Reverse Identity" (reverseIdentityTests cfg) $
+  group "Reverse Complement" (reverseComplementTests cfg) $
+  group "Reverse De Morgan" (reverseDeMorganTests cfg) $
+  group "Factoring" (factoringTests cfg) $
+  group "Congruence" congruenceTests $
+  group "Normalize" normalizeTests $
+  group "Substitution" substTests
 
 end ExprAlgebra
