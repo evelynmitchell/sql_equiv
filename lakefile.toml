@@ -34,3 +34,7 @@ globs = ["LSpecTests.*"]
 [[lean_exe]]
 name = "sql_equiv_lspec"
 root = "LSpecTests.Main"
+
+[[lean_exe]]
+name = "unused_theorem_checker"
+root = "tools.UnusedTheoremChecker"
