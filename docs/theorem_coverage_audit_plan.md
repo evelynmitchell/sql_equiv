@@ -3,7 +3,7 @@
 ## Status
 - Branch: `master` (current)
 - **0 axioms** across tracked `.lean` files (0 in `Equiv/`, 0 in infrastructure)
-- **561 theorems** proved (100.0%)
+- **562 theorems** proved (100.0%)
 - Axiom ratchet: 0 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
@@ -44,12 +44,12 @@ Run with `--runtime` flag for full analysis. No build required.
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Semantics.lean` | 0 | 59 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
+| `Semantics.lean` | 0 | 60 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
 | `SemanticsBase.lean` | 0 | 1 |  |
 | `SemanticsCore.lean` | 0 | 68 |  |
-| **Subtotal** | **0** | **128** | |
+| **Subtotal** | **0** | **129** | |
 
-### Grand Total: 0 axioms, 561 theorems (100.0% proved)
+### Grand Total: 0 axioms, 562 theorems (100.0% proved)
 
 > **Note:** `Semantics_test.lean` is an untracked scratch file (7 axioms, 38
 > theorems) not included in these counts. The ratchet tracks only committed files.
