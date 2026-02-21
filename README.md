@@ -52,17 +52,17 @@ def StmtEquiv (s1 s2 : Stmt) : Prop :=
 
 ```lean
 -- Automated equivalence proving (handles boolean, arithmetic, comparison)
-example : Expr.binOp .and a b =~e Expr.binOp .and b a := by sql_equiv
-example : Expr.binOp .add a (Expr.lit (.int 0)) =~e a := by sql_equiv
-example : Expr.binOp .lt a b =~e Expr.binOp .gt b a := by sql_equiv
+example : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by sql_equiv
+example : Expr.binOp .add a (Expr.lit (.int 0)) ≃ₑ a := by sql_equiv
+example : Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a := by sql_equiv
 
 -- SQL-specific simplification
 example : ... := by sql_simp
 
 -- Reflexivity, symmetry, transitivity
-example : a =~e a := by sql_refl
-example (h : a =~e b) : b =~e a := by sql_symm; exact h
-example (h1 : a =~e b) (h2 : b =~e c) : a =~e c := by sql_trans b <;> assumption
+example : a ≃ₑ a := by sql_refl
+example (h : a ≃ₑ b) : b ≃ₑ a := by sql_symm; exact h
+example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by sql_trans b <;> assumption
 
 -- Specialized rewrite tactics
 example : ... := by sql_rw_arith      -- Arithmetic identities (x+0=x, x*1=x)
@@ -107,7 +107,13 @@ lake build
 # Run the complete test suite
 lake exe sql_equiv_test
 
-# Run the demo
+# Run LSpec property-based tests (SlimCheck-powered)
+lake exe sql_equiv_lspec
+
+# Run the unused private checker
+python tools/unused_private_checker.py 2>/dev/null
+
+# Run the demo REPL
 lake exe sql_equiv
 ```
 
@@ -171,12 +177,12 @@ open SqlEquiv
 
 -- Prove AND is commutative
 theorem my_and_comm (a b : Expr) :
-    Expr.binOp .and a b =~e Expr.binOp .and b a := by
+    Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by
   sql_equiv
 
--- Prove double negation elimination
-theorem my_not_not (e : Expr) :
-    Expr.unaryOp .not (Expr.unaryOp .not e) =~e e := by
+-- Prove double negation elimination (requires isBoolValued precondition)
+theorem my_not_not (e : Expr) (h : e.isBoolValued) :
+    Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e := by
   sql_equiv
 
 -- Prove WHERE TRUE is equivalent to no WHERE clause
@@ -227,16 +233,16 @@ open SqlEquiv
 variable (a b c : Expr)
 
 -- Basic commutativity
-example : Expr.binOp .and a b =~e Expr.binOp .and b a := by sql_equiv
-example : Expr.binOp .or a b =~e Expr.binOp .or b a := by sql_equiv
-example : Expr.binOp .add a b =~e Expr.binOp .add b a := by sql_equiv
-example : Expr.binOp .mul a b =~e Expr.binOp .mul b a := by sql_equiv
+example : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by sql_equiv
+example : Expr.binOp .or a b ≃ₑ Expr.binOp .or b a := by sql_equiv
+example : Expr.binOp .add a b ≃ₑ Expr.binOp .add b a := by sql_equiv
+example : Expr.binOp .mul a b ≃ₑ Expr.binOp .mul b a := by sql_equiv
 
--- Double negation
-example : Expr.unaryOp .not (Expr.unaryOp .not a) =~e a := by sql_equiv
+-- Double negation (requires isBoolValued precondition)
+example (h : a.isBoolValued) : Expr.unaryOp .not (Expr.unaryOp .not a) ≃ₑ a := by sql_equiv
 
 -- Using transitivity
-example (h1 : a =~e b) (h2 : b =~e c) : a =~e c := by
+example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
   sql_trans b
   . exact h1
   . exact h2
@@ -251,8 +257,17 @@ example (h1 : a =~e b) (h2 : b =~e c) : a =~e c := by
 | `SqlEquiv.Ast` | Abstract Syntax Tree definitions for all SQL constructs |
 | `SqlEquiv.Parser` | Hand-rolled recursive descent parser with tokenizer |
 | `SqlEquiv.Pretty` | Pretty printer for converting AST back to SQL strings |
-| `SqlEquiv.Semantics` | Relational algebra-based evaluation model |
-| `SqlEquiv.Equiv` | Equivalence definitions and core theorems |
+| `SqlEquiv.SemanticsBase` | Core types and helpers for the evaluation model |
+| `SqlEquiv.SemanticsCore` | Non-partial evaluation mirrors and lemmas |
+| `SqlEquiv.Semantics` | Well-founded recursive evaluator with bridge theorems |
+| `SqlEquiv.Equiv` | Re-export hub for all equivalence submodules |
+| `SqlEquiv.Equiv.Defs` | Equivalence relation definitions (ExprEquiv, SelectEquiv, etc.) |
+| `SqlEquiv.Equiv.ValueLemmas` | Value-level lemmas for evalBinOp/evalUnaryOp |
+| `SqlEquiv.Equiv.ExprAxioms` | Expression equivalence theorems (commutativity, identity, etc.) |
+| `SqlEquiv.Equiv.Comparison` | Comparison, NULL, aggregate, join, and filter theorems |
+| `SqlEquiv.Equiv.StatementAxioms` | Statement-level theorems (joins, set ops, subqueries, LIMIT/OFFSET) |
+| `SqlEquiv.Equiv.SetBagLemmas` | Set/bag algebra helper lemmas |
+| `SqlEquiv.Equiv.Decidable` | Decidable equality for AST types |
 | `SqlEquiv.Tactics` | Custom Lean 4 tactics for SQL proofs |
 | `SqlEquiv.Basic` | Re-exports all modules for convenience |
 
@@ -310,58 +325,60 @@ inductive Stmt where
 
 | Theorem | Description |
 |---------|-------------|
-| `expr_equiv_refl` | Reflexivity: `e =~e e` |
-| `expr_equiv_symm` | Symmetry: `e1 =~e e2 -> e2 =~e e1` |
-| `expr_equiv_trans` | Transitivity: `e1 =~e e2 -> e2 =~e e3 -> e1 =~e e3` |
+| `expr_equiv_refl` | Reflexivity: `e ≃ₑ e` |
+| `expr_equiv_symm` | Symmetry: `e1 ≃ₑ e2 -> e2 ≃ₑ e1` |
+| `expr_equiv_trans` | Transitivity: `e1 ≃ₑ e2 -> e2 ≃ₑ e3 -> e1 ≃ₑ e3` |
 
 ### Commutativity
 
 | Theorem | Description |
 |---------|-------------|
-| `and_comm` | `(a AND b) =~e (b AND a)` |
-| `or_comm` | `(a OR b) =~e (b OR a)` |
-| `add_comm` | `(a + b) =~e (b + a)` |
-| `mul_comm` | `(a * b) =~e (b * a)` |
-| `eq_comm` | `(a = b) =~e (b = a)` |
+| `and_comm` | `(a AND b) ≃ₑ (b AND a)` |
+| `or_comm` | `(a OR b) ≃ₑ (b OR a)` |
+| `add_comm` | `(a + b) ≃ₑ (b + a)` |
+| `mul_comm` | `(a * b) ≃ₑ (b * a)` |
+| `eq_comm` | `(a = b) ≃ₑ (b = a)` |
 
 ### Associativity
 
 | Theorem | Description |
 |---------|-------------|
-| `and_assoc` | `((a AND b) AND c) =~e (a AND (b AND c))` |
-| `or_assoc` | `((a OR b) OR c) =~e (a OR (b OR c))` |
+| `and_assoc` | `((a AND b) AND c) ≃ₑ (a AND (b AND c))` (requires `a.isBoolValued`, `b.isBoolValued`, `c.isBoolValued`) |
+| `or_assoc` | `((a OR b) OR c) ≃ₑ (a OR (b OR c))` (requires `a.isBoolValued`, `b.isBoolValued`, `c.isBoolValued`) |
 
 ### De Morgan's Laws
 
 | Theorem | Description |
 |---------|-------------|
-| `not_and` | `NOT (a AND b) =~e (NOT a OR NOT b)` |
-| `not_or` | `NOT (a OR b) =~e (NOT a AND NOT b)` |
+| `not_and` | `NOT (a AND b) ≃ₑ (NOT a OR NOT b)` (requires `isBoolValued`) |
+| `not_or` | `NOT (a OR b) ≃ₑ (NOT a AND NOT b)` (requires `isBoolValued`) |
 
 ### Distributivity
 
+All distributivity theorems require `isBoolValued` on all operands.
+
 | Theorem | Description |
 |---------|-------------|
-| `and_or_distrib_left` | `a AND (b OR c) =~e (a AND b) OR (a AND c)` |
-| `and_or_distrib_right` | `(a OR b) AND c =~e (a AND c) OR (b AND c)` |
-| `or_and_distrib_left` | `a OR (b AND c) =~e (a OR b) AND (a OR c)` |
-| `or_and_distrib_right` | `(a AND b) OR c =~e (a OR c) AND (b OR c)` |
+| `and_or_distrib_left` | `a AND (b OR c) ≃ₑ (a AND b) OR (a AND c)` |
+| `and_or_distrib_right` | `(a OR b) AND c ≃ₑ (a AND c) OR (b AND c)` |
+| `or_and_distrib_left` | `a OR (b AND c) ≃ₑ (a OR b) AND (a OR c)` |
+| `or_and_distrib_right` | `(a AND b) OR c ≃ₑ (a OR c) AND (b OR c)` |
 
 ### Absorption Laws
 
 | Theorem | Description |
 |---------|-------------|
-| `and_absorb_or` | `a AND (a OR b) =~e a` |
-| `or_absorb_and` | `a OR (a AND b) =~e a` |
+| `and_absorb_or` | `a AND (a OR b) ≃ₑ a` (requires `isBoolValued`) |
+| `or_absorb_and` | `a OR (a AND b) ≃ₑ a` (requires `isBoolValued`) |
 
 ### Identity Laws
 
 | Theorem | Description |
 |---------|-------------|
-| `and_true` | `a AND TRUE =~e a` |
-| `or_false` | `a OR FALSE =~e a` |
-| `and_false` | `a AND FALSE =~e FALSE` |
-| `or_true` | `a OR TRUE =~e TRUE` |
+| `and_true` | `a AND TRUE ≃ₑ a` |
+| `or_false` | `a OR FALSE ≃ₑ a` |
+| `and_false` | `a AND FALSE ≃ₑ FALSE` |
+| `or_true` | `a OR TRUE ≃ₑ TRUE` |
 
 ### NULL Handling (IS NULL Laws)
 
@@ -598,23 +615,22 @@ inductive Stmt where
 | `not_exists_as_count_eq_zero` | `NOT EXISTS = (COUNT(*) = 0)` |
 | `in_subquery_as_exists` | `x IN (SELECT col FROM t) = EXISTS (SELECT 1 FROM t WHERE col = x)` |
 | `not_in_subquery_as_not_exists` | `x NOT IN (...) = NOT EXISTS (...)` |
-| `uncorrelated_subquery_independent` | Uncorrelated subquery result is independent of outer row |
 | `subquery_limit_one` | Subquery with LIMIT 1 returns at most 1 row |
 | `scalar_subquery_is_first` | Scalar subquery = first column of first row |
 | `exists_monotonic` | EXISTS is monotonic (superset preserves TRUE) |
 | `subquery_where_true` | Adding WHERE TRUE doesn't change subquery |
 | `subquery_where_false` | Adding WHERE FALSE makes subquery empty |
 | `in_singleton_subquery` | `x IN (single value v) = (x = v)` |
-| `correlated_subquery_uses_context` | Correlated subquery uses outer row context |
+| `in_subquery_unnest_to_join` | IN subquery unnested to semi-join |
+| `not_in_subquery_unnest_to_antijoin` | NOT IN subquery unnested to anti-join |
 
 ### ORDER BY Theorems
 
 | Theorem | Description |
 |---------|-------------|
 | `order_by_preserves_count` | ORDER BY doesn't change row count |
-| `order_by_idempotent` | Ordering twice by same criteria = once |
 | `order_by_length_invariant` | Different ORDER BY clauses produce same row count |
-| `order_by_reverse` | ASC vs DESC reverses the result |
+| `order_limit_deterministic` | ORDER BY + LIMIT gives deterministic prefix |
 
 ### LIMIT Theorems
 
@@ -644,26 +660,28 @@ inductive Stmt where
 | `pagination_upper_bound` | `LIMIT n OFFSET m` returns at most n rows |
 | `pagination_identity` | `OFFSET 0 LIMIT count` = all rows |
 | `consecutive_pages` | Page 1 ++ Page 2 = combined page |
-| `order_limit_deterministic` | ORDER BY + LIMIT gives deterministic prefix |
 
-### Other
+### WHERE Clause Theorems
 
 | Theorem | Description |
 |---------|-------------|
-| `not_not` | `NOT (NOT e) =~e e` |
 | `where_true_elim` | `SELECT ... WHERE TRUE` equals `SELECT ...` |
 | `where_false_empty` | `SELECT ... WHERE FALSE` returns empty |
-| `join_comm` | INNER JOIN is commutative (row membership) |
+| `filter_true_elim'` | `filter(TRUE)` is identity |
+| `filter_false_empty'` | `filter(FALSE)` returns empty |
 
 ## Contributing
 
 ### Adding New Equivalences
 
-1. **Define the theorem** in `SqlEquiv/Equiv.lean`:
+1. **Define the theorem** in the appropriate `SqlEquiv/Equiv/` submodule:
+   - Expression-level: `Equiv/ExprAxioms.lean` or `Equiv/Comparison.lean`
+   - Statement-level (joins, set ops, subqueries): `Equiv/StatementAxioms.lean`
+   - Value-level helpers: `Equiv/ValueLemmas.lean`
 
 ```lean
 theorem my_new_theorem (a b : Expr) :
-    Expr.binOp .someOp a b =~e Expr.binOp .someOp b a := by
+    Expr.binOp .someOp a b ≃ₑ Expr.binOp .someOp b a := by
   intro row
   -- Your proof here
   sorry
@@ -708,33 +726,56 @@ sql_equiv/
 |   +-- Ast.lean               # AST definitions
 |   +-- Parser.lean            # SQL parser
 |   +-- Pretty.lean            # Pretty printer
-|   +-- Semantics.lean         # Evaluation model
-|   +-- Equiv.lean             # Equivalence proofs
+|   +-- SemanticsBase.lean     # Core types and helpers
+|   +-- SemanticsCore.lean     # Non-partial evaluation mirrors and lemmas
+|   +-- Semantics.lean         # Well-founded recursive evaluator
+|   +-- Equiv.lean             # Re-export hub for Equiv submodules
+|   +-- Equiv/
+|   |   +-- Defs.lean          # Equivalence relation definitions
+|   |   +-- ValueLemmas.lean   # Value-level lemmas
+|   |   +-- ExprAxioms.lean    # Expression equivalence theorems
+|   |   +-- Comparison.lean    # Comparison, NULL, aggregate, filter theorems
+|   |   +-- StatementAxioms.lean # JOIN, set ops, subquery, LIMIT/OFFSET theorems
+|   |   +-- SetBagLemmas.lean  # Set/bag algebra helpers
+|   |   +-- Decidable.lean     # Decidable equality for AST types
 |   +-- Tactics.lean           # Custom tactics
 |   +-- Basic.lean             # Re-exports
 +-- Test/
-|   +-- Common.lean              # Test infrastructure
-|   +-- ParserTest.lean          # Parser tests
-|   +-- SemanticsTest.lean       # Semantics tests
-|   +-- EquivTest.lean           # Equivalence tests
-|   +-- PropertyTest.lean        # Property-based tests
-|   +-- AxiomCoverageTest.lean   # Runtime tests for 141 axioms
-|   +-- Main.lean                # Test runner
+|   +-- Common.lean            # Test infrastructure
+|   +-- ParserTest.lean        # Parser tests
+|   +-- SemanticsTest.lean     # Semantics tests
+|   +-- EquivTest.lean         # Equivalence tests
+|   +-- PropertyTest.lean      # Property-based tests
+|   +-- AxiomCoverageTest.lean # Runtime coverage tests for all theorems
+|   +-- Main.lean              # Test runner
++-- LSpecTests/
+|   +-- Generators.lean        # SlimCheck generators for SQL types
+|   +-- ExprAlgebra.lean       # Expression algebra property tests
+|   +-- NullSemantics.lean     # NULL propagation property tests
+|   +-- QueryHelpers.lean      # Query-level property tests
+|   +-- EdgeCaseDb.lean        # Edge-case database tests
+|   +-- DiffSqlite.lean        # Differential testing against SQLite
+|   +-- Main.lean              # LSpec test runner
++-- tools/
+|   +-- axiom_coverage_validator.py # Static analysis for test coverage
+|   +-- count_axioms_theorems.py   # Axiom/theorem counter
+|   +-- unused_private_checker.py  # Text-based unused private finder
+|   +-- ci_sparkline.py            # CI anomaly detection
 +-- docs/                    # Documentation and specs
 |   +-- axiom_dependencies.dot # Graphviz axiom dependency graph
 |   +-- specs/               # Feature specifications
 |   +-- tutorials/           # Tutorial series (10 chapters)
 +-- benchmarks/              # SQL benchmark suites
-+-- tools/                   # Utility tools
-+-- Main.lean                # Demo application
++-- Main.lean                # Demo REPL
 +-- lakefile.toml            # Lake build config
 +-- README.md                # This file
 ```
 
 ## Dependencies
 
-- [Lean 4](https://lean-lang.org/) - The programming language and theorem prover
+- [Lean 4](https://lean-lang.org/) (v4.27.0) - The programming language and theorem prover
 - [Batteries](https://github.com/leanprover-community/batteries) - Standard library extensions
+- [LSpec](https://github.com/argumentcomputer/LSpec) - Property-based testing with SlimCheck
 
 ## License
 
