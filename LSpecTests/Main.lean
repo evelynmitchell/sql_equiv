@@ -6,7 +6,7 @@
   and semantic-preserving transformations.
 
   Sample count is configurable via the LSPEC_SAMPLES environment variable
-  (defaults to 1000). CI can set LSPEC_SAMPLES=100 for faster runs.
+  (defaults to 100,000). CI can set LSPEC_SAMPLES=N to override.
 -/
 import LSpec
 import SqlEquiv
