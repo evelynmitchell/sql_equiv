@@ -38,7 +38,7 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 
 5. **Report discrepancies** between documented counts and reality.
 
-### Expected State (as of PR #174)
+### Expected State
 
 - **3 sorry** in `SqlEquiv/Semantics.lean` — Block 1 `decreasing_by` (lambda callbacks in mutual WFR, Lean 4.27.0 limitation)
 - **1 sorry** in `SqlEquiv/Equiv/Decidable.lean` — proof gap in `checkEquivFull` notEquiv branch (requires `LawfulBEq Value`)
