@@ -6,6 +6,7 @@ import Test.SemanticsTest
 import Test.EquivTest
 import Test.PropertyTest
 import Test.AxiomCoverageTest
+import Test.RewriterTest
 
 def main : IO UInt32 := do
   IO.println "╔═══════════════════════════════════╗"
@@ -31,6 +32,10 @@ def main : IO UInt32 := do
   IO.println ""
 
   let (_, failed) ← AxiomCoverageTest.runAxiomCoverageTests
+  totalFailed := totalFailed + failed
+  IO.println ""
+
+  let (_, failed) ← RewriterTest.runRewriterTests
   totalFailed := totalFailed + failed
   IO.println ""
 
