@@ -343,8 +343,8 @@ inductive Stmt where
 
 | Theorem | Description |
 |---------|-------------|
-| `and_assoc` | `((a AND b) AND c) ≃ₑ (a AND (b AND c))` (requires `isBoolValued`) |
-| `or_assoc` | `((a OR b) OR c) ≃ₑ (a OR (b OR c))` (requires `isBoolValued`) |
+| `and_assoc` | `((a AND b) AND c) ≃ₑ (a AND (b AND c))` (requires `a.isBoolValued`, `b.isBoolValued`, `c.isBoolValued`) |
+| `or_assoc` | `((a OR b) OR c) ≃ₑ (a OR (b OR c))` (requires `a.isBoolValued`, `b.isBoolValued`, `c.isBoolValued`) |
 
 ### De Morgan's Laws
 
@@ -660,7 +660,6 @@ All distributivity theorems require `isBoolValued` on all operands.
 | `pagination_upper_bound` | `LIMIT n OFFSET m` returns at most n rows |
 | `pagination_identity` | `OFFSET 0 LIMIT count` = all rows |
 | `consecutive_pages` | Page 1 ++ Page 2 = combined page |
-| `order_limit_deterministic` | ORDER BY + LIMIT gives deterministic prefix |
 
 ### WHERE Clause Theorems
 
