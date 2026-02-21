@@ -44,7 +44,7 @@ Run with `--runtime` flag for full analysis. No build required.
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Rewriter.lean` | 0 | 3 |  |
+| `Rewriter.lean` | 0 | 3 | Certified expression rewriter + congruence lemmas |
 | `Semantics.lean` | 0 | 60 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
 | `SemanticsBase.lean` | 0 | 1 |  |
 | `SemanticsCore.lean` | 0 | 68 |  |

@@ -14,7 +14,7 @@ The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplif
 
 ## Simplification Rules
 
-Phase 1 implements 19 unconditional rules (no type preconditions needed):
+Phase 1 implements 24 unconditional rules (no type preconditions needed):
 
 ### Boolean Short-Circuit (4 rules)
 
@@ -40,8 +40,8 @@ Phase 1 implements 19 unconditional rules (no type preconditions needed):
 
 | Input | Output | Theorem |
 |-------|--------|---------|
-| `NOT EXISTS sel` | `NOT EXISTS sel` (flag flip) | `not_not_exists` |
-| `NOT (NOT EXISTS sel)` | `EXISTS sel` (flag flip) | `not_exists_true_flip` |
+| `NOT (EXISTS sel)` | `NOT EXISTS sel` (flip negation flag) | `not_not_exists` |
+| `NOT (NOT EXISTS sel)` | `EXISTS sel` (flip negation flag) | `not_exists_true_flip` |
 
 ### BETWEEN Expansion (1 rule)
 
@@ -84,7 +84,9 @@ Phase 1 implements 19 unconditional rules (no type preconditions needed):
 
 ### Bottom-Up Traversal
 
-`certifiedRewrite` recursively simplifies subexpressions first, then applies top-level simplifications. This ensures inner rewrites compose correctly with outer ones.
+`certifiedRewrite` recursively simplifies subexpressions first, then applies top-level simplifications for `binOp`, `unaryOp`, `between`, and `inList` nodes. This ensures inner rewrites compose correctly with outer ones.
+
+**Phase 1 exceptions**: CASE branch/else subexpressions, IN list values, function arguments, and aggregate arguments are NOT recursively rewritten. Only top-level CASE pattern matching (true/false/empty) is applied. This means the rewriter is not structurally idempotent for expressions containing these nodes — a known limitation addressed in Phase 2.
 
 For example, `NOT(NOT(a = b)) AND FALSE`:
 1. Inner: `NOT(a = b)` rewrites to `a <> b`

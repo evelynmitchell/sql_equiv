@@ -75,10 +75,6 @@ def simplifyBinOp (op : BinOp) (l r : Expr) :
 def simplifyUnaryOp (op : UnaryOp) (e : Expr) :
     { e' : Expr // Expr.unaryOp op e ≃ₑ e' } :=
   match op, e with
-  -- NOT(BETWEEN e lo hi) → e < lo OR e > hi
-  | .not, .between e' lo hi =>
-    ⟨.binOp .or (.binOp .lt e' lo) (.binOp .gt e' hi),
-     not_between_expansion e' lo hi⟩
   -- NOT(comparison) → flipped comparison
   | .not, .binOp .eq a b => ⟨.binOp .ne a b, not_eq_is_ne a b⟩
   | .not, .binOp .ne a b => ⟨.binOp .eq a b, not_ne_is_eq a b⟩
