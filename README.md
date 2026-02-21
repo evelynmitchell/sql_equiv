@@ -110,8 +110,8 @@ lake exe sql_equiv_test
 # Run LSpec property-based tests (SlimCheck-powered)
 lake exe sql_equiv_lspec
 
-# Run the unused theorem checker
-lake exe unused_theorem_checker 2>/dev/null
+# Run the unused private checker
+python tools/unused_private_checker.py 2>/dev/null
 
 # Run the demo REPL
 lake exe sql_equiv
@@ -758,7 +758,6 @@ sql_equiv/
 |   +-- DiffSqlite.lean        # Differential testing against SQLite
 |   +-- Main.lean              # LSpec test runner
 +-- tools/
-|   +-- UnusedTheoremChecker.lean  # Lean env introspection for dead code
 |   +-- axiom_coverage_validator.py # Static analysis for test coverage
 |   +-- count_axioms_theorems.py   # Axiom/theorem counter
 |   +-- unused_private_checker.py  # Text-based unused private finder
