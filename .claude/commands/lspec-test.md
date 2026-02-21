@@ -38,10 +38,19 @@ LSpec property tests live in `LSpecTests/` and use SlimCheck for random generati
    | NULL propagation, three-valued logic, IS NULL | `LSpecTests/NullSemantics.lean` |
    | Database/query-level properties | `LSpecTests/EdgeCaseDb.lean` |
 
-4. **Write the test** using this pattern:
+4. **Write the test with a `-- covers:` annotation:**
    ```lean
-   check (cfg := cfg) "theorem_name description" (∀ v1 : Gen1, v2 : Gen2,
+   -- covers: theorem_name
+   check (cfg := cfg) "human-readable description" (∀ v1 : Gen1, v2 : Gen2,
      LHS == RHS) $
+   ```
+
+   The `-- covers:` comment is **required** for every new `check` statement. It links the test to one or more theorems for coverage tracking.
+
+   For tests covering multiple theorems:
+   ```lean
+   -- covers: and_comm, evalBinOp_and_comm
+   check (cfg := cfg) "AND commutes" (∀ a b : BoundedGroundExpr, ...)
    ```
 
    - For expression-level theorems, use `evalExpr [] expr` (empty row for ground exprs)
@@ -51,7 +60,9 @@ LSpec property tests live in `LSpecTests/` and use SlimCheck for random generati
 5. **Add the test to the group function** in the same file. Tests are organized in named groups:
    ```lean
    def myTests (cfg : Configuration) : TestSeq :=
+     -- covers: theorem_a
      check (cfg := cfg) "test1" (...) $
+     -- covers: theorem_b
      check (cfg := cfg) "test2" (...) $
      done
    ```
@@ -70,28 +81,37 @@ LSpec property tests live in `LSpecTests/` and use SlimCheck for random generati
    ```
    For quick iteration: `LSPEC_SAMPLES=100 lake exe sql_equiv_lspec`
 
+8. **Verify coverage** after adding tests:
+   ```bash
+   uv run python tools/axiom_coverage_validator.py --runtime --theorems
+   ```
+
 ### Examples
 
 **Value-level NULL propagation (NullSemantics.lean):**
 ```lean
+-- covers: null_add_left
 check (cfg := cfg) "NULL + x = NULL" (∀ v : Value,
   evalBinOp .add (some (.null none)) (some v) == some (.null none)) $
 ```
 
 **Expression-level boolean algebra (ExprAlgebra.lean):**
 ```lean
+-- covers: and_comm, evalBinOp_and_comm
 check (cfg := cfg) "AND commutes" (∀ a b : BoundedGroundExpr,
   evalExpr [] (.binOp .and a.expr b.expr) == evalExpr [] (.binOp .and b.expr a.expr)) $
 ```
 
 **Three-valued logic with typed nulls (NullSemantics.lean):**
 ```lean
+-- covers: false_and_null, trilean_and_false
 check (cfg := cfg) "FALSE AND NULL = FALSE" (∀ t : Option SqlType,
   evalBinOp .and (some (.bool false)) (some (.null t)) == some (.bool false)) $
 ```
 
 ### Important Notes
 
+- **Every `check` statement MUST have a `-- covers:` annotation** on the line above it
 - The `$` operator chains tests — the last test in a group uses `done` (no trailing `$`)
 - `BoundedGroundExpr` has a `.expr` field to extract the `Expr`
 - Ground expressions have no column references, so `evalExpr [] e` works (empty row)

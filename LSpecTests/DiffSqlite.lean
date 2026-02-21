@@ -188,6 +188,7 @@ def runAllTests : IO TestSeq := do
     diffFullTest "WHERE department = 'Engineering'"
       (mkSelectWhere "users" (some (.binOp .eq (qcol "users" "department") (.lit (.string "Engineering")))))
       "SELECT * FROM users WHERE department = 'Engineering'",
+    -- covers: filter_and
     diffCountTest "WHERE age > 25 AND department = 'Engineering'"
       (mkSelectWhere "users" (some (.binOp .and
         (.binOp .gt (qcol "users" "age") (.lit (.int 25)))
@@ -198,23 +199,27 @@ def runAllTests : IO TestSeq := do
         (.binOp .lt (qcol "users" "age") (.lit (.int 25)))
         (.binOp .gt (qcol "users" "age") (.lit (.int 30))))))
       "SELECT * FROM users WHERE age < 25 OR age > 30",
+    -- covers: where_false_empty
     diffCountTest "WHERE FALSE returns 0 rows"
       (mkSelectWhere "users" (some (.lit (.bool false))))
       "SELECT * FROM users WHERE 0",
+    -- covers: where_true_elim
     diffFullTest "no WHERE returns all rows"
       (mkSelectWhere "users" none)
       "SELECT * FROM users",
     -- DISTINCT
+    -- covers: distinct_count_le
     diffCountTest "SELECT DISTINCT department"
       (.mk true
         [.exprItem (qcol "users" "department") (some "department")]
         (some (.table ⟨"users", none⟩)) none [] none [] none none)
       "SELECT DISTINCT department FROM users",
-    -- LIMIT/OFFSET
+    -- covers: limit_upper_bound
     diffCountTest "LIMIT 3"
       (.mk false [.star none] (some (.table ⟨"users", none⟩)) none [] none
         [OrderByItem.mk (qcol "users" "id") .asc] (some 3) none)
       "SELECT * FROM users ORDER BY id LIMIT 3",
+    -- covers: limit_offset_compose
     diffCountTest "LIMIT 2 OFFSET 2"
       (.mk false [.star none] (some (.table ⟨"users", none⟩)) none [] none
         [OrderByItem.mk (qcol "users" "id") .asc] (some 2) (some 2))

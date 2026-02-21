@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Axiom Coverage Validator for sql_equiv Lean 4 project.
+Axiom & Theorem Coverage Validator for sql_equiv Lean 4 project.
 
-Validates that each axiom is exercised by the test suite by:
+Validates that each axiom/theorem is exercised by the test suite by:
 1. Commenting out each axiom one at a time
 2. Attempting to build and run tests
 3. Checking whether the build fails (compile-time coverage) or tests fail (runtime coverage)
 4. Reporting which axioms have no test coverage
+
+Additional modes:
+- --runtime: Static runtime coverage (test-name matching, no build)
+- --theorems: Include public theorems from Equiv/ and LSpec `-- covers:` annotations
 
 Usage:
     python tools/axiom_coverage_validator.py                    # Run all axioms
@@ -16,6 +20,7 @@ Usage:
     python tools/axiom_coverage_validator.py --resume           # Resume from checkpoint
     python tools/axiom_coverage_validator.py --dry-run          # Parse only, no modification
     python tools/axiom_coverage_validator.py --runtime          # Static runtime coverage (no build)
+    python tools/axiom_coverage_validator.py --runtime --theorems  # Include theorem coverage
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SQLEQUIV_DIR = PROJECT_ROOT / "SqlEquiv"
+EQUIV_DIR = SQLEQUIV_DIR / "Equiv"
 
 # lake lives under ~/.elan/bin which may not be in subprocess PATH
 _ELAN_BIN = Path.home() / ".elan" / "bin"
@@ -58,6 +64,9 @@ AXIOM_FILES = sorted(SQLEQUIV_DIR.rglob("*.lean"))
 TEST_DIR = PROJECT_ROOT / "Test"
 TEST_FILES = sorted(TEST_DIR.rglob("*.lean")) if TEST_DIR.exists() else []
 
+LSPEC_DIR = PROJECT_ROOT / "LSpecTests"
+LSPEC_FILES = sorted(LSPEC_DIR.rglob("*.lean")) if LSPEC_DIR.exists() else []
+
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -70,6 +79,7 @@ class AxiomLocation:
     start_line: int       # 0-indexed
     end_line: int         # 0-indexed, inclusive
     source_lines: list[str]
+    kind: str = "axiom"   # "axiom" or "theorem"
 
     @property
     def short_file(self) -> str:
@@ -96,7 +106,7 @@ class AxiomTestResult:
 
 
 # ---------------------------------------------------------------------------
-# Axiom parsing
+# Declaration parsing (axioms and theorems)
 # ---------------------------------------------------------------------------
 
 def parse_axioms(file_path: Path) -> list[AxiomLocation]:
@@ -110,7 +120,7 @@ def parse_axioms(file_path: Path) -> list[AxiomLocation]:
     axioms: list[AxiomLocation] = []
     i = 0
     while i < len(lines):
-        m = re.match(r"^axiom\s+(\w+)", lines[i])
+        m = re.match(r"^axiom\s+([\w.']+)", lines[i])
         if m:
             name = m.group(1)
             start = i
@@ -130,11 +140,53 @@ def parse_axioms(file_path: Path) -> list[AxiomLocation]:
                 start_line=start,
                 end_line=end,
                 source_lines=lines[start:end + 1],
+                kind="axiom",
             ))
             i = end + 1
         else:
             i += 1
     return axioms
+
+
+def parse_theorems(file_path: Path) -> list[AxiomLocation]:
+    """Parse public theorem declarations from a Lean file.
+
+    A theorem starts with ``theorem`` at column 0 (not ``private theorem``).
+    Continuation lines are indented. The theorem ends at a blank line or a
+    line starting at column 0.
+    """
+    text = file_path.read_text()
+    lines = text.splitlines()
+    theorems: list[AxiomLocation] = []
+    i = 0
+    while i < len(lines):
+        # Match "theorem name" but NOT "private theorem name"
+        m = re.match(r"^theorem\s+([\w.']+)", lines[i])
+        if m:
+            name = m.group(1)
+            start = i
+            end = i
+            j = i + 1
+            while j < len(lines):
+                line = lines[j]
+                if line.strip() == "":
+                    break
+                if len(line) > 0 and line[0] not in (" ", "\t"):
+                    break
+                end = j
+                j += 1
+            theorems.append(AxiomLocation(
+                name=name,
+                file_path=str(file_path),
+                start_line=start,
+                end_line=end,
+                source_lines=lines[start:end + 1],
+                kind="theorem",
+            ))
+            i = end + 1
+        else:
+            i += 1
+    return theorems
 
 
 def parse_test_names(file_path: Path) -> list[str]:
@@ -155,6 +207,22 @@ def parse_test_names(file_path: Path) -> list[str]:
     return names
 
 
+def parse_lspec_covers(file_path: Path) -> list[str]:
+    """Extract theorem names from ``-- covers: name1, name2`` comments.
+
+    Returns a flat list of all theorem names referenced by covers annotations
+    in the given file.
+    """
+    text = file_path.read_text()
+    names: list[str] = []
+    for m in re.finditer(r"--\s*covers:\s*(.+)", text):
+        for name in m.group(1).split(","):
+            stripped = name.strip()
+            if stripped:
+                names.append(stripped)
+    return names
+
+
 # ---------------------------------------------------------------------------
 # Runtime coverage analysis (static, no build needed)
 # ---------------------------------------------------------------------------
@@ -162,34 +230,55 @@ def parse_test_names(file_path: Path) -> list[str]:
 def runtime_analysis(
     axioms: list[AxiomLocation],
     test_files: list[Path] | None = None,
+    lspec_files: list[Path] | None = None,
 ) -> dict:
-    """Match axiom names against test name strings (static analysis).
+    """Match declaration names against test name strings and LSpec annotations.
 
-    A test name *covers* an axiom if the test name starts with the axiom name.
-    For example, test ``"expr_add_zero (int)"`` covers axiom ``expr_add_zero``.
+    A declaration is *test-covered* if any Test/ test name starts with its name.
+    A declaration is *lspec-covered* if any LSpec ``-- covers:`` annotation
+    matches its name exactly.
+    A declaration is *covered* if matched by either source.
     """
     if test_files is None:
         test_files = TEST_FILES
 
-    # Collect all test names across files
+    # Collect all test names across Test/ files
     all_test_names: list[str] = []
-    files_scanned = 0
+    test_files_scanned = 0
     for tf in test_files:
         if tf.exists():
             try:
                 all_test_names.extend(parse_test_names(tf))
-                files_scanned += 1
+                test_files_scanned += 1
             except Exception as e:
                 print(f"Warning: Could not parse {tf}: {e}", file=sys.stderr)
 
-    if files_scanned == 0:
-        print("WARNING: No test files found. Check that TEST_FILES paths are correct.",
+    # Collect all LSpec covers annotations
+    all_lspec_covers: list[str] = []
+    lspec_files_scanned = 0
+    if lspec_files is not None:
+        for lf in lspec_files:
+            if lf.exists():
+                try:
+                    all_lspec_covers.extend(parse_lspec_covers(lf))
+                    lspec_files_scanned += 1
+                except Exception as e:
+                    print(f"Warning: Could not parse LSpec {lf}: {e}", file=sys.stderr)
+
+    lspec_covers_set = set(all_lspec_covers)
+
+    if test_files_scanned == 0 and lspec_files_scanned == 0:
+        print("WARNING: No test files found. Check that file paths are correct.",
               file=sys.stderr)
 
-    # Match: axiom is covered if any test name starts with the axiom name
-    covered: list[AxiomLocation] = []
+    # Match: declaration is covered if any test name starts with it OR any
+    # LSpec annotation matches it exactly
+    test_covered: list[AxiomLocation] = []
+    lspec_covered: list[AxiomLocation] = []
+    both_covered: list[AxiomLocation] = []
     uncovered: list[AxiomLocation] = []
-    coverage_map: dict[str, list[str]] = {}  # axiom_name -> matching tests
+    coverage_map: dict[str, list[str]] = {}  # decl_name -> matching tests
+    lspec_coverage_map: dict[str, bool] = {}  # decl_name -> has lspec coverage
 
     def _test_matches_axiom(test_name: str, axiom_name: str) -> bool:
         """True if test_name is axiom_name exactly or followed by a non-identifier char."""
@@ -201,22 +290,46 @@ def runtime_analysis(
         return test_name[len(axiom_name)] not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
     for ax in axioms:
-        matches = [t for t in all_test_names if _test_matches_axiom(t, ax.name)]
-        if matches:
-            covered.append(ax)
-            coverage_map[ax.name] = matches
+        test_matches = [t for t in all_test_names if _test_matches_axiom(t, ax.name)]
+        has_test = bool(test_matches)
+        has_lspec = ax.name in lspec_covers_set
+
+        if test_matches:
+            coverage_map[ax.name] = test_matches
+        if has_lspec:
+            lspec_coverage_map[ax.name] = True
+
+        if has_test and has_lspec:
+            both_covered.append(ax)
+        elif has_test:
+            test_covered.append(ax)
+        elif has_lspec:
+            lspec_covered.append(ax)
         else:
             uncovered.append(ax)
+
+    covered_count = len(test_covered) + len(lspec_covered) + len(both_covered)
 
     return {
         "total_axioms": len(axioms),
         "total_test_names": len(all_test_names),
-        "files_scanned": files_scanned,
-        "covered_count": len(covered),
+        "total_lspec_covers": len(all_lspec_covers),
+        "files_scanned": test_files_scanned,
+        "lspec_files_scanned": lspec_files_scanned,
+        "covered_count": covered_count,
         "uncovered_count": len(uncovered),
-        "covered": covered,
+        "test_covered_count": len(test_covered) + len(both_covered),
+        "lspec_covered_count": len(lspec_covered) + len(both_covered),
+        "both_covered_count": len(both_covered),
+        "test_only_count": len(test_covered),
+        "lspec_only_count": len(lspec_covered),
+        "test_covered": test_covered,
+        "lspec_covered": lspec_covered,
+        "both_covered": both_covered,
+        "covered": test_covered + lspec_covered + both_covered,
         "uncovered": uncovered,
         "coverage_map": coverage_map,
+        "lspec_coverage_map": lspec_coverage_map,
     }
 
 
@@ -226,28 +339,39 @@ def print_runtime_report(analysis: dict) -> None:
     uncovered_count = analysis["uncovered_count"]
 
     if total == 0:
-        print("No axioms found.")
+        print("No declarations found.")
         return
 
     cov_pct = covered / total * 100
     uncov_pct = uncovered_count / total * 100
 
-    print()
-    print("=" * 50)
-    print(" Runtime Coverage Analysis (static)")
-    print("=" * 50)
-    print(f"Test files scanned: {analysis['files_scanned']}")
-    print(f"Test names found:   {analysis['total_test_names']}")
-    print(f"Total axioms:       {total}")
-    print(f"Runtime covered:    {covered:>3} ({cov_pct:4.1f}%)"
-          f"  — test name matches axiom name")
-    print(f"Not covered:        {uncovered_count:>3} ({uncov_pct:4.1f}%)")
+    has_lspec = analysis["lspec_files_scanned"] > 0
 
-    uncovered_axioms: list[AxiomLocation] = analysis["uncovered"]
-    if uncovered_axioms:
-        print(f"\n--- Axioms Without Runtime Tests ({uncovered_count}) ---")
-        for ax in uncovered_axioms:
-            print(f"  {ax.short_file}:{ax.start_line + 1}  {ax.name}")
+    label = "declarations" if has_lspec else "axioms"
+
+    print()
+    print("=" * 60)
+    print(" Runtime Coverage Analysis (static)")
+    print("=" * 60)
+    print(f"Test files scanned:   {analysis['files_scanned']}")
+    print(f"Test names found:     {analysis['total_test_names']}")
+    if has_lspec:
+        print(f"LSpec files scanned:  {analysis['lspec_files_scanned']}")
+        print(f"LSpec covers found:   {analysis['total_lspec_covers']}")
+    print(f"Total {label}:     {total}")
+    print(f"Covered:              {covered:>3} ({cov_pct:4.1f}%)")
+    if has_lspec:
+        print(f"  Test/ only:         {analysis['test_only_count']:>3}")
+        print(f"  LSpec only:         {analysis['lspec_only_count']:>3}")
+        print(f"  Both:               {analysis['both_covered_count']:>3}")
+    print(f"Not covered:          {uncovered_count:>3} ({uncov_pct:4.1f}%)")
+
+    uncovered_decls: list[AxiomLocation] = analysis["uncovered"]
+    if uncovered_decls:
+        print(f"\n--- Uncovered {label.title()} ({uncovered_count}) ---")
+        for ax in uncovered_decls:
+            kind_tag = f"[{ax.kind}]" if has_lspec else ""
+            print(f"  {ax.short_file}:{ax.start_line + 1}  {ax.name}  {kind_tag}")
 
     # Per-file breakdown
     by_file: dict[str, dict[str, int]] = {}
@@ -256,16 +380,16 @@ def print_runtime_report(analysis: dict) -> None:
         bucket = by_file.setdefault(fname, {"total": 0, "covered": 0, "uncovered": 0})
         bucket["total"] += 1
         bucket["covered"] += 1
-    for ax in uncovered_axioms:
+    for ax in uncovered_decls:
         fname = ax.short_file
         bucket = by_file.setdefault(fname, {"total": 0, "covered": 0, "uncovered": 0})
         bucket["total"] += 1
         bucket["uncovered"] += 1
 
-    print("\n--- Per-File Breakdown ---")
+    print(f"\n--- Per-File Breakdown ---")
     for fname, b in sorted(by_file.items()):
         file_pct = b["covered"] / b["total"] * 100 if b["total"] else 0
-        print(f"  {fname:30s}  {b['total']:>3} axioms | "
+        print(f"  {fname:30s}  {b['total']:>3} {label} | "
               f"{b['covered']:>3} covered | "
               f"{b['uncovered']:>3} uncovered | {file_pct:5.1f}%")
 
@@ -278,20 +402,27 @@ def save_runtime_report(analysis: dict, path: Path) -> None:
         "mode": "runtime",
         "timestamp": datetime.now().isoformat(),
         "summary": {
-            "total_axioms": analysis["total_axioms"],
+            "total_declarations": analysis["total_axioms"],
             "total_test_names": analysis["total_test_names"],
+            "total_lspec_covers": analysis["total_lspec_covers"],
             "files_scanned": analysis["files_scanned"],
-            "runtime_covered": analysis["covered_count"],
+            "lspec_files_scanned": analysis["lspec_files_scanned"],
+            "covered": analysis["covered_count"],
+            "test_only": analysis["test_only_count"],
+            "lspec_only": analysis["lspec_only_count"],
+            "both": analysis["both_covered_count"],
             "not_covered": analysis["uncovered_count"],
             "coverage_pct": round(
                 analysis["covered_count"] / analysis["total_axioms"] * 100, 1
             ) if analysis["total_axioms"] else 0,
         },
-        "uncovered_axioms": [
-            {"name": ax.name, "file": ax.short_file, "line": ax.start_line + 1}
+        "uncovered": [
+            {"name": ax.name, "file": ax.short_file, "line": ax.start_line + 1,
+             "kind": ax.kind}
             for ax in analysis["uncovered"]
         ],
         "coverage_map": analysis["coverage_map"],
+        "lspec_coverage_map": analysis["lspec_coverage_map"],
     }
     path.write_text(json.dumps(data, indent=2) + "\n")
 
@@ -661,11 +792,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true",
                    help="Parse and list axioms without testing")
     p.add_argument("--verify-parse", action="store_true",
-                   help="Only parse and list all axioms")
+                   help="Only parse and list all declarations")
     p.add_argument("--ci", action="store_true",
                    help="CI mode: skip interactive prompts")
     p.add_argument("--runtime", action="store_true",
                    help="Static runtime coverage: match test names to axiom names (no build)")
+    p.add_argument("--theorems", action="store_true",
+                   help="Include public theorems from Equiv/ and LSpec covers annotations")
     p.add_argument("--update-ratchet", action="store_true",
                    help="Update the axiom count ratchet file to the current count")
     return p.parse_args()
@@ -678,69 +811,88 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    include_theorems = getattr(args, "theorems", False)
+
     # Discover axioms
-    all_axioms: list[AxiomLocation] = []
+    all_decls: list[AxiomLocation] = []
     files_processed = 0
     for fpath in AXIOM_FILES:
         if fpath.exists():
-            all_axioms.extend(parse_axioms(fpath))
+            all_decls.extend(parse_axioms(fpath))
             files_processed += 1
-    print(f"Found {len(all_axioms)} axioms across {files_processed} files")
+
+    axiom_count = len(all_decls)
+
+    # Discover theorems from Equiv/ if --theorems
+    theorem_count = 0
+    if include_theorems:
+        equiv_files = sorted(EQUIV_DIR.rglob("*.lean")) if EQUIV_DIR.exists() else []
+        for fpath in equiv_files:
+            if fpath.exists():
+                all_decls.extend(parse_theorems(fpath))
+        theorem_count = len(all_decls) - axiom_count
+
+    if include_theorems:
+        print(f"Found {axiom_count} axioms + {theorem_count} theorems = "
+              f"{len(all_decls)} declarations across {files_processed} files")
+    else:
+        print(f"Found {axiom_count} axioms across {files_processed} files")
 
     # Filters
     if args.file:
-        all_axioms = [a for a in all_axioms if args.file in a.file_path]
-        if not all_axioms:
-            sys.exit(f"Error: no axioms found matching file filter '{args.file}'")
-        print(f"Filtered to {len(all_axioms)} axioms matching '{args.file}'")
+        all_decls = [a for a in all_decls if args.file in a.file_path]
+        if not all_decls:
+            sys.exit(f"Error: no declarations found matching file filter '{args.file}'")
+        print(f"Filtered to {len(all_decls)} declarations matching '{args.file}'")
 
     if args.axiom:
-        all_axioms = [a for a in all_axioms if a.name == args.axiom]
-        if not all_axioms:
-            sys.exit(f"Error: axiom '{args.axiom}' not found")
-        print(f"Testing single axiom: {args.axiom}")
+        all_decls = [a for a in all_decls if a.name == args.axiom]
+        if not all_decls:
+            sys.exit(f"Error: declaration '{args.axiom}' not found")
+        print(f"Testing single declaration: {args.axiom}")
 
     # List-only modes
     if args.verify_parse or args.dry_run:
-        for ax in all_axioms:
+        for ax in all_decls:
+            kind = f"[{ax.kind}]" if include_theorems else ""
             print(f"  {ax.short_file}:{ax.start_line + 1}-{ax.end_line + 1}  "
-                  f"{ax.name}  ({ax.line_count} lines)")
+                  f"{ax.name}  ({ax.line_count} lines) {kind}")
         return
 
     # Static runtime coverage analysis (no build needed)
     if args.runtime:
-        analysis = runtime_analysis(all_axioms)
+        lspec_files = LSPEC_FILES if include_theorems else None
+        analysis = runtime_analysis(all_decls, lspec_files=lspec_files)
         print_runtime_report(analysis)
         report_path = Path(args.report)
         save_runtime_report(analysis, report_path)
         print(f"Full report: {report_path}")
 
-        # Ratchet: update or check
+        # Ratchet: update or check (axiom count only, not theorem count)
         if args.update_ratchet:
-            RATCHET_FILE.write_text(f"{analysis['total_axioms']}\n")
-            print(f"Updated ratchet to {analysis['total_axioms']} in {RATCHET_FILE}")
+            RATCHET_FILE.write_text(f"{axiom_count}\n")
+            print(f"Updated ratchet to {axiom_count} in {RATCHET_FILE}")
         elif RATCHET_FILE.exists():
             minimum = int(RATCHET_FILE.read_text().strip())
-            actual = analysis["total_axioms"]
-            if actual < minimum:
+            if axiom_count < minimum:
                 print(f"\nERROR: Axiom count regression! "
-                      f"Found {actual} axioms, expected >= {minimum}.",
+                      f"Found {axiom_count} axioms, expected >= {minimum}.",
                       file=sys.stderr)
                 print(f"  If axioms were intentionally removed, run with "
                       f"--runtime --update-ratchet", file=sys.stderr)
                 sys.exit(1)
             else:
-                print(f"Ratchet check passed: {actual} >= {minimum}")
+                print(f"Ratchet check passed: {axiom_count} >= {minimum}")
         return
 
     # Pre-flight
     preflight_checks(args.build_timeout, args.test_timeout, ci=args.ci)
 
     # Run
-    results = run_axiom_tests(all_axioms, args)
+    results = run_axiom_tests(all_decls, args)
 
     # Report
-    report = generate_report(results, all_axioms)
+    report = generate_report(results, all_decls)
     Path(args.report).write_text(json.dumps(report, indent=2) + "\n")
     print_summary(report)
     print(f"Full report: {args.report}")

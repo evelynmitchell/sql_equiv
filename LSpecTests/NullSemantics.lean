@@ -19,20 +19,28 @@ namespace NullSemantics
 -- ============================================================================
 
 def nullArithTests (cfg : Configuration) : TestSeq :=
+  -- covers: null_add_left
   check (cfg := cfg) "NULL + x = NULL" (∀ v : Value,
     evalBinOp .add (some (.null none)) (some v) == some (.null none)) $
+  -- covers: null_add_right
   check (cfg := cfg) "x + NULL = NULL" (∀ v : Value,
     evalBinOp .add (some v) (some (.null none)) == some (.null none)) $
+  -- covers: null_sub_left
   check (cfg := cfg) "NULL - x = NULL" (∀ v : Value,
     evalBinOp .sub (some (.null none)) (some v) == some (.null none)) $
+  -- covers: null_sub_right
   check (cfg := cfg) "x - NULL = NULL" (∀ v : Value,
     evalBinOp .sub (some v) (some (.null none)) == some (.null none)) $
+  -- covers: null_mul_left
   check (cfg := cfg) "NULL * x = NULL" (∀ v : Value,
     evalBinOp .mul (some (.null none)) (some v) == some (.null none)) $
+  -- covers: null_mul_right
   check (cfg := cfg) "x * NULL = NULL" (∀ v : Value,
     evalBinOp .mul (some v) (some (.null none)) == some (.null none)) $
+  -- covers: null_div_left
   check (cfg := cfg) "NULL / x = NULL" (∀ v : Value,
     evalBinOp .div (some (.null none)) (some v) == some (.null none)) $
+  -- covers: null_div_right
   check (cfg := cfg) "x / NULL = NULL" (∀ v : Value,
     evalBinOp .div (some v) (some (.null none)) == some (.null none))
 
@@ -41,12 +49,16 @@ def nullArithTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def nullComparisonTests (cfg : Configuration) : TestSeq :=
+  -- covers: null_eq_left
   check (cfg := cfg) "NULL = x = NULL" (∀ v : Value,
     evalBinOp .eq (some (.null none)) (some v) == some (.null none)) $
+  -- covers: null_eq_right
   check (cfg := cfg) "x = NULL = NULL" (∀ v : Value,
     evalBinOp .eq (some v) (some (.null none)) == some (.null none)) $
+  -- covers: null_lt_left
   check (cfg := cfg) "NULL < x = NULL" (∀ v : Value,
     evalBinOp .lt (some (.null none)) (some v) == some (.null none)) $
+  -- covers: null_lt_right
   check (cfg := cfg) "x < NULL = NULL" (∀ v : Value,
     evalBinOp .lt (some v) (some (.null none)) == some (.null none))
 
@@ -56,26 +68,35 @@ def nullComparisonTests (cfg : Configuration) : TestSeq :=
 
 def threeValuedLogicTests (cfg : Configuration) : TestSeq :=
   -- FALSE dominates AND, TRUE dominates OR
+  -- covers: false_and_null, trilean_and_false
   check (cfg := cfg) "FALSE AND NULL = FALSE" (∀ t : Option SqlType,
     evalBinOp .and (some (.bool false)) (some (.null t)) == some (.bool false)) $
+  -- covers: null_and_false
   check (cfg := cfg) "NULL AND FALSE = FALSE" (∀ t : Option SqlType,
     evalBinOp .and (some (.null t)) (some (.bool false)) == some (.bool false)) $
+  -- covers: true_or_null, trilean_or_true
   check (cfg := cfg) "TRUE OR NULL = TRUE" (∀ t : Option SqlType,
     evalBinOp .or (some (.bool true)) (some (.null t)) == some (.bool true)) $
+  -- covers: null_or_true
   check (cfg := cfg) "NULL OR TRUE = TRUE" (∀ t : Option SqlType,
     evalBinOp .or (some (.null t)) (some (.bool true)) == some (.bool true)) $
   -- Non-dominating cases: AND/OR with NULL propagates NULL (SQL three-valued logic)
+  -- covers: true_and_null, trilean_and_true
   check (cfg := cfg) "TRUE AND NULL = NULL" (∀ t : Option SqlType,
     evalBinOp .and (some (.bool true)) (some (.null t)) == some (.null none)) $
+  -- covers: null_and_true
   check (cfg := cfg) "NULL AND TRUE = NULL" (∀ t : Option SqlType,
     evalBinOp .and (some (.null t)) (some (.bool true)) == some (.null none)) $
+  -- covers: false_or_null, trilean_or_false
   check (cfg := cfg) "FALSE OR NULL = NULL" (∀ t : Option SqlType,
     evalBinOp .or (some (.bool false)) (some (.null t)) == some (.null none)) $
+  -- covers: null_or_false
   check (cfg := cfg) "NULL OR FALSE = NULL" (∀ t : Option SqlType,
     evalBinOp .or (some (.null t)) (some (.bool false)) == some (.null none)) $
-  -- NULL AND/OR NULL = NULL
+  -- covers: null_and_null
   check (cfg := cfg) "NULL AND NULL = NULL" (∀ t1 t2 : Option SqlType,
     evalBinOp .and (some (.null t1)) (some (.null t2)) == some (.null none)) $
+  -- covers: null_or_null
   check (cfg := cfg) "NULL OR NULL = NULL" (∀ t1 t2 : Option SqlType,
     evalBinOp .or (some (.null t1)) (some (.null t2)) == some (.null none))
 
@@ -89,14 +110,19 @@ private def isNullComplement (v : Value) : Bool :=
   | _, _ => false
 
 def isNullTests (cfg : Configuration) : TestSeq :=
+  -- covers: is_null_is_not_null_complement, value_is_null_complement
   check (cfg := cfg) "IS NULL and IS NOT NULL are complementary" (∀ v : Value,
     isNullComplement v) $
+  -- covers: is_null_on_null, isNullValue_null
   check (cfg := cfg) "IS NULL on NULL = TRUE" (∀ t : Option SqlType,
     evalUnaryOp .isNull (some (.null t)) == some (.bool true)) $
+  -- covers: is_not_null_on_null
   check (cfg := cfg) "IS NOT NULL on NULL = FALSE" (∀ t : Option SqlType,
     evalUnaryOp .isNotNull (some (.null t)) == some (.bool false)) $
+  -- covers: is_null_on_int, isNullValue_int
   check (cfg := cfg) "IS NULL on int = FALSE" (∀ n : Int,
     evalUnaryOp .isNull (some (.int n)) == some (.bool false)) $
+  -- covers: is_not_null_on_int
   check (cfg := cfg) "IS NOT NULL on int = TRUE" (∀ n : Int,
     evalUnaryOp .isNotNull (some (.int n)) == some (.bool true))
 
@@ -105,12 +131,16 @@ def isNullTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def coalesceTests (cfg : Configuration) : TestSeq :=
+  -- covers: coalesce_int_left
   check (cfg := cfg) "COALESCE(int, x) = int" (∀ n : Int, ∀ v : Value,
     evalFunc "COALESCE" [some (.int n), some v] == some (.int n)) $
+  -- covers: coalesce_string_left
   check (cfg := cfg) "COALESCE(string, x) = string" (∀ v : Value,
     evalFunc "COALESCE" [some (.string "hello"), some v] == some (.string "hello")) $
+  -- covers: coalesce_bool_left
   check (cfg := cfg) "COALESCE(bool, x) = bool" (∀ b : Bool, ∀ v : Value,
     evalFunc "COALESCE" [some (.bool b), some v] == some (.bool b)) $
+  -- covers: coalesce_null_left_nonnull
   check (cfg := cfg) "COALESCE(NULL, int) = int" (∀ n : Int,
     evalFunc "COALESCE" [some (.null none), some (.int n)] == some (.int n))
 
@@ -119,8 +149,10 @@ def coalesceTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def nullifTests (cfg : Configuration) : TestSeq :=
+  -- covers: nullif_same_int
   check (cfg := cfg) "NULLIF(n, n) = NULL" (∀ n : Int,
     evalFunc "NULLIF" [some (.int n), some (.int n)] == some (.null none)) $
+  -- covers: nullif_diff_int
   check (cfg := cfg) "NULLIF(n, n+1) = n" (∀ n : Int,
     evalFunc "NULLIF" [some (.int n), some (.int (n + 1))] == some (.int n)) $
   check (cfg := cfg) "NULLIF(true, false) = true" (
@@ -141,21 +173,26 @@ def absTests (cfg : Configuration) : TestSeq :=
 def stringFuncTests : TestSeq :=
   test "LENGTH(hello) = 5" (
     evalFunc "LENGTH" [some (.string "hello")] == some (.int 5)) $
+  -- covers: length_empty
   test "LENGTH empty = 0" (
     evalFunc "LENGTH" [some (.string "")] == some (.int 0)) $
   test "UPPER(hello) = HELLO" (
     evalFunc "UPPER" [some (.string "hello")] == some (.string "HELLO")) $
   test "LOWER(HELLO) = hello" (
     evalFunc "LOWER" [some (.string "HELLO")] == some (.string "hello")) $
+  -- covers: upper_lower_upper
   test "UPPER(LOWER(s)) = UPPER(s)" (
     evalFunc "UPPER" [evalFunc "LOWER" [some (.string "Hello")]] ==
     evalFunc "UPPER" [some (.string "Hello")]) $
+  -- covers: lower_upper_lower
   test "LOWER(UPPER(s)) = LOWER(s)" (
     evalFunc "LOWER" [evalFunc "UPPER" [some (.string "Hello")]] ==
     evalFunc "LOWER" [some (.string "Hello")]) $
+  -- covers: concat_empty_right
   test "CONCAT(s, empty) = s" (
     evalFunc "CONCAT" [some (.string "hello"), some (.string "")] ==
     some (.string "hello")) $
+  -- covers: concat_empty_left
   test "CONCAT(empty, s) = s" (
     evalFunc "CONCAT" [some (.string ""), some (.string "world")] ==
     some (.string "world"))
