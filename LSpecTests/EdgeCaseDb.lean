@@ -82,6 +82,7 @@ private def emptyDb : Database := fun _ => []
 -- ============================================================================
 
 private def nullAgeTests : TestSeq :=
+  -- covers: where_false_empty
   test "null-age: WHERE age > 25 returns 0 rows (NULLs filtered)" (
     (evalSelect nullAgeDb (mkWhereAge .gt 25)).length == 0) $
   test "null-age: WHERE department = 'Sales' returns 1 row" (
@@ -105,6 +106,7 @@ private def singleRowTests : TestSeq :=
 private def dupKeyTests : TestSeq :=
   test "dup-key: WHERE age > 20 returns 2 rows" (
     (evalSelect dupKeyDb (mkWhereAge .gt 20)).length == 2) $
+  -- covers: inner_join_cardinality_le
   test "dup-key: INNER JOIN age > 20 returns rows" (
     (evalSelect dupKeyDb (mkJoinQuery .inner 20)).length > 0)
 
@@ -115,6 +117,7 @@ private def dupKeyTests : TestSeq :=
 private def uniformTests : TestSeq :=
   test "uniform: WHERE age > 25 returns all 5 rows (all age=30)" (
     (evalSelect uniformDb (mkWhereAge .gt 25)).length == 5) $
+  -- covers: distinct_idempotent
   test "uniform: DISTINCT reduces to 1 row" (
     (evalSelect uniformDb (mkDistinctWhere 25)).length == 1)
 
@@ -134,8 +137,10 @@ private def mixedNullTests : TestSeq :=
 -- ============================================================================
 
 private def emptyDbTests : TestSeq :=
+  -- covers: inner_join_empty_left, inner_join_empty_right
   test "empty: WHERE age > 25 returns []" (
     (evalSelect emptyDb (mkWhereAge .gt 25)).length == 0) $
+  -- covers: cross_join_empty_left, cross_join_empty_right
   test "empty: INNER JOIN returns []" (
     (evalSelect emptyDb (mkJoinQuery .inner 25)).length == 0) $
   test "empty: UNION ALL returns []" (
