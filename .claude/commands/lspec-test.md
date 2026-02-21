@@ -77,9 +77,9 @@ LSpec property tests live in `LSpecTests/` and use SlimCheck for random generati
 
 7. **Build and run:**
    ```bash
-   lake build lspec_tests && lake exe lspec_tests
+   lake build sql_equiv_lspec && lake exe sql_equiv_lspec
    ```
-   For quick iteration: `LSPEC_SAMPLES=100 lake exe lspec_tests`
+   For quick iteration: `LSPEC_SAMPLES=100 lake exe sql_equiv_lspec`
 
 8. **Verify coverage** after adding tests:
    ```bash
