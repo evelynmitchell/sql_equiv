@@ -1420,7 +1420,7 @@ private theorem case_foldl_true_forall {α : Type} {f g : α → Bool} {xs : Lis
       · exact ih h hmem
 
 /-- evalCaseHelper congruence: if two functions agree on all branches, results agree. -/
-private theorem evalCaseHelper_congr (f g : Expr → Option Value)
+theorem evalCaseHelper_congr (f g : Expr → Option Value)
     (elseVal1 elseVal2 : Option Value) (h_else : elseVal1 = elseVal2)
     (branches : List (Expr × Expr))
     (h : ∀ pair, pair ∈ branches → f pair.1 = g pair.1 ∧ f pair.2 = g pair.2) :
@@ -1445,7 +1445,7 @@ private theorem evalCaseHelper_congr (f g : Expr → Option Value)
       | null _ => exact ih'
 
 /-- InList foldl congruence: if ev and all value evaluations agree, foldl results agree. -/
-private theorem inList_foldl_eval_independent
+theorem inList_foldl_eval_independent
     (f g : Expr → Option Value)
     (ev1 ev2 : Option Value) (h_ev : ev1 = ev2)
     (vals : List Expr)

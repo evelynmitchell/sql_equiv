@@ -382,13 +382,93 @@ private def leafTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Subexpression Recursion Tests (Phase 2b)
+-- ============================================================================
+
+private def subexprRecursionTests : List TestResult := [
+  -- Func: recurse into args
+  testRewrite "func_recursion (UPPER(x OR TRUE) → UPPER(TRUE))"
+    (.func "UPPER" [.binOp .or (col "x") (boolLit true)])
+    (.func "UPPER" [boolLit true]),
+
+  -- Func: multi-arg recursion
+  testRewrite "func_multi_arg_recursion (CONCAT(x AND FALSE, y OR TRUE) → CONCAT(FALSE, TRUE))"
+    (.func "CONCAT" [.binOp .and (col "x") (boolLit false), .binOp .or (col "y") (boolLit true)])
+    (.func "CONCAT" [boolLit false, boolLit true]),
+
+  -- Agg: recurse into arg
+  testRewrite "agg_recursion (SUM(x BETWEEN 1 AND 10) → SUM(x >= 1 AND x <= 10))"
+    (.agg .sum (some (.between (col "x") (intLit 1) (intLit 10))) false)
+    (.agg .sum (some (.binOp .and (.binOp .ge (col "x") (intLit 1)) (.binOp .le (col "x") (intLit 10)))) false),
+
+  -- Agg: none arg unchanged
+  testRewrite "agg_no_arg (COUNT(*) style SUM(none) unchanged)"
+    (.agg .sum none false)
+    (.agg .sum none false),
+
+  -- WindowFn: recurse into arg
+  let spec : WindowSpec := .mk [] []
+  testRewrite "windowFn_recursion (ROW_NUMBER(x AND FALSE) → ROW_NUMBER(FALSE))"
+    (.windowFn .rowNumber (some (.binOp .and (col "x") (boolLit false))) spec)
+    (.windowFn .rowNumber (some (boolLit false)) spec),
+
+  -- WindowFn: none arg unchanged
+  let spec : WindowSpec := .mk [] []
+  testRewrite "windowFn_no_arg (ROW_NUMBER(none) unchanged)"
+    (.windowFn .rowNumber none spec)
+    (.windowFn .rowNumber none spec),
+
+  -- InSubquery: recurse into expression
+  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  testRewrite "inSubquery_recursion ((x OR TRUE) IN subquery → TRUE IN subquery)"
+    (.inSubquery (.binOp .or (col "x") (boolLit true)) false sel)
+    (.inSubquery (boolLit true) false sel),
+
+  -- InList: recurse into vals
+  testRewrite "inList_vals_recursion (x IN (NOT(a=b), c) → x IN (a<>b, c))"
+    (.inList (col "x") false [.unaryOp .not (.binOp .eq (col "a") (col "b")), col "c"])
+    (.inList (col "x") false [.binOp .ne (col "a") (col "b"), col "c"]),
+
+  -- InList: recurse into both expr and vals, then singleton rule fires
+  testRewrite "inList_expr_and_vals_recursion ((x AND FALSE) IN (NOT(a=b)) → FALSE = (a<>b))"
+    (.inList (.binOp .and (col "x") (boolLit false)) false [.unaryOp .not (.binOp .eq (col "a") (col "b"))])
+    (.binOp .eq (boolLit false) (.binOp .ne (col "a") (col "b"))),
+
+  -- CASE: recurse into branch condition
+  testRewrite "case_condition_recursion (CASE WHEN NOT(a=b) THEN r ELSE d → CASE WHEN a<>b THEN r ELSE d)"
+    (.«case» [(.unaryOp .not (.binOp .eq (col "a") (col "b")), col "r")] (some (col "d")))
+    (.«case» [(.binOp .ne (col "a") (col "b"), col "r")] (some (col "d"))),
+
+  -- CASE: recurse into branch result
+  testRewrite "case_result_recursion (CASE WHEN c THEN (x AND FALSE) ELSE d → CASE WHEN c THEN FALSE ELSE d)"
+    (.«case» [(col "c", .binOp .and (col "x") (boolLit false))] (some (col "d")))
+    (.«case» [(col "c", boolLit false)] (some (col "d"))),
+
+  -- CASE: recurse into else clause
+  testRewrite "case_else_recursion (CASE WHEN c THEN r ELSE (x OR TRUE) → CASE WHEN c THEN r ELSE TRUE)"
+    (.«case» [(col "c", col "r")] (some (.binOp .or (col "x") (boolLit true))))
+    (.«case» [(col "c", col "r")] (some (boolLit true))),
+
+  -- CASE: condition rewrites to TRUE → simplifyCaseExpr fires
+  testRewrite "case_compose_true (CASE WHEN (x OR TRUE) THEN r ELSE d → r)"
+    (.«case» [(.binOp .or (col "x") (boolLit true), col "r")] (some (col "d")))
+    (col "r"),
+
+  -- CASE: condition rewrites to FALSE → simplifyCaseExpr fires
+  testRewrite "case_compose_false (CASE WHEN (x AND FALSE) THEN r ELSE d → d)"
+    (.«case» [(.binOp .and (col "x") (boolLit false), col "r")] (some (col "d")))
+    (col "d")
+]
+
+-- ============================================================================
 -- Test Suite
 -- ============================================================================
 
 def allTests : List TestResult :=
   binOpTests ++ unaryOpTests ++ betweenTests ++ inListTests ++
   caseTests ++ conditionalBoolTests ++ conditionalArithTests ++
-  compositionTests ++ recursionTests ++ idempotencyTests ++ leafTests
+  compositionTests ++ recursionTests ++ idempotencyTests ++ leafTests ++
+  subexprRecursionTests
 
 def runRewriterTests : IO (Nat × Nat) :=
   runTests "Certified Rewriter Tests" allTests
