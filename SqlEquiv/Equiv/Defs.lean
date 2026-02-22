@@ -55,6 +55,14 @@ def Expr.isStringOrNullValued (e : Expr) : Prop :=
               (∃ n, evalExpr row e = some (.null n)) ∨
               evalExpr row e = none
 
+/-- Stronger than isStringOrNullValued: null values must be untyped (`.null none`).
+    Satisfied by any expression whose values have passed through an evaluator operation,
+    since all evalBinOp/evalUnaryOp/evalFunc null arms return `some (.null none)`. -/
+def Expr.isStringOrUntypedNullValued (e : Expr) : Prop :=
+  ∀ row : Row, (∃ s : String, evalExpr row e = some (.string s)) ∨
+              evalExpr row e = some (.null none) ∨
+              evalExpr row e = none
+
 /-- Type precondition: expression always evaluates to a string or null value.
     Excludes int/bool values AND errors (none). Needed for LIKE pattern axioms
     (like_match_all, like_self) where evalBinOp .like only handles string/null inputs. -/
