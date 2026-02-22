@@ -194,6 +194,109 @@ private def caseTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Conditional Boolean Identity Tests
+-- ============================================================================
+
+private def conditionalBoolTests : List TestResult := [
+  -- Guard passes: IS_NULL is definitely bool
+  testRewrite "and_true (IS_NULL(x) AND TRUE → IS_NULL(x))"
+    (.binOp .and (.unaryOp .isNull (col "x")) (boolLit true))
+    (.unaryOp .isNull (col "x")),
+
+  testRewrite "true_and (TRUE AND IS_NULL(x) → IS_NULL(x))"
+    (.binOp .and (boolLit true) (.unaryOp .isNull (col "x")))
+    (.unaryOp .isNull (col "x")),
+
+  testRewrite "or_false (IS_NULL(x) OR FALSE → IS_NULL(x))"
+    (.binOp .or (.unaryOp .isNull (col "x")) (boolLit false))
+    (.unaryOp .isNull (col "x")),
+
+  testRewrite "false_or (FALSE OR IS_NULL(x) → IS_NULL(x))"
+    (.binOp .or (boolLit false) (.unaryOp .isNull (col "x")))
+    (.unaryOp .isNull (col "x")),
+
+  -- NOT NOT with definitely bool inner
+  testRewrite "not_not_isNull (NOT NOT IS_NULL(x) → IS_NULL(x))"
+    (.unaryOp .not (.unaryOp .not (.unaryOp .isNull (col "x"))))
+    (.unaryOp .isNull (col "x")),
+
+  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  testRewrite "not_not_exists (NOT NOT EXISTS sel → EXISTS sel)"
+    (.unaryOp .not (.unaryOp .not (.«exists» false sel)))
+    (.«exists» false sel),
+
+  -- Guard fails: col is NOT definitely bool → unchanged
+  testRewrite "and_true_col_unchanged (col AND TRUE unchanged)"
+    (.binOp .and (col "x") (boolLit true))
+    (.binOp .and (col "x") (boolLit true)),
+
+  -- Guard fails: comparison is NOT definitely bool
+  testRewrite "and_true_eq_unchanged ((a = b) AND TRUE unchanged)"
+    (.binOp .and (.binOp .eq (col "a") (col "b")) (boolLit true))
+    (.binOp .and (.binOp .eq (col "a") (col "b")) (boolLit true)),
+
+  -- Guard fails: NOT NOT col unchanged
+  testRewrite "not_not_col_unchanged (NOT NOT col unchanged)"
+    (.unaryOp .not (.unaryOp .not (col "x")))
+    (.unaryOp .not (.unaryOp .not (col "x"))),
+
+  -- Bool literal: TRUE AND TRUE → TRUE (guard passes, lit is definitely bool)
+  testRewrite "and_true_lit (TRUE AND TRUE → TRUE)"
+    (.binOp .and (boolLit true) (boolLit true))
+    (boolLit true)
+]
+
+-- ============================================================================
+-- Conditional Arithmetic Identity Tests
+-- ============================================================================
+
+private def conditionalArithTests : List TestResult := [
+  -- Guard passes: int literals are definitely int
+  testRewrite "add_zero (5 + 0 → 5)"
+    (.binOp .add (intLit 5) (intLit 0))
+    (intLit 5),
+
+  testRewrite "zero_add (0 + 5 → 5)"
+    (.binOp .add (intLit 0) (intLit 5))
+    (intLit 5),
+
+  testRewrite "mul_one (5 * 1 → 5)"
+    (.binOp .mul (intLit 5) (intLit 1))
+    (intLit 5),
+
+  testRewrite "one_mul (1 * 5 → 5)"
+    (.binOp .mul (intLit 1) (intLit 5))
+    (intLit 5),
+
+  testRewrite "sub_zero (5 - 0 → 5)"
+    (.binOp .sub (intLit 5) (intLit 0))
+    (intLit 5),
+
+  -- Guard fails: col is NOT definitely int → unchanged
+  testRewrite "add_zero_col_unchanged (col + 0 unchanged)"
+    (.binOp .add (col "x") (intLit 0))
+    (.binOp .add (col "x") (intLit 0)),
+
+  -- Nested: (3 + 2) + 0 → (3 + 2), since 3+2 is definitely int
+  testRewrite "add_zero_nested ((3 + 2) + 0 → 3 + 2)"
+    (.binOp .add (.binOp .add (intLit 3) (intLit 2)) (intLit 0))
+    (.binOp .add (intLit 3) (intLit 2))
+]
+
+-- ============================================================================
+-- Bottom-Up + Conditional Composition Tests
+-- ============================================================================
+
+private def compositionTests : List TestResult := [
+  -- NOT NOT IS_NULL(x) AND TRUE → IS_NULL(x)
+  -- Inner: NOT NOT IS_NULL(x) → IS_NULL(x) (conditional NOT-NOT)
+  -- Then: IS_NULL(x) AND TRUE → IS_NULL(x) (conditional AND TRUE)
+  testRewrite "composition_not_not_and_true (NOT NOT IS_NULL(x) AND TRUE → IS_NULL(x))"
+    (.binOp .and (.unaryOp .not (.unaryOp .not (.unaryOp .isNull (col "x")))) (boolLit true))
+    (.unaryOp .isNull (col "x"))
+]
+
+-- ============================================================================
 -- Bottom-Up Recursion Tests
 -- ============================================================================
 
@@ -284,7 +387,8 @@ private def leafTests : List TestResult := [
 
 def allTests : List TestResult :=
   binOpTests ++ unaryOpTests ++ betweenTests ++ inListTests ++
-  caseTests ++ recursionTests ++ idempotencyTests ++ leafTests
+  caseTests ++ conditionalBoolTests ++ conditionalArithTests ++
+  compositionTests ++ recursionTests ++ idempotencyTests ++ leafTests
 
 def runRewriterTests : IO (Nat × Nat) :=
   runTests "Certified Rewriter Tests" allTests

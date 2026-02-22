@@ -5,11 +5,147 @@
   producing both the simplified expression AND a proof of equivalence,
   with zero new axioms or sorry.
 
-  Phase 1: Unconditional rules only (no isBoolValued/isIntValued preconditions).
+  Phase 1: Unconditional rules (no type preconditions).
+  Phase 2a: Conditional rules guarded by static type checks.
 -/
 import SqlEquiv.Equiv
 
 namespace SqlEquiv
+
+-- ============================================================================
+-- Static Type Guards
+-- ============================================================================
+
+/-- Conservative static check: returns true only for expressions that are
+    guaranteed to evaluate to `some (.bool _)` regardless of row/db context.
+    Excludes comparisons (can return none on type mismatch), BETWEEN, IN list. -/
+def Expr.isDefinitelyBool : Expr → Bool
+  | .lit (.bool _) => true
+  | .unaryOp .isNull _ => true
+  | .unaryOp .isNotNull _ => true
+  | .unaryOp .not e => e.isDefinitelyBool
+  | .binOp .and l r => l.isDefinitelyBool && r.isDefinitelyBool
+  | .binOp .or l r => l.isDefinitelyBool && r.isDefinitelyBool
+  | .«exists» _ _ => true
+  | _ => false
+
+/-- Conservative static check: returns true only for expressions that are
+    guaranteed to evaluate to `some (.int _)` regardless of row/db context.
+    Excludes div/mod (division by zero returns none). -/
+def Expr.isDefinitelyInt : Expr → Bool
+  | .lit (.int _) => true
+  | .binOp .add l r => l.isDefinitelyInt && r.isDefinitelyInt
+  | .binOp .sub l r => l.isDefinitelyInt && r.isDefinitelyInt
+  | .binOp .mul l r => l.isDefinitelyInt && r.isDefinitelyInt
+  | .unaryOp .neg e => e.isDefinitelyInt
+  | _ => false
+
+-- ============================================================================
+-- Bridge Lemmas: static guards → semantic predicates
+-- ============================================================================
+
+/-- If `isDefinitelyBool` returns true, then `e` is semantically bool-valued:
+    for every row, `evalExpr row e = some (.bool b)` for some `b`. -/
+theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool = true) :
+    e.isBoolValued := by
+  intro row
+  simp only [evalExpr]
+  cases e with
+  | lit v =>
+    cases v with
+    | bool b => exact ⟨b, evalExprWithDb_lit ..⟩
+    | _ => simp [Expr.isDefinitelyBool] at h
+  | unaryOp op inner =>
+    cases op with
+    | isNull =>
+      rw [evalExprWithDb_unaryOp]
+      cases evalExprWithDb _ row inner with
+      | none => exact ⟨true, rfl⟩
+      | some v => cases v <;> exact ⟨_, rfl⟩
+    | isNotNull =>
+      rw [evalExprWithDb_unaryOp]
+      cases evalExprWithDb _ row inner with
+      | none => exact ⟨false, rfl⟩
+      | some v => cases v <;> exact ⟨_, rfl⟩
+    | not =>
+      simp [Expr.isDefinitelyBool] at h
+      have ⟨b, hb⟩ := isDefinitelyBool_implies_isBoolValued inner h row
+      simp only [evalExpr] at hb
+      rw [evalExprWithDb_unaryOp, hb]
+      exact ⟨!b, rfl⟩
+    | neg => simp [Expr.isDefinitelyBool] at h
+  | binOp op l r =>
+    cases op with
+    | «and» =>
+      simp [Expr.isDefinitelyBool] at h
+      have ⟨bl, hbl⟩ := isDefinitelyBool_implies_isBoolValued l h.1 row
+      have ⟨br, hbr⟩ := isDefinitelyBool_implies_isBoolValued r h.2 row
+      simp only [evalExpr] at hbl hbr
+      rw [evalExprWithDb_binOp, hbl, hbr]
+      exact ⟨bl && br, rfl⟩
+    | «or» =>
+      simp [Expr.isDefinitelyBool] at h
+      have ⟨bl, hbl⟩ := isDefinitelyBool_implies_isBoolValued l h.1 row
+      have ⟨br, hbr⟩ := isDefinitelyBool_implies_isBoolValued r h.2 row
+      simp only [evalExpr] at hbl hbr
+      rw [evalExprWithDb_binOp, hbl, hbr]
+      exact ⟨bl || br, rfl⟩
+    | _ => simp [Expr.isDefinitelyBool] at h
+  | «exists» neg sel =>
+    rw [evalExprWithDb_exists]
+    simp only
+    cases neg with
+    | false =>
+      exact ⟨!(evalSelectWithContext _ row sel).isEmpty, rfl⟩
+    | true =>
+      exact ⟨!!(evalSelectWithContext _ row sel).isEmpty, rfl⟩
+  | _ => simp [Expr.isDefinitelyBool] at h
+
+/-- If `isDefinitelyInt` returns true, then `e` is semantically int-valued:
+    for every row, `evalExpr row e = some (.int n)` for some `n`. -/
+theorem isDefinitelyInt_implies_isIntValued (e : Expr) (h : e.isDefinitelyInt = true) :
+    e.isIntValued := by
+  intro row
+  simp only [evalExpr]
+  cases e with
+  | lit v =>
+    cases v with
+    | int n => exact ⟨n, evalExprWithDb_lit ..⟩
+    | _ => simp [Expr.isDefinitelyInt] at h
+  | binOp op l r =>
+    cases op with
+    | add =>
+      simp [Expr.isDefinitelyInt] at h
+      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 row
+      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 row
+      simp only [evalExpr] at hnl hnr
+      rw [evalExprWithDb_binOp, hnl, hnr]
+      exact ⟨nl + nr, rfl⟩
+    | sub =>
+      simp [Expr.isDefinitelyInt] at h
+      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 row
+      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 row
+      simp only [evalExpr] at hnl hnr
+      rw [evalExprWithDb_binOp, hnl, hnr]
+      exact ⟨nl - nr, rfl⟩
+    | mul =>
+      simp [Expr.isDefinitelyInt] at h
+      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 row
+      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 row
+      simp only [evalExpr] at hnl hnr
+      rw [evalExprWithDb_binOp, hnl, hnr]
+      exact ⟨nl * nr, rfl⟩
+    | _ => simp [Expr.isDefinitelyInt] at h
+  | unaryOp op inner =>
+    cases op with
+    | neg =>
+      simp [Expr.isDefinitelyInt] at h
+      have ⟨n, hn⟩ := isDefinitelyInt_implies_isIntValued inner h row
+      simp only [evalExpr] at hn
+      rw [evalExprWithDb_unaryOp, hn]
+      exact ⟨-n, rfl⟩
+    | _ => simp [Expr.isDefinitelyInt] at h
+  | _ => simp [Expr.isDefinitelyInt] at h
 
 -- ============================================================================
 -- Congruence Lemmas
@@ -68,6 +204,44 @@ def simplifyBinOp (op : BinOp) (l r : Expr) :
   | .or, .lit (.bool true), r => ⟨.lit (.bool true), true_or r⟩
   -- LIKE empty pattern
   | .like, l, .lit (.string "") => ⟨.binOp .eq l (.lit (.string "")), like_empty_pattern l⟩
+  -- Boolean identity (conditional on type guard)
+  | .and, l, .lit (.bool true) =>
+    if h : l.isDefinitelyBool = true
+    then ⟨l, and_true l (isDefinitelyBool_implies_isBoolValued l h)⟩
+    else ⟨.binOp .and l (.lit (.bool true)), expr_equiv_refl _⟩
+  | .and, .lit (.bool true), r =>
+    if h : r.isDefinitelyBool = true
+    then ⟨r, true_and r (isDefinitelyBool_implies_isBoolValued r h)⟩
+    else ⟨.binOp .and (.lit (.bool true)) r, expr_equiv_refl _⟩
+  | .or, l, .lit (.bool false) =>
+    if h : l.isDefinitelyBool = true
+    then ⟨l, or_false l (isDefinitelyBool_implies_isBoolValued l h)⟩
+    else ⟨.binOp .or l (.lit (.bool false)), expr_equiv_refl _⟩
+  | .or, .lit (.bool false), r =>
+    if h : r.isDefinitelyBool = true
+    then ⟨r, false_or r (isDefinitelyBool_implies_isBoolValued r h)⟩
+    else ⟨.binOp .or (.lit (.bool false)) r, expr_equiv_refl _⟩
+  -- Arithmetic identity (conditional on type guard)
+  | .add, l, .lit (.int 0) =>
+    if h : l.isDefinitelyInt = true
+    then ⟨l, expr_add_zero l (isDefinitelyInt_implies_isIntValued l h)⟩
+    else ⟨.binOp .add l (.lit (.int 0)), expr_equiv_refl _⟩
+  | .add, .lit (.int 0), r =>
+    if h : r.isDefinitelyInt = true
+    then ⟨r, expr_zero_add r (isDefinitelyInt_implies_isIntValued r h)⟩
+    else ⟨.binOp .add (.lit (.int 0)) r, expr_equiv_refl _⟩
+  | .mul, l, .lit (.int 1) =>
+    if h : l.isDefinitelyInt = true
+    then ⟨l, expr_mul_one l (isDefinitelyInt_implies_isIntValued l h)⟩
+    else ⟨.binOp .mul l (.lit (.int 1)), expr_equiv_refl _⟩
+  | .mul, .lit (.int 1), r =>
+    if h : r.isDefinitelyInt = true
+    then ⟨r, expr_one_mul r (isDefinitelyInt_implies_isIntValued r h)⟩
+    else ⟨.binOp .mul (.lit (.int 1)) r, expr_equiv_refl _⟩
+  | .sub, l, .lit (.int 0) =>
+    if h : l.isDefinitelyInt = true
+    then ⟨l, expr_sub_zero l (isDefinitelyInt_implies_isIntValued l h)⟩
+    else ⟨.binOp .sub l (.lit (.int 0)), expr_equiv_refl _⟩
   -- Default: no simplification
   | op, l, r => ⟨.binOp op l r, expr_equiv_refl _⟩
 
@@ -87,6 +261,11 @@ def simplifyUnaryOp (op : UnaryOp) (e : Expr) :
     ⟨.«exists» true sel, expr_equiv_symm (not_not_exists sel)⟩
   | .not, .«exists» true sel =>
     ⟨.«exists» false sel, not_exists_true_flip sel⟩
+  -- NOT(NOT(e)) → e (conditional on type guard)
+  | .not, .unaryOp .not e =>
+    if h : e.isDefinitelyBool = true
+    then ⟨e, not_not e (isDefinitelyBool_implies_isBoolValued e h)⟩
+    else ⟨.unaryOp .not (.unaryOp .not e), expr_equiv_refl _⟩
   -- Default: no simplification
   | op, e => ⟨.unaryOp op e, expr_equiv_refl _⟩
 
