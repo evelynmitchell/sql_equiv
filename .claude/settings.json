@@ -1,8 +1,8 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SubagentStart": [
       {
-        "matcher": "EnterPlanMode",
+        "matcher": "Plan",
         "hooks": [
           {
             "type": "command",

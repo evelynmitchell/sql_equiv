@@ -1,6 +1,6 @@
 #!/bin/bash
 # Hook: ensure-fresh-branch.sh
-# Fires on PreToolUse(EnterPlanMode) — ensures we're on a fresh branch
+# Fires on SubagentStart(Plan) — ensures we're on a fresh branch
 # before starting any new task planning.
 #
 # Behavior:
