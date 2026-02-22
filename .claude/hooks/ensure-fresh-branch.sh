@@ -1,9 +1,10 @@
 #!/bin/bash
 # Hook: ensure-fresh-branch.sh
-# Fires on SubagentStart(Plan) — ensures we're on a fresh branch
-# before starting any new task planning.
+# Fires on PreToolUse(Task) — filters for Plan subagent only.
+# Ensures we're on a fresh branch before starting any new task planning.
 #
 # Behavior:
+#   - Non-Plan subagent: no-op (exit 0 immediately)
 #   - On master/main: fetches latest, creates claude/<slug> branch
 #   - On a branch with a merged PR: switches to master, creates new branch
 #   - On a clean unmerged branch: passes through (no-op)
@@ -11,6 +12,11 @@
 # Output: JSON with additionalContext so Claude sees the branch state.
 
 set -euo pipefail
+
+# Read stdin JSON and filter: only act on Plan subagents
+input=$(cat)
+subagent_type=$(echo "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
+[ "$subagent_type" != "Plan" ] && exit 0
 
 # Not a git repo? Nothing to do.
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0

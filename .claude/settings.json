@@ -1,8 +1,8 @@
 {
   "hooks": {
-    "SubagentStart": [
+    "PreToolUse": [
       {
-        "matcher": "Plan",
+        "matcher": "Task",
         "hooks": [
           {
             "type": "command",
