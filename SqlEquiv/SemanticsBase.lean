@@ -220,8 +220,8 @@ def evalFunc (name : String) (args : List (Option Value)) : Option Value :=
   | "UPPER", [some (.string s)] => some (.string s.toUpper)
   | "LOWER", [some (.null _)] => some (.null none)
   | "LOWER", [some (.string s)] => some (.string s.toLower)
-  | "CONCAT", [some (.null t), some _] => some (.null t)
-  | "CONCAT", [some _, some (.null t)] => some (.null t)
+  | "CONCAT", [some (.null _), some _] => some (.null none)
+  | "CONCAT", [some _, some (.null _)] => some (.null none)
   | "CONCAT", [some (.string a), some (.string b)] => some (.string (a ++ b))
   | _, _ => none
 

@@ -5,7 +5,7 @@
     "wildcard": 253,
     "delegated": 54,
     "value_dependent": 16,
-    "gaps": 9
+    "gaps": 8
   },
   "matrices": [
     {
@@ -6068,14 +6068,6 @@
       "right_type": "bool",
       "severity": "LOW",
       "description": "ABS(string/bool) \u2014 not valid SQL, wildcard correct"
-    },
-    {
-      "function": "evalFunc",
-      "op": "CONCAT",
-      "left_type": "N/A",
-      "right_type": "N/A",
-      "severity": "MEDIUM",
-      "description": "CONCAT null type preserved (evalFunc) vs lost (evalBinOp .concat)"
     },
     {
       "function": "evalFunc",

@@ -1500,31 +1500,35 @@ theorem like_self (e : Expr) (h : e.isStringOrNull) :
 -- String Function Theorems
 -- ============================================================================
 
--- Value-level helper: CONCAT("", v) = v for string/null/none values
+-- Value-level helper: CONCAT("", v) = v for string/untyped-null/none values
 private theorem evalFunc_concat_empty_left (v : Option Value) :
-    (∃ s, v = some (.string s)) ∨ (∃ n, v = some (.null n)) ∨ v = none →
+    (∃ s, v = some (.string s)) ∨ v = some (.null none) ∨ v = none →
     evalFunc "CONCAT" [some (.string ""), v] = v := by
   have hup : "CONCAT".toUpper = "CONCAT" := by native_decide
-  intro h; rcases h with ⟨s, hs⟩ | ⟨n, hn⟩ | hn <;> subst_vars <;> simp [evalFunc, hup]
+  intro h; rcases h with ⟨s, hs⟩ | hn | hn <;> subst_vars <;> simp [evalFunc, hup]
 
--- Value-level helper: CONCAT(v, "") = v for string/null/none values
+-- Value-level helper: CONCAT(v, "") = v for string/untyped-null/none values
 private theorem evalFunc_concat_empty_right (v : Option Value) :
-    (∃ s, v = some (.string s)) ∨ (∃ n, v = some (.null n)) ∨ v = none →
+    (∃ s, v = some (.string s)) ∨ v = some (.null none) ∨ v = none →
     evalFunc "CONCAT" [v, some (.string "")] = v := by
   have hup : "CONCAT".toUpper = "CONCAT" := by native_decide
-  intro h; rcases h with ⟨s, hs⟩ | ⟨n, hn⟩ | hn <;> subst_vars <;> simp [evalFunc, hup]
+  intro h; rcases h with ⟨s, hs⟩ | hn | hn <;> subst_vars <;> simp [evalFunc, hup]
 
 /-- CONCAT('', x) = x (empty string is identity for concat).
-    Requires `isStringOrNullValued` — expression must evaluate to string, null, or error. -/
-theorem concat_empty_left (e : Expr) (h : e.isStringOrNullValued) :
+    Requires `isStringOrUntypedNullValued` — expression must evaluate to string,
+    untyped null, or error. Typed null literals don't satisfy this because
+    CONCAT normalizes null type to `none`. -/
+theorem concat_empty_left (e : Expr) (h : e.isStringOrUntypedNullValued) :
     Expr.func "CONCAT" [Expr.lit (.string ""), e] ≃ₑ e := by
   intro row
   simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
   exact evalFunc_concat_empty_left _ (h row)
 
 /-- CONCAT(x, '') = x (empty string is identity for concat).
-    Requires `isStringOrNullValued` — expression must evaluate to string, null, or error. -/
-theorem concat_empty_right (e : Expr) (h : e.isStringOrNullValued) :
+    Requires `isStringOrUntypedNullValued` — expression must evaluate to string,
+    untyped null, or error. Typed null literals don't satisfy this because
+    CONCAT normalizes null type to `none`. -/
+theorem concat_empty_right (e : Expr) (h : e.isStringOrUntypedNullValued) :
     Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e := by
   intro row
   simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]

@@ -772,8 +772,6 @@ def _parse_func_args(args_str: str) -> Optional[list[str]]:
 KNOWN_GAPS: list[dict] = [
     {"function": "evalFunc", "op": "ABS", "types": [("string",), ("bool",)],
      "severity": "LOW", "desc": "ABS(string/bool) — not valid SQL, wildcard correct"},
-    {"function": "evalFunc", "op": "CONCAT", "types": [],
-     "severity": "MEDIUM", "desc": "CONCAT null type preserved (evalFunc) vs lost (evalBinOp .concat)"},
     {"function": "evalFunc", "op": "COALESCE", "types": [],
      "severity": "LOW", "desc": "COALESCE conflates none (error) with null via isNullValue"},
     {"function": "Value.compare", "op": "compare", "types": [("bool", "bool")],
