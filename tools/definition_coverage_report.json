@@ -1,0 +1,6183 @@
+{
+  "summary": {
+    "total_cells": 502,
+    "explicit": 175,
+    "wildcard": 257,
+    "delegated": 54,
+    "value_dependent": 16,
+    "gaps": 17
+  },
+  "matrices": [
+    {
+      "function": "evalBinOp",
+      "operator": "add",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "add",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "int",
+          "detail": "",
+          "line_number": 131,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 130,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 130,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 130,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 129,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "add",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 129,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "add",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 129,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "add",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 129,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "add",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "add",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "sub",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "sub",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "int",
+          "detail": "",
+          "line_number": 134,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 133,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 133,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 133,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 132,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL - x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "sub",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 132,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL - x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "sub",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 132,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL - x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "sub",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 132,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL - x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "sub",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "sub",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "mul",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "mul",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "int",
+          "detail": "",
+          "line_number": 137,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 136,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 136,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 136,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 135,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL * x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "mul",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 135,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL * x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "mul",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 135,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL * x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "mul",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 135,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL * x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "mul",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mul",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "div",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "div",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if b == 0 then none else some (.int (a / b))",
+          "line_number": 140,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 139,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 139,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 139,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 138,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL / x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "div",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 138,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL / x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "div",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 138,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL / x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "div",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 138,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL / x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "div",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "div",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "mod",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "mod",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if b == 0 then none else some (.int (a % b))",
+          "line_number": 144,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 143,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 143,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 143,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 142,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 142,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 142,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 142,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "mod",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "eq",
+      "explicit": 7,
+      "wildcard": 9,
+      "delegated": 9,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 148,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 148,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via eq",
+          "line_number": 149,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 148,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 147,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL = x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 147,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL = x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 147,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL = x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 147,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL = x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: eq result is BNN"
+          ]
+        },
+        {
+          "op": "eq",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "ne",
+      "explicit": 7,
+      "wildcard": 9,
+      "delegated": 9,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "ne",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 151,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 151,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via eq",
+          "line_number": 152,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 151,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 150,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "ne",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 150,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "ne",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 150,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "ne",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 150,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "ne",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ne",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "lt",
+      "explicit": 7,
+      "wildcard": 9,
+      "delegated": 9,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "lt",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 154,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 154,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 155,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 154,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 153,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL < x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "lt",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 153,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL < x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "lt",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 153,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL < x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "lt",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 153,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL < x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "lt",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "lt",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "le",
+      "explicit": 7,
+      "wildcard": 9,
+      "delegated": 9,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "le",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 157,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 157,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 158,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 157,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 156,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 156,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 156,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 156,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "le",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "gt",
+      "explicit": 7,
+      "wildcard": 9,
+      "delegated": 9,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "gt",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 160,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 160,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 161,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 160,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 159,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 159,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 159,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 159,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "gt",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "ge",
+      "explicit": 7,
+      "wildcard": 9,
+      "delegated": 9,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "ge",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 163,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "bool",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 163,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "delegated",
+          "result_type": "none",
+          "detail": "via compare",
+          "line_number": 164,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 163,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 162,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 162,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 162,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 162,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ge",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "and",
+      "explicit": 6,
+      "wildcard": 11,
+      "delegated": 0,
+      "value_dependent": 8,
+      "total": 25,
+      "cells": [
+        {
+          "op": "and",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=none, false=bool",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 172,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=none, false=bool",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 172,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=none, false=bool",
+          "line_number": 188,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: FALSE AND x = FALSE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=none, false=bool",
+          "line_number": 188,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: FALSE AND x = FALSE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 167,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: FALSE AND x = FALSE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=null, false=bool",
+          "line_number": 172,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: FALSE AND NULL = FALSE",
+            "NullSemantics.lean: TRUE AND NULL = NULL",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: FALSE AND x = FALSE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=none, false=bool",
+          "line_number": 188,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: FALSE AND x = FALSE (any Option Value)"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 171,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 171,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=null, false=bool",
+          "line_number": 171,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL AND FALSE = FALSE",
+            "NullSemantics.lean: NULL AND TRUE = NULL"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 171,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL AND NULL = NULL"
+          ]
+        },
+        {
+          "op": "and",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=none, false=bool",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "and",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: le result is BNN"
+          ]
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "or",
+      "explicit": 6,
+      "wildcard": 11,
+      "delegated": 0,
+      "value_dependent": 8,
+      "total": 25,
+      "cells": [
+        {
+          "op": "or",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=none",
+          "line_number": 175,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 178,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=none",
+          "line_number": 175,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 178,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=none",
+          "line_number": 174,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: TRUE OR x = TRUE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=none",
+          "line_number": 174,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: TRUE OR x = TRUE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 173,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: Int BEq commutes",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: TRUE OR x = TRUE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=null",
+          "line_number": 174,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: TRUE OR NULL = TRUE",
+            "NullSemantics.lean: FALSE OR NULL = NULL",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: TRUE OR x = TRUE (any Option Value) (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=none",
+          "line_number": 174,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: TRUE OR x = TRUE (any Option Value)"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 177,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 177,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=null",
+          "line_number": 175,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL OR TRUE = TRUE",
+            "NullSemantics.lean: NULL OR FALSE = NULL",
+            "NullSemantics.lean: le result is BNN"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 177,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL OR NULL = NULL",
+            "NullSemantics.lean: le result is BNN"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "value-dependent",
+          "result_type": "varies",
+          "detail": "true=bool, false=none",
+          "line_number": 175,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN"
+          ]
+        },
+        {
+          "op": "or",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "or",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "concat",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "concat",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 181,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "string",
+          "detail": "",
+          "line_number": 182,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 181,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 181,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 180,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 180,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 180,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 180,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "concat",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalBinOp",
+      "operator": "like",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "like",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 184,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 185,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 184,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 184,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 183,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 183,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 183,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 183,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "like",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 188,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalUnaryOp",
+      "operator": "not",
+      "explicit": 2,
+      "wildcard": 3,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "not",
+          "left_type": "N/A",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 206,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL <> x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "not",
+          "left_type": "N/A",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 206,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULL <> x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "not",
+          "left_type": "N/A",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 200,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: NULL <> x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "not",
+          "left_type": "N/A",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 201,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: NULL <> x = NULL (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "not",
+          "left_type": "N/A",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 206,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN",
+            "NullSemantics.lean: le result is BNN"
+          ]
+        }
+      ]
+    },
+    {
+      "function": "evalUnaryOp",
+      "operator": "neg",
+      "explicit": 2,
+      "wildcard": 3,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "neg",
+          "left_type": "N/A",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "int",
+          "detail": "",
+          "line_number": 202,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "neg",
+          "left_type": "N/A",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 206,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "neg",
+          "left_type": "N/A",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 206,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "neg",
+          "left_type": "N/A",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 203,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "neg",
+          "left_type": "N/A",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 206,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalUnaryOp",
+      "operator": "isNull",
+      "explicit": 5,
+      "wildcard": 0,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "isNull",
+          "left_type": "N/A",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 204,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NULL on int = FALSE",
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)",
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)",
+            "NullSemantics.lean: COALESCE(int, x) = int (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "isNull",
+          "left_type": "N/A",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 204,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)",
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)",
+            "NullSemantics.lean: COALESCE(int, x) = int (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "isNull",
+          "left_type": "N/A",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 204,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)",
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)",
+            "NullSemantics.lean: COALESCE(int, x) = int (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "isNull",
+          "left_type": "N/A",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 204,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NULL on NULL = TRUE",
+            "NullSemantics.lean: NULL + x = NULL (\u2200 Value)",
+            "NullSemantics.lean: IS NULL and IS NOT NULL are complementary (\u2200 Value)",
+            "NullSemantics.lean: COALESCE(int, x) = int (\u2200 Value)"
+          ]
+        },
+        {
+          "op": "isNull",
+          "left_type": "N/A",
+          "right_type": "none",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 204,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        }
+      ]
+    },
+    {
+      "function": "evalUnaryOp",
+      "operator": "isNotNull",
+      "explicit": 5,
+      "wildcard": 0,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "isNotNull",
+          "left_type": "N/A",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 205,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NOT NULL on int = TRUE"
+          ]
+        },
+        {
+          "op": "isNotNull",
+          "left_type": "N/A",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 205,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "isNotNull",
+          "left_type": "N/A",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 205,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "isNotNull",
+          "left_type": "N/A",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 205,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: IS NOT NULL on NULL = FALSE"
+          ]
+        },
+        {
+          "op": "isNotNull",
+          "left_type": "N/A",
+          "right_type": "none",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 205,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        }
+      ]
+    },
+    {
+      "function": "Value.eq",
+      "operator": "",
+      "explicit": 10,
+      "wildcard": 6,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 16,
+      "cells": [
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 79,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 82,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 82,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 78,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 82,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 80,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 82,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 78,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 82,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 82,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 81,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 78,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 77,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 77,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 77,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "eq",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 77,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "Value.compare",
+      "operator": "",
+      "explicit": 9,
+      "wildcard": 7,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 16,
+      "cells": [
+        {
+          "op": "compare",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "ordering",
+          "detail": "",
+          "line_number": 88,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 87,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "ordering",
+          "detail": "",
+          "line_number": 89,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 87,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 90,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 87,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 86,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 86,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 86,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "compare",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 86,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "Value.toBool",
+      "operator": "",
+      "explicit": 3,
+      "wildcard": 1,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 4,
+      "cells": [
+        {
+          "op": "toBool",
+          "left_type": "N/A",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 96,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "toBool",
+          "left_type": "N/A",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 97,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "toBool",
+          "left_type": "N/A",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "bool",
+          "detail": "",
+          "line_number": 94,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "toBool",
+          "left_type": "N/A",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 95,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "COALESCE",
+      "explicit": 1,
+      "wildcard": 0,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 1,
+      "cells": [
+        {
+          "op": "COALESCE",
+          "left_type": "N/A",
+          "right_type": "List(Option Value)",
+          "status": "explicit",
+          "result_type": "passthrough",
+          "detail": "first non-null via isNullValue filter",
+          "line_number": 211,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "NULLIF",
+      "explicit": 16,
+      "wildcard": 9,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "NULLIF",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULLIF(n, n) = NULL",
+            "NullSemantics.lean: NULLIF(n, n+1) = n"
+          ]
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULLIF(true, false) = true",
+            "NullSemantics.lean: NULLIF(true, true) = NULL"
+          ]
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "conditional",
+          "detail": "if a.eq b == some true then some (.null none) else some a",
+          "line_number": 213,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "NULLIF",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "ABS",
+      "explicit": 1,
+      "wildcard": 4,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "ABS",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "int",
+          "detail": "",
+          "line_number": 215,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: NULLIF(true, true) = NULL",
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "ABS",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ABS",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ABS",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "ABS",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "LENGTH",
+      "explicit": 1,
+      "wildcard": 4,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "LENGTH",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "LENGTH",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "int",
+          "detail": "",
+          "line_number": 216,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "LENGTH",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "LENGTH",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "LENGTH",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "UPPER",
+      "explicit": 1,
+      "wildcard": 4,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "UPPER",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "UPPER",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "string",
+          "detail": "",
+          "line_number": 217,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "UPPER",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "UPPER",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "UPPER",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "LOWER",
+      "explicit": 1,
+      "wildcard": 4,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 5,
+      "cells": [
+        {
+          "op": "LOWER",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "LOWER",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "string",
+          "detail": "",
+          "line_number": 218,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "LOWER",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "LOWER",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "LOWER",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    },
+    {
+      "function": "evalFunc",
+      "operator": "CONCAT",
+      "explicit": 8,
+      "wildcard": 17,
+      "delegated": 0,
+      "value_dependent": 0,
+      "total": 25,
+      "cells": [
+        {
+          "op": "CONCAT",
+          "left_type": "int",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "int",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "int",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "int",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 220,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "int",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "string",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "string",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "string",
+          "detail": "",
+          "line_number": 221,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "string",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "string",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 220,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "string",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "bool",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "bool",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "bool",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "bool",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 220,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "bool",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "null",
+          "right_type": "int",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 219,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "null",
+          "right_type": "string",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 219,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "null",
+          "right_type": "bool",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 219,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "null",
+          "right_type": "null",
+          "status": "explicit",
+          "result_type": "null",
+          "detail": "",
+          "line_number": 219,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "null",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "none",
+          "right_type": "int",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "none",
+          "right_type": "string",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "none",
+          "right_type": "bool",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "none",
+          "right_type": "null",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        },
+        {
+          "op": "CONCAT",
+          "left_type": "none",
+          "right_type": "none",
+          "status": "wildcard",
+          "result_type": "none",
+          "detail": "",
+          "line_number": 222,
+          "tested": false,
+          "test_names": []
+        }
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "function": "evalFunc",
+      "op": "ABS",
+      "left_type": "N/A",
+      "right_type": "null",
+      "severity": "HIGH",
+      "description": "ABS(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "ABS",
+      "left_type": "N/A",
+      "right_type": "none",
+      "severity": "HIGH",
+      "description": "ABS(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "LENGTH",
+      "left_type": "N/A",
+      "right_type": "null",
+      "severity": "HIGH",
+      "description": "LENGTH(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "LENGTH",
+      "left_type": "N/A",
+      "right_type": "none",
+      "severity": "HIGH",
+      "description": "LENGTH(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "UPPER",
+      "left_type": "N/A",
+      "right_type": "null",
+      "severity": "HIGH",
+      "description": "UPPER(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "UPPER",
+      "left_type": "N/A",
+      "right_type": "none",
+      "severity": "HIGH",
+      "description": "UPPER(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "LOWER",
+      "left_type": "N/A",
+      "right_type": "null",
+      "severity": "HIGH",
+      "description": "LOWER(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "LOWER",
+      "left_type": "N/A",
+      "right_type": "none",
+      "severity": "HIGH",
+      "description": "LOWER(NULL) should return NULL per SQL standard"
+    },
+    {
+      "function": "evalFunc",
+      "op": "ABS",
+      "left_type": "N/A",
+      "right_type": "string",
+      "severity": "LOW",
+      "description": "ABS(string/bool) \u2014 not valid SQL, wildcard correct"
+    },
+    {
+      "function": "evalFunc",
+      "op": "ABS",
+      "left_type": "N/A",
+      "right_type": "bool",
+      "severity": "LOW",
+      "description": "ABS(string/bool) \u2014 not valid SQL, wildcard correct"
+    },
+    {
+      "function": "evalFunc",
+      "op": "CONCAT",
+      "left_type": "N/A",
+      "right_type": "N/A",
+      "severity": "MEDIUM",
+      "description": "CONCAT null type preserved (evalFunc) vs lost (evalBinOp .concat)"
+    },
+    {
+      "function": "evalFunc",
+      "op": "COALESCE",
+      "left_type": "N/A",
+      "right_type": "N/A",
+      "severity": "LOW",
+      "description": "COALESCE conflates none (error) with null via isNullValue"
+    },
+    {
+      "function": "Value.compare",
+      "op": "compare",
+      "left_type": "bool",
+      "right_type": "bool",
+      "severity": "LOW",
+      "description": "Value.compare has no bool\u00d7bool arm \u2014 some SQL dialects support this"
+    },
+    {
+      "function": "evalBinOp",
+      "op": "lt",
+      "left_type": "bool",
+      "right_type": "bool",
+      "severity": "LOW",
+      "description": "Delegation to via compare returns none for bool\u00d7bool"
+    },
+    {
+      "function": "evalBinOp",
+      "op": "le",
+      "left_type": "bool",
+      "right_type": "bool",
+      "severity": "LOW",
+      "description": "Delegation to via compare returns none for bool\u00d7bool"
+    },
+    {
+      "function": "evalBinOp",
+      "op": "gt",
+      "left_type": "bool",
+      "right_type": "bool",
+      "severity": "LOW",
+      "description": "Delegation to via compare returns none for bool\u00d7bool"
+    },
+    {
+      "function": "evalBinOp",
+      "op": "ge",
+      "left_type": "bool",
+      "right_type": "bool",
+      "severity": "LOW",
+      "description": "Delegation to via compare returns none for bool\u00d7bool"
+    }
+  ]
+}
