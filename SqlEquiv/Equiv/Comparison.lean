@@ -665,8 +665,8 @@ theorem trilean_ofBool_toBool (b : Bool) : (Trilean.ofBool b).toBool = b := by
 
 /-- AND commutativity via Trilean bridge -/
 theorem evalBinOp_and_comm_via_trilean (v w : Value)
-    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
-    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    (hv : isBoolOrNull (some v))
+    (hw : isBoolOrNull (some w)) :
     evalBinOp .and (some v) (some w) = evalBinOp .and (some w) (some v) := by
   rw [evalBinOp_and_as_trilean v w hv hw,
       evalBinOp_and_as_trilean w v hw hv,
@@ -674,8 +674,8 @@ theorem evalBinOp_and_comm_via_trilean (v w : Value)
 
 /-- OR commutativity via Trilean bridge -/
 theorem evalBinOp_or_comm_via_trilean (v w : Value)
-    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
-    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    (hv : isBoolOrNull (some v))
+    (hw : isBoolOrNull (some w)) :
     evalBinOp .or (some v) (some w) = evalBinOp .or (some w) (some v) := by
   rw [evalBinOp_or_as_trilean v w hv hw,
       evalBinOp_or_as_trilean w v hw hv,

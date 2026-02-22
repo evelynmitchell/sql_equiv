@@ -367,6 +367,16 @@ def trileanBridgeTests : TestSeq :=
   test "evalUnaryOp_not_as_trilean (null)" (
     evalUnaryOp .not (some (.null none)) ==
     Trilean.toOptionValue (Value.toTrilean (.null none) |>.not)) $
+  -- Typed NULL cases: typed nulls lose type info through boolean context
+  test "evalBinOp_and_as_trilean (true, typed null)" (
+    evalBinOp .and (some (.bool true)) (some (.null (some .bool))) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool true) |>.and (Value.toTrilean (.null (some .bool))))) $
+  test "evalBinOp_or_as_trilean (typed null, false)" (
+    evalBinOp .or (some (.null (some .int))) (some (.bool false)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null (some .int)) |>.or (Value.toTrilean (.bool false)))) $
+  test "evalUnaryOp_not_as_trilean (typed null)" (
+    evalUnaryOp .not (some (.null (some .string))) ==
+    Trilean.toOptionValue (Value.toTrilean (.null (some .string)) |>.not)) $
   -- covers: trilean_and_assoc
   test "trilean_and_assoc (T,F,U)" (
     (Trilean.true.and Trilean.false).and Trilean.unknown ==

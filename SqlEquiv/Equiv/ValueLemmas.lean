@@ -555,40 +555,47 @@ theorem Trilean.toOptionValue_isBoolOrNull (t : Trilean) :
   | false => exact Or.inl ⟨Bool.false, rfl⟩
   | unknown => exact Or.inr ⟨none, rfl⟩
 
+/-- Extract Value-level disjunction from isBoolOrNull on some -/
+private theorem isBoolOrNull_some_elim {v : Value} (h : isBoolOrNull (some v)) :
+    (∃ b, v = .bool b) ∨ (∃ t, v = .null t) := by
+  rcases h with ⟨b, hb⟩ | ⟨t, ht⟩
+  · exact Or.inl ⟨b, Option.some.inj hb⟩
+  · exact Or.inr ⟨t, Option.some.inj ht⟩
+
 /-- evalBinOp AND agrees with Trilean.and for bool/null inputs -/
 theorem evalBinOp_and_as_trilean (v w : Value)
-    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
-    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    (hv : isBoolOrNull (some v))
+    (hw : isBoolOrNull (some w)) :
     evalBinOp .and (some v) (some w) =
     Trilean.toOptionValue (v.toTrilean.and w.toTrilean) := by
-  rcases hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
-  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+  rcases isBoolOrNull_some_elim hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
+  · rcases isBoolOrNull_some_elim hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
     · cases bv <;> cases bw <;> rfl
     · cases bv <;> rfl
-  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+  · rcases isBoolOrNull_some_elim hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
     · cases bw <;> rfl
     · rfl
 
 /-- evalBinOp OR agrees with Trilean.or for bool/null inputs -/
 theorem evalBinOp_or_as_trilean (v w : Value)
-    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
-    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    (hv : isBoolOrNull (some v))
+    (hw : isBoolOrNull (some w)) :
     evalBinOp .or (some v) (some w) =
     Trilean.toOptionValue (v.toTrilean.or w.toTrilean) := by
-  rcases hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
-  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+  rcases isBoolOrNull_some_elim hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
+  · rcases isBoolOrNull_some_elim hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
     · cases bv <;> cases bw <;> rfl
     · cases bv <;> rfl
-  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+  · rcases isBoolOrNull_some_elim hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
     · cases bw <;> rfl
     · rfl
 
 /-- evalUnaryOp NOT agrees with Trilean.not for bool/null inputs -/
 theorem evalUnaryOp_not_as_trilean (v : Value)
-    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t)) :
+    (hv : isBoolOrNull (some v)) :
     evalUnaryOp .not (some v) =
     Trilean.toOptionValue (v.toTrilean.not) := by
-  rcases hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
+  rcases isBoolOrNull_some_elim hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
   · cases bv <;> rfl
   · rfl
 

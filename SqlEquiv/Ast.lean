@@ -146,10 +146,8 @@ def ofTrilean : Trilean → Value
 end Value
 
 /-- Convert Trilean to Option Value (for bridge theorems) -/
-def Trilean.toOptionValue : Trilean → Option Value
-  | .true => some (.bool Bool.true)
-  | .false => some (.bool Bool.false)
-  | .unknown => some (.null none)
+def Trilean.toOptionValue (t : Trilean) : Option Value :=
+  some (Value.ofTrilean t)
 
 /-- Column reference: optionally qualified with table name -/
 structure ColumnRef where
