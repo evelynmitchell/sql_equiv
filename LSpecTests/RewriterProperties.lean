@@ -220,6 +220,56 @@ def likeTests : TestSeq :=
       .binOp .eq (.lit (.string "hello")) (.lit (.string "")))
 
 -- ============================================================================
+-- Conditional boolean identity
+-- ============================================================================
+
+def boolIdentityTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "e AND TRUE preserves semantics (BoolGroundExpr)"
+    (∀ e : BoolGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .and e.expr (.lit (.bool true)))).val ==
+        evalExpr [] (.binOp .and e.expr (.lit (.bool true)))) $
+  check (cfg := cfg) "TRUE AND e preserves semantics (BoolGroundExpr)"
+    (∀ e : BoolGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .and (.lit (.bool true)) e.expr)).val ==
+        evalExpr [] (.binOp .and (.lit (.bool true)) e.expr)) $
+  check (cfg := cfg) "e OR FALSE preserves semantics (BoolGroundExpr)"
+    (∀ e : BoolGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .or e.expr (.lit (.bool false)))).val ==
+        evalExpr [] (.binOp .or e.expr (.lit (.bool false)))) $
+  check (cfg := cfg) "FALSE OR e preserves semantics (BoolGroundExpr)"
+    (∀ e : BoolGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .or (.lit (.bool false)) e.expr)).val ==
+        evalExpr [] (.binOp .or (.lit (.bool false)) e.expr))
+
+-- ============================================================================
+-- Conditional arithmetic identity
+-- ============================================================================
+
+def arithIdentityTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "e + 0 preserves semantics (IntGroundExpr)"
+    (∀ e : IntGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .add e.expr (.lit (.int 0)))).val ==
+        evalExpr [] (.binOp .add e.expr (.lit (.int 0)))) $
+  check (cfg := cfg) "e * 1 preserves semantics (IntGroundExpr)"
+    (∀ e : IntGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .mul e.expr (.lit (.int 1)))).val ==
+        evalExpr [] (.binOp .mul e.expr (.lit (.int 1)))) $
+  check (cfg := cfg) "e - 0 preserves semantics (IntGroundExpr)"
+    (∀ e : IntGroundExpr,
+      evalExpr [] (certifiedRewrite (.binOp .sub e.expr (.lit (.int 0)))).val ==
+        evalExpr [] (.binOp .sub e.expr (.lit (.int 0))))
+
+-- ============================================================================
+-- NOT NOT
+-- ============================================================================
+
+def notNotTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "NOT NOT e preserves semantics (BoolGroundExpr)"
+    (∀ e : BoolGroundExpr,
+      evalExpr [] (certifiedRewrite (.unaryOp .not (.unaryOp .not e.expr))).val ==
+        evalExpr [] (.unaryOp .not (.unaryOp .not e.expr)))
+
+-- ============================================================================
 -- All rewriter property tests
 -- ============================================================================
 
@@ -235,6 +285,9 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "CASE" caseTests $
   group "CASE Semantics" (caseSemanticTests cfg) $
   group "NOT(BETWEEN)" notBetweenTests $
-  group "LIKE" likeTests
+  group "LIKE" likeTests $
+  group "Boolean Identity" (boolIdentityTests cfg) $
+  group "Arithmetic Identity" (arithIdentityTests cfg) $
+  group "NOT NOT" (notNotTests cfg)
 
 end RewriterProperties

@@ -14,9 +14,9 @@ The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplif
 
 ## Simplification Rules
 
-Phase 1 implements 24 unconditional rules (no type preconditions needed):
+The rewriter implements **34 rules**: 24 unconditional + 10 conditional (guarded by static type checks).
 
-### Boolean Short-Circuit (4 rules)
+### Boolean Short-Circuit (4 rules, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
@@ -25,7 +25,7 @@ Phase 1 implements 24 unconditional rules (no type preconditions needed):
 | `e OR TRUE` | `TRUE` | `or_true` |
 | `TRUE OR e` | `TRUE` | `true_or` |
 
-### NOT Comparison Flips (6 rules)
+### NOT Comparison Flips (6 rules, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
@@ -36,26 +36,26 @@ Phase 1 implements 24 unconditional rules (no type preconditions needed):
 | `NOT (a > b)` | `a <= b` | `not_gt_is_le` |
 | `NOT (a >= b)` | `a < b` | `not_ge_is_lt` |
 
-### NOT EXISTS Flip (2 rules)
+### NOT EXISTS Flip (2 rules, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
 | `NOT (EXISTS sel)` | `NOT EXISTS sel` (flip negation flag) | `not_not_exists` |
 | `NOT (NOT EXISTS sel)` | `EXISTS sel` (flip negation flag) | `not_exists_true_flip` |
 
-### BETWEEN Expansion (1 rule)
+### BETWEEN Expansion (1 rule, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
 | `e BETWEEN lo AND hi` | `e >= lo AND e <= hi` | `between_expansion` |
 
-### NOT BETWEEN (1 rule)
+### NOT BETWEEN (1 rule, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
 | `NOT (e BETWEEN lo AND hi)` | `e < lo OR e > hi` | `not_between_expansion` |
 
-### IN List (4 rules)
+### IN List (4 rules, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
@@ -64,7 +64,7 @@ Phase 1 implements 24 unconditional rules (no type preconditions needed):
 | `e IN (a)` | `e = a` | `in_singleton` |
 | `e NOT IN (a)` | `e <> a` | `not_in_singleton` |
 
-### CASE (5 rules)
+### CASE (5 rules, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
@@ -74,11 +74,80 @@ Phase 1 implements 24 unconditional rules (no type preconditions needed):
 | `CASE ELSE y` (empty branches) | `y` | `case_empty_else` |
 | `CASE` (empty, no else) | `NULL` | `case_empty_no_else` |
 
-### LIKE (1 rule)
+### LIKE (1 rule, unconditional)
 
 | Input | Output | Theorem |
 |-------|--------|---------|
 | `e LIKE ''` | `e = ''` | `like_empty_pattern` |
+
+### Boolean Identity (4 rules, conditional)
+
+| Input | Output | Guard | Theorem |
+|-------|--------|-------|---------|
+| `e AND TRUE` | `e` | `e.isDefinitelyBool` | `and_true` |
+| `TRUE AND e` | `e` | `e.isDefinitelyBool` | `true_and` |
+| `e OR FALSE` | `e` | `e.isDefinitelyBool` | `or_false` |
+| `FALSE OR e` | `e` | `e.isDefinitelyBool` | `false_or` |
+
+### Double Negation (1 rule, conditional)
+
+| Input | Output | Guard | Theorem |
+|-------|--------|-------|---------|
+| `NOT (NOT e)` | `e` | `e.isDefinitelyBool` | `not_not` |
+
+### Arithmetic Identity (5 rules, conditional)
+
+| Input | Output | Guard | Theorem |
+|-------|--------|-------|---------|
+| `e + 0` | `e` | `e.isDefinitelyInt` | `expr_add_zero` |
+| `0 + e` | `e` | `e.isDefinitelyInt` | `expr_zero_add` |
+| `e * 1` | `e` | `e.isDefinitelyInt` | `expr_mul_one` |
+| `1 * e` | `e` | `e.isDefinitelyInt` | `expr_one_mul` |
+| `e - 0` | `e` | `e.isDefinitelyInt` | `expr_sub_zero` |
+
+## Static Type Guards
+
+Conditional rules require knowing that an expression always evaluates to a specific type. The rewriter uses conservative **static type guards** — pure syntactic checks that return `true` only when the expression is guaranteed to produce the expected type for any row/database context.
+
+### `Expr.isDefinitelyBool`
+
+Returns `true` for expressions guaranteed to evaluate to `some (.bool _)`:
+
+- Boolean literals (`TRUE`, `FALSE`)
+- `IS NULL` / `IS NOT NULL` (always return a bool)
+- `NOT e` where `e` is definitely bool
+- `e AND f` / `e OR f` where both are definitely bool
+- `EXISTS sel` / `NOT EXISTS sel`
+
+**Excluded** (can return `none` or `null`):
+- Comparisons (`=`, `<>`, `<`, etc.) — `Value.eq`/`Value.compare` return `none` on type mismatch
+- `BETWEEN` — defined via comparisons that propagate null
+- `IN (list)` — folds with `evalBinOp .or/.eq` which propagate null
+
+### `Expr.isDefinitelyInt`
+
+Returns `true` for expressions guaranteed to evaluate to `some (.int _)`:
+
+- Integer literals
+- `e + f`, `e - f`, `e * f` where both operands are definitely int
+- `-e` where `e` is definitely int
+
+**Excluded**:
+- `DIV`, `MOD` — division by zero returns `none`
+
+### Bridge Lemmas
+
+Two proven theorems connect static guards to semantic predicates:
+
+```lean
+theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool = true) :
+    e.isBoolValued
+
+theorem isDefinitelyInt_implies_isIntValued (e : Expr) (h : e.isDefinitelyInt = true) :
+    e.isIntValued
+```
+
+These allow conditional rules to use the `if h : guard then ... else ...` pattern: when the guard succeeds, the bridge lemma converts it to the semantic predicate needed by the equivalence theorem.
 
 ## Architecture
 
@@ -86,12 +155,11 @@ Phase 1 implements 24 unconditional rules (no type preconditions needed):
 
 `certifiedRewrite` recursively simplifies subexpressions first, then applies top-level simplifications for `binOp`, `unaryOp`, `between`, and `inList` nodes. This ensures inner rewrites compose correctly with outer ones.
 
-**Phase 1 exceptions**: The following subexpressions are NOT recursively rewritten: CASE branch/else expressions, IN list values, function arguments, aggregate arguments, EXISTS/subquery/IN-subquery payloads, and window function arguments. Only top-level CASE pattern matching (true/false/empty) is applied. This means the rewriter is not structurally idempotent for expressions containing these nodes — a known limitation addressed in Phase 2.
+**Current limitations**: The following subexpressions are NOT recursively rewritten: CASE branch/else expressions, IN list values, function arguments, aggregate arguments, EXISTS/subquery/IN-subquery payloads, and window function arguments. Only top-level CASE pattern matching (true/false/empty) is applied. This means the rewriter is not structurally idempotent for expressions containing these nodes — a known limitation for Phase 2b.
 
-For example, `NOT(NOT(a = b)) AND FALSE`:
-1. Inner: `NOT(a = b)` rewrites to `a <> b`
-2. Middle: `NOT(a <> b)` rewrites to `a = b`
-3. Outer: `(a = b) AND FALSE` rewrites to `FALSE`
+For example, `NOT(NOT(IS_NULL(x))) AND TRUE`:
+1. Inner: `NOT(NOT(IS_NULL(x)))` rewrites to `IS_NULL(x)` (conditional NOT-NOT, guard passes)
+2. Outer: `IS_NULL(x) AND TRUE` rewrites to `IS_NULL(x)` (conditional AND TRUE, guard passes)
 
 ### Proof Chaining
 
@@ -128,20 +196,22 @@ let ⟨result, proof⟩ := certifiedRewrite input
 
 The proof witness can be used with `expr_equiv_subst` to substitute equivalent expressions in any evaluation context.
 
-## Phase 1 Scope
+## Phases
 
-Phase 1 includes only **unconditional** rules — simplifications that are valid regardless of the types of subexpressions. Rules requiring type preconditions (like `isBoolValued` or `isIntValued`) are planned for Phase 2.
+- **Phase 1** (PR #187): 24 unconditional rules. No type preconditions.
+- **Phase 2a** (this PR): 10 conditional rules guarded by `isDefinitelyBool`/`isDefinitelyInt` static type checks.
+- **Phase 2b** (future): Complete recursion into all Expr subexpressions (CASE branches, IN list values, function args, etc.).
 
 ## Testing
 
-- **47 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, bottom-up composition, idempotency, and leaf node preservation.
-- **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions, idempotency, BETWEEN elimination, short-circuit properties, and more.
+- **65 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, guard-pass and guard-fail cases, bottom-up composition, conditional composition, idempotency, and leaf node preservation.
+- **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions (bool/int/bounded generators), idempotency, BETWEEN elimination, short-circuit properties, boolean/arithmetic identity, and NOT-NOT.
 - **Compile-time verification**: the type signature `{ e' : Expr // e ≃ₑ e' }` means Lean's type checker verifies correctness at compile time. Tests confirm the evaluator agrees with the proofs.
 
 ## File Layout
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `SqlEquiv/Rewriter.lean` | 179 | Rewriter implementation + congruence lemmas |
-| `Test/RewriterTest.lean` | 293 | Unit tests (77 tests) |
-| `LSpecTests/RewriterProperties.lean` | ~170 | LSpec property tests |
+| `SqlEquiv/Rewriter.lean` | ~350 | Rewriter implementation, type guards, bridge lemmas, congruence lemmas |
+| `Test/RewriterTest.lean` | ~370 | Unit tests (65 tests) |
+| `LSpecTests/RewriterProperties.lean` | ~290 | LSpec property tests |
