@@ -1,11 +1,11 @@
 {
   "summary": {
     "total_cells": 502,
-    "explicit": 175,
-    "wildcard": 257,
+    "explicit": 179,
+    "wildcard": 253,
     "delegated": 54,
     "value_dependent": 16,
-    "gaps": 17
+    "gaps": 9
   },
   "matrices": [
     {
@@ -5244,7 +5244,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5299,7 +5299,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5357,7 +5357,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5412,7 +5412,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5423,7 +5423,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5434,7 +5434,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5445,7 +5445,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5456,7 +5456,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5467,7 +5467,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         }
@@ -5476,8 +5476,8 @@
     {
       "function": "evalFunc",
       "operator": "ABS",
-      "explicit": 1,
-      "wildcard": 4,
+      "explicit": 2,
+      "wildcard": 3,
       "delegated": 0,
       "value_dependent": 0,
       "total": 5,
@@ -5489,7 +5489,7 @@
           "status": "explicit",
           "result_type": "int",
           "detail": "",
-          "line_number": 215,
+          "line_number": 216,
           "tested": true,
           "test_names": [
             "NullSemantics.lean: NULLIF(true, true) = NULL",
@@ -5504,7 +5504,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5515,7 +5515,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5523,12 +5523,15 @@
           "op": "ABS",
           "left_type": "null",
           "right_type": "null",
-          "status": "wildcard",
-          "result_type": "none",
+          "status": "explicit",
+          "result_type": "null",
           "detail": "",
-          "line_number": 222,
-          "tested": false,
-          "test_names": []
+          "line_number": 215,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
         },
         {
           "op": "ABS",
@@ -5537,7 +5540,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         }
@@ -5546,8 +5549,8 @@
     {
       "function": "evalFunc",
       "operator": "LENGTH",
-      "explicit": 1,
-      "wildcard": 4,
+      "explicit": 2,
+      "wildcard": 3,
       "delegated": 0,
       "value_dependent": 0,
       "total": 5,
@@ -5559,7 +5562,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5570,7 +5573,7 @@
           "status": "explicit",
           "result_type": "int",
           "detail": "",
-          "line_number": 216,
+          "line_number": 218,
           "tested": true,
           "test_names": [
             "NullSemantics.lean: ABS(-n) = ABS(n)",
@@ -5584,7 +5587,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5592,12 +5595,15 @@
           "op": "LENGTH",
           "left_type": "null",
           "right_type": "null",
-          "status": "wildcard",
-          "result_type": "none",
+          "status": "explicit",
+          "result_type": "null",
           "detail": "",
-          "line_number": 222,
-          "tested": false,
-          "test_names": []
+          "line_number": 217,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)",
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
         },
         {
           "op": "LENGTH",
@@ -5606,7 +5612,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         }
@@ -5615,8 +5621,8 @@
     {
       "function": "evalFunc",
       "operator": "UPPER",
-      "explicit": 1,
-      "wildcard": 4,
+      "explicit": 2,
+      "wildcard": 3,
       "delegated": 0,
       "value_dependent": 0,
       "total": 5,
@@ -5628,7 +5634,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5639,7 +5645,7 @@
           "status": "explicit",
           "result_type": "string",
           "detail": "",
-          "line_number": 217,
+          "line_number": 220,
           "tested": true,
           "test_names": [
             "NullSemantics.lean: ABS(-n) = ABS(n)",
@@ -5654,7 +5660,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5662,12 +5668,14 @@
           "op": "UPPER",
           "left_type": "null",
           "right_type": "null",
-          "status": "wildcard",
-          "result_type": "none",
+          "status": "explicit",
+          "result_type": "null",
           "detail": "",
-          "line_number": 222,
-          "tested": false,
-          "test_names": []
+          "line_number": 219,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
         },
         {
           "op": "UPPER",
@@ -5676,7 +5684,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         }
@@ -5685,8 +5693,8 @@
     {
       "function": "evalFunc",
       "operator": "LOWER",
-      "explicit": 1,
-      "wildcard": 4,
+      "explicit": 2,
+      "wildcard": 3,
       "delegated": 0,
       "value_dependent": 0,
       "total": 5,
@@ -5698,7 +5706,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5709,7 +5717,7 @@
           "status": "explicit",
           "result_type": "string",
           "detail": "",
-          "line_number": 218,
+          "line_number": 222,
           "tested": true,
           "test_names": [
             "NullSemantics.lean: ABS(-n) = ABS(n)",
@@ -5724,7 +5732,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5732,12 +5740,14 @@
           "op": "LOWER",
           "left_type": "null",
           "right_type": "null",
-          "status": "wildcard",
-          "result_type": "none",
+          "status": "explicit",
+          "result_type": "null",
           "detail": "",
-          "line_number": 222,
-          "tested": false,
-          "test_names": []
+          "line_number": 221,
+          "tested": true,
+          "test_names": [
+            "NullSemantics.lean: ABS(-n) = ABS(n)"
+          ]
         },
         {
           "op": "LOWER",
@@ -5746,7 +5756,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         }
@@ -5768,7 +5778,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5779,7 +5789,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5790,7 +5800,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5801,7 +5811,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 220,
+          "line_number": 224,
           "tested": false,
           "test_names": []
         },
@@ -5812,7 +5822,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5823,7 +5833,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5834,7 +5844,7 @@
           "status": "explicit",
           "result_type": "string",
           "detail": "",
-          "line_number": 221,
+          "line_number": 225,
           "tested": true,
           "test_names": [
             "NullSemantics.lean: ABS(-n) = ABS(n)",
@@ -5848,7 +5858,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5859,7 +5869,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 220,
+          "line_number": 224,
           "tested": false,
           "test_names": []
         },
@@ -5870,7 +5880,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5881,7 +5891,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5892,7 +5902,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5903,7 +5913,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5914,7 +5924,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 220,
+          "line_number": 224,
           "tested": false,
           "test_names": []
         },
@@ -5925,7 +5935,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5936,7 +5946,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 219,
+          "line_number": 223,
           "tested": false,
           "test_names": []
         },
@@ -5947,7 +5957,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 219,
+          "line_number": 223,
           "tested": false,
           "test_names": []
         },
@@ -5958,7 +5968,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 219,
+          "line_number": 223,
           "tested": false,
           "test_names": []
         },
@@ -5969,7 +5979,7 @@
           "status": "explicit",
           "result_type": "null",
           "detail": "",
-          "line_number": 219,
+          "line_number": 223,
           "tested": false,
           "test_names": []
         },
@@ -5980,7 +5990,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -5991,7 +6001,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -6002,7 +6012,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -6013,7 +6023,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -6024,7 +6034,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         },
@@ -6035,7 +6045,7 @@
           "status": "wildcard",
           "result_type": "none",
           "detail": "",
-          "line_number": 222,
+          "line_number": 226,
           "tested": false,
           "test_names": []
         }
@@ -6043,70 +6053,6 @@
     }
   ],
   "gaps": [
-    {
-      "function": "evalFunc",
-      "op": "ABS",
-      "left_type": "N/A",
-      "right_type": "null",
-      "severity": "HIGH",
-      "description": "ABS(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "ABS",
-      "left_type": "N/A",
-      "right_type": "none",
-      "severity": "HIGH",
-      "description": "ABS(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "LENGTH",
-      "left_type": "N/A",
-      "right_type": "null",
-      "severity": "HIGH",
-      "description": "LENGTH(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "LENGTH",
-      "left_type": "N/A",
-      "right_type": "none",
-      "severity": "HIGH",
-      "description": "LENGTH(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "UPPER",
-      "left_type": "N/A",
-      "right_type": "null",
-      "severity": "HIGH",
-      "description": "UPPER(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "UPPER",
-      "left_type": "N/A",
-      "right_type": "none",
-      "severity": "HIGH",
-      "description": "UPPER(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "LOWER",
-      "left_type": "N/A",
-      "right_type": "null",
-      "severity": "HIGH",
-      "description": "LOWER(NULL) should return NULL per SQL standard"
-    },
-    {
-      "function": "evalFunc",
-      "op": "LOWER",
-      "left_type": "N/A",
-      "right_type": "none",
-      "severity": "HIGH",
-      "description": "LOWER(NULL) should return NULL per SQL standard"
-    },
     {
       "function": "evalFunc",
       "op": "ABS",

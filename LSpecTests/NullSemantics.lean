@@ -170,6 +170,21 @@ def absTests (cfg : Configuration) : TestSeq :=
   check (cfg := cfg) "ABS(-n) = ABS(n)" (∀ n : Int,
     evalFunc "ABS" [some (.int (-n))] == evalFunc "ABS" [some (.int n)])
 
+def scalarNullTests : TestSeq :=
+  -- covers: evalFunc ABS/LENGTH/UPPER/LOWER null propagation
+  test "ABS(NULL) = NULL" (
+    evalFunc "ABS" [some (.null none)] == some (.null none)) $
+  test "LENGTH(NULL) = NULL" (
+    evalFunc "LENGTH" [some (.null none)] == some (.null none)) $
+  test "UPPER(NULL) = NULL" (
+    evalFunc "UPPER" [some (.null none)] == some (.null none)) $
+  test "LOWER(NULL) = NULL" (
+    evalFunc "LOWER" [some (.null none)] == some (.null none)) $
+  test "ABS(NULL::int) = NULL" (
+    evalFunc "ABS" [some (.null (some .int))] == some (.null none)) $
+  test "LENGTH(NULL::string) = NULL" (
+    evalFunc "LENGTH" [some (.null (some .string))] == some (.null none))
+
 def stringFuncTests : TestSeq :=
   test "LENGTH(hello) = 5" (
     evalFunc "LENGTH" [some (.string "hello")] == some (.int 5)) $
@@ -483,6 +498,7 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "Null Disjunction" (nullDisjunctionTests cfg) $
   group "NULLIF" (nullifTests cfg) $
   group "ABS" (absTests cfg) $
+  group "Scalar NULL Propagation" scalarNullTests $
   group "String Functions" stringFuncTests
 
 end NullSemantics

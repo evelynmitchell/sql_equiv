@@ -484,7 +484,7 @@ def stringFuncTests : List TestResult :=
     testExprEquiv "length_concat (empty)"
       (.func "LENGTH" [.func "CONCAT" [eEmpty, eHello]])
       (.binOp .add (.func "LENGTH" [eEmpty]) (.func "LENGTH" [eHello])) [],
-    -- Non-string inputs: both sides reduce to none (type mismatch)
+    -- Non-string inputs: both sides reduce to none (int) or null (typed null)
     testExprEquiv "length_concat (int args)"
       (.func "LENGTH" [.func "CONCAT" [Expr.lit (.int 5), Expr.lit (.string "world")]])
       (.binOp .add (.func "LENGTH" [Expr.lit (.int 5)]) (.func "LENGTH" [Expr.lit (.string "world")])) [],

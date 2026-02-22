@@ -770,14 +770,6 @@ def _parse_func_args(args_str: str) -> Optional[list[str]]:
 
 # Static knowledge base: (function, op, left, right) -> (severity, description)
 KNOWN_GAPS: list[dict] = [
-    {"function": "evalFunc", "op": "ABS", "types": [("null",), ("none",)],
-     "severity": "HIGH", "desc": "ABS(NULL) should return NULL per SQL standard"},
-    {"function": "evalFunc", "op": "LENGTH", "types": [("null",), ("none",)],
-     "severity": "HIGH", "desc": "LENGTH(NULL) should return NULL per SQL standard"},
-    {"function": "evalFunc", "op": "UPPER", "types": [("null",), ("none",)],
-     "severity": "HIGH", "desc": "UPPER(NULL) should return NULL per SQL standard"},
-    {"function": "evalFunc", "op": "LOWER", "types": [("null",), ("none",)],
-     "severity": "HIGH", "desc": "LOWER(NULL) should return NULL per SQL standard"},
     {"function": "evalFunc", "op": "ABS", "types": [("string",), ("bool",)],
      "severity": "LOW", "desc": "ABS(string/bool) — not valid SQL, wildcard correct"},
     {"function": "evalFunc", "op": "CONCAT", "types": [],
