@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "EnterPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/ensure-fresh-branch.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
