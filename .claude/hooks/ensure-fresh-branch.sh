@@ -20,6 +20,7 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "jq not found — cannot parse task JSON. Install jq or remove this hook." >&2
   exit 2
 fi
+
 subagent_type=$(echo "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
 [ "$subagent_type" != "Plan" ] && exit 0
 
@@ -50,9 +51,9 @@ else
   fi
 fi
 
-# Generate a slug from timestamp (human-readable, unique)
+# Generate a slug from timestamp (human-readable, highly unique)
 generate_slug() {
-  date +"%Y%m%d-%H%M%S"
+  date +"%Y%m%d-%H%M%S-%N"
 }
 
 # Check if the current branch has a merged PR (prints PR number or empty)
@@ -66,33 +67,35 @@ if [ "$branch" = "$default_branch" ]; then
   git merge --ff-only "origin/$default_branch" --quiet || echo "Warning: could not fast-forward $default_branch" >&2
   new_branch="claude/task-$(generate_slug)"
   git checkout -b "$new_branch" --quiet
-  cat <<EOJSON
-{
-  "additionalContext": "Auto-created branch '$new_branch' from $default_branch. You were on $default_branch — never commit directly to it."
-}
-EOJSON
+  jq -n --arg msg "Auto-created branch '$new_branch' from $default_branch. You were on $default_branch — never commit directly to it." \
+    '{additionalContext: $msg}'
   exit 0
 fi
 
 # Case 2: On a branch that already has a merged PR — stale branch
 merged_pr=$(has_merged_pr "$branch")
 if [ -n "$merged_pr" ]; then
-  # Check for uncommitted changes
-  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-    echo "Branch '$branch' has merged PR #$merged_pr but you have uncommitted changes. Stash or commit them first." >&2
+  # Check for uncommitted or untracked changes
+  if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
+    echo "Branch '$branch' has merged PR #$merged_pr but you have uncommitted or untracked changes. Stash, commit, or clean them first." >&2
     exit 2
   fi
 
-  git checkout "$default_branch" --quiet
+  # Ensure the default branch exists locally before checking it out
+  if git show-ref --verify --quiet "refs/heads/$default_branch" 2>/dev/null; then
+    git checkout "$default_branch" --quiet
+  elif git show-ref --verify --quiet "refs/remotes/origin/$default_branch" 2>/dev/null; then
+    git checkout -b "$default_branch" "origin/$default_branch" --quiet
+  else
+    echo "Default branch '$default_branch' does not exist locally or on origin. Cannot create a fresh task branch." >&2
+    exit 2
+  fi
   git fetch origin "$default_branch" --quiet 2>/dev/null || true
   git merge --ff-only "origin/$default_branch" --quiet || echo "Warning: could not fast-forward $default_branch" >&2
   new_branch="claude/task-$(generate_slug)"
   git checkout -b "$new_branch" --quiet
-  cat <<EOJSON
-{
-  "additionalContext": "Branch '$branch' already had merged PR #$merged_pr. Auto-created fresh branch '$new_branch' from $default_branch."
-}
-EOJSON
+  jq -n --arg msg "Branch '$branch' already had merged PR #$merged_pr. Auto-created fresh branch '$new_branch' from $default_branch." \
+    '{additionalContext: $msg}'
   exit 0
 fi
 
