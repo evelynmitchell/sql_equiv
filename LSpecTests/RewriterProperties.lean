@@ -28,6 +28,9 @@ private partial def containsBetween : Expr → Bool
   | .«case» branches else_ =>
     branches.foldl (fun acc (c, t) => acc || containsBetween c || containsBetween t) false ||
     match else_ with | some e => containsBetween e | none => false
+  | .func _ args => args.foldl (fun acc e => acc || containsBetween e) false
+  | .agg _ (some e) _ => containsBetween e
+  | .inSubquery e _ _ => containsBetween e
   | _ => false
 
 -- ============================================================================

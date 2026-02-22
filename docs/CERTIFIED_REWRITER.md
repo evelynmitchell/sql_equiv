@@ -86,7 +86,7 @@ Phase 1 implements 24 unconditional rules (no type preconditions needed):
 
 `certifiedRewrite` recursively simplifies subexpressions first, then applies top-level simplifications for `binOp`, `unaryOp`, `between`, and `inList` nodes. This ensures inner rewrites compose correctly with outer ones.
 
-**Phase 1 exceptions**: CASE branch/else subexpressions, IN list values, function arguments, and aggregate arguments are NOT recursively rewritten. Only top-level CASE pattern matching (true/false/empty) is applied. This means the rewriter is not structurally idempotent for expressions containing these nodes — a known limitation addressed in Phase 2.
+**Phase 1 exceptions**: The following subexpressions are NOT recursively rewritten: CASE branch/else expressions, IN list values, function arguments, aggregate arguments, EXISTS/subquery/IN-subquery payloads, and window function arguments. Only top-level CASE pattern matching (true/false/empty) is applied. This means the rewriter is not structurally idempotent for expressions containing these nodes — a known limitation addressed in Phase 2.
 
 For example, `NOT(NOT(a = b)) AND FALSE`:
 1. Inner: `NOT(a = b)` rewrites to `a <> b`
@@ -134,7 +134,7 @@ Phase 1 includes only **unconditional** rules — simplifications that are valid
 
 ## Testing
 
-- **77 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, bottom-up composition, idempotency, and leaf node preservation.
+- **47 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, bottom-up composition, idempotency, and leaf node preservation.
 - **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions, idempotency, BETWEEN elimination, short-circuit properties, and more.
 - **Compile-time verification**: the type signature `{ e' : Expr // e ≃ₑ e' }` means Lean's type checker verifies correctness at compile time. Tests confirm the evaluator agrees with the proofs.
 
