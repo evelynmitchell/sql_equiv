@@ -44,10 +44,10 @@ Run with `--runtime` flag for full analysis. No build required.
 
 | File | Axioms | Theorems | Description |
 |------|--------|----------|-------------|
-| `Rewriter.lean` | 0 | 17 | Query/AST rewriting passes and normalization utilities |
+| `Rewriter.lean` | 0 | 17 |  |
 | `Semantics.lean` | 0 | 60 | Evaluator unfolding (evalExprWithDb_lit, _binOp, etc.) |
-| `SemanticsBase.lean` | 0 | 1 | Base semantic definitions and helper structures |
-| `SemanticsCore.lean` | 0 | 68 | Core semantic rules for query evaluation |
+| `SemanticsBase.lean` | 0 | 1 |  |
+| `SemanticsCore.lean` | 0 | 68 |  |
 | **Subtotal** | **0** | **146** | |
 
 ### Grand Total: 0 axioms, 579 theorems (100.0% proved)

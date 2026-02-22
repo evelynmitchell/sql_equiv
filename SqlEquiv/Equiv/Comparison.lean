@@ -1535,26 +1535,28 @@ theorem concat_empty_right (e : Expr) (h : e.isStringOrNullValued) :
 -- ============================================================================
 
 -- Value-level helper: LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)
--- No precondition needed — all non-string cases reduce to none on both sides.
-private theorem evalFunc_length_concat (av bv : Option Value) :
+-- Requires string-or-null-valued inputs; int/bool inputs break the identity because
+-- CONCAT propagates null but LENGTH on non-string returns none (error).
+private theorem evalFunc_length_concat (av bv : Option Value)
+    (ha : (∃ s, av = some (.string s)) ∨ (∃ n, av = some (.null n)) ∨ av = none)
+    (hb : (∃ s, bv = some (.string s)) ∨ (∃ n, bv = some (.null n)) ∨ bv = none) :
     evalFunc "LENGTH" [evalFunc "CONCAT" [av, bv]] =
     evalBinOp .add (evalFunc "LENGTH" [av]) (evalFunc "LENGTH" [bv]) := by
   have hL : "LENGTH".toUpper = "LENGTH" := by native_decide
   have hC : "CONCAT".toUpper = "CONCAT" := by native_decide
-  cases av with
-  | none => simp [evalFunc, hC, hL, evalBinOp]
-  | some v => cases bv with
-    | none => cases v <;> simp [evalFunc, hC, hL, evalBinOp]
-    | some w => cases v <;> cases w <;> simp [evalFunc, hC, hL, evalBinOp, String.length_append]
+  rcases ha with ⟨s, rfl⟩ | ⟨n, rfl⟩ | rfl <;>
+    rcases hb with ⟨s', rfl⟩ | ⟨n', rfl⟩ | rfl <;>
+    simp [evalFunc, hC, hL, evalBinOp, String.length_append]
 
 /-- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b).
-    No precondition needed — non-string and null cases all reduce to none on both sides. -/
-theorem length_concat (a b : Expr) :
+    Requires isStringOrNullValued precondition on both arguments — int/bool inputs
+    break the identity because CONCAT propagates null but LENGTH on non-string returns none. -/
+theorem length_concat (a b : Expr) (ha : a.isStringOrNullValued) (hb : b.isStringOrNullValued) :
     Expr.func "LENGTH" [Expr.func "CONCAT" [a, b]] ≃ₑ
     Expr.binOp .add (Expr.func "LENGTH" [a]) (Expr.func "LENGTH" [b]) := by
   intro row
   simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_binOp]
-  exact evalFunc_length_concat _ _
+  exact evalFunc_length_concat _ _ (ha row) (hb row)
 
 -- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
 -- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.

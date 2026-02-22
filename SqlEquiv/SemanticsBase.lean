@@ -212,9 +212,13 @@ def evalFunc (name : String) (args : List (Option Value)) : Option Value :=
     vals.find? (fun v => !isNullValue v) |>.join
   | "NULLIF", [some a, some b] =>
     if a.eq b == some true then some (.null none) else some a
+  | "ABS", [some (.null _)] => some (.null none)
   | "ABS", [some (.int n)] => some (.int n.natAbs)
+  | "LENGTH", [some (.null _)] => some (.null none)
   | "LENGTH", [some (.string s)] => some (.int s.length)
+  | "UPPER", [some (.null _)] => some (.null none)
   | "UPPER", [some (.string s)] => some (.string s.toUpper)
+  | "LOWER", [some (.null _)] => some (.null none)
   | "LOWER", [some (.string s)] => some (.string s.toLower)
   | "CONCAT", [some (.null t), some _] => some (.null t)
   | "CONCAT", [some _, some (.null t)] => some (.null t)
