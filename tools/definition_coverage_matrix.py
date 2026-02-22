@@ -149,7 +149,8 @@ def _split_top_level(s: str) -> list[str]:
             depth += 1
             current.append(ch)
         elif ch in (')', ']'):
-            depth -= 1
+            if depth > 0:
+                depth -= 1
             current.append(ch)
         elif ch == ',' and depth == 0:
             parts.append(''.join(current).strip())
