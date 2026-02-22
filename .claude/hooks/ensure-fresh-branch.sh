@@ -9,6 +9,7 @@
 #   - On a branch with a merged PR: switches to master, creates new branch
 #   - On a clean unmerged branch: passes through (no-op)
 #
+# Dependencies: jq (JSON parsing), gh (GitHub CLI, merged-PR detection)
 # Output: JSON with additionalContext so Claude sees the branch state.
 
 set -euo pipefail
@@ -34,7 +35,10 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 branch=$(git branch --show-current 2>/dev/null)
-[ -z "$branch" ] && exit 0
+if [ -z "$branch" ]; then
+  echo "[ensure-fresh-branch] Detached HEAD (no current branch); skipping branch hygiene checks." >&2
+  exit 0
+fi
 
 # Determine the default branch (prefer repo's configured default)
 default_branch="master"
@@ -51,9 +55,20 @@ else
   fi
 fi
 
-# Generate a slug from timestamp (human-readable, highly unique)
+# Generate a slug from timestamp (human-readable, reasonably unique)
 generate_slug() {
-  date +"%Y%m%d-%H%M%S-%N"
+  # Avoid %N (nanoseconds) — not supported by BSD date on macOS.
+  # Use seconds-level timestamp plus PID to reduce collision likelihood.
+  date +"%Y%m%d-%H%M%S-$$"
+}
+
+# Fetch and fast-forward the default branch, failing hard if diverged
+fetch_and_ff_default() {
+  git fetch origin "$default_branch" --quiet 2>/dev/null || true
+  if ! git merge --ff-only "origin/$default_branch" --quiet 2>/dev/null; then
+    echo "Error: could not fast-forward '$default_branch' to 'origin/$default_branch'. Resolve the divergence and try again." >&2
+    exit 2
+  fi
 }
 
 # Check if the current branch has a merged PR (prints PR number or empty)
@@ -63,10 +78,12 @@ has_merged_pr() {
 
 # Case 1: Already on default branch — need to branch off
 if [ "$branch" = "$default_branch" ]; then
-  git fetch origin "$default_branch" --quiet 2>/dev/null || true
-  git merge --ff-only "origin/$default_branch" --quiet || echo "Warning: could not fast-forward $default_branch" >&2
+  fetch_and_ff_default
   new_branch="claude/task-$(generate_slug)"
-  git checkout -b "$new_branch" --quiet
+  if ! git checkout -b "$new_branch" --quiet; then
+    echo "Error: could not create branch '$new_branch'. A branch or file with that name may already exist." >&2
+    exit 2
+  fi
   jq -n --arg msg "Auto-created branch '$new_branch' from $default_branch. You were on $default_branch — never commit directly to it." \
     '{additionalContext: $msg}'
   exit 0
@@ -90,10 +107,12 @@ if [ -n "$merged_pr" ]; then
     echo "Default branch '$default_branch' does not exist locally or on origin. Cannot create a fresh task branch." >&2
     exit 2
   fi
-  git fetch origin "$default_branch" --quiet 2>/dev/null || true
-  git merge --ff-only "origin/$default_branch" --quiet || echo "Warning: could not fast-forward $default_branch" >&2
+  fetch_and_ff_default
   new_branch="claude/task-$(generate_slug)"
-  git checkout -b "$new_branch" --quiet
+  if ! git checkout -b "$new_branch" --quiet; then
+    echo "Error: could not create branch '$new_branch'. A branch or file with that name may already exist." >&2
+    exit 2
+  fi
   jq -n --arg msg "Branch '$branch' already had merged PR #$merged_pr. Auto-created fresh branch '$new_branch' from $default_branch." \
     '{additionalContext: $msg}'
   exit 0
