@@ -536,4 +536,69 @@ theorem Option.beq_some_true_iff (ob : Option Bool) :
   | none => constructor <;> intro h <;> contradiction
   | some b => cases b <;> (constructor <;> intro h <;> first | rfl | contradiction)
 
+-- ============================================================================
+-- Trilean ↔ Value Bridge
+-- ============================================================================
+
+/-- Value is bool or null (no error, no int/string) -/
+def isBoolOrNull (v : Option Value) : Prop :=
+  (∃ b, v = some (.bool b)) ∨ (∃ t, v = some (.null t))
+
+theorem Value.toTrilean_ofTrilean (t : Trilean) :
+    (Value.ofTrilean t).toTrilean = t := by
+  cases t <;> rfl
+
+theorem Trilean.toOptionValue_isBoolOrNull (t : Trilean) :
+    isBoolOrNull (Trilean.toOptionValue t) := by
+  cases t with
+  | true => exact Or.inl ⟨Bool.true, rfl⟩
+  | false => exact Or.inl ⟨Bool.false, rfl⟩
+  | unknown => exact Or.inr ⟨none, rfl⟩
+
+/-- evalBinOp AND agrees with Trilean.and for bool/null inputs -/
+theorem evalBinOp_and_as_trilean (v w : Value)
+    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
+    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    evalBinOp .and (some v) (some w) =
+    Trilean.toOptionValue (v.toTrilean.and w.toTrilean) := by
+  rcases hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
+  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+    · cases bv <;> cases bw <;> rfl
+    · cases bv <;> rfl
+  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+    · cases bw <;> rfl
+    · rfl
+
+/-- evalBinOp OR agrees with Trilean.or for bool/null inputs -/
+theorem evalBinOp_or_as_trilean (v w : Value)
+    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
+    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    evalBinOp .or (some v) (some w) =
+    Trilean.toOptionValue (v.toTrilean.or w.toTrilean) := by
+  rcases hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
+  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+    · cases bv <;> cases bw <;> rfl
+    · cases bv <;> rfl
+  · rcases hw with ⟨bw, rfl⟩ | ⟨tw, rfl⟩
+    · cases bw <;> rfl
+    · rfl
+
+/-- evalUnaryOp NOT agrees with Trilean.not for bool/null inputs -/
+theorem evalUnaryOp_not_as_trilean (v : Value)
+    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t)) :
+    evalUnaryOp .not (some v) =
+    Trilean.toOptionValue (v.toTrilean.not) := by
+  rcases hv with ⟨bv, rfl⟩ | ⟨tv, rfl⟩
+  · cases bv <;> rfl
+  · rfl
+
+/-- Double negation via Trilean bridge: NOT(NOT v) = v for bool values,
+    NOT(NOT NULL) = NULL for untyped nulls. Typed nulls lose type through NOT. -/
+theorem evalUnaryOp_not_not_via_trilean (v : Value)
+    (hv : (∃ b, v = .bool b) ∨ v = .null none) :
+    evalUnaryOp .not (evalUnaryOp .not (some v)) = some v := by
+  rcases hv with ⟨bv, rfl⟩ | rfl
+  · cases bv <;> rfl
+  · rfl
+
 end SqlEquiv

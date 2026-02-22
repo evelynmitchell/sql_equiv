@@ -634,6 +634,54 @@ theorem trilean_de_morgan_or (a b : Trilean) :
   | .unknown, .unknown => rfl
 
 -- ============================================================================
+-- Trilean Algebraic Theorems (associativity, idempotence, ofBool roundtrip)
+-- ============================================================================
+
+/-- Trilean AND is associative -/
+theorem trilean_and_assoc (a b c : Trilean) :
+    (a.and b).and c = a.and (b.and c) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- Trilean OR is associative -/
+theorem trilean_or_assoc (a b c : Trilean) :
+    (a.or b).or c = a.or (b.or c) := by
+  cases a <;> cases b <;> cases c <;> rfl
+
+/-- Trilean AND is idempotent -/
+theorem trilean_and_self (t : Trilean) : t.and t = t := by
+  cases t <;> rfl
+
+/-- Trilean OR is idempotent -/
+theorem trilean_or_self (t : Trilean) : t.or t = t := by
+  cases t <;> rfl
+
+/-- ofBool roundtrips with toBool -/
+theorem trilean_ofBool_toBool (b : Bool) : (Trilean.ofBool b).toBool = b := by
+  cases b <;> rfl
+
+-- ============================================================================
+-- Derived Bridge Theorems (compose Trilean bridge with Trilean algebra)
+-- ============================================================================
+
+/-- AND commutativity via Trilean bridge -/
+theorem evalBinOp_and_comm_via_trilean (v w : Value)
+    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
+    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    evalBinOp .and (some v) (some w) = evalBinOp .and (some w) (some v) := by
+  rw [evalBinOp_and_as_trilean v w hv hw,
+      evalBinOp_and_as_trilean w v hw hv,
+      trilean_and_comm]
+
+/-- OR commutativity via Trilean bridge -/
+theorem evalBinOp_or_comm_via_trilean (v w : Value)
+    (hv : (∃ b, v = .bool b) ∨ (∃ t, v = .null t))
+    (hw : (∃ b, w = .bool b) ∨ (∃ t, w = .null t)) :
+    evalBinOp .or (some v) (some w) = evalBinOp .or (some w) (some v) := by
+  rw [evalBinOp_or_as_trilean v w hv hw,
+      evalBinOp_or_as_trilean w v hw hv,
+      trilean_or_comm]
+
+-- ============================================================================
 -- COALESCE Theorems
 -- ============================================================================
 

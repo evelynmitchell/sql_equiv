@@ -137,7 +137,19 @@ def toTrilean : Value → Trilean
   | .null _ => .unknown
   | _ => .unknown  -- non-boolean treated as unknown in boolean context
 
+/-- Convert Trilean back to Value -/
+def ofTrilean : Trilean → Value
+  | .true => .bool true
+  | .false => .bool false
+  | .unknown => .null none
+
 end Value
+
+/-- Convert Trilean to Option Value (for bridge theorems) -/
+def Trilean.toOptionValue : Trilean → Option Value
+  | .true => some (.bool Bool.true)
+  | .false => some (.bool Bool.false)
+  | .unknown => some (.null none)
 
 /-- Column reference: optionally qualified with table name -/
 structure ColumnRef where
