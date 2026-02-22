@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Hook: ensure-fresh-branch.sh
 # Fires on PreToolUse(Task) — filters for Plan subagent only.
 # Ensures we're on a fresh branch before starting any new task planning.
@@ -21,14 +21,27 @@ subagent_type=$(echo "$input" | jq -r '.tool_input.subagent_type // empty' 2>/de
 # Not a git repo? Nothing to do.
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
+# gh CLI required for merged-PR detection
+if ! command -v gh >/dev/null 2>&1; then
+  echo "gh CLI not found — cannot check for merged PRs. Install gh or remove this hook." >&2
+  exit 2
+fi
+
 branch=$(git branch --show-current 2>/dev/null)
 [ -z "$branch" ] && exit 0
 
-# Determine the default branch (master or main)
+# Determine the default branch (prefer repo's configured default)
 default_branch="master"
-if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
-  if ! git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
-    default_branch="main"
+if origin_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
+  origin_head="${origin_head#origin/}"
+  if [ -n "$origin_head" ]; then
+    default_branch="$origin_head"
+  fi
+else
+  if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
+    if ! git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
+      default_branch="main"
+    fi
   fi
 fi
 
@@ -45,9 +58,9 @@ has_merged_pr() {
 # Case 1: Already on default branch — need to branch off
 if [ "$branch" = "$default_branch" ]; then
   git fetch origin "$default_branch" --quiet 2>/dev/null || true
-  git merge --ff-only "origin/$default_branch" --quiet 2>/dev/null || true
+  git merge --ff-only "origin/$default_branch" --quiet || echo "Warning: could not fast-forward $default_branch" >&2
   new_branch="claude/task-$(generate_slug)"
-  git checkout -b "$new_branch" --quiet 2>/dev/null
+  git checkout -b "$new_branch" --quiet
   cat <<EOJSON
 {
   "additionalContext": "Auto-created branch '$new_branch' from $default_branch. You were on $default_branch — never commit directly to it."
@@ -65,11 +78,11 @@ if [ -n "$merged_pr" ]; then
     exit 2
   fi
 
-  git checkout "$default_branch" --quiet 2>/dev/null
+  git checkout "$default_branch" --quiet
   git fetch origin "$default_branch" --quiet 2>/dev/null || true
-  git merge --ff-only "origin/$default_branch" --quiet 2>/dev/null || true
+  git merge --ff-only "origin/$default_branch" --quiet || echo "Warning: could not fast-forward $default_branch" >&2
   new_branch="claude/task-$(generate_slug)"
-  git checkout -b "$new_branch" --quiet 2>/dev/null
+  git checkout -b "$new_branch" --quiet
   cat <<EOJSON
 {
   "additionalContext": "Branch '$branch' already had merged PR #$merged_pr. Auto-created fresh branch '$new_branch' from $default_branch."
