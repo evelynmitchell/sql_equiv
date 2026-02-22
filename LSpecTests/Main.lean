@@ -16,6 +16,7 @@ import LSpecTests.NullSemantics
 import LSpecTests.QueryHelpers
 import LSpecTests.EdgeCaseDb
 import LSpecTests.DiffSqlite
+import LSpecTests.RewriterProperties
 
 open LSpec SlimCheck
 
@@ -31,5 +32,6 @@ def main : IO UInt32 := do
     ("Expression Algebra", [ExprAlgebra.allTests cfg]),
     ("NULL Semantics", [NullSemantics.allTests cfg]),
     ("Edge-Case Databases", [EdgeCaseDb.allTests cfg]),
-    ("SQLite Differential", [sqliteTests])
+    ("SQLite Differential", [sqliteTests]),
+    ("Rewriter Properties", [RewriterProperties.allTests cfg])
   ]) []
