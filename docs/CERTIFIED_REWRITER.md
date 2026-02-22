@@ -153,9 +153,11 @@ These allow conditional rules to use the `if h : guard then ... else ...` patter
 
 ### Bottom-Up Traversal
 
-`certifiedRewrite` recursively simplifies subexpressions first, then applies top-level simplifications for `binOp`, `unaryOp`, `between`, and `inList` nodes. This ensures inner rewrites compose correctly with outer ones.
+`certifiedRewrite` recursively simplifies subexpressions first, then applies top-level simplifications. This ensures inner rewrites compose correctly with outer ones.
 
-**Current limitations**: The following subexpressions are NOT recursively rewritten: CASE branch/else expressions, IN list values, function arguments, aggregate arguments, EXISTS/subquery/IN-subquery payloads, and window function arguments. Only top-level CASE pattern matching (true/false/empty) is applied. This means the rewriter is not structurally idempotent for expressions containing these nodes — a known limitation for Phase 2b.
+The rewriter recurses into **all Expr subexpressions**: `binOp`, `unaryOp`, `between`, `inList` (both expression and values), `func` arguments, `case` (branch conditions, results, and else clause), `agg` arguments, `windowFn` arguments, and `inSubquery` expressions.
+
+**Remaining limitation**: `SelectStmt` payloads inside `.exists`, `.subquery`, and `.inSubquery` are NOT recursed into (they contain `SelectStmt`, not just `Expr`).
 
 For example, `NOT(NOT(IS_NULL(x))) AND TRUE`:
 1. Inner: `NOT(NOT(IS_NULL(x)))` rewrites to `IS_NULL(x)` (conditional NOT-NOT, guard passes)
@@ -163,16 +165,13 @@ For example, `NOT(NOT(IS_NULL(x))) AND TRUE`:
 
 ### Proof Chaining
 
-Each step produces a proof of equivalence. These are composed using `expr_equiv_trans` (transitivity):
+The rewriter uses a split architecture: `certifiedRewriteAux` (computation, WFR) + `certifiedRewriteAux_equiv` (proof, strong induction) + `certifiedRewrite` (wrapper returning subtype). This avoids eq_def derivation failures in Lean's WFR compiler.
 
-```lean
-| .binOp op l r =>
-    let ⟨l', hl⟩ := certifiedRewrite l        -- recursively rewrite left
-    let ⟨r', hr⟩ := certifiedRewrite r        -- recursively rewrite right
-    let step1 := binOp_congr hl hr             -- congruence: op(l,r) ≃ op(l',r')
-    let ⟨result, step2⟩ := simplifyBinOp op l' r'  -- simplify the top node
-    ⟨result, expr_equiv_trans step1 step2⟩     -- chain the proofs
-```
+Each case proves equivalence by:
+1. Recursive IH: each subexpression is equivalent to its rewrite
+2. Congruence: the parent node with rewritten subexpressions is equivalent
+3. Simplification: the simplified form is equivalent to the congruent form
+4. Transport: chain via `expr_equiv_trans` and bridge across the WFR unfolding
 
 ### Special NOT(BETWEEN) Handling
 
@@ -180,7 +179,14 @@ BETWEEN is normally expanded to `AND(GE, LE)` bottom-up. But `NOT(BETWEEN)` need
 
 ### Congruence Lemmas
 
-The rewriter includes two congruence lemmas (`between_congr`, `inList_congr_expr`) that propagate equivalence through node types not covered by the existing `binOp_congr` and `unaryOp_congr`.
+The rewriter uses internal (private) congruence lemmas that propagate equivalence through each node type:
+- `between_congr`, `inList_congr_expr`, `inList_congr_vals` — BETWEEN and IN list
+- `func_congr` — function arguments
+- `case_congr` — CASE branches and else clause (uses `evalCaseHelper_map_congr`)
+- `agg_congr`, `windowFn_congr` — trivially true (eval returns `none` for these)
+- `inSubquery_congr_expr` — IN subquery expression
+
+These are implementation details of the rewriter proof, not part of the public API.
 
 ## Usage
 
@@ -199,19 +205,19 @@ The proof witness can be used with `expr_equiv_subst` to substitute equivalent e
 ## Phases
 
 - **Phase 1** (PR #187): 24 unconditional rules. No type preconditions.
-- **Phase 2a** (this PR): 10 conditional rules guarded by `isDefinitelyBool`/`isDefinitelyInt` static type checks.
-- **Phase 2b** (future): Complete recursion into all Expr subexpressions (CASE branches, IN list values, function args, etc.).
+- **Phase 2a** (PR #188): 10 conditional rules guarded by `isDefinitelyBool`/`isDefinitelyInt` static type checks.
+- **Phase 2b** (this PR): Complete recursion into all Expr subexpressions (func args, CASE branches/else, IN list values, agg/windowFn args, inSubquery expr). Uses well-founded recursion with `termination_by sizeOf`.
 
 ## Testing
 
-- **65 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, guard-pass and guard-fail cases, bottom-up composition, conditional composition, idempotency, and leaf node preservation.
-- **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions (bool/int/bounded generators), idempotency, BETWEEN elimination, short-circuit properties, boolean/arithmetic identity, and NOT-NOT.
+- **79 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, guard-pass and guard-fail cases, bottom-up composition, conditional composition, idempotency, leaf node preservation, and subexpression recursion (func, case, inList vals, agg, windowFn, inSubquery).
+- **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions (bool/int/bounded generators), structural idempotency, BETWEEN elimination, short-circuit properties, boolean/arithmetic identity, and NOT-NOT.
 - **Compile-time verification**: the type signature `{ e' : Expr // e ≃ₑ e' }` means Lean's type checker verifies correctness at compile time. Tests confirm the evaluator agrees with the proofs.
 
 ## File Layout
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `SqlEquiv/Rewriter.lean` | ~350 | Rewriter implementation, type guards, bridge lemmas, congruence lemmas |
-| `Test/RewriterTest.lean` | ~370 | Unit tests (65 tests) |
-| `LSpecTests/RewriterProperties.lean` | ~290 | LSpec property tests |
+| `SqlEquiv/Rewriter.lean` | ~750 | Rewriter implementation, type guards, bridge lemmas, congruence lemmas, WFR proof |
+| `Test/RewriterTest.lean` | ~470 | Unit tests (79 tests) |
+| `LSpecTests/RewriterProperties.lean` | ~300 | LSpec property tests |

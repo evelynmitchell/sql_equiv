@@ -56,12 +56,16 @@ def semanticEquivTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def idempotencyTests (cfg : Configuration) : TestSeq :=
-  -- BoolGroundExpr has no CASE nodes, so idempotency holds structurally.
-  -- BoundedGroundExpr can generate CASE, which Phase 1 doesn't recurse into,
-  -- so structural idempotency fails (e.g., CASE WHEN TRUE THEN (TRUE OR x) → TRUE OR x → TRUE).
-  -- Instead we test that double-rewriting preserves semantics.
+  -- Phase 2b recurses into all Expr subexpressions (func, case, inList, agg, windowFn, inSubquery).
+  -- Only SelectStmt payloads (.exists, .subquery, .inSubquery sel) are not recursed into.
+  -- Since genGroundExpr generates only lit/binOp/unaryOp/CASE (no SelectStmt nodes),
+  -- structural idempotency should hold for both BoolGroundExpr and BoundedGroundExpr.
   check (cfg := cfg) "certifiedRewrite is idempotent (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
+      let r1 := (certifiedRewrite e.expr).val
+      (certifiedRewrite r1).val == r1) $
+  check (cfg := cfg) "certifiedRewrite is idempotent (BoundedGroundExpr)"
+    (∀ e : BoundedGroundExpr,
       let r1 := (certifiedRewrite e.expr).val
       (certifiedRewrite r1).val == r1) $
   check (cfg := cfg) "double rewrite preserves semantics (BoundedGroundExpr)"

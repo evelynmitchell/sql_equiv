@@ -388,7 +388,7 @@ row merging is commutative/associative (modulo column ordering).
 
 ## Remaining Axiom Count by Phase
 
-**Current totals**: 0 axioms remaining (0 in Equiv/, 0 in infrastructure files), 567 theorems proved (100.0%). Of these, 561 are tracked in the phase summary table below; the remainder are supporting lemmas in Rewriter.lean and other infrastructure files outside the phase breakdown.
+**Current totals**: 0 axioms remaining (0 in Equiv/, 0 in infrastructure files), 579 theorems proved (100.0%).
 Axiom ratchet: 0 (in `tools/axiom_count_minimum.txt`, reduced from 7 in Step 1 of Final Seven plan).
 Run `python3 tools/count_axioms_theorems.py -v` for a live per-file breakdown (includes `private theorem` declarations).
 

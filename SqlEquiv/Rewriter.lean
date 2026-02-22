@@ -175,6 +175,93 @@ theorem inList_congr_expr {e1 e2 : Expr} (neg : Bool) (vals : List Expr)
   have h' := h row; simp only [evalExpr] at h'
   rw [h']
 
+/-- CASE congruence: if branch conditions, results, and else are pairwise equivalent, CASE is equivalent -/
+private theorem case_congr (branches : List (Expr × Expr)) (else_ : Option Expr)
+    (f : Expr → Expr)
+    (hc : ∀ p ∈ branches, p.1 ≃ₑ f p.1)
+    (hr : ∀ p ∈ branches, p.2 ≃ₑ f p.2)
+    (helse : ∀ e, else_ = some e → e ≃ₑ f e) :
+    Expr.case branches else_ ≃ₑ
+    Expr.case (branches.map fun p => (f p.1, f p.2)) (else_.map f) := by
+  cases else_ with
+  | none =>
+    intro row; simp only [evalExpr]
+    rw [evalExprWithDb_case, evalExprWithDb_case]
+    simp only [evalCase, Option.map]
+    exact (evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
+      f f branches _
+      (fun p hp => by have := hc p hp row; simp only [evalExpr] at this; exact this.symm)
+      (fun p hp => by have := hr p hp row; simp only [evalExpr] at this; exact this.symm)).symm
+  | some elseExpr =>
+    intro row; simp only [evalExpr]
+    rw [evalExprWithDb_case, evalExprWithDb_case]
+    simp only [evalCase, Option.map]
+    have helse_eq : evalExprWithDb (fun _ => []) row (f elseExpr) =
+        evalExprWithDb (fun _ => []) row elseExpr := by
+      have := helse elseExpr rfl row; simp only [evalExpr] at this; exact this.symm
+    rw [helse_eq]
+    exact (evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
+      f f branches _
+      (fun p hp => by have := hc p hp row; simp only [evalExpr] at this; exact this.symm)
+      (fun p hp => by have := hr p hp row; simp only [evalExpr] at this; exact this.symm)).symm
+
+/-- IN list congruence for the value list -/
+private theorem inList_congr_vals (e : Expr) (neg : Bool) (vals : List Expr) (f : Expr → Expr)
+    (h : ∀ v ∈ vals, v ≃ₑ f v) :
+    Expr.inList e neg vals ≃ₑ Expr.inList e neg (vals.map f) := by
+  intro row; simp only [evalExpr]
+  rw [evalExprWithDb_inList, evalExprWithDb_inList]
+  dsimp only []
+  suffices hfoldl : ∀ init,
+      vals.foldl (fun acc vi =>
+        evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
+          (evalExprWithDb (fun _ => []) row vi))) init =
+      (vals.map f).foldl (fun acc vi =>
+        evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
+          (evalExprWithDb (fun _ => []) row vi))) init by
+    rw [hfoldl]
+  intro init
+  induction vals generalizing init with
+  | nil => rfl
+  | cons v rest ih =>
+    simp only [List.foldl, List.map]
+    have hv := h v List.mem_cons_self
+    have hv' := hv row; simp only [evalExpr] at hv'
+    rw [hv']
+    exact ih (fun vi hvi => h vi (List.mem_cons_of_mem v hvi)) _
+
+/-- Function congruence: if args evaluate the same, func is equivalent -/
+private theorem func_congr (name : String) (args1 args2 : List Expr)
+    (h : ∀ row, args1.map (evalExprWithDb (fun _ => []) row) =
+                args2.map (evalExprWithDb (fun _ => []) row)) :
+    Expr.func name args1 ≃ₑ Expr.func name args2 := by
+  intro row; simp only [evalExpr]
+  rw [evalExprWithDb_func, evalExprWithDb_func]
+  exact congrArg (evalFunc name) (h row)
+
+/-- Aggregate congruence: trivially true since evalExprCore returns none for .agg -/
+private theorem agg_congr (fn : AggFunc) (arg1 arg2 : Option Expr) (d : Bool) :
+    Expr.agg fn arg1 d ≃ₑ Expr.agg fn arg2 d := by
+  intro row; simp only [evalExpr]
+  rw [evalExprWithDb_eq_evalExprCore, evalExprWithDb_eq_evalExprCore]
+  simp [evalExprCore]
+
+/-- Window function congruence: trivially true since evalExprCore returns none for .windowFn -/
+private theorem windowFn_congr (fn : WindowFunc) (arg1 arg2 : Option Expr) (spec : WindowSpec) :
+    Expr.windowFn fn arg1 spec ≃ₑ Expr.windowFn fn arg2 spec := by
+  intro row; simp only [evalExpr]
+  rw [evalExprWithDb_eq_evalExprCore, evalExprWithDb_eq_evalExprCore]
+  simp [evalExprCore]
+
+/-- IN subquery congruence for the expression argument -/
+private theorem inSubquery_congr_expr {e1 e2 : Expr} (neg : Bool) (sel : SelectStmt)
+    (h : e1 ≃ₑ e2) :
+    Expr.inSubquery e1 neg sel ≃ₑ Expr.inSubquery e2 neg sel := by
+  intro row; simp only [evalExpr]
+  rw [evalExprWithDb_inSubquery, evalExprWithDb_inSubquery]
+  have h' := h row; simp only [evalExpr] at h'
+  rw [h']
+
 -- ============================================================================
 -- Helper Theorems
 -- ============================================================================
@@ -297,58 +384,327 @@ def simplifyBetween (e lo hi : Expr) :
    between_expansion e lo hi⟩
 
 -- ============================================================================
+-- Opaque Wrappers (prevent inlining into certifiedRewriteAux compiled body)
+-- ============================================================================
+
+/-- Extract simplified expression from simplifyBinOp -/
+@[noinline] private def simplifyBinOpVal (op : BinOp) (l r : Expr) : Expr :=
+  (simplifyBinOp op l r).val
+
+/-- Extract simplified expression from simplifyUnaryOp -/
+@[noinline] private def simplifyUnaryOpVal (op : UnaryOp) (e : Expr) : Expr :=
+  (simplifyUnaryOp op e).val
+
+/-- Extract simplified expression from simplifyInList -/
+@[noinline] private def simplifyInListVal (e : Expr) (neg : Bool) (vals : List Expr) : Expr :=
+  (simplifyInList e neg vals).val
+
+/-- Extract simplified expression from simplifyCaseExpr -/
+@[noinline] private def simplifyCaseExprVal
+    (branches : List (Expr × Expr)) (else_ : Option Expr) : Expr :=
+  (simplifyCaseExpr branches else_).val
+
+/-- Extract simplified expression from simplifyBetween -/
+@[noinline] private def simplifyBetweenVal (e lo hi : Expr) : Expr :=
+  (simplifyBetween e lo hi).val
+
+-- Bridge lemmas for the wrappers
+private theorem simplifyBinOpVal_spec (op : BinOp) (l r : Expr) :
+    Expr.binOp op l r ≃ₑ simplifyBinOpVal op l r :=
+  (simplifyBinOp op l r).property
+
+private theorem simplifyUnaryOpVal_spec (op : UnaryOp) (e : Expr) :
+    Expr.unaryOp op e ≃ₑ simplifyUnaryOpVal op e :=
+  (simplifyUnaryOp op e).property
+
+private theorem simplifyInListVal_spec (e : Expr) (neg : Bool) (vals : List Expr) :
+    Expr.inList e neg vals ≃ₑ simplifyInListVal e neg vals :=
+  (simplifyInList e neg vals).property
+
+private theorem simplifyCaseExprVal_spec (branches : List (Expr × Expr)) (else_ : Option Expr) :
+    Expr.«case» branches else_ ≃ₑ simplifyCaseExprVal branches else_ :=
+  (simplifyCaseExpr branches else_).property
+
+private theorem simplifyBetweenVal_spec (e lo hi : Expr) :
+    Expr.between e lo hi ≃ₑ simplifyBetweenVal e lo hi :=
+  (simplifyBetween e lo hi).property
+
+-- ============================================================================
 -- Main Recursive Function
 -- ============================================================================
 
+/-- Computation part of the certified rewriter: bottom-up simplification.
+    Returns just the simplified expression. The proof is in `certifiedRewriteAux_equiv`. -/
+def certifiedRewriteAux : Expr → Expr
+  | .lit v => .lit v
+  | .col c => .col c
+  | .countStar => .countStar
+  | .«exists» neg sel => .«exists» neg sel
+  | .subquery sel => .subquery sel
+  | .agg fn arg d =>
+    .agg fn (match arg with | none => none | some e => some (certifiedRewriteAux e)) d
+  | .windowFn fn arg spec =>
+    .windowFn fn (match arg with | none => none | some e => some (certifiedRewriteAux e)) spec
+  | .inSubquery e neg sel => .inSubquery (certifiedRewriteAux e) neg sel
+  | .func name args =>
+    .func name (args.map certifiedRewriteAux)
+  | .binOp op l r =>
+    simplifyBinOpVal op (certifiedRewriteAux l) (certifiedRewriteAux r)
+  | .unaryOp .not (.between e lo hi) =>
+    .binOp .or (.binOp .lt (certifiedRewriteAux e) (certifiedRewriteAux lo))
+      (.binOp .gt (certifiedRewriteAux e) (certifiedRewriteAux hi))
+  | .unaryOp op e =>
+    simplifyUnaryOpVal op (certifiedRewriteAux e)
+  | .between e lo hi =>
+    simplifyBetweenVal (certifiedRewriteAux e) (certifiedRewriteAux lo)
+      (certifiedRewriteAux hi)
+  | .inList e neg vals =>
+    simplifyInListVal (certifiedRewriteAux e) neg
+      (vals.map certifiedRewriteAux)
+  | .«case» branches else_ =>
+    simplifyCaseExprVal
+      (branches.map (fun pair =>
+          (certifiedRewriteAux pair.1, certifiedRewriteAux pair.2)))
+      (match else_ with | none => none | some e => some (certifiedRewriteAux e))
+termination_by e => sizeOf e
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
+
+/-- The certified rewriter preserves equivalence: for all expressions,
+    the rewritten form is semantically equivalent to the original. -/
+theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e := by
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n → e ≃ₑ certifiedRewriteAux e by
+    exact key (sizeOf e + 1) e (by omega)
+  intro n; induction n with
+  | zero => intro _ hlt; exact absurd hlt (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt
+    -- Helper: transport an equivalence proof across certifiedRewriteAux unfolding
+    -- Given step : e ≃ₑ expanded and h_unfold : certifiedRewriteAux e = expanded,
+    -- produces e ≃ₑ certifiedRewriteAux e
+    have transport {e expanded : Expr}
+        (step : e ≃ₑ expanded) (h_unfold : certifiedRewriteAux e = expanded) :
+        e ≃ₑ certifiedRewriteAux e :=
+      fun row => (step row).trans (congrArg (evalExpr row) h_unfold).symm
+    cases e with
+    | lit v =>
+      exact transport (expr_equiv_refl _) (by simp [certifiedRewriteAux])
+    | col c =>
+      exact transport (expr_equiv_refl _) (by simp [certifiedRewriteAux])
+    | countStar =>
+      exact transport (expr_equiv_refl _) (by simp [certifiedRewriteAux])
+    | «exists» neg sel =>
+      exact transport (expr_equiv_refl _) (by simp [certifiedRewriteAux])
+    | subquery sel =>
+      exact transport (expr_equiv_refl _) (by simp [certifiedRewriteAux])
+    | agg fn arg d =>
+      have h_unfold : certifiedRewriteAux (.agg fn arg d) =
+          .agg fn (match arg with | none => none | some e => some (certifiedRewriteAux e)) d := by
+        cases arg <;> simp [certifiedRewriteAux]
+      exact transport (agg_congr fn arg _ d) h_unfold
+    | windowFn fn arg spec =>
+      have h_unfold : certifiedRewriteAux (.windowFn fn arg spec) =
+          .windowFn fn (match arg with | none => none | some e => some (certifiedRewriteAux e)) spec := by
+        cases arg <;> simp [certifiedRewriteAux]
+      exact transport (windowFn_congr fn arg _ spec) h_unfold
+    | inSubquery e neg sel =>
+      have he : e ≃ₑ certifiedRewriteAux e := ih e (by
+        have : sizeOf (Expr.inSubquery e neg sel) = 1 + sizeOf e + sizeOf neg + sizeOf sel := by
+          simp [Expr.inSubquery.sizeOf_spec]
+        omega)
+      exact transport (inSubquery_congr_expr neg sel he)
+        (by simp [certifiedRewriteAux])
+    | func name args =>
+      have hargs : ∀ a ∈ args, a ≃ₑ certifiedRewriteAux a := by
+        intro a ha
+        have h_mem_sz := List.sizeOf_lt_of_mem ha
+        have : sizeOf (Expr.func name args) = 1 + sizeOf name + sizeOf args := by
+          simp [Expr.func.sizeOf_spec]
+        exact ih a (by omega)
+      have h_unfold : certifiedRewriteAux (.func name args) =
+          .func name (args.map certifiedRewriteAux) := by
+        simp [certifiedRewriteAux]
+      exact transport
+        (func_congr name args (args.map certifiedRewriteAux) (by
+          intro row; rw [List.map_map]
+          exact List.map_congr_left fun e he => by
+            have := hargs e he row; simp only [evalExpr] at this; exact this))
+        h_unfold
+    | binOp op l r =>
+      have hl : l ≃ₑ certifiedRewriteAux l := ih l (by
+        have : sizeOf (Expr.binOp op l r) = 1 + sizeOf op + sizeOf l + sizeOf r := by
+          simp [Expr.binOp.sizeOf_spec]
+        omega)
+      have hr : r ≃ₑ certifiedRewriteAux r := ih r (by
+        have : sizeOf (Expr.binOp op l r) = 1 + sizeOf op + sizeOf l + sizeOf r := by
+          simp [Expr.binOp.sizeOf_spec]
+        omega)
+      have h_unfold : certifiedRewriteAux (.binOp op l r) =
+          simplifyBinOpVal op (certifiedRewriteAux l) (certifiedRewriteAux r) := by
+        simp [certifiedRewriteAux]
+      exact transport
+        (expr_equiv_trans (binOp_congr hl hr) (simplifyBinOpVal_spec op _ _))
+        h_unfold
+    | unaryOp op inner =>
+      have sz_inner : sizeOf inner < n := by
+        have : sizeOf (Expr.unaryOp op inner) = 1 + sizeOf op + sizeOf inner := by
+          simp [Expr.unaryOp.sizeOf_spec]
+        omega
+      have hi : inner ≃ₑ certifiedRewriteAux inner := ih inner sz_inner
+      cases op with
+      | not =>
+        cases inner with
+        | between e lo hi_expr =>
+          -- NOT(BETWEEN) special case: expands to OR(LT, GT)
+          have he : e ≃ₑ certifiedRewriteAux e := ih e (by
+            have : sizeOf (Expr.between e lo hi_expr) = 1 + sizeOf e + sizeOf lo + sizeOf hi_expr := by
+              simp [Expr.between.sizeOf_spec]
+            omega)
+          have hlo : lo ≃ₑ certifiedRewriteAux lo := ih lo (by
+            have : sizeOf (Expr.between e lo hi_expr) = 1 + sizeOf e + sizeOf lo + sizeOf hi_expr := by
+              simp [Expr.between.sizeOf_spec]
+            omega)
+          have hhi : hi_expr ≃ₑ certifiedRewriteAux hi_expr := ih hi_expr (by
+            have : sizeOf (Expr.between e lo hi_expr) = 1 + sizeOf e + sizeOf lo + sizeOf hi_expr := by
+              simp [Expr.between.sizeOf_spec]
+            omega)
+          have h_unfold : certifiedRewriteAux (.unaryOp .not (.between e lo hi_expr)) =
+              .binOp .or (.binOp .lt (certifiedRewriteAux e) (certifiedRewriteAux lo))
+                (.binOp .gt (certifiedRewriteAux e) (certifiedRewriteAux hi_expr)) := by
+            simp [certifiedRewriteAux]
+          exact transport
+            (expr_equiv_trans (not_between_expansion e lo hi_expr)
+              (binOp_congr (binOp_congr he hlo) (binOp_congr he hhi)))
+            h_unfold
+        | _ =>
+          -- NOT(other): use simplifyUnaryOp (inner is destructured, don't name it)
+          exact transport
+            (expr_equiv_trans (unaryOp_congr hi) (simplifyUnaryOpVal_spec .not _))
+            (by simp [certifiedRewriteAux])
+      | _ =>
+        -- isNull, isNotNull, neg: use simplifyUnaryOp
+        exact transport
+          (expr_equiv_trans (unaryOp_congr hi) (simplifyUnaryOpVal_spec _ _))
+          (by simp [certifiedRewriteAux])
+    | between e lo hi =>
+      have he : e ≃ₑ certifiedRewriteAux e := ih e (by
+        have : sizeOf (Expr.between e lo hi) = 1 + sizeOf e + sizeOf lo + sizeOf hi := by
+          simp [Expr.between.sizeOf_spec]
+        omega)
+      have hlo : lo ≃ₑ certifiedRewriteAux lo := ih lo (by
+        have : sizeOf (Expr.between e lo hi) = 1 + sizeOf e + sizeOf lo + sizeOf hi := by
+          simp [Expr.between.sizeOf_spec]
+        omega)
+      have hhi : hi ≃ₑ certifiedRewriteAux hi := ih hi (by
+        have : sizeOf (Expr.between e lo hi) = 1 + sizeOf e + sizeOf lo + sizeOf hi := by
+          simp [Expr.between.sizeOf_spec]
+        omega)
+      have h_unfold : certifiedRewriteAux (.between e lo hi) =
+          simplifyBetweenVal (certifiedRewriteAux e) (certifiedRewriteAux lo)
+            (certifiedRewriteAux hi) := by
+        simp [certifiedRewriteAux]
+      exact transport
+        (expr_equiv_trans (between_congr he hlo hhi) (simplifyBetweenVal_spec _ _ _))
+        h_unfold
+    | inList e neg vals =>
+      have he : e ≃ₑ certifiedRewriteAux e := ih e (by
+        have : sizeOf (Expr.inList e neg vals) = 1 + sizeOf e + sizeOf neg + sizeOf vals := by
+          simp [Expr.inList.sizeOf_spec]
+        omega)
+      have hvals : ∀ v ∈ vals, v ≃ₑ certifiedRewriteAux v := by
+        intro v hv
+        have h_mem_sz := List.sizeOf_lt_of_mem hv
+        have : sizeOf (Expr.inList e neg vals) = 1 + sizeOf e + sizeOf neg + sizeOf vals := by
+          simp [Expr.inList.sizeOf_spec]
+        exact ih v (by omega)
+      have h_unfold : certifiedRewriteAux (.inList e neg vals) =
+          simplifyInListVal (certifiedRewriteAux e) neg
+            (vals.map certifiedRewriteAux) := by
+        simp [certifiedRewriteAux]
+      -- Compose: inList e neg vals ≃ₑ inList e' neg vals' ≃ₑ simplified
+      have step1 := inList_congr_expr neg vals he
+      have step2 := inList_congr_vals (certifiedRewriteAux e) neg vals certifiedRewriteAux
+        (fun v hv => hvals v hv)
+      exact transport
+        (expr_equiv_trans step1
+          (expr_equiv_trans step2 (simplifyInListVal_spec _ neg _)))
+        h_unfold
+    | «case» branches else_ =>
+      -- Case-split else_ first to avoid WFR compiled match contamination
+      cases else_ with
+      | none =>
+        -- IH for branch conditions and results
+        have hbr_c : ∀ p ∈ branches, p.1 ≃ₑ certifiedRewriteAux p.1 := by
+          intro p hp
+          have h_mem_sz := List.sizeOf_lt_of_mem hp
+          have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
+            obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
+          have : sizeOf (Expr.case branches none) = 1 + sizeOf branches + sizeOf (none : Option Expr) := by
+            simp [Expr.case.sizeOf_spec]
+          exact ih p.1 (by omega)
+        have hbr_r : ∀ p ∈ branches, p.2 ≃ₑ certifiedRewriteAux p.2 := by
+          intro p hp
+          have h_mem_sz := List.sizeOf_lt_of_mem hp
+          have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
+            obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
+          have : sizeOf (Expr.case branches none) = 1 + sizeOf branches + sizeOf (none : Option Expr) := by
+            simp [Expr.case.sizeOf_spec]
+          exact ih p.2 (by omega)
+        have step1 := case_congr branches none certifiedRewriteAux hbr_c hbr_r
+          (fun _ h => by cases h)
+        have h_unfold : certifiedRewriteAux (.case branches none) =
+            simplifyCaseExprVal
+              (branches.map (fun p => (certifiedRewriteAux p.1, certifiedRewriteAux p.2)))
+              none := by
+          simp [certifiedRewriteAux]
+        exact transport
+          (expr_equiv_trans step1 (simplifyCaseExprVal_spec _ _))
+          (by simp [Option.map] at step1; exact h_unfold)
+      | some elseExpr =>
+        -- IH for branch conditions and results
+        have hbr_c : ∀ p ∈ branches, p.1 ≃ₑ certifiedRewriteAux p.1 := by
+          intro p hp
+          have h_mem_sz := List.sizeOf_lt_of_mem hp
+          have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
+            obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
+          have : sizeOf (Expr.case branches (some elseExpr)) = 1 + sizeOf branches + sizeOf (some elseExpr) := by
+            simp [Expr.case.sizeOf_spec]
+          exact ih p.1 (by omega)
+        have hbr_r : ∀ p ∈ branches, p.2 ≃ₑ certifiedRewriteAux p.2 := by
+          intro p hp
+          have h_mem_sz := List.sizeOf_lt_of_mem hp
+          have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
+            obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
+          have : sizeOf (Expr.case branches (some elseExpr)) = 1 + sizeOf branches + sizeOf (some elseExpr) := by
+            simp [Expr.case.sizeOf_spec]
+          exact ih p.2 (by omega)
+        -- IH for else
+        have helse : elseExpr ≃ₑ certifiedRewriteAux elseExpr := ih elseExpr (by
+          have h1 : sizeOf (Expr.case branches (some elseExpr)) = 1 + sizeOf branches + sizeOf (some elseExpr) := by
+            simp [Expr.case.sizeOf_spec]
+          have h2 : sizeOf (some elseExpr) = 1 + sizeOf elseExpr := by simp [Option.some.sizeOf_spec]
+          omega)
+        have step1 := case_congr branches (some elseExpr) certifiedRewriteAux hbr_c hbr_r
+          (fun e he => by cases he; exact helse)
+        have h_unfold : certifiedRewriteAux (.case branches (some elseExpr)) =
+            simplifyCaseExprVal
+              (branches.map (fun p => (certifiedRewriteAux p.1, certifiedRewriteAux p.2)))
+              (some (certifiedRewriteAux elseExpr)) := by
+          simp [certifiedRewriteAux]
+        exact transport
+          (expr_equiv_trans step1 (simplifyCaseExprVal_spec _ _))
+          (by simp [Option.map] at step1; exact h_unfold)
+
 /-- Certified expression rewriter: simplifies bottom-up, returning both
     the result and a proof of equivalence. Zero axioms, zero sorry. -/
-def certifiedRewrite : (e : Expr) → { e' : Expr // e ≃ₑ e' }
-  | .lit v => ⟨.lit v, expr_equiv_refl _⟩
-  | .col c => ⟨.col c, expr_equiv_refl _⟩
-  | .countStar => ⟨.countStar, expr_equiv_refl _⟩
-  | .agg f arg d => ⟨.agg f arg d, expr_equiv_refl _⟩
-  | .windowFn f arg spec => ⟨.windowFn f arg spec, expr_equiv_refl _⟩
-  | .«exists» neg sel => ⟨.«exists» neg sel, expr_equiv_refl _⟩
-  | .subquery sel => ⟨.subquery sel, expr_equiv_refl _⟩
-  | .inSubquery e neg sel => ⟨.inSubquery e neg sel, expr_equiv_refl _⟩
-  | .func name args => ⟨.func name args, expr_equiv_refl _⟩
-  | .binOp op l r =>
-    let ⟨l', hl⟩ := certifiedRewrite l
-    let ⟨r', hr⟩ := certifiedRewrite r
-    let step1 := binOp_congr hl hr
-    let ⟨result, step2⟩ := simplifyBinOp op l' r'
-    ⟨result, expr_equiv_trans step1 step2⟩
-  | .unaryOp .not (.between e lo hi) =>
-    -- Special case: expand NOT(BETWEEN) before recursing, since bottom-up
-    -- would expand BETWEEN first, losing the NOT(BETWEEN) pattern.
-    let ⟨e', he⟩ := certifiedRewrite e
-    let ⟨lo', hlo⟩ := certifiedRewrite lo
-    let ⟨hi', hhi⟩ := certifiedRewrite hi
-    let step1 := not_between_expansion e lo hi
-    let lCongr : Expr.binOp .lt e lo ≃ₑ Expr.binOp .lt e' lo' := binOp_congr he hlo
-    let rCongr : Expr.binOp .gt e hi ≃ₑ Expr.binOp .gt e' hi' := binOp_congr he hhi
-    let step2 : Expr.binOp .or _ _ ≃ₑ _ := binOp_congr lCongr rCongr
-    ⟨.binOp .or (.binOp .lt e' lo') (.binOp .gt e' hi'),
-     expr_equiv_trans step1 step2⟩
-  | .unaryOp op e =>
-    let ⟨e', he⟩ := certifiedRewrite e
-    let step1 := unaryOp_congr he
-    let ⟨result, step2⟩ := simplifyUnaryOp op e'
-    ⟨result, expr_equiv_trans step1 step2⟩
-  | .between e lo hi =>
-    let ⟨e', he⟩ := certifiedRewrite e
-    let ⟨lo', hlo⟩ := certifiedRewrite lo
-    let ⟨hi', hhi⟩ := certifiedRewrite hi
-    let step1 := between_congr he hlo hhi
-    let ⟨result, step2⟩ := simplifyBetween e' lo' hi'
-    ⟨result, expr_equiv_trans step1 step2⟩
-  | .inList e neg vals =>
-    let ⟨e', he⟩ := certifiedRewrite e
-    let step1 := inList_congr_expr neg vals he
-    let ⟨result, step2⟩ := simplifyInList e' neg vals
-    ⟨result, expr_equiv_trans step1 step2⟩
-  | .«case» branches else_ =>
-    let ⟨result, step⟩ := simplifyCaseExpr branches else_
-    ⟨result, step⟩
+def certifiedRewrite (e : Expr) : { e' : Expr // e ≃ₑ e' } :=
+  ⟨certifiedRewriteAux e, certifiedRewriteAux_equiv e⟩
 
 end SqlEquiv

@@ -15,7 +15,7 @@ namespace SqlEquiv
 -- ============================================================================
 
 /-- foldl with append singleton equals map -/
-private theorem foldl_append_singleton_eq_map {α β : Type} (f : α → β) (l : List α) :
+theorem foldl_append_singleton_eq_map {α β : Type} (f : α → β) (l : List α) :
     l.foldl (fun acc e => acc ++ [f e]) [] = l.map f := by
   suffices h : ∀ init, l.foldl (fun acc e => acc ++ [f e]) init = init ++ l.map f by
     simp [h]
@@ -32,7 +32,7 @@ private theorem foldl_append_singleton_eq_map {α β : Type} (f : α → β) (l 
 -- ============================================================================
 
 /-- evalCaseHelper is invariant when sub-expressions in branches evaluate the same -/
-private theorem evalCaseHelper_map_congr (f : Expr → Option Value)
+theorem evalCaseHelper_map_congr (f : Expr → Option Value)
     (nc nr : Expr → Expr) (brs : List (Expr × Expr)) (ev : Option Value)
     (hc : ∀ p ∈ brs, f (nc p.1) = f p.1)
     (hr : ∀ p ∈ brs, f (nr p.2) = f p.2) :
