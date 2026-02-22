@@ -15,6 +15,11 @@ set -euo pipefail
 
 # Read stdin JSON and filter: only act on Plan subagents
 input=$(cat)
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq not found — cannot parse task JSON. Install jq or remove this hook." >&2
+  exit 2
+fi
 subagent_type=$(echo "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
 [ "$subagent_type" != "Plan" ] && exit 0
 
