@@ -179,12 +179,14 @@ BETWEEN is normally expanded to `AND(GE, LE)` bottom-up. But `NOT(BETWEEN)` need
 
 ### Congruence Lemmas
 
-The rewriter includes congruence lemmas that propagate equivalence through each node type:
+The rewriter uses internal (private) congruence lemmas that propagate equivalence through each node type:
 - `between_congr`, `inList_congr_expr`, `inList_congr_vals` — BETWEEN and IN list
 - `func_congr` — function arguments
 - `case_congr` — CASE branches and else clause (uses `evalCaseHelper_map_congr`)
 - `agg_congr`, `windowFn_congr` — trivially true (eval returns `none` for these)
 - `inSubquery_congr_expr` — IN subquery expression
+
+These are implementation details of the rewriter proof, not part of the public API.
 
 ## Usage
 

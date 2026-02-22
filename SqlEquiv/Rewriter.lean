@@ -447,7 +447,7 @@ def certifiedRewriteAux : Expr → Expr
     .windowFn fn (match arg with | none => none | some e => some (certifiedRewriteAux e)) spec
   | .inSubquery e neg sel => .inSubquery (certifiedRewriteAux e) neg sel
   | .func name args =>
-    .func name (args.foldl (fun acc e => acc ++ [certifiedRewriteAux e]) [])
+    .func name (args.map certifiedRewriteAux)
   | .binOp op l r =>
     simplifyBinOpVal op (certifiedRewriteAux l) (certifiedRewriteAux r)
   | .unaryOp .not (.between e lo hi) =>
@@ -460,14 +460,11 @@ def certifiedRewriteAux : Expr → Expr
       (certifiedRewriteAux hi)
   | .inList e neg vals =>
     simplifyInListVal (certifiedRewriteAux e) neg
-      (vals.foldl (fun acc v => acc ++ [certifiedRewriteAux v]) [])
+      (vals.map certifiedRewriteAux)
   | .«case» branches else_ =>
     simplifyCaseExprVal
-      (branches.foldl (fun acc pair => match h : pair with
-        | (c, r) =>
-          have _hc : sizeOf c < sizeOf pair := by rw [h]; simp_wf; omega
-          have _hr : sizeOf r < sizeOf pair := by rw [h]; simp_wf; omega
-          acc ++ [(certifiedRewriteAux c, certifiedRewriteAux r)]) [])
+      (branches.map (fun pair =>
+          (certifiedRewriteAux pair.1, certifiedRewriteAux pair.2)))
       (match else_ with | none => none | some e => some (certifiedRewriteAux e))
 termination_by e => sizeOf e
 decreasing_by
@@ -532,9 +529,8 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
           simp [Expr.func.sizeOf_spec]
         exact ih a (by omega)
       have h_unfold : certifiedRewriteAux (.func name args) =
-          .func name (args.foldl (fun acc e => acc ++ [certifiedRewriteAux e]) []) := by
+          .func name (args.map certifiedRewriteAux) := by
         simp [certifiedRewriteAux]
-      rw [foldl_append_singleton_eq_map] at h_unfold
       exact transport
         (func_congr name args (args.map certifiedRewriteAux) (by
           intro row; rw [List.map_map]
@@ -630,9 +626,8 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
         exact ih v (by omega)
       have h_unfold : certifiedRewriteAux (.inList e neg vals) =
           simplifyInListVal (certifiedRewriteAux e) neg
-            (vals.foldl (fun acc v => acc ++ [certifiedRewriteAux v]) []) := by
+            (vals.map certifiedRewriteAux) := by
         simp [certifiedRewriteAux]
-      rw [foldl_append_singleton_eq_map] at h_unfold
       -- Compose: inList e neg vals ≃ₑ inList e' neg vals' ≃ₑ simplified
       have step1 := inList_congr_expr neg vals he
       have step2 := inList_congr_vals (certifiedRewriteAux e) neg vals certifiedRewriteAux
@@ -642,22 +637,6 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
           (expr_equiv_trans step2 (simplifyInListVal_spec _ neg _)))
         h_unfold
     | «case» branches else_ =>
-      -- Helper: foldl with match-pair → map (universally quantified to avoid outer variable capture)
-      have case_foldl_eq_map : ∀ (brs : List (Expr × Expr)),
-          brs.foldl (fun acc pair => match pair with
-            | (c, r) => acc ++ [(certifiedRewriteAux c, certifiedRewriteAux r)]) [] =
-          brs.map (fun p => (certifiedRewriteAux p.1, certifiedRewriteAux p.2)) := by
-        intro brs
-        suffices h : ∀ init, brs.foldl (fun acc pair => match pair with
-            | (c, r) => acc ++ [(certifiedRewriteAux c, certifiedRewriteAux r)]) init =
-            init ++ brs.map (fun p => (certifiedRewriteAux p.1, certifiedRewriteAux p.2)) by
-          simp [h]
-        induction brs with
-        | nil => intro init; simp
-        | cons p rest ih_br =>
-          intro init; obtain ⟨c, r⟩ := p
-          simp only [List.foldl, List.map_cons]
-          rw [ih_br]; simp [List.append_assoc]
       -- Case-split else_ first to avoid WFR compiled match contamination
       cases else_ with
       | none =>
@@ -684,13 +663,7 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
             simplifyCaseExprVal
               (branches.map (fun p => (certifiedRewriteAux p.1, certifiedRewriteAux p.2)))
               none := by
-          have h_raw : certifiedRewriteAux (.case branches none) =
-              simplifyCaseExprVal
-                (branches.foldl (fun acc pair => match pair with
-                  | (c, r) => acc ++ [(certifiedRewriteAux c, certifiedRewriteAux r)]) [])
-                none := by
-            simp [certifiedRewriteAux]
-          rw [h_raw, case_foldl_eq_map]
+          simp [certifiedRewriteAux]
         exact transport
           (expr_equiv_trans step1 (simplifyCaseExprVal_spec _ _))
           (by simp [Option.map] at step1; exact h_unfold)
@@ -724,13 +697,7 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
             simplifyCaseExprVal
               (branches.map (fun p => (certifiedRewriteAux p.1, certifiedRewriteAux p.2)))
               (some (certifiedRewriteAux elseExpr)) := by
-          have h_raw : certifiedRewriteAux (.case branches (some elseExpr)) =
-              simplifyCaseExprVal
-                (branches.foldl (fun acc pair => match pair with
-                  | (c, r) => acc ++ [(certifiedRewriteAux c, certifiedRewriteAux r)]) [])
-                (some (certifiedRewriteAux elseExpr)) := by
-            simp [certifiedRewriteAux]
-          rw [h_raw, case_foldl_eq_map]
+          simp [certifiedRewriteAux]
         exact transport
           (expr_equiv_trans step1 (simplifyCaseExprVal_spec _ _))
           (by simp [Option.map] at step1; exact h_unfold)
