@@ -40,6 +40,9 @@ if [ -z "$branch" ]; then
   exit 0
 fi
 
+# Refresh remote refs so default branch detection is up-to-date
+git fetch origin --quiet 2>/dev/null || true
+
 # Determine the default branch (prefer repo's configured default)
 default_branch="master"
 if origin_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
@@ -62,14 +65,14 @@ generate_slug() {
   date +"%Y%m%d-%H%M%S-$$"
 }
 
-# Fetch and fast-forward the default branch, failing hard if diverged
+# Fetch and fast-forward the default branch. Returns 1 if ff-only merge fails.
 fetch_and_ff_default() {
   if ! git fetch origin "$default_branch" --quiet 2>/dev/null; then
     echo "Warning: could not fetch 'origin/$default_branch'. Proceeding with local state." >&2
   fi
   if ! git merge --ff-only "origin/$default_branch" --quiet 2>/dev/null; then
     echo "Error: could not fast-forward '$default_branch' to 'origin/$default_branch'. Resolve the divergence and try again." >&2
-    exit 2
+    return 1
   fi
 }
 
@@ -80,7 +83,7 @@ has_merged_pr() {
 
 # Case 1: Already on default branch — need to branch off
 if [ "$branch" = "$default_branch" ]; then
-  fetch_and_ff_default
+  fetch_and_ff_default || exit 2
   new_branch="claude/task-$(generate_slug)"
   if ! git checkout -b "$new_branch" --quiet; then
     echo "Error: could not create branch '$new_branch'. A branch or file with that name may already exist." >&2
@@ -112,7 +115,15 @@ if [ -n "$merged_pr" ]; then
     exit 2
   fi
   if [ "$default_branch_created" = false ]; then
-    fetch_and_ff_default
+    if ! fetch_and_ff_default; then
+      # Return user to their original branch on error
+      if ! git checkout "$branch" --quiet 2>/dev/null; then
+        echo "Failed to fast-forward '$default_branch', and could not switch back to '$branch'. You are now on '$default_branch'." >&2
+      else
+        echo "Failed to fast-forward '$default_branch'. You have been returned to '$branch'." >&2
+      fi
+      exit 2
+    fi
   fi
   new_branch="claude/task-$(generate_slug)"
   if ! git checkout -b "$new_branch" --quiet; then
