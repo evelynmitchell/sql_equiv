@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Hook: ensure-fresh-branch.sh
-# Fires on PreToolUse(Task) — filters for Plan subagent only.
+# Fires on SubagentStart(Plan).
 # Ensures we're on a fresh branch before starting any new task planning.
 #
 # Behavior:
@@ -10,7 +10,8 @@
 #   - On a clean unmerged branch: passes through (no-op)
 #
 # Dependencies: jq (JSON parsing), gh (GitHub CLI, merged-PR detection)
-# Output: JSON with additionalContext so Claude sees the branch state.
+# Output: When branch changes occur, emits JSON with additionalContext
+#   describing the branch state; on no-op paths emits nothing.
 
 set -euo pipefail
 
@@ -22,8 +23,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 2
 fi
 
-subagent_type=$(echo "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
-[ "$subagent_type" != "Plan" ] && exit 0
+agent_type=$(echo "$input" | jq -r '.agent_type // .tool_input.subagent_type // empty' 2>/dev/null)
+[ "$agent_type" != "Plan" ] && exit 0
 
 # Not a git repo? Nothing to do.
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
@@ -40,9 +41,6 @@ if [ -z "$branch" ]; then
   exit 0
 fi
 
-# Refresh remote refs so default branch detection is up-to-date
-git fetch origin --quiet 2>/dev/null || true
-
 # Determine the default branch (prefer repo's configured default)
 default_branch="master"
 if origin_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null); then
@@ -51,10 +49,19 @@ if origin_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/de
     default_branch="$origin_head"
   fi
 else
-  if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
-    if ! git show-ref --verify --quiet refs/heads/master 2>/dev/null; then
-      default_branch="main"
-    fi
+  # Fallback: check both local and remote refs for main vs master
+  has_main=false
+  if git show-ref --verify --quiet refs/heads/main 2>/dev/null || \
+     git show-ref --verify --quiet refs/remotes/origin/main 2>/dev/null; then
+    has_main=true
+  fi
+  has_master=false
+  if git show-ref --verify --quiet refs/heads/master 2>/dev/null || \
+     git show-ref --verify --quiet refs/remotes/origin/master 2>/dev/null; then
+    has_master=true
+  fi
+  if [ "$has_main" = true ] && [ "$has_master" = false ]; then
+    default_branch="main"
   fi
 fi
 
