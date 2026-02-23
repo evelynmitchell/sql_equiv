@@ -327,6 +327,73 @@ def trileanCommTests : TestSeq :=
   test "trilean OR comm (F,U)" (Trilean.or .false .unknown == Trilean.or .unknown .false)
 
 -- ============================================================================
+-- Trilean ↔ Value bridge
+-- ============================================================================
+
+def trileanBridgeTests : TestSeq :=
+  -- covers: evalBinOp_and_as_trilean
+  test "evalBinOp_and_as_trilean (true,false)" (
+    evalBinOp .and (some (.bool true)) (some (.bool false)) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool true) |>.and (Value.toTrilean (.bool false)))) $
+  test "evalBinOp_and_as_trilean (true,null)" (
+    evalBinOp .and (some (.bool true)) (some (.null none)) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool true) |>.and (Value.toTrilean (.null none)))) $
+  test "evalBinOp_and_as_trilean (null,false)" (
+    evalBinOp .and (some (.null none)) (some (.bool false)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null none) |>.and (Value.toTrilean (.bool false)))) $
+  test "evalBinOp_and_as_trilean (null,null)" (
+    evalBinOp .and (some (.null none)) (some (.null none)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null none) |>.and (Value.toTrilean (.null none)))) $
+  -- covers: evalBinOp_or_as_trilean
+  test "evalBinOp_or_as_trilean (false,true)" (
+    evalBinOp .or (some (.bool false)) (some (.bool true)) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool false) |>.or (Value.toTrilean (.bool true)))) $
+  test "evalBinOp_or_as_trilean (false,null)" (
+    evalBinOp .or (some (.bool false)) (some (.null none)) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool false) |>.or (Value.toTrilean (.null none)))) $
+  test "evalBinOp_or_as_trilean (null,true)" (
+    evalBinOp .or (some (.null none)) (some (.bool true)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null none) |>.or (Value.toTrilean (.bool true)))) $
+  test "evalBinOp_or_as_trilean (null,null)" (
+    evalBinOp .or (some (.null none)) (some (.null none)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null none) |>.or (Value.toTrilean (.null none)))) $
+  -- covers: evalUnaryOp_not_as_trilean
+  test "evalUnaryOp_not_as_trilean (true)" (
+    evalUnaryOp .not (some (.bool true)) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool true) |>.not)) $
+  test "evalUnaryOp_not_as_trilean (false)" (
+    evalUnaryOp .not (some (.bool false)) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool false) |>.not)) $
+  test "evalUnaryOp_not_as_trilean (null)" (
+    evalUnaryOp .not (some (.null none)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null none) |>.not)) $
+  -- Typed NULL cases: typed nulls lose type info through boolean context
+  test "evalBinOp_and_as_trilean (true, typed null)" (
+    evalBinOp .and (some (.bool true)) (some (.null (some .bool))) ==
+    Trilean.toOptionValue (Value.toTrilean (.bool true) |>.and (Value.toTrilean (.null (some .bool))))) $
+  test "evalBinOp_or_as_trilean (typed null, false)" (
+    evalBinOp .or (some (.null (some .int))) (some (.bool false)) ==
+    Trilean.toOptionValue (Value.toTrilean (.null (some .int)) |>.or (Value.toTrilean (.bool false)))) $
+  test "evalUnaryOp_not_as_trilean (typed null)" (
+    evalUnaryOp .not (some (.null (some .string))) ==
+    Trilean.toOptionValue (Value.toTrilean (.null (some .string)) |>.not)) $
+  -- covers: trilean_and_assoc
+  test "trilean_and_assoc (T,F,U)" (
+    (Trilean.true.and Trilean.false).and Trilean.unknown ==
+    Trilean.true.and (Trilean.false.and Trilean.unknown)) $
+  -- covers: trilean_or_assoc
+  test "trilean_or_assoc (F,T,U)" (
+    (Trilean.false.or Trilean.true).or Trilean.unknown ==
+    Trilean.false.or (Trilean.true.or Trilean.unknown)) $
+  -- covers: trilean_and_self
+  test "trilean_and_self (U)" (Trilean.unknown.and .unknown == .unknown) $
+  -- covers: trilean_or_self
+  test "trilean_or_self (U)" (Trilean.unknown.or .unknown == .unknown) $
+  -- covers: trilean_ofBool_toBool
+  test "trilean_ofBool_toBool (true)" ((Trilean.ofBool true).toBool == true) $
+  test "trilean_ofBool_toBool (false)" ((Trilean.ofBool false).toBool == false)
+
+-- ============================================================================
 -- Value-level helpers
 -- ============================================================================
 
@@ -490,6 +557,7 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "COALESCE Single/Empty" (coalesceSingleTests cfg) $
   group "Short-Circuit" (shortCircuitTests cfg) $
   group "Trilean Commutativity" trileanCommTests $
+  group "Trilean Bridge" trileanBridgeTests $
   group "Value Helpers" (valueHelperTests cfg) $
   group "Value Distributivity" valueDistribTests $
   group "BNN Invariants" (bnnInvariantTests cfg) $
