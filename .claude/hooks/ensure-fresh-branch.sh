@@ -5,7 +5,7 @@
 #
 # Behavior:
 #   - Non-Plan subagent: no-op (exit 0 immediately)
-#   - On master/main: fetches latest, creates claude/<slug> branch
+#   - On master/main: fetches latest, creates claude/task-<slug> branch
 #   - On a branch with a merged PR: switches to master, creates new branch
 #   - On a clean unmerged branch: passes through (no-op)
 #
@@ -64,7 +64,9 @@ generate_slug() {
 
 # Fetch and fast-forward the default branch, failing hard if diverged
 fetch_and_ff_default() {
-  git fetch origin "$default_branch" --quiet 2>/dev/null || true
+  if ! git fetch origin "$default_branch" --quiet 2>/dev/null; then
+    echo "Warning: could not fetch 'origin/$default_branch'. Proceeding with local state." >&2
+  fi
   if ! git merge --ff-only "origin/$default_branch" --quiet 2>/dev/null; then
     echo "Error: could not fast-forward '$default_branch' to 'origin/$default_branch'. Resolve the divergence and try again." >&2
     exit 2
@@ -99,15 +101,19 @@ if [ -n "$merged_pr" ]; then
   fi
 
   # Ensure the default branch exists locally before checking it out
+  default_branch_created=false
   if git show-ref --verify --quiet "refs/heads/$default_branch" 2>/dev/null; then
     git checkout "$default_branch" --quiet
   elif git show-ref --verify --quiet "refs/remotes/origin/$default_branch" 2>/dev/null; then
     git checkout -b "$default_branch" "origin/$default_branch" --quiet
+    default_branch_created=true
   else
     echo "Default branch '$default_branch' does not exist locally or on origin. Cannot create a fresh task branch." >&2
     exit 2
   fi
-  fetch_and_ff_default
+  if [ "$default_branch_created" = false ]; then
+    fetch_and_ff_default
+  fi
   new_branch="claude/task-$(generate_slug)"
   if ! git checkout -b "$new_branch" --quiet; then
     echo "Error: could not create branch '$new_branch'. A branch or file with that name may already exist." >&2
