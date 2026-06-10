@@ -967,7 +967,7 @@ private theorem list_filter_false {α : Type} (p : α → Bool) (l : List α)
   induction l with
   | nil => rfl
   | cons x xs ih =>
-    simp [List.filter_cons, h x List.mem_cons_self,
+    simp [h x List.mem_cons_self,
           ih (fun a ha => h a (List.mem_cons_of_mem x ha))]
 
 /-- When a filter on flatMap results is constant per-outer-element,
@@ -1005,7 +1005,7 @@ theorem list_filter_filterMap_comm {α β : Type} (xs : List α)
     simp only [List.filterMap_cons, List.filter_cons]
     cases hfx : f x with
     | none =>
-      cases q x <;> simp [List.filterMap_cons, hfx, ih']
+      cases q x <;> simp [hfx, ih']
     | some b =>
       have hpb := h x List.mem_cons_self b hfx
       cases hq : q x with
@@ -1795,7 +1795,7 @@ private theorem foldl_addToGroupsByKey_const_key_acc
       fun r hr => hk r (List.mem_cons_of_mem row hr)
     simp only [addToGroupsByKey, hk_row]
     simp only [List.find?_cons, beq_self_eq_true, List.map_cons, List.map_nil,
-               ite_true, List.cons_append]
+               ite_true]
     rw [ih (acc ++ [row]) hk_rest]
     congr 1; congr 1
     rw [List.append_assoc]; rfl
@@ -1809,7 +1809,7 @@ private theorem foldl_addToGroupsByKey_const_key
     (row :: rest).foldl (addToGroupsByKey exprEval db groupBy) [] = [(k0, row :: rest)] := by
   simp only [List.foldl_cons, addToGroupsByKey, hk_row, List.find?_nil, List.nil_append]
   rw [foldl_addToGroupsByKey_const_key_acc exprEval db groupBy k0 [row] rest hk_rest]
-  simp [List.singleton_append]
+  simp
 
 -- ============================================================================
 -- evalSelectProjectDistinct: equality from length and row-independent callbacks
@@ -1873,7 +1873,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
             (hk0 row2) (fun r _ => hk0 r)
           unfold addToGroupsByKey at hfold1 hfold2
           rw [hfold1, hfold2]
-          simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons, List.append_nil]
+          simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons]
           have hlen' : (row1 :: rest1).length = (row2 :: rest2).length := by simp [hlen]
           cases having with
           | none =>
