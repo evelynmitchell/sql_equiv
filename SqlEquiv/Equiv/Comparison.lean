@@ -348,6 +348,7 @@ theorem is_null_is_not_null_complement (v : Value) :
     | _, _ => False := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -361,6 +362,7 @@ theorem null_add_left (t : Option SqlType) (v : Value) :
     evalBinOp .add (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -370,6 +372,7 @@ theorem null_add_right (v : Value) (t : Option SqlType) :
     evalBinOp .add (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -379,6 +382,7 @@ theorem null_sub_left (t : Option SqlType) (v : Value) :
     evalBinOp .sub (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -388,6 +392,7 @@ theorem null_sub_right (v : Value) (t : Option SqlType) :
     evalBinOp .sub (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -397,6 +402,7 @@ theorem null_mul_left (t : Option SqlType) (v : Value) :
     evalBinOp .mul (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -406,6 +412,7 @@ theorem null_mul_right (v : Value) (t : Option SqlType) :
     evalBinOp .mul (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -415,6 +422,7 @@ theorem null_div_left (t : Option SqlType) (v : Value) :
     evalBinOp .div (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -424,6 +432,7 @@ theorem null_div_right (v : Value) (t : Option SqlType) :
     evalBinOp .div (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -437,6 +446,7 @@ theorem null_eq_left (t : Option SqlType) (v : Value) :
     evalBinOp .eq (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -446,6 +456,7 @@ theorem null_eq_right (v : Value) (t : Option SqlType) :
     evalBinOp .eq (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -455,6 +466,7 @@ theorem null_ne_left (t : Option SqlType) (v : Value) :
     evalBinOp .ne (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -464,6 +476,7 @@ theorem null_ne_right (v : Value) (t : Option SqlType) :
     evalBinOp .ne (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -473,6 +486,7 @@ theorem null_lt_left (t : Option SqlType) (v : Value) :
     evalBinOp .lt (some (.null t)) (some v) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -482,6 +496,7 @@ theorem null_lt_right (v : Value) (t : Option SqlType) :
     evalBinOp .lt (some v) (some (.null t)) = some (.null none) := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -719,6 +734,7 @@ theorem coalesce_null_left_nonnull (t : Option SqlType) (v : Option Value)
   simp only [isNullValue, List.find?, Option.join]
   match v with
   | some (.int _) => rfl
+  | some (.decimal _ _) => rfl
   | some (.string _) => rfl
   | some (.bool _) => rfl
   | some (.null _) => simp [isNullValue] at hv
@@ -791,6 +807,7 @@ theorem nullif_diff_int (n m : Int) (h : n ≠ m) :
 theorem value_null_or_not_null (v : Value) : v.isNull = true ∨ v.isNotNull = true := by
   match v with
   | .int _ => right; rfl
+  | .decimal _ _ => right; rfl
   | .string _ => right; rfl
   | .bool _ => right; rfl
   | .null _ => left; rfl
@@ -799,6 +816,7 @@ theorem value_null_or_not_null (v : Value) : v.isNull = true ∨ v.isNotNull = t
 theorem value_is_null_complement (v : Value) : v.isNull = !v.isNotNull := by
   match v with
   | .int _ => rfl
+  | .decimal _ _ => rfl
   | .string _ => rfl
   | .bool _ => rfl
   | .null _ => rfl
@@ -1390,6 +1408,7 @@ private theorem evalBinOp_like_empty_eq_eq (v : Option Value) :
   | none => rfl
   | some (.null _) => rfl
   | some (.int _) => rfl
+  | some (.decimal _ _) => rfl
   | some (.bool _) => rfl
   | some (.string s) =>
     simp only [evalBinOp, Value.eq, Option.map, simpleLike_empty]
@@ -1706,14 +1725,16 @@ private theorem evalFunc_upper_idem (v : Option Value) :
   have hup : "UPPER".toUpper = "UPPER" := by native_decide
   match v with
   | some (.string s) => simp [evalFunc, hup, string_toUpper_idem]
-  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hup]
+  | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
+    simp [evalFunc, hup]
 
 private theorem evalFunc_lower_idem (v : Option Value) :
     evalFunc "LOWER" [evalFunc "LOWER" [v]] = evalFunc "LOWER" [v] := by
   have hlo : "LOWER".toUpper = "LOWER" := by native_decide
   match v with
   | some (.string s) => simp [evalFunc, hlo, string_toLower_idem]
-  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hlo]
+  | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
+    simp [evalFunc, hlo]
 
 /-- UPPER(UPPER(x)) = UPPER(x) (idempotent) -/
 theorem upper_idempotent (e : Expr) :
@@ -1747,7 +1768,8 @@ private theorem evalFunc_upper_lower_upper (v : Option Value) :
   have hlo : "LOWER".toUpper = "LOWER" := by native_decide
   match v with
   | some (.string s) => simp [evalFunc, hup, hlo, string_toUpper_toLower_toUpper]
-  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hup, hlo]
+  | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
+    simp [evalFunc, hup, hlo]
 
 private theorem evalFunc_lower_upper_lower (v : Option Value) :
     evalFunc "LOWER" [evalFunc "UPPER" [evalFunc "LOWER" [v]]] = evalFunc "LOWER" [v] := by
@@ -1755,7 +1777,8 @@ private theorem evalFunc_lower_upper_lower (v : Option Value) :
   have hup : "UPPER".toUpper = "UPPER" := by native_decide
   match v with
   | some (.string s) => simp [evalFunc, hlo, hup, string_toLower_toUpper_toLower]
-  | some (.int _) | some (.bool _) | some (.null _) | none => simp [evalFunc, hlo, hup]
+  | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
+    simp [evalFunc, hlo, hup]
 
 /-- UPPER(LOWER(UPPER(x))) = UPPER(x) -/
 theorem upper_lower_upper (e : Expr) :
@@ -1813,6 +1836,9 @@ theorem eq_reflexive (e : Expr) (h : e.evaluable) :
     -- isNull = false, CASE falls through to else = lit true
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, Value.eq]
+  | .decimal u s =>
+    rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
+    simp [evalBinOp, Value.eq]
   | .string s =>
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, Value.eq]
@@ -1837,6 +1863,9 @@ theorem ne_irreflexive (e : Expr) (h : e.evaluable) :
   | .null _ =>
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]; rfl
   | .int n =>
+    rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
+    simp [evalBinOp, Value.eq]
+  | .decimal u s =>
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, Value.eq]
   | .string s =>
@@ -2026,7 +2055,7 @@ private theorem evalBinOp_lt_eq_gt_flip (l r : Option Value) :
     | some w => cases v <;> cases w <;>
       first
       | rfl
-      | (simp only [evalBinOp, Value.compare, Option.map]; rw [ordering_lt_eq_swap_gt, compare_swap_gen])
+      | (simp only [evalBinOp, Value.compare, Option.map, Nat.max_comm]; rw [ordering_lt_eq_swap_gt, compare_swap_gen])
 
 private theorem evalBinOp_le_eq_ge_flip (l r : Option Value) :
     evalBinOp .le l r = evalBinOp .ge r l := by
@@ -2037,7 +2066,7 @@ private theorem evalBinOp_le_eq_ge_flip (l r : Option Value) :
     | some w => cases v <;> cases w <;>
       first
       | rfl
-      | (simp only [evalBinOp, Value.compare, Option.map]; rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen])
+      | (simp only [evalBinOp, Value.compare, Option.map, Nat.max_comm]; rw [ordering_ne_gt_eq_swap_ne_lt, compare_swap_gen])
 
 /-- x < y = y > x (flip) -/
 theorem lt_flip (a b : Expr) :

@@ -118,6 +118,7 @@ def separatorLine (widths : List Nat) : String :=
 /-- Convert Value to display string -/
 def valueToDisplay : Value -> String
   | .int n => toString n
+  | .decimal u s => Value.toSql (.decimal u s)
   | .string s => s
   | .bool b => if b then "true" else "false"
   | .null _ => "NULL"

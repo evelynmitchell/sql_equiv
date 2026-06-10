@@ -418,6 +418,7 @@ theorem inner_join_to_where (db : Database) (t1 t2 : TableRef) (cond : Expr) :
       cases val with
       | bool b => cases b <;> simp <;> exact ih
       | int _ => simp; exact ih
+      | decimal _ _ => simp; exact ih
       | string _ => simp; exact ih
       | null _ => simp; exact ih
 
@@ -460,6 +461,7 @@ theorem left_join_preserves_left (db : Database) (a b : FromClause) (on_ : Optio
           cases val with
           | bool b => cases b <;> simp at hf; rw [← hf]; exact List.mem_append.mpr (.inl hkv)
           | int _ => simp at hf
+          | decimal _ _ => simp at hf
           | string _ => simp at hf
           | null _ => simp at hf
 
@@ -498,6 +500,7 @@ theorem right_join_preserves_right (db : Database) (a b : FromClause) (on_ : Opt
           cases val with
           | bool b => cases b <;> simp at hf; rw [← hf]; exact List.mem_append.mpr (.inr hkv)
           | int _ => simp at hf
+          | decimal _ _ => simp at hf
           | string _ => simp at hf
           | null _ => simp at hf
 
@@ -622,6 +625,7 @@ theorem left_join_filter_null_is_inner (db : Database) (a b : FromClause) (on_ :
             exact hRightNonNull'
           | false => simp at hf
         | int _ => simp at hf
+        | decimal _ _ => simp at hf
         | string _ => simp at hf
         | null _ => simp at hf
 
@@ -1307,6 +1311,7 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
           | false => exact nomatch hFM
         | null _ => exact nomatch hFM
         | int _ => exact nomatch hFM
+        | decimal _ _ => exact nomatch hFM
         | string _ => exact nomatch hFM
     simp only [hEqTrue] at hFM
     simp only [Option.some.injEq] at hFM
@@ -1362,6 +1367,7 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
           | bool b => cases b with | true => rfl | false => exact nomatch hFM'
           | null _ => exact nomatch hFM'
           | int _ => exact nomatch hFM'
+          | decimal _ _ => exact nomatch hFM'
           | string _ => exact nomatch hFM'
       simp only [hEqTrue'] at hFM'
       simp only [Option.some.injEq] at hFM'
@@ -1384,6 +1390,7 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
           cases yVal with
           | null t => exact absurd rfl (hNotNull t)
           | int n => simp [evalUnaryOp, isNullValue]
+          | decimal _ _ => simp [evalUnaryOp, isNullValue]
           | string s => simp [evalUnaryOp, isNullValue]
           | bool b => simp [evalUnaryOp, isNullValue]]
         decide]

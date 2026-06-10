@@ -42,6 +42,7 @@ instance : SampleableExt UnaryOp :=
 instance : Shrinkable Value where
   shrink
     | .int n => (Shrinkable.shrink n).map Value.int
+    | .decimal u s => (Shrinkable.shrink u).map (Value.mkDecimal · s)
     | .string s => if s.isEmpty then [] else [.string ""]
     | .bool _ => [.bool true, .bool false]
     | .null _ => []

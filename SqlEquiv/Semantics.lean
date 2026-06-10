@@ -82,21 +82,11 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
   match fn with
   | .count => some (.int distinctValues.length)
   | .sum =>
-    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
-    if nums.isEmpty then some (.null none) else some (.int (nums.foldl (· + ·) 0))
-  | .avg =>
-    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
-    if nums.isEmpty then some (.null none) else some (.int (nums.foldl (· + ·) 0 / nums.length))
-  | .min =>
-    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
-    match nums with
-    | [] => some (.null none)
-    | n :: rest => some (.int (rest.foldl min n))
-  | .max =>
-    let nums := distinctValues.filterMap fun | .int n => some n | _ => none
-    match nums with
-    | [] => some (.null none)
-    | n :: rest => some (.int (rest.foldl max n))
+    if countNumeric distinctValues == 0 then some (.null none)
+    else some (sumNumeric distinctValues)
+  | .avg => some ((avgNumeric distinctValues).getD (.null none))
+  | .min => some ((minNumeric distinctValues).getD (.null none))
+  | .max => some ((maxNumeric distinctValues).getD (.null none))
 
 /-- Parameterized expression evaluator with aggregate support -/
 def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
@@ -215,34 +205,25 @@ def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => exprEval db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      some (.int (intVals.foldl (· + ·) 0))
+      some (sumNumeric vals)
   | .avg =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => exprEval db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      if intVals.isEmpty then some (.null none)
-      else some (.int (intVals.foldl (· + ·) 0 / Int.ofNat intVals.length))
+      some ((avgNumeric vals).getD (.null none))
   | .min =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => exprEval db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m < n then m else n)) none with
-      | some n => some (.int n)
-      | none => some (.null none)
+      some ((minNumeric vals).getD (.null none))
   | .max =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => exprEval db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m > n then m else n)) none with
-      | some n => some (.int n)
-      | none => some (.null none)
+      some ((maxNumeric vals).getD (.null none))
   | .count =>
     match arg with
     | none => some (.int (Int.ofNat partition.length))
@@ -355,31 +336,11 @@ def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Expr) (dis
   | .count =>
     some (.int distinctValues.length)
   | .sum =>
-    let nums := distinctValues.filterMap fun
-      | .int n => some n
-      | _ => none
-    if nums.isEmpty then some (.null none)
-    else some (.int (nums.foldl (· + ·) 0))
-  | .avg =>
-    let nums := distinctValues.filterMap fun
-      | .int n => some n
-      | _ => none
-    if nums.isEmpty then some (.null none)
-    else some (.int (nums.foldl (· + ·) 0 / nums.length))
-  | .min =>
-    let nums := distinctValues.filterMap fun
-      | .int n => some n
-      | _ => none
-    match nums with
-    | [] => some (.null none)
-    | n :: rest => some (.int (rest.foldl min n))
-  | .max =>
-    let nums := distinctValues.filterMap fun
-      | .int n => some n
-      | _ => none
-    match nums with
-    | [] => some (.null none)
-    | n :: rest => some (.int (rest.foldl max n))
+    if countNumeric distinctValues == 0 then some (.null none)
+    else some (sumNumeric distinctValues)
+  | .avg => some ((avgNumeric distinctValues).getD (.null none))
+  | .min => some ((minNumeric distinctValues).getD (.null none))
+  | .max => some ((maxNumeric distinctValues).getD (.null none))
 
 /-- Evaluate expression with aggregate support over a table -/
 partial def evalExprWithAgg (db : Database) (rows : Table) (row : Row) : Expr → Option Value
@@ -502,34 +463,25 @@ def evalWindowFn (db : Database) (fn : WindowFunc) (arg : Option Expr)
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      some (.int (intVals.foldl (· + ·) 0))
+      some (sumNumeric vals)
   | .avg =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      if intVals.isEmpty then some (.null none)
-      else some (.int (intVals.foldl (· + ·) 0 / Int.ofNat intVals.length))
+      some ((avgNumeric vals).getD (.null none))
   | .min =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m < n then m else n)) none with
-      | some n => some (.int n)
-      | none => some (.null none)
+      some ((minNumeric vals).getD (.null none))
   | .max =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
-      let intVals := vals.filterMap fun v => match v with | .int n => some n | _ => none
-      match intVals.foldl (fun acc n => match acc with | none => some n | some m => some (if m > n then m else n)) none with
-      | some n => some (.int n)
-      | none => some (.null none)
+      some ((maxNumeric vals).getD (.null none))
   | .count =>
     match arg with
     | none => some (.int (Int.ofNat partition.length))  -- COUNT(*)

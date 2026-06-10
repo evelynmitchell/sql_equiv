@@ -30,6 +30,7 @@ inductive Token where
   | keyword  : String → Token          -- SELECT, FROM, WHERE, etc.
   | ident    : String → Token          -- identifiers
   | intLit   : Int → Token             -- integer literals
+  | decLit   : Int → Nat → Token       -- decimal literals: unscaled value, scale (123.45 → 12345, 2)
   | strLit   : String → Token          -- string literals
   | op       : String → Token          -- operators: +, -, *, /, =, <>, etc.
   | lparen   : Token                   -- (
@@ -53,6 +54,7 @@ def Token.describe : Token → String
   | .keyword s => s!"keyword '{s}'"
   | .ident s => s!"identifier '{s}'"
   | .intLit n => s!"integer {n}"
+  | .decLit u s => s!"decimal {u}e-{s}"
   | .strLit s => s!"string '{s}'"
   | .op s => s!"operator '{s}'"
   | .lparen => "'('"
@@ -365,8 +367,31 @@ partial def tokenize (input : String) : Except TokenizerError (List PositionedTo
         let pt := ⟨.comma, ⟨state.line, state.column⟩, ","⟩
         go rest (advancePos state c) (pt :: acc)
       else if c == '.' then
-        let pt := ⟨.dot, ⟨state.line, state.column⟩, "."⟩
-        go rest (advancePos state c) (pt :: acc)
+        -- Leading-dot decimal literal (`.5`); a bare dot stays the
+        -- qualification token (column names can't start with a digit).
+        match rest with
+        | c2 :: rest' =>
+          if isDigit c2 then
+            let startPos := ⟨state.line, state.column⟩
+            let (fracDigits, rest'') := rest'.span isDigit
+            let allFrac := c2 :: fracDigits
+            let consumed := '.' :: allFrac
+            match (String.ofList allFrac).toInt? with
+            | some u =>
+              let pt := ⟨.decLit u allFrac.length, startPos, String.ofList consumed⟩
+              go rest'' (advancePosMany state consumed) (pt :: acc)
+            | none => .error {
+                message := s!"Invalid decimal: {String.ofList consumed}"
+                line := startPos.line
+                column := startPos.column
+                context := getContextAt input state.offset
+              }
+          else
+            let pt := ⟨.dot, ⟨state.line, state.column⟩, "."⟩
+            go rest (advancePos state c) (pt :: acc)
+        | [] =>
+          let pt := ⟨.dot, ⟨state.line, state.column⟩, "."⟩
+          go rest (advancePos state c) (pt :: acc)
       else if c == ';' then
         let pt := ⟨.semicolon, ⟨state.line, state.column⟩, ";"⟩
         go rest (advancePos state c) (pt :: acc)
@@ -453,21 +478,65 @@ partial def tokenize (input : String) : Except TokenizerError (List PositionedTo
           let pt := ⟨.strLit s, startPos, s!"'{s}'"⟩
           go rest' state' (pt :: acc)
       else if isDigit c then
-        -- Integer literal
+        -- Integer or decimal literal. A '.' continues the number only when a
+        -- digit follows, so `t1.col` and `1.x` still tokenize the dot alone.
         let startPos := ⟨state.line, state.column⟩
         let (digits, rest') := rest.span isDigit
         let allDigits := c :: digits
         let numStr := String.ofList allDigits
-        match numStr.toInt? with
-        | some n =>
-          let pt := ⟨.intLit n, startPos, numStr⟩
-          go rest' (advancePosMany state allDigits) (pt :: acc)
-        | none => .error {
-            message := s!"Invalid integer: {numStr}"
+        let intToken := fun () =>
+          match numStr.toInt? with
+          | some n =>
+            let pt := ⟨.intLit n, startPos, numStr⟩
+            go rest' (advancePosMany state allDigits) (pt :: acc)
+          | none => .error {
+              message := s!"Invalid integer: {numStr}"
+              line := startPos.line
+              column := startPos.column
+              context := getContextAt input state.offset
+            }
+        -- Exponent syntax (1e5, 1.5E-2) is float territory — reject loudly
+        -- rather than silently lexing `1e5` as integer 1 aliased `e5` (#202).
+        let isExponent := fun (cs : List Char) =>
+          match cs with
+          | 'e' :: d :: _ => isDigit d || d == '+' || d == '-'
+          | 'E' :: d :: _ => isDigit d || d == '+' || d == '-'
+          | _ => false
+        let exponentError : List Char → Except TokenizerError (List PositionedToken) :=
+          fun lit => .error {
+            message := s!"Exponent literals are not supported (float types are not \
+implemented): {String.ofList lit}…"
             line := startPos.line
             column := startPos.column
             context := getContextAt input state.offset
           }
+        let decimalToken := fun (allFrac : List Char) (consumed : List Char) rest''' =>
+          let unscaledStr := String.ofList (allDigits ++ allFrac)
+          match unscaledStr.toInt? with
+          | some u =>
+            let pt := ⟨.decLit u allFrac.length, startPos, String.ofList consumed⟩
+            go rest''' (advancePosMany state consumed) (pt :: acc)
+          | none => .error {
+              message := s!"Invalid decimal: {String.ofList consumed}"
+              line := startPos.line
+              column := startPos.column
+              context := getContextAt input state.offset
+            }
+        match rest' with
+        | '.' :: c2 :: rest'' =>
+          if isDigit c2 then
+            let (fracDigits, rest''') := rest''.span isDigit
+            let allFrac := c2 :: fracDigits
+            if isExponent rest''' then exponentError (allDigits ++ '.' :: allFrac)
+            else decimalToken allFrac (allDigits ++ '.' :: allFrac) rest'''
+          else if isAlpha c2 then intToken ()  -- e.g. `1.x`: leave the dot alone
+          else
+            -- Trailing-dot literal `1.` — engines read this as 1.0
+            decimalToken [] (allDigits ++ ['.']) (c2 :: rest'')
+        | ['.'] => decimalToken [] (allDigits ++ ['.']) []
+        | _ =>
+          if isExponent rest' then exponentError allDigits
+          else intToken ()
       else if isAlpha c then
         -- Identifier or keyword
         let startPos := ⟨state.line, state.column⟩
@@ -588,6 +657,10 @@ partial def parsePrimary : Parser Expr := do
   | .intLit n =>
     let _ ← Parser.advance
     return .lit (.int n)
+  | .decLit u s =>
+    let _ ← Parser.advance
+    -- mkDecimal keeps stored decimals canonical (2.50 → decimal 25 1)
+    return .lit (Value.mkDecimal u s)
   | .strLit s =>
     let _ ← Parser.advance
     return .lit (.string s)

@@ -17,6 +17,7 @@ inductive SqlType where
   | int
   | string
   | bool
+  | decimal  -- NUMERIC/DECIMAL: exact scaled-integer arithmetic (#201)
   | unknown  -- for untyped NULL or expressions with indeterminate type
   deriving Repr, BEq, Inhabited, DecidableEq, ReflBEq, LawfulBEq
 
@@ -101,6 +102,12 @@ inductive Value where
   | int    : Int → Value
   | string : String → Value
   | bool   : Bool → Value
+  /-- NUMERIC/DECIMAL as exact scaled integer: `decimal u s` denotes u / 10^s
+      (e.g. `decimal 12345 2` = 123.45). Construct via `Value.mkDecimal` to
+      keep values in canonical form (no trailing zeros: 1.10 is stored as
+      `decimal 11 1`, never `decimal 110 2`), so structural BEq (DISTINCT,
+      GROUP BY) agrees with numeric equality. -/
+  | decimal : Int → Nat → Value
   | null   : Option SqlType → Value  -- typed NULL (none = unknown type)
   deriving Repr, BEq, Inhabited, DecidableEq, ReflBEq, LawfulBEq
 
@@ -111,8 +118,18 @@ def sqlType : Value → SqlType
   | .int _ => .int
   | .string _ => .string
   | .bool _ => .bool
+  | .decimal _ _ => .decimal
   | .null (some t) => t
   | .null none => .unknown
+
+/-- Canonical decimal constructor: strips trailing zeros so numerically equal
+    decimals are structurally equal (`mkDecimal 110 2 = mkDecimal 11 1`).
+    A whole number normalizes to scale 0 but stays `.decimal` (1.0 → decimal
+    1 0), preserving the value's declared type. -/
+def mkDecimal (u : Int) (s : Nat) : Value :=
+  match s with
+  | 0 => .decimal u 0
+  | s' + 1 => if u % 10 == 0 then mkDecimal (u / 10) s' else .decimal u (s' + 1)
 
 /-- Check if value is NULL (any type) -/
 def isNull : Value → Bool
@@ -128,6 +145,7 @@ def isNotNull : Value → Bool
 def nullInt : Value := .null (some .int)
 def nullString : Value := .null (some .string)
 def nullBool : Value := .null (some .bool)
+def nullDecimal : Value := .null (some .decimal)
 def nullUntyped : Value := .null none
 
 /-- Convert boolean value to Trilean -/

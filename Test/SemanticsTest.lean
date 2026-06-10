@@ -39,12 +39,20 @@ def productsTable : Table := [
   [("id", .int 3), ("name", .string "Gizmo"), ("price", .int 150)]
 ]
 
-/-- Test database -/
+/-- Items with DECIMAL prices (canonical form), including a NULL price -/
+def itemsTable : Table := [
+  [("id", .int 1), ("name", .string "Bolt"), ("price", .decimal 25 1)],     -- 2.5
+  [("id", .int 2), ("name", .string "Nut"),  ("price", .decimal 125 2)],    -- 1.25
+  [("id", .int 3), ("name", .string "Washer"), ("price", .decimal 3 0)],    -- 3
+  [("id", .int 4), ("name", .string "Shim"), ("price", .null (some .decimal))]
+]
+
 def testDb : Database := fun name =>
   match name with
   | "users" => usersTable
   | "orders" => ordersTable
   | "products" => productsTable
+  | "items" => itemsTable
   | _ => []
 
 -- ============================================================================
@@ -538,6 +546,122 @@ def coalesceTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Cross-Type vs NULL Semantics (drift guards for mismatched_types_error, #201)
+-- ============================================================================
+
+/-- Direct value-level check helper -/
+private def checkEval (name : String) (actual expected : Option Value) : TestResult :=
+  if actual == expected then .pass name
+  else .fail name s!"expected {repr expected}, got {repr actual}"
+
+/-- DECIMAL end-to-end (#201): SQL text → parser → scaled-int evaluation.
+    Covers exact arithmetic, scale alignment, canonicalization (trailing
+    zeros stripped), int↔decimal promotion, and NULL propagation. -/
+def decimalTests : List TestResult := [
+  -- Literal parses to canonical form: 2.50 → decimal 25 1
+  testContainsValue "decimal_literal_canonical"
+    "SELECT 2.50" (.decimal 25 1),
+  -- Exact arithmetic with scale alignment: 1.5 + 2.25 = 3.75
+  testContainsValue "decimal_add_scale_align"
+    "SELECT 1.5 + 2.25" (.decimal 375 2),
+  -- Result renormalizes: 0.5 + 0.5 = 1 (scale 0, still decimal-typed)
+  testContainsValue "decimal_add_canonicalizes"
+    "SELECT 0.5 + 0.5" (.decimal 1 0),
+  -- The classic float failure is exact here: 0.1 + 0.2 = 0.3
+  testContainsValue "decimal_no_float_drift"
+    "SELECT 0.1 + 0.2" (.decimal 3 1),
+  -- Multiplication: scales add then renormalize: 1.5 * 2.0 = 3
+  testContainsValue "decimal_mul"
+    "SELECT 1.5 * 2.0" (.decimal 3 0),
+  -- int↔decimal promotion: 1 + 2.5 = 3.5
+  testContainsValue "decimal_int_promotion_add"
+    "SELECT 1 + 2.5" (.decimal 35 1),
+  -- Promotion in comparison: 2 = 2.0 is TRUE (and WHERE keeps the row)
+  testRowCount "decimal_int_promotion_eq"
+    "SELECT id FROM users WHERE 2 = 2.0" 5,
+  -- Cross-scale comparison: 1.5 < 2 is TRUE
+  testRowCount "decimal_lt_int"
+    "SELECT id FROM users WHERE 1.5 < 2" 5,
+  -- NULL propagation per the invariant: NULL + 1.5 is NULL, not error
+  checkEval "decimal_null_propagation"
+    (evalBinOp .add (some (.null none)) (some (.decimal 15 1))) (some (.null none)),
+  -- Cross-type with non-numeric stays an error
+  checkEval "decimal_string_mismatch_error"
+    (evalBinOp .add (some (.decimal 15 1)) (some (.string "a"))) none,
+  -- Unary negation: -1.5
+  testContainsValue "decimal_negation"
+    "SELECT -1.5" (.decimal (-15) 1),
+
+  -- ---- Aggregates over a decimal column (items: 2.5, 1.25, 3, NULL) ----
+  -- SUM skips the NULL and scale-aligns: 2.5 + 1.25 + 3 = 6.75
+  testContainsValue "decimal_agg_sum"
+    "SELECT SUM(price) FROM items" (.decimal 675 2),
+  -- MIN/MAX return the original stored values
+  testContainsValue "decimal_agg_min"
+    "SELECT MIN(price) FROM items" (.decimal 125 2),
+  testContainsValue "decimal_agg_max"
+    "SELECT MAX(price) FROM items" (.decimal 3 0),
+  -- AVG: 6.75 / 3 = 2.25
+  testContainsValue "decimal_agg_avg"
+    "SELECT AVG(price) FROM items" (.decimal 225 2),
+  -- int aggregates keep int results (no behavior change)
+  testContainsValue "decimal_agg_int_unchanged"
+    "SELECT SUM(age) FROM users" (.int 140),
+  -- ORDER BY over the decimal column (scale-aware comparison). The sort key
+  -- must be projected: ORDER BY on non-projected columns is a known engine
+  -- gap (sort runs post-projection) — see issue #206.
+  testContainsValue "decimal_order_by"
+    "SELECT name, price FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1"
+    (.string "Nut"),
+
+  -- ---- Lexer edges ----
+  -- Leading-dot literal: .5 = 0.5
+  testContainsValue "decimal_leading_dot"
+    "SELECT .5" (.decimal 5 1),
+  -- Trailing-dot literal: 1. = 1
+  testContainsValue "decimal_trailing_dot"
+    "SELECT 1." (.decimal 1 0),
+  -- Exponent literals are rejected loudly, not misparsed as `1 AS e5`
+  (match parse "SELECT 1e5" with
+   | .error _ => .pass "decimal_exponent_rejected"
+   | .ok _ => .fail "decimal_exponent_rejected" "1e5 should be a parse error"),
+  (match parse "SELECT 1.5e2" with
+   | .error _ => .pass "decimal_frac_exponent_rejected"
+   | .ok _ => .fail "decimal_frac_exponent_rejected" "1.5e2 should be a parse error"),
+  -- Qualified columns still tokenize (dot not consumed by number lexing)
+  testRowCount "decimal_qualified_col_unaffected"
+    "SELECT u.id FROM users u WHERE u.age > 25" 3,
+
+  -- ---- Pretty printer ----
+  (if Value.toSql (.decimal (-5) 2) == "-0.05"
+   then .pass "decimal_print_negative_pad"
+   else .fail "decimal_print_negative_pad" s!"got {Value.toSql (.decimal (-5) 2)}"),
+  (if Value.toSql (.decimal 5 2) == "0.05"
+   then .pass "decimal_print_zero_pad"
+   else .fail "decimal_print_zero_pad" s!"got {Value.toSql (.decimal 5 2)}"),
+  (if Value.toSql (.decimal 1050 2) == "10.50"
+   then .pass "decimal_print_noncanonical_faithful"
+   else .fail "decimal_print_noncanonical_faithful" s!"got {Value.toSql (.decimal 1050 2)}")
+]
+
+/-- Type mismatches are errors (`none`); NULL operands are SQL NULL — never
+    confuse the two. Mirrors the proven `mismatched_types_error` lemma and the
+    NULL Semantics Invariant in docs/SQL_TYPES_CONCRETE_PLAN.md. -/
+def crossTypeTests : List TestResult := [
+  checkEval "mismatched_types_error (int + string is error)"
+    (evalBinOp .add (some (.int 1)) (some (.string "a"))) none,
+  checkEval "mismatched_types_error (int < bool is error)"
+    (evalBinOp .lt (some (.int 1)) (some (.bool true))) none,
+  checkEval "mismatched_types_error (string = bool is error)"
+    (evalBinOp .eq (some (.string "t")) (some (.bool true))) none,
+  -- Contrast: NULL operands propagate as SQL NULL, not error
+  checkEval "mismatched_types_error (NULL + int is NULL, not error)"
+    (evalBinOp .add (some (.null none)) (some (.int 1))) (some (.null none)),
+  checkEval "mismatched_types_error (NULL = string is NULL, not error)"
+    (evalBinOp .eq (some (.null none)) (some (.string "a"))) (some (.null none))
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -547,7 +671,7 @@ def allSemanticsTests : List TestResult :=
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
-  subqueryUnnestingTests ++ coalesceTests
+  subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests

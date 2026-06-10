@@ -311,6 +311,7 @@ private theorem case_foldl_eq_evalCaseHelper (f : Expr → Option Value)
         | false => simp; exact ih
       | int _ => simp; exact ih
       | string _ => simp; exact ih
+      | decimal _ _ => simp; exact ih
       | null _ => simp; exact ih
 
 /-- evalExprCore unfolds for CASE expressions to evalCaseHelper. -/
@@ -1442,6 +1443,7 @@ theorem evalCaseHelper_congr (f g : Expr → Option Value)
         | false => exact ih'
       | int _ => exact ih'
       | string _ => exact ih'
+      | decimal _ _ => exact ih'
       | null _ => exact ih'
 
 /-- InList foldl congruence: if ev and all value evaluations agree, foldl results agree. -/
