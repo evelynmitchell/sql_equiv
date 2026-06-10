@@ -30,6 +30,7 @@ inductive Token where
   | keyword  : String → Token          -- SELECT, FROM, WHERE, etc.
   | ident    : String → Token          -- identifiers
   | intLit   : Int → Token             -- integer literals
+  | decLit   : Int → Nat → Token       -- decimal literals: unscaled value, scale (123.45 → 12345, 2)
   | strLit   : String → Token          -- string literals
   | op       : String → Token          -- operators: +, -, *, /, =, <>, etc.
   | lparen   : Token                   -- (
@@ -53,6 +54,7 @@ def Token.describe : Token → String
   | .keyword s => s!"keyword '{s}'"
   | .ident s => s!"identifier '{s}'"
   | .intLit n => s!"integer {n}"
+  | .decLit u s => s!"decimal {u}e-{s}"
   | .strLit s => s!"string '{s}'"
   | .op s => s!"operator '{s}'"
   | .lparen => "'('"
@@ -453,21 +455,42 @@ partial def tokenize (input : String) : Except TokenizerError (List PositionedTo
           let pt := ⟨.strLit s, startPos, s!"'{s}'"⟩
           go rest' state' (pt :: acc)
       else if isDigit c then
-        -- Integer literal
+        -- Integer or decimal literal. A '.' continues the number only when a
+        -- digit follows, so `t1.col` and `1.x` still tokenize the dot alone.
         let startPos := ⟨state.line, state.column⟩
         let (digits, rest') := rest.span isDigit
         let allDigits := c :: digits
         let numStr := String.ofList allDigits
-        match numStr.toInt? with
-        | some n =>
-          let pt := ⟨.intLit n, startPos, numStr⟩
-          go rest' (advancePosMany state allDigits) (pt :: acc)
-        | none => .error {
-            message := s!"Invalid integer: {numStr}"
-            line := startPos.line
-            column := startPos.column
-            context := getContextAt input state.offset
-          }
+        let intToken := fun () =>
+          match numStr.toInt? with
+          | some n =>
+            let pt := ⟨.intLit n, startPos, numStr⟩
+            go rest' (advancePosMany state allDigits) (pt :: acc)
+          | none => .error {
+              message := s!"Invalid integer: {numStr}"
+              line := startPos.line
+              column := startPos.column
+              context := getContextAt input state.offset
+            }
+        match rest' with
+        | '.' :: c2 :: rest'' =>
+          if isDigit c2 then
+            let (fracDigits, rest''') := rest''.span isDigit
+            let allFrac := c2 :: fracDigits
+            let unscaledStr := String.ofList (allDigits ++ allFrac)
+            let consumed := allDigits ++ '.' :: allFrac
+            match unscaledStr.toInt? with
+            | some u =>
+              let pt := ⟨.decLit u allFrac.length, startPos, String.ofList consumed⟩
+              go rest''' (advancePosMany state consumed) (pt :: acc)
+            | none => .error {
+                message := s!"Invalid decimal: {String.ofList consumed}"
+                line := startPos.line
+                column := startPos.column
+                context := getContextAt input state.offset
+              }
+          else intToken ()
+        | _ => intToken ()
       else if isAlpha c then
         -- Identifier or keyword
         let startPos := ⟨state.line, state.column⟩
@@ -588,6 +611,10 @@ partial def parsePrimary : Parser Expr := do
   | .intLit n =>
     let _ ← Parser.advance
     return .lit (.int n)
+  | .decLit u s =>
+    let _ ← Parser.advance
+    -- mkDecimal keeps stored decimals canonical (2.50 → decimal 25 1)
+    return .lit (Value.mkDecimal u s)
   | .strLit s =>
     let _ ← Parser.advance
     return .lit (.string s)

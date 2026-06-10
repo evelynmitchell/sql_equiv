@@ -546,6 +546,45 @@ private def checkEval (name : String) (actual expected : Option Value) : TestRes
   if actual == expected then .pass name
   else .fail name s!"expected {repr expected}, got {repr actual}"
 
+/-- DECIMAL end-to-end (#201): SQL text → parser → scaled-int evaluation.
+    Covers exact arithmetic, scale alignment, canonicalization (trailing
+    zeros stripped), int↔decimal promotion, and NULL propagation. -/
+def decimalTests : List TestResult := [
+  -- Literal parses to canonical form: 2.50 → decimal 25 1
+  testContainsValue "decimal_literal_canonical"
+    "SELECT 2.50" (.decimal 25 1),
+  -- Exact arithmetic with scale alignment: 1.5 + 2.25 = 3.75
+  testContainsValue "decimal_add_scale_align"
+    "SELECT 1.5 + 2.25" (.decimal 375 2),
+  -- Result renormalizes: 0.5 + 0.5 = 1 (scale 0, still decimal-typed)
+  testContainsValue "decimal_add_canonicalizes"
+    "SELECT 0.5 + 0.5" (.decimal 1 0),
+  -- The classic float failure is exact here: 0.1 + 0.2 = 0.3
+  testContainsValue "decimal_no_float_drift"
+    "SELECT 0.1 + 0.2" (.decimal 3 1),
+  -- Multiplication: scales add then renormalize: 1.5 * 2.0 = 3
+  testContainsValue "decimal_mul"
+    "SELECT 1.5 * 2.0" (.decimal 3 0),
+  -- int↔decimal promotion: 1 + 2.5 = 3.5
+  testContainsValue "decimal_int_promotion_add"
+    "SELECT 1 + 2.5" (.decimal 35 1),
+  -- Promotion in comparison: 2 = 2.0 is TRUE (and WHERE keeps the row)
+  testRowCount "decimal_int_promotion_eq"
+    "SELECT id FROM users WHERE 2 = 2.0" 5,
+  -- Cross-scale comparison: 1.5 < 2 is TRUE
+  testRowCount "decimal_lt_int"
+    "SELECT id FROM users WHERE 1.5 < 2" 5,
+  -- NULL propagation per the invariant: NULL + 1.5 is NULL, not error
+  checkEval "decimal_null_propagation"
+    (evalBinOp .add (some (.null none)) (some (.decimal 15 1))) (some (.null none)),
+  -- Cross-type with non-numeric stays an error
+  checkEval "decimal_string_mismatch_error"
+    (evalBinOp .add (some (.decimal 15 1)) (some (.string "a"))) none,
+  -- Unary negation: -1.5
+  testContainsValue "decimal_negation"
+    "SELECT -1.5" (.decimal (-15) 1)
+]
+
 /-- Type mismatches are errors (`none`); NULL operands are SQL NULL — never
     confuse the two. Mirrors the proven `mismatched_types_error` lemma and the
     NULL Semantics Invariant in docs/SQL_TYPES_CONCRETE_PLAN.md. -/
@@ -573,7 +612,7 @@ def allSemanticsTests : List TestResult :=
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
-  subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests
+  subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
