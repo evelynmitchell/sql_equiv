@@ -110,6 +110,67 @@ def Value.toBool : Value → Option Bool
   | _ => none
 
 -- ============================================================================
+-- Numeric Aggregation Helpers (#201)
+-- ============================================================================
+
+/-- Numeric view for aggregation: ints promote to scale-0 scaled integers. -/
+def Value.toScaled? : Value → Option (Int × Nat)
+  | .int n => some (n, 0)
+  | .decimal u s => some (u, s)
+  | _ => none
+
+/-- True if any value is a decimal — drives the aggregate result type
+    (SUM over a decimal column is decimal; over ints stays int). -/
+def anyDecimal (vs : List Value) : Bool :=
+  vs.any fun | .decimal _ _ => true | _ => false
+
+/-- Scale-aligned sum of the numeric values in the list (non-numerics are
+    ignored, matching the previous int-only behavior). Empty sums to (0, 0). -/
+def sumScaled (vs : List Value) : Int × Nat :=
+  (vs.filterMap Value.toScaled?).foldl
+    (fun a b => (a.1 * 10 ^ (max a.2 b.2 - a.2) + b.1 * 10 ^ (max a.2 b.2 - b.2),
+                 max a.2 b.2))
+    (0, 0)
+
+/-- Number of numeric values (the AVG denominator). -/
+def countNumeric (vs : List Value) : Nat :=
+  (vs.filterMap Value.toScaled?).length
+
+/-- SUM over numerics: decimal iff any input was decimal. Empty gives int 0;
+    callers that want SQL's NULL-on-empty guard with `countNumeric`. -/
+def sumNumeric (vs : List Value) : Value :=
+  if anyDecimal vs then Value.mkDecimal (sumScaled vs).1 (sumScaled vs).2
+  else .int (sumScaled vs).1
+
+/-- AVG over numerics (truncating division, consistent with the existing
+    integer AVG); none when there are no numeric inputs. -/
+def avgNumeric (vs : List Value) : Option Value :=
+  let n := countNumeric vs
+  if n == 0 then none
+  else if anyDecimal vs then
+    some (Value.mkDecimal ((sumScaled vs).1 / Int.ofNat n) (sumScaled vs).2)
+  else some (.int ((sumScaled vs).1 / Int.ofNat n))
+
+/-- MIN over numerics via scale-aware comparison; returns the original value
+    (so canonical form is preserved); none when there are no numeric inputs. -/
+def minNumeric (vs : List Value) : Option Value :=
+  vs.foldl (fun acc v =>
+    if (Value.toScaled? v).isSome then
+      match acc with
+      | none => some v
+      | some m => if Value.compare m v == some .gt then some v else acc
+    else acc) none
+
+/-- MAX over numerics; see `minNumeric`. -/
+def maxNumeric (vs : List Value) : Option Value :=
+  vs.foldl (fun acc v =>
+    if (Value.toScaled? v).isSome then
+      match acc with
+      | none => some v
+      | some m => if Value.compare m v == some .lt then some v else acc
+    else acc) none
+
+-- ============================================================================
 -- Expression Evaluation Helper Functions (standalone)
 -- ============================================================================
 

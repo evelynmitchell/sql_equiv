@@ -39,12 +39,20 @@ def productsTable : Table := [
   [("id", .int 3), ("name", .string "Gizmo"), ("price", .int 150)]
 ]
 
-/-- Test database -/
+/-- Items with DECIMAL prices (canonical form), including a NULL price -/
+def itemsTable : Table := [
+  [("id", .int 1), ("name", .string "Bolt"), ("price", .decimal 25 1)],     -- 2.5
+  [("id", .int 2), ("name", .string "Nut"),  ("price", .decimal 125 2)],    -- 1.25
+  [("id", .int 3), ("name", .string "Washer"), ("price", .decimal 3 0)],    -- 3
+  [("id", .int 4), ("name", .string "Shim"), ("price", .null (some .decimal))]
+]
+
 def testDb : Database := fun name =>
   match name with
   | "users" => usersTable
   | "orders" => ordersTable
   | "products" => productsTable
+  | "items" => itemsTable
   | _ => []
 
 -- ============================================================================
@@ -582,7 +590,58 @@ def decimalTests : List TestResult := [
     (evalBinOp .add (some (.decimal 15 1)) (some (.string "a"))) none,
   -- Unary negation: -1.5
   testContainsValue "decimal_negation"
-    "SELECT -1.5" (.decimal (-15) 1)
+    "SELECT -1.5" (.decimal (-15) 1),
+
+  -- ---- Aggregates over a decimal column (items: 2.5, 1.25, 3, NULL) ----
+  -- SUM skips the NULL and scale-aligns: 2.5 + 1.25 + 3 = 6.75
+  testContainsValue "decimal_agg_sum"
+    "SELECT SUM(price) FROM items" (.decimal 675 2),
+  -- MIN/MAX return the original stored values
+  testContainsValue "decimal_agg_min"
+    "SELECT MIN(price) FROM items" (.decimal 125 2),
+  testContainsValue "decimal_agg_max"
+    "SELECT MAX(price) FROM items" (.decimal 3 0),
+  -- AVG: 6.75 / 3 = 2.25
+  testContainsValue "decimal_agg_avg"
+    "SELECT AVG(price) FROM items" (.decimal 225 2),
+  -- int aggregates keep int results (no behavior change)
+  testContainsValue "decimal_agg_int_unchanged"
+    "SELECT SUM(age) FROM users" (.int 140),
+  -- ORDER BY over the decimal column (scale-aware comparison). The sort key
+  -- must be projected: ORDER BY on non-projected columns is a known engine
+  -- gap (sort runs post-projection) — see issue #206.
+  testContainsValue "decimal_order_by"
+    "SELECT name, price FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1"
+    (.string "Nut"),
+
+  -- ---- Lexer edges ----
+  -- Leading-dot literal: .5 = 0.5
+  testContainsValue "decimal_leading_dot"
+    "SELECT .5" (.decimal 5 1),
+  -- Trailing-dot literal: 1. = 1
+  testContainsValue "decimal_trailing_dot"
+    "SELECT 1." (.decimal 1 0),
+  -- Exponent literals are rejected loudly, not misparsed as `1 AS e5`
+  (match parse "SELECT 1e5" with
+   | .error _ => .pass "decimal_exponent_rejected"
+   | .ok _ => .fail "decimal_exponent_rejected" "1e5 should be a parse error"),
+  (match parse "SELECT 1.5e2" with
+   | .error _ => .pass "decimal_frac_exponent_rejected"
+   | .ok _ => .fail "decimal_frac_exponent_rejected" "1.5e2 should be a parse error"),
+  -- Qualified columns still tokenize (dot not consumed by number lexing)
+  testRowCount "decimal_qualified_col_unaffected"
+    "SELECT u.id FROM users u WHERE u.age > 25" 3,
+
+  -- ---- Pretty printer ----
+  (if Value.toSql (.decimal (-5) 2) == "-0.05"
+   then .pass "decimal_print_negative_pad"
+   else .fail "decimal_print_negative_pad" s!"got {Value.toSql (.decimal (-5) 2)}"),
+  (if Value.toSql (.decimal 5 2) == "0.05"
+   then .pass "decimal_print_zero_pad"
+   else .fail "decimal_print_zero_pad" s!"got {Value.toSql (.decimal 5 2)}"),
+  (if Value.toSql (.decimal 1050 2) == "10.50"
+   then .pass "decimal_print_noncanonical_faithful"
+   else .fail "decimal_print_noncanonical_faithful" s!"got {Value.toSql (.decimal 1050 2)}")
 ]
 
 /-- Type mismatches are errors (`none`); NULL operands are SQL NULL — never
