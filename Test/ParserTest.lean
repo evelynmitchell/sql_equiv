@@ -252,7 +252,15 @@ def doubleQuoteTests : List TestResult := [
   -- Unterminated double quote is a loud error
   (match parse "SELECT \"oops" with
    | .error _ => .pass "dquote_unterminated_errors"
-   | .ok _ => .fail "dquote_unterminated_errors" "should not parse")
+   | .ok _ => .fail "dquote_unterminated_errors" "should not parse"),
+  -- ON-less JOIN (Spider/SQLite: bare `A JOIN B WHERE ...` = cross product)
+  (match parse "SELECT T1.a FROM t1 AS T1 JOIN t2 AS T2 WHERE T1.a < 5" with
+   | .ok _ => .pass "join_without_on (Spider style)"
+   | .error e => .fail "join_without_on (Spider style)" s!"{e}"),
+  -- JOIN with ON still parses identically
+  (match parse "SELECT a FROM t1 JOIN t2 ON t1.x = t2.x" with
+   | .ok _ => .pass "join_with_on_unaffected"
+   | .error e => .fail "join_with_on_unaffected" s!"{e}")
 ]
 
 def allParserTests : List TestResult :=

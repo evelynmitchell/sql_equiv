@@ -22,6 +22,9 @@
     (sort keys must come from the output columns; the key silently ties), but
     DuckDB is permissive and sorts by the pre-dedup source. Do not add such a
     case without deciding which behavior to adopt.
+  - ON-less JOIN (`A JOIN B WHERE ...`): we follow Spider/SQLite (cross
+    product); DuckDB rejects the spelling outright (requires CROSS JOIN).
+    The CROSS JOIN case below covers the shared semantics.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
@@ -190,6 +193,10 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1",
     diffTest "ORDER BY non-projected DESC with LIMIT"
       "SELECT name FROM users ORDER BY age DESC LIMIT 2",
+    -- Cross-product join semantics (explicit CROSS JOIN — see known
+    -- divergences for the ON-less spelling)
+    diffTest "CROSS JOIN product"
+      "SELECT users.name, items.name FROM users CROSS JOIN items WHERE items.price > 2",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

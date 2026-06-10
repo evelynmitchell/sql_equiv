@@ -1191,9 +1191,16 @@ where
     if isJoin then
       let jtype ← parseJoinType
       let right ← parseFromSource
+      -- ON is optional for non-cross joins too (Spider/SQLite write bare
+      -- `A JOIN B WHERE ...` meaning a cross product); the AST and evaluator
+      -- already model the missing condition as `none`.
       let on_ ← if jtype == .cross then Parser.pure none else do
-        Parser.expect (.keyword "ON") "Expected ON"
-        some <$> parseExpr
+        let t ← Parser.peek
+        if isKeyword "ON" t then
+          let _ ← Parser.advance
+          some <$> parseExpr
+        else
+          Parser.pure none
       parseJoins (.join left jtype right on_)
     else
       return left
