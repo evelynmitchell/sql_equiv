@@ -13,3 +13,8 @@ After editing any of these files, suggest running `/audit` before committing:
 - `SqlEquiv/Ast.lean` — `Value`, `BinOp`, `UnaryOp` type definitions
 - `SqlEquiv/Equiv.lean` — equivalence module root
 - `SqlEquiv/Equiv/` — axioms, lemmas, and equivalence definitions
+
+## Workflow
+
+- **Always open a PR for anything substantial** (semantics, proofs, new features,
+  CI changes). Small follow-up fixes can ride on the open PR's branch.
