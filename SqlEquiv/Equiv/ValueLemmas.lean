@@ -608,4 +608,40 @@ theorem evalUnaryOp_not_not_via_trilean (v : Value)
   · cases bv <;> rfl
   · rfl
 
+-- ============================================================================
+-- Cross-Type Elimination (proof-explosion mitigation for type expansion, #201)
+-- ============================================================================
+
+/-- Numeric values participate in int↔decimal promotion (#201).
+    Extend this when adding numeric constructors (decimal, float). -/
+def Value.isNumeric : Value → Bool
+  | .int _ => true
+  | _ => false
+
+/-- Operators with strict operand typing: arithmetic, comparisons, and string
+    ops. Excludes AND/OR, whose FALSE/TRUE dominance arms fire regardless of
+    the other operand's type. -/
+def BinOp.isStrictTyped : BinOp → Bool
+  | .add | .sub | .mul | .div | .mod
+  | .eq | .ne | .lt | .le | .gt | .ge
+  | .concat | .like => true
+  | .and | .or => false
+
+/-- Cross-type elimination: for strictly-typed operators, operands of
+    different SQL types are a type error (`none`) — *never* SQL NULL.
+    NULL operands are excluded (they take the null-propagation arms and
+    yield `some (.null none)`); numeric pairs are excluded because int and
+    decimal promote rather than erroring (#201). One invocation of this lemma
+    closes every cross-type case arm in a binary-op proof. -/
+theorem mismatched_types_error (op : BinOp) (v1 v2 : Value)
+    (hop : op.isStrictTyped = true)
+    (h1 : v1.isNull = false) (h2 : v2.isNull = false)
+    (hnum : ¬(v1.isNumeric = true ∧ v2.isNumeric = true))
+    (hty : v1.sqlType ≠ v2.sqlType) :
+    evalBinOp op (some v1) (some v2) = none := by
+  cases op <;> simp only [BinOp.isStrictTyped, Bool.false_eq_true] at hop <;>
+    cases v1 <;> cases v2 <;>
+    simp_all [Value.isNull, Value.isNumeric, Value.sqlType, evalBinOp,
+              Value.eq, Value.compare]
+
 end SqlEquiv

@@ -538,6 +538,32 @@ def coalesceTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Cross-Type vs NULL Semantics (drift guards for mismatched_types_error, #201)
+-- ============================================================================
+
+/-- Direct value-level check helper -/
+private def checkEval (name : String) (actual expected : Option Value) : TestResult :=
+  if actual == expected then .pass name
+  else .fail name s!"expected {repr expected}, got {repr actual}"
+
+/-- Type mismatches are errors (`none`); NULL operands are SQL NULL — never
+    confuse the two. Mirrors the proven `mismatched_types_error` lemma and the
+    NULL Semantics Invariant in docs/SQL_TYPES_CONCRETE_PLAN.md. -/
+def crossTypeTests : List TestResult := [
+  checkEval "mismatched_types_error (int + string is error)"
+    (evalBinOp .add (some (.int 1)) (some (.string "a"))) none,
+  checkEval "mismatched_types_error (int < bool is error)"
+    (evalBinOp .lt (some (.int 1)) (some (.bool true))) none,
+  checkEval "mismatched_types_error (string = bool is error)"
+    (evalBinOp .eq (some (.string "t")) (some (.bool true))) none,
+  -- Contrast: NULL operands propagate as SQL NULL, not error
+  checkEval "mismatched_types_error (NULL + int is NULL, not error)"
+    (evalBinOp .add (some (.null none)) (some (.int 1))) (some (.null none)),
+  checkEval "mismatched_types_error (NULL = string is NULL, not error)"
+    (evalBinOp .eq (some (.null none)) (some (.string "a"))) (some (.null none))
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -547,7 +573,7 @@ def allSemanticsTests : List TestResult :=
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
-  subqueryUnnestingTests ++ coalesceTests
+  subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
