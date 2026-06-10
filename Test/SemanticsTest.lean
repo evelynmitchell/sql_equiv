@@ -614,6 +614,11 @@ def decimalTests : List TestResult := [
     "SELECT name, price FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1"
     (.string "Nut"),
 
+  -- COUNT(col) skips NULLs per the SQL standard (3 non-null prices of 4 rows;
+  -- regression for the bug the DuckDB oracle found)
+  testContainsValue "decimal_count_skips_nulls"
+    "SELECT COUNT(price) FROM items" (.int 3),
+
   -- ---- Lexer edges ----
   -- Leading-dot literal: .5 = 0.5
   testContainsValue "decimal_leading_dot"

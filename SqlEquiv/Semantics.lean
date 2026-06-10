@@ -80,7 +80,9 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
     | some e => rows.filterMap fun row => exprEval db row e
   let distinctValues := if distinct then values.eraseDups else values
   match fn with
-  | .count => some (.int distinctValues.length)
+  -- COUNT(col) skips NULLs per the SQL standard (COUNT(*) is Expr.countStar,
+  -- which doesn't go through here); the window-fn COUNT already does this.
+  | .count => some (.int (distinctValues.filter (fun v => !v.isNull)).length)
   | .sum =>
     if countNumeric distinctValues == 0 then some (.null none)
     else some (sumNumeric distinctValues)
@@ -334,7 +336,8 @@ def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Expr) (dis
   let distinctValues := if distinct then values.eraseDups else values
   match fn with
   | .count =>
-    some (.int distinctValues.length)
+    -- COUNT(col) skips NULLs per the SQL standard
+    some (.int (distinctValues.filter (fun v => !v.isNull)).length)
   | .sum =>
     if countNumeric distinctValues == 0 then some (.null none)
     else some (sumNumeric distinctValues)

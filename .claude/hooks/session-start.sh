@@ -26,10 +26,12 @@ TOOLCHAIN_DIR="$HOME/.elan/toolchains/$(echo "$TOOLCHAIN" | sed -e 's|/|--|g' -e
 VERSION="${TOOLCHAIN##*:}"          # v4.27.0
 VERSION_NUM="${VERSION#v}"          # 4.27.0
 
-# --- apt deps: zstd (to unpack the Lean tarball), sqlite3 (differential tests) ---
+# --- apt deps: zstd (to unpack the Lean tarball), sqlite3 (differential tests),
+# unzip (to unpack the duckdb CLI) ---
 missing_pkgs=()
 command -v zstd >/dev/null 2>&1 || missing_pkgs+=(zstd)
 command -v sqlite3 >/dev/null 2>&1 || missing_pkgs+=(sqlite3)
+command -v unzip >/dev/null 2>&1 || missing_pkgs+=(unzip)
 if [ "${#missing_pkgs[@]}" -gt 0 ]; then
   echo "Installing apt packages: ${missing_pkgs[*]}"
   if ! apt-get update -qq 2>/dev/null; then sudo apt-get update -qq; fi
@@ -58,6 +60,16 @@ if [ ! -x "$TOOLCHAIN_DIR/bin/lean" ]; then
   rm -rf "$TOOLCHAIN_DIR"
   mv "/tmp/lean-$VERSION_NUM-linux" "$TOOLCHAIN_DIR"
   rm -f /tmp/lean.tar.zst
+fi
+
+# --- duckdb CLI (differential-test oracle, #203; from GitHub releases) ---
+if ! command -v duckdb >/dev/null 2>&1; then
+  echo "Installing duckdb CLI from GitHub releases..."
+  curl -sSfL -o /tmp/duckdb.zip \
+    https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip
+  unzip -o -q /tmp/duckdb.zip -d /usr/local/bin 2>/dev/null \
+    || sudo unzip -o -q /tmp/duckdb.zip -d /usr/local/bin
+  rm -f /tmp/duckdb.zip
 fi
 
 # Persist PATH for the session so `lake` is directly available.
