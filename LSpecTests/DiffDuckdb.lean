@@ -18,6 +18,10 @@
     same #201 policy decision; DuckDB computes it.
   - (resolved) ORDER BY on non-projected columns used to no-op (#206); now
     fixed and covered by the ORDER BY agreement case below.
+  - DISTINCT + ORDER BY on a non-projected column: we follow the SQL standard
+    (sort keys must come from the output columns; the key silently ties), but
+    DuckDB is permissive and sorts by the pre-dedup source. Do not add such a
+    case without deciding which behavior to adopt.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/

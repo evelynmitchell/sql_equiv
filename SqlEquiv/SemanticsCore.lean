@@ -626,41 +626,6 @@ def evalSelectCore (db : Database) (outerRow : Row)
 -- Equational Theorems for evalSelectCore
 -- ============================================================================
 
-/-- Steps 7-9 of the evaluation pipeline: ORDER BY + OFFSET + LIMIT.
-    Factored out as a small function for length proofs. -/
-def applyOrderByLimitOffset
-    (compareEval : Database → Row → Row → List OrderByItem → Bool)
-    (db : Database) (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (rows : Table) : Table :=
-  let orderedRows : Table := if orderBy.isEmpty then rows else
-    rows.mergeSort fun r1 r2 =>
-      compareEval db r1 r2 orderBy
-  let offsetRows : Table := match offset with
-    | some n => orderedRows.drop n
-    | none => orderedRows
-  match limit with | some n => offsetRows.take n | none => offsetRows
-
-/-- Changing the ORDER BY clause doesn't change the length of the pipeline output. -/
-theorem applyOrderByLimitOffset_length_eq
-    (compareEval : Database → Row → Row → List OrderByItem → Bool)
-    (db : Database) (orderBy1 orderBy2 : List OrderByItem)
-    (limit offset : Option Nat) (rows : Table) :
-    (applyOrderByLimitOffset compareEval db orderBy1 limit offset rows).length =
-    (applyOrderByLimitOffset compareEval db orderBy2 limit offset rows).length := by
-  simp only [applyOrderByLimitOffset]
-  -- Case split limit/offset first (they're still in scope), then split the if-then-else
-  cases limit <;> cases offset <;>
-    simp only [] <;>  -- normalize
-    (split <;> split <;> simp [List.length_mergeSort, List.length_take, List.length_drop])
-
-/-- ORDER BY + OFFSET + LIMIT on empty list produces empty list. -/
-theorem applyOrderByLimitOffset_nil
-    (compareEval : Database → Row → Row → List OrderByItem → Bool)
-    (db : Database) (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    applyOrderByLimitOffset compareEval db orderBy limit offset [] = [] := by
-  simp only [applyOrderByLimitOffset, List.mergeSort_nil]
-  cases limit <;> cases offset <;> simp
-
 /-- ORDER BY + OFFSET + LIMIT where sort keys can also resolve against an
     aligned source row (#206): when `useSources` is true, each projected row
     is paired 1:1 with its pre-projection source row and sort keys evaluate
@@ -828,7 +793,7 @@ theorem evalSelectProjectDistinct_length_aligned (db : Database)
 /-- Steps 3-9 of the evaluation pipeline (after WHERE filtering).
     Takes filteredRows as input and applies GROUP BY, HAVING, projection,
     DISTINCT, ORDER BY, OFFSET, and LIMIT. Factored as composition of
-    evalSelectProjectDistinct + applyOrderByLimitOffset. -/
+    evalSelectProjectDistinct + applyOrderByLimitOffsetAligned. -/
 def evalSelectAfterFilter (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
     (selectItemEval : Database → Row → SelectItem → List (String × Value))

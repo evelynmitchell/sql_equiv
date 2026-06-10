@@ -18,3 +18,12 @@ After editing any of these files, suggest running `/audit` before committing:
 
 - **Always open a PR for anything substantial** (semantics, proofs, new features,
   CI changes). Small follow-up fixes can ride on the open PR's branch.
+- **Critical self-review heuristic — review when a bug would be quiet, skip
+  when it would be loud.** Run `/critical-self-review` before merging:
+  semantics changes (evalBinOp, aggregates, NULL paths, SELECT pipeline), new
+  Value types or parser changes, new external surfaces (CI steps, oracles,
+  dependency installs), and any change where the tests were written in the
+  same pass as the code. Skip for docs, lint cleanup, test-only additions,
+  and proof repairs where theorem statements are unchanged (the kernel is a
+  stricter reviewer). Verify findings empirically (probe, don't speculate)
+  before acting on them.
