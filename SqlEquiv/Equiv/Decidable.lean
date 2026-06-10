@@ -1055,34 +1055,17 @@ instance decideGroundExprEquivInst (e1 e2 : GroundExpr) : Decidable (e1.val ≃�
 -- Certified Equivalence Checker
 -- ============================================================================
 
--- NOTE: The following sections have type universe issues (Prop vs Type) and need redesign.
--- They are commented out for now to allow the rest of the module to build.
-
-/-
-/-- Result of equivalence check with optional proof -/
+/-- Result of an equivalence check: a proof of equivalence, a proof of
+    non-equivalence, or unknown (the check was inconclusive). -/
 inductive EquivCheckResult (e1 e2 : Expr) where
   | equiv : e1 ≃ₑ e2 → EquivCheckResult e1 e2
-  | notEquiv : (e1 ≃ₑ e2 → False) → EquivCheckResult e1 e2
+  | notEquiv : ¬(e1 ≃ₑ e2) → EquivCheckResult e1 e2
   | unknown : EquivCheckResult e1 e2
 
-/-- Certified equivalence checker: returns proof if equivalence can be decided -/
-def checkEquiv (e1 e2 : Expr) : Option (e1 ≃ₑ e2) :=
-  -- First try syntactic normalization
-  if h : decideExprEquiv e1 e2 = true then
-    some (decideExprEquiv_sound h)
-  -- For ground expressions, use semantic evaluation
-  else if hg1 : e1.isGround = true then
-    if hg2 : e2.isGround = true then
-      if h : decideGroundExprEquiv e1 e2 hg1 hg2 = true then
-        some (decideGroundExprEquiv_sound hg1 hg2 h)
-      else
-        none
-    else
-      none
-  else
-    none
-
-/-- Alternative checker that returns full result type -/
+/-- Certified equivalence checker. Tries syntactic normalization first, then
+    semantic evaluation for ground expressions. Every `equiv`/`notEquiv` result
+    carries a kernel-checked proof; `unknown` means the check was inconclusive
+    (non-ground expressions that don't normalize to the same form). -/
 def checkEquivFull (e1 e2 : Expr) : EquivCheckResult e1 e2 :=
   -- First try syntactic normalization
   if h : decideExprEquiv e1 e2 = true then
@@ -1090,37 +1073,54 @@ def checkEquivFull (e1 e2 : Expr) : EquivCheckResult e1 e2 :=
   -- For ground expressions, use semantic evaluation
   else if hg1 : e1.isGround = true then
     if hg2 : e2.isGround = true then
-      if h : decideGroundExprEquiv e1 e2 hg1 hg2 = true then
-        .equiv (decideGroundExprEquiv_sound hg1 hg2 h)
+      if heval : evalExpr [] e1 = evalExpr [] e2 then
+        .equiv (fun row => by
+          rw [← ground_expr_eval_independent e1 hg1 [] row,
+              ← ground_expr_eval_independent e2 hg2 [] row, heval])
       else
-        -- Ground expressions that evaluate differently are not equivalent
-        .notEquiv (by
-          intro heq
-          unfold decideGroundExprEquiv at h
-          simp only [beq_iff_eq, Bool.not_eq_true] at h
-          have := heq []
-          -- This requires BEq to be lawful
-          sorry)
+        -- Ground expressions are row-independent, so differing on the empty
+        -- row refutes equivalence outright.
+        .notEquiv (fun heq => heval (heq []))
     else
       .unknown
   else
     .unknown
 
-/-- Certified checker for SELECT statement equivalence -/
-def checkSelectEquiv (s1 s2 : SelectStmt) : Option (s1 ≃ₛ s2) :=
-  -- Simple syntactic check
-  if decideSelectStmtEq s1 s2 then
-    some (by intro db; rfl)  -- Syntactically equal statements are semantically equal
-  else
-    none
+/-- Whether the check produced a (proof-backed) `equiv` result. -/
+def EquivCheckResult.isEquiv {e1 e2 : Expr} : EquivCheckResult e1 e2 → Bool
+  | .equiv _ => true
+  | _ => false
 
-/-- Certified checker for Query equivalence -/
-def checkQueryEquiv (q1 q2 : Query) : Option (q1 ≃ᵩ q2) :=
-  if decideQueryEq q1 q2 then
-    some (by intro db; rfl)
-  else
-    none
--/
+/-- Whether the check produced a (proof-backed) `notEquiv` result. -/
+def EquivCheckResult.isNotEquiv {e1 e2 : Expr} : EquivCheckResult e1 e2 → Bool
+  | .notEquiv _ => true
+  | _ => false
+
+/-- Whether the check was inconclusive. -/
+def EquivCheckResult.isUnknown {e1 e2 : Expr} : EquivCheckResult e1 e2 → Bool
+  | .unknown => true
+  | _ => false
+
+-- Compile-time smoke tests: one per reachable checkEquivFull branch.
+-- (`native_decide` because `evalExpr`'s WF recursion blocks kernel reduction.)
+-- Syntactic branch: identical expressions normalize equal
+example : (checkEquivFull (.col ⟨none, "x"⟩) (.col ⟨none, "x"⟩)).isEquiv = true := by
+  native_decide
+-- Ground semantic branch: 1 + 1 ≃ 2
+example : (checkEquivFull (.binOp .add (.lit (.int 1)) (.lit (.int 1)))
+    (.lit (.int 2))).isEquiv = true := by native_decide
+-- notEquiv branch: 1 ≄ 2, with a real proof of non-equivalence
+example : (checkEquivFull (.lit (.int 1)) (.lit (.int 2))).isNotEquiv = true := by
+  native_decide
+-- unknown branch: non-ground expressions that don't normalize equal
+example : (checkEquivFull (.col ⟨none, "x"⟩) (.col ⟨none, "y"⟩)).isUnknown = true := by
+  native_decide
+
+-- NOTE: An `Option (e1 ≃ₑ e2)`-returning variant is not expressible (`Option`
+-- expects a `Type`, not a `Prop`); use `checkEquivFull` and match on the result.
+-- Statement-level checkers (`checkSelectEquiv`, `checkQueryEquiv`) would need
+-- soundness lemmas for `decideSelectStmtEq`/`decideQueryEq`, which are `partial
+-- def`s and currently unprovable without refactoring them to structural recursion.
 
 -- ============================================================================
 -- Decidable Instance for Expression Equivalence (general case via normalization)
