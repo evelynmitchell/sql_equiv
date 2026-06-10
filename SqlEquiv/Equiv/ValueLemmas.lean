@@ -49,6 +49,19 @@ theorem evalBinOp_and_comm (l r : Option Value) :
   | none, some (.string _) => rfl
   | none, some (.null _) => rfl
   | none, none => rfl
+  | some (.bool false), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.bool false) => rfl
+  | some (.bool true), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.bool true) => rfl
+  | some (.int _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.int _) => rfl
+  | some (.string _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.string _) => rfl
+  | some (.null _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.null _) => rfl
+  | some (.decimal _ _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), none => rfl
+  | none, some (.decimal _ _) => rfl
 
 /-- OR is commutative at the value level -/
 theorem evalBinOp_or_comm (l r : Option Value) :
@@ -88,6 +101,19 @@ theorem evalBinOp_or_comm (l r : Option Value) :
   | none, some (.string _) => rfl
   | none, some (.null _) => rfl
   | none, none => rfl
+  | some (.bool true), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.bool true) => rfl
+  | some (.bool false), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.bool false) => rfl
+  | some (.int _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.int _) => rfl
+  | some (.string _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.string _) => rfl
+  | some (.null _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.null _) => rfl
+  | some (.decimal _ _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), none => rfl
+  | none, some (.decimal _ _) => rfl
 
 /-- Addition is commutative at the value level -/
 theorem evalBinOp_add_comm (l r : Option Value) :
@@ -95,6 +121,20 @@ theorem evalBinOp_add_comm (l r : Option Value) :
   match l, r with
   | some (.int a), some (.int b) =>
     simp only [evalBinOp, Int.add_comm]
+  | some (.decimal u1 s1), some (.decimal u2 s2) =>
+    simp only [evalBinOp, Nat.max_comm s2 s1, Int.add_comm]
+  | some (.int a), some (.decimal u s) =>
+    simp only [evalBinOp, Int.add_comm]
+  | some (.decimal u s), some (.int b) =>
+    simp only [evalBinOp, Int.add_comm]
+  | some (.decimal _ _), some (.bool _) => rfl
+  | some (.decimal _ _), some (.string _) => rfl
+  | some (.decimal _ _), some (.null _) => rfl
+  | some (.decimal _ _), none => rfl
+  | some (.bool _), some (.decimal _ _) => rfl
+  | some (.string _), some (.decimal _ _) => rfl
+  | some (.null _), some (.decimal _ _) => rfl
+  | none, some (.decimal _ _) => rfl
   | some (.int _), some (.bool _) => rfl
   | some (.int _), some (.string _) => rfl
   | some (.int _), some (.null _) => rfl
@@ -126,6 +166,20 @@ theorem evalBinOp_mul_comm (l r : Option Value) :
   match l, r with
   | some (.int a), some (.int b) =>
     simp only [evalBinOp, Int.mul_comm]
+  | some (.decimal u1 s1), some (.decimal u2 s2) =>
+    simp only [evalBinOp, Nat.add_comm s2 s1, Int.mul_comm]
+  | some (.int a), some (.decimal u s) =>
+    simp only [evalBinOp, Int.mul_comm]
+  | some (.decimal u s), some (.int b) =>
+    simp only [evalBinOp, Int.mul_comm]
+  | some (.decimal _ _), some (.bool _) => rfl
+  | some (.decimal _ _), some (.string _) => rfl
+  | some (.decimal _ _), some (.null _) => rfl
+  | some (.decimal _ _), none => rfl
+  | some (.bool _), some (.decimal _ _) => rfl
+  | some (.string _), some (.decimal _ _) => rfl
+  | some (.null _), some (.decimal _ _) => rfl
+  | none, some (.decimal _ _) => rfl
   | some (.int _), some (.bool _) => rfl
   | some (.int _), some (.string _) => rfl
   | some (.int _), some (.null _) => rfl
@@ -197,6 +251,20 @@ theorem evalBinOp_eq_comm (l r : Option Value) :
   | some (.bool _), none => rfl
   | some (.null _), none => rfl
   | none, none => rfl
+  | some (.decimal u1 s1), some (.decimal u2 s2) =>
+    simp only [evalBinOp, Value.eq, Nat.max_comm s2 s1, Int.beq_comm]
+  | some (.int a), some (.decimal u s) =>
+    simp only [evalBinOp, Value.eq, Int.beq_comm]
+  | some (.decimal u s), some (.int b) =>
+    simp only [evalBinOp, Value.eq, Int.beq_comm]
+  | some (.decimal _ _), some (.bool _) => rfl
+  | some (.bool _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.string _) => rfl
+  | some (.string _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), some (.null _) => rfl
+  | some (.null _), some (.decimal _ _) => rfl
+  | some (.decimal _ _), none => rfl
+  | none, some (.decimal _ _) => rfl
 
 -- ============================================================================
 -- Short-Circuit and Identity Helper Lemmas
@@ -209,6 +277,7 @@ theorem evalBinOp_and_false_right (v : Option Value) :
   | some (.bool true) => rfl
   | some (.bool false) => rfl
   | some (.int _) => rfl
+  | some (.decimal _ _) => rfl
   | some (.string _) => rfl
   | some (.null _) => rfl
   | none => rfl
@@ -219,6 +288,7 @@ theorem evalBinOp_and_false_left (v : Option Value) :
   match v with
   | some (.bool _) => rfl
   | some (.int _) => rfl
+  | some (.decimal _ _) => rfl
   | some (.string _) => rfl
   | some (.null _) => rfl
   | none => rfl
@@ -230,6 +300,7 @@ theorem evalBinOp_or_true_right (v : Option Value) :
   | some (.bool true) => rfl
   | some (.bool false) => rfl
   | some (.int _) => rfl
+  | some (.decimal _ _) => rfl
   | some (.string _) => rfl
   | some (.null _) => rfl
   | none => rfl
@@ -240,6 +311,7 @@ theorem evalBinOp_or_true_left (v : Option Value) :
   match v with
   | some (.bool _) => rfl
   | some (.int _) => rfl
+  | some (.decimal _ _) => rfl
   | some (.string _) => rfl
   | some (.null _) => rfl
   | none => rfl
@@ -498,10 +570,11 @@ theorem evalBinOp_or_and_distrib_right (a b c : Bool) :
 
 /-- Value.eq is symmetric -/
 theorem Value.eq_comm (a b : Value) : a.eq b = b.eq a := by
-  cases a <;> cases b <;> simp [Value.eq]
-  · exact Int.beq_comm ..
-  · exact String.beq_comm ..
-  · exact Bool.beq_comm ..
+  cases a <;> cases b <;> simp [Value.eq, Nat.max_comm] <;>
+    first
+      | exact Int.beq_comm ..
+      | exact String.beq_comm ..
+      | exact Bool.beq_comm ..
 
 -- ============================================================================
 -- evalBinOp .eq ↔ Value.eq Bridge Lemmas (for subquery unnesting proofs)
@@ -616,6 +689,7 @@ theorem evalUnaryOp_not_not_via_trilean (v : Value)
     Extend this when adding numeric constructors (decimal, float). -/
 def Value.isNumeric : Value → Bool
   | .int _ => true
+  | .decimal _ _ => true
   | _ => false
 
 /-- Operators with strict operand typing: arithmetic, comparisons, and string
