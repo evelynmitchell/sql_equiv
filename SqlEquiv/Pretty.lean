@@ -29,7 +29,7 @@ def Value.toSql : Value → String
       let intPart := abs / 10 ^ s
       let fracPart := abs % 10 ^ s
       let fracStr := toString fracPart
-      let padded := String.mk (List.replicate (s - fracStr.length) '0') ++ fracStr
+      let padded := String.ofList (List.replicate (s - fracStr.length) '0') ++ fracStr
       s!"{sign}{intPart}.{padded}"
   | .null _   => "NULL"  -- All NULLs print as NULL regardless of type
 
