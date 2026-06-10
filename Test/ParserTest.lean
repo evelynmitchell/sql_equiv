@@ -227,11 +227,39 @@ def recursiveCTETests : List TestResult := [
 -- Test Runner
 -- ============================================================================
 
+/-- Double-quoted string literals (#215): Spider/SQLite dialect. Strictly
+    additive — any input containing `"` was previously a lex error, so no
+    existing parse changes meaning. -/
+def doubleQuoteTests : List TestResult := [
+  (match parse "SELECT count(*) FROM AIRLINES WHERE Country = \"USA\"" with
+   | .ok _ => .pass "dquote_string_literal (Spider style)"
+   | .error e => .fail "dquote_string_literal (Spider style)" s!"{e}"),
+  -- Double- and single-quoted literals produce the same AST
+  (match parse "SELECT 'USA'", parse "SELECT \"USA\"" with
+   | .ok a, .ok b =>
+     if a == b then .pass "dquote_same_ast_as_squote"
+     else .fail "dquote_same_ast_as_squote" "ASTs differ"
+   | _, _ => .fail "dquote_same_ast_as_squote" "parse failure"),
+  -- Doubled-quote escaping
+  (match parse "SELECT \"it\"\"s\"" with
+   | .ok (.query (.simple sel)) =>
+     (match sel.items with
+      | [.exprItem (.lit (.string v)) _] =>
+        if v == "it\"s" then .pass "dquote_escaping"
+        else .fail "dquote_escaping" s!"got {v}"
+      | _ => .fail "dquote_escaping" "unexpected items")
+   | _ => .fail "dquote_escaping" "parse failure"),
+  -- Unterminated double quote is a loud error
+  (match parse "SELECT \"oops" with
+   | .error _ => .pass "dquote_unterminated_errors"
+   | .ok _ => .fail "dquote_unterminated_errors" "should not parse")
+]
+
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
   insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests ++
-  recursiveCTETests
+  recursiveCTETests ++ doubleQuoteTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests

@@ -477,6 +477,33 @@ partial def tokenize (input : String) : Except TokenizerError (List PositionedTo
         | .ok (s, rest', state') =>
           let pt := ⟨.strLit s, startPos, s!"'{s}'"⟩
           go rest' state' (pt :: acc)
+      else if c == '"' then
+        -- Double-quoted string literal (#215). Dialect decision: the SQL
+        -- standard reserves double quotes for identifiers, but the project
+        -- targets Spider compatibility and Spider/SQLite write string
+        -- literals as "...". We have no quoted-identifier support, so there
+        -- is no ambiguity today; revisit if quoted identifiers are added.
+        let startPos := ⟨state.line, state.column⟩
+        let rec readDStr (cs : List Char) (st : TokenizerState) (accStr : List Char)
+            : Except TokenizerError (String × List Char × TokenizerState) :=
+          match cs with
+          | [] => .error {
+              message := "Unterminated string literal"
+              line := startPos.line
+              column := startPos.column
+              context := some s!"String started at line {startPos.line}, column {startPos.column}"
+            }
+          | '"' :: '"' :: cs' =>
+            readDStr cs' (advancePosMany st ['"', '"']) ('"' :: accStr)
+          | '"' :: cs' =>
+            .ok (String.ofList accStr.reverse, cs', advancePos st '"')
+          | ch :: cs' =>
+            readDStr cs' (advancePos st ch) (ch :: accStr)
+        match readDStr rest (advancePos state c) [] with
+        | .error e => .error e
+        | .ok (s, rest', state') =>
+          let pt := ⟨.strLit s, startPos, s!"\"{s}\""⟩
+          go rest' state' (pt :: acc)
       else if isDigit c then
         -- Integer or decimal literal. A '.' continues the number only when a
         -- digit follows, so `t1.col` and `1.x` still tokenize the dot alone.
