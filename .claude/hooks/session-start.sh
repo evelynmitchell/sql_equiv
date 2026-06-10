@@ -63,10 +63,11 @@ if [ ! -x "$TOOLCHAIN_DIR/bin/lean" ]; then
 fi
 
 # --- duckdb CLI (differential-test oracle, #203; from GitHub releases) ---
+DUCKDB_VERSION="v1.5.3"  # pinned: output parsing depends on -list format details
 if ! command -v duckdb >/dev/null 2>&1; then
   echo "Installing duckdb CLI from GitHub releases..."
   curl -sSfL -o /tmp/duckdb.zip \
-    https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip
+    https://github.com/duckdb/duckdb/releases/download/$DUCKDB_VERSION/duckdb_cli-linux-amd64.zip
   unzip -o -q /tmp/duckdb.zip -d /usr/local/bin 2>/dev/null \
     || sudo unzip -o -q /tmp/duckdb.zip -d /usr/local/bin
   rm -f /tmp/duckdb.zip

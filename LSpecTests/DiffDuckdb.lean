@@ -9,6 +9,17 @@
   Lean-side tables, runs the same string through the duckdb CLI against the
   same data, and compares normalized result tables. This exercises the
   parser, evaluator, and pretty-printing of values in one pass.
+
+  KNOWN DIVERGENCES (do not add cases that hit these without resolving them):
+  - AVG over decimals: we truncate at the sum's scale; DuckDB returns a
+    DOUBLE. Test data below is curated so the average is exact. Blocked on
+    the decimal division/scale policy (#201).
+  - Decimal division/modulo: ours is intentionally an error pending the
+    same #201 policy decision; DuckDB computes it.
+  - ORDER BY on non-projected columns: ours silently no-ops (#206); add a
+    divergence case here once that is fixed.
+  - Pipe characters or numeric-looking strings in data would break the
+    `-list` output parsing (same limitation as the sqlite harness).
 -/
 import LSpec
 import SqlEquiv
