@@ -554,7 +554,7 @@ def main (args : List String) : IO Unit := do
     let mut n := 0
     for line in content.splitOn "\n" do
       n := n + 1
-      if line.trim.isEmpty then
+      if line.trimAscii.isEmpty then
         continue
       match SqlEquiv.parse line with
       | .ok _ => IO.println s!"ok\t{n}"
