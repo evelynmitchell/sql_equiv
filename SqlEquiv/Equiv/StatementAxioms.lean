@@ -530,7 +530,7 @@ private theorem filter_pred_false_on_null_mapped (rightRow : Row) (col : String)
     | some (_, v) => !isNullValue v
     | none => false) = false := by
   induction rightRow with
-  | nil => simp [List.find?]
+  | nil => simp
   | cons hd rest ih =>
     simp only [List.map_cons, List.find?_cons]
     cases hd.1 == col with
@@ -1008,9 +1008,9 @@ private theorem lookup_append_none_left :
   | (_k, _v) :: rest, l₂, key, h => by
     simp only [List.cons_append, List.lookup] at h ⊢
     split
-    · rename_i heq; simp only [heq, ↓reduceIte] at h; exact nomatch h
+    · rename_i heq; simp only [heq] at h; exact nomatch h
     · rename_i hne
-      simp only [hne, ↓reduceIte] at h
+      simp only [hne] at h
       exact lookup_append_none_left rest l₂ key h
 
 /-- isNullValue of any lookup on a null-padded list is true -/
@@ -1335,7 +1335,7 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
           (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
             (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
         == some (Value.bool true)) = false from by rw [hNotInFalse]; decide]
-    simp only [↓reduceIte]
+    simp only
     -- RHS: matchingRows non-empty, so ljBody = matchingRows
     rw [show matchingRows.isEmpty = false from by
       cases matchingRows with

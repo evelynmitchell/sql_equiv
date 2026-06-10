@@ -386,7 +386,7 @@ def print_runtime_report(analysis: dict) -> None:
         bucket["total"] += 1
         bucket["uncovered"] += 1
 
-    print(f"\n--- Per-File Breakdown ---")
+    print("\n--- Per-File Breakdown ---")
     for fname, b in sorted(by_file.items()):
         file_pct = b["covered"] / b["total"] * 100 if b["total"] else 0
         print(f"  {fname:30s}  {b['total']:>3} {label} | "
@@ -878,8 +878,8 @@ def main() -> None:
                 print(f"\nERROR: Axiom count regression! "
                       f"Found {axiom_count} axioms, expected >= {minimum}.",
                       file=sys.stderr)
-                print(f"  If axioms were intentionally removed, run with "
-                      f"--runtime --update-ratchet", file=sys.stderr)
+                print("  If axioms were intentionally removed, run with "
+                      "--runtime --update-ratchet", file=sys.stderr)
                 sys.exit(1)
             else:
                 print(f"Ratchet check passed: {axiom_count} >= {minimum}")
