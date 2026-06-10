@@ -81,7 +81,8 @@ ensure_uv() {
     fi
 
     log_info "Installing uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    # Pinned: bump deliberately, not via upstream releases
+    curl -LsSf https://astral.sh/uv/0.8.17/install.sh | sh
 
     # Add to PATH for this session
     export PATH="$HOME/.local/bin:$PATH"
@@ -108,9 +109,9 @@ ensure_ruff() {
 
     log_info "Installing ruff..."
     if has_cmd uv; then
-        uv tool install ruff
+        uv tool install ruff==0.15.8
     elif has_cmd pip; then
-        pip install --user ruff
+        pip install --user ruff==0.15.8
     else
         log_err "Cannot install ruff: no uv or pip"
         return 1
@@ -146,9 +147,9 @@ ensure_precommit() {
 
     log_info "Installing pre-commit..."
     if has_cmd uv; then
-        uv tool install pre-commit
+        uv tool install pre-commit==4.6.0
     elif has_cmd pip; then
-        pip install --user pre-commit
+        pip install --user pre-commit==4.6.0
     else
         log_err "Cannot install pre-commit: no uv or pip"
         return 1
@@ -243,18 +244,19 @@ main() {
 echo "Installing Claude Code..."
 if command -v claude > /dev/null 2>&1; then
     CLAUDE_VERSION=$(claude --version 2>&1 | head -1)
-    print_success "Claude Code already installed ($CLAUDE_VERSION)"
+    log_ok "Claude Code already installed ($CLAUDE_VERSION)"
 else
-    curl -fsSL https://claude.ai/install.sh | bash
+    # Pinned initial install; the CLI self-updates afterwards
+    curl -fsSL https://claude.ai/install.sh | bash -s 2.1.170
     # Add to PATH for current session
     export PATH="$HOME/.local/bin:$PATH"
 
     # Verify installation succeeded
     if command -v claude > /dev/null 2>&1; then
         CLAUDE_VERSION=$(claude --version 2>&1 | head -1)
-        print_success "Claude Code installed ($CLAUDE_VERSION)"
+        log_ok "Claude Code installed ($CLAUDE_VERSION)"
     else
-        print_warning "Claude Code installation may have failed - command not found"
+        log_warn "Claude Code installation may have failed - command not found"
     fi
 fi
 echo ""

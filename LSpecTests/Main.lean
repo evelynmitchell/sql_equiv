@@ -16,6 +16,7 @@ import LSpecTests.NullSemantics
 import LSpecTests.QueryHelpers
 import LSpecTests.EdgeCaseDb
 import LSpecTests.DiffSqlite
+import LSpecTests.DiffDuckdb
 import LSpecTests.RewriterProperties
 
 open LSpec SlimCheck
@@ -28,10 +29,12 @@ def main : IO UInt32 := do
   IO.println s!"Running LSpec with {numSamples} samples per property"
   -- IO-based tests (SQLite differential)
   let sqliteTests ← DiffSqlite.runAllTests
+  let duckdbTests ← DiffDuckdb.runAllTests
   lspecIO (.ofList [
     ("Expression Algebra", [ExprAlgebra.allTests cfg]),
     ("NULL Semantics", [NullSemantics.allTests cfg]),
     ("Edge-Case Databases", [EdgeCaseDb.allTests cfg]),
     ("SQLite Differential", [sqliteTests]),
+    ("DuckDB Differential", [duckdbTests]),
     ("Rewriter Properties", [RewriterProperties.allTests cfg])
   ]) []
