@@ -56,6 +56,12 @@ jobs:
       - name: Build library
         run: lake build SqlEquiv
 
+      - name: Build CLI
+        run: lake build sql_equiv
+
+      - name: Check Spider parse-rate ratchet
+        run: python3 tools/spider_parse_baseline.py --check
+
       - name: Build tests
         run: lake build sql_equiv_test
 

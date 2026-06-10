@@ -33,3 +33,12 @@ After editing any of these files, suggest running `/audit` before committing:
   (`tools/definition_coverage_matrix.py`) and the LSpec generators must learn
   it in the same batch — a coverage tool that doesn't know a type reports
   vacuous green.
+- **Operating loop for autonomous sessions:** pick/confirm an issue → fresh
+  branch → implement (code + proofs + tests + docs together) → push → PR
+  linking the issue → critical self-review per the heuristic above → fix
+  findings → green CI → hand off for merge. Two human gates only: merges,
+  and design decisions (present options with trade-offs, wait for a pick).
+  Issues are the memory between sessions — write them so a cold session can
+  execute them. Goal generation: the Spider parse-rate baseline
+  (`tools/spider_parse_baseline.py`) is the north-star metric; failure
+  classes in its report become issues.
