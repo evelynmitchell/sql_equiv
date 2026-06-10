@@ -17,3 +17,4 @@ tools/axiom_coverage_report.json
 
 # LeanDojo trace output
 .leandojo_trace/
+__pycache__/
