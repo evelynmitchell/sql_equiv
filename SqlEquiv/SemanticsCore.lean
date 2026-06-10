@@ -2131,22 +2131,22 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
     | none =>
       cases hv with
       | none =>
-        simp [List.map_map, Function.comp_def, List.drop_left]
+        simp [List.map_map, Function.comp_def]
       | some hcond =>
         simp only [List.filter_map, List.map_map, Function.comp_def,
-          List.drop_left, List.map_id, List.map_id']
+          List.drop_left, List.map_id']
         exact List.filter_congr (fun row _ => by
           congr 1; exact h_hv hcond rfl (r1 ++ row) (r2 ++ row))
     | some wcond =>
       cases hv with
       | none =>
         simp only [List.filter_map, List.map_map, Function.comp_def,
-          List.drop_left, List.map_id, List.map_id']
+          List.drop_left, List.map_id']
         exact List.filter_congr (fun row _ => by
           congr 1; exact h_wc wcond rfl (r1 ++ row) (r2 ++ row))
       | some hcond =>
         simp only [List.filter_map, List.map_map, Function.comp_def,
-          List.drop_left, List.map_id, List.map_id', List.filter_filter]
+          List.drop_left, List.map_id', List.filter_filter]
         exact List.filter_congr (fun row _ => by
           rw [h_wc wcond rfl (r1 ++ row) (r2 ++ row),
               h_hv hcond rfl (r1 ++ row) (r2 ++ row)])
