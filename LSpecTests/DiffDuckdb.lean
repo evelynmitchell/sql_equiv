@@ -16,8 +16,12 @@
     the decimal division/scale policy (#201).
   - Decimal division/modulo: ours is intentionally an error pending the
     same #201 policy decision; DuckDB computes it.
-  - ORDER BY on non-projected columns: ours silently no-ops (#206); add a
-    divergence case here once that is fixed.
+  - (resolved) ORDER BY on non-projected columns used to no-op (#206); now
+    fixed and covered by the ORDER BY agreement case below.
+  - DISTINCT + ORDER BY on a non-projected column: we follow the SQL standard
+    (sort keys must come from the output columns; the key silently ties), but
+    DuckDB is permissive and sorts by the pre-dedup source. Do not add such a
+    case without deciding which behavior to adopt.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
@@ -181,6 +185,11 @@ def runAllTests : IO TestSeq := do
     diffTest "WHERE with AND" "SELECT * FROM users WHERE age > 25 AND department = 'Engineering'",
     diffTest "WHERE with OR" "SELECT * FROM users WHERE age < 25 OR age > 30",
     diffTest "DISTINCT" "SELECT DISTINCT department FROM users",
+    -- ORDER BY on a non-projected column (#206 fix); LIMIT makes order observable
+    diffTest "ORDER BY non-projected column"
+      "SELECT name FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1",
+    diffTest "ORDER BY non-projected DESC with LIMIT"
+      "SELECT name FROM users ORDER BY age DESC LIMIT 2",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

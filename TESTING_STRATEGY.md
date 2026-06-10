@@ -26,7 +26,18 @@ and the redundancy means a gap in one layer is covered by another.
 - **Watch for:** When axioms are intentionally removed (converted to theorems),
   update the ratchet: `python3 tools/axiom_coverage_validator.py --runtime --update-ratchet`
 
-### 4. LSpec Property Tests (lake exe sql_equiv_lspec)
+### 4. Differential Oracles (sqlite3 + DuckDB, in lake exe sql_equiv_lspec)
+- **What it catches:** Semantics divergence from real engines — silent wrong
+  answers that all internal layers agree on. Found the COUNT(col) NULL bug
+  and verified the ORDER BY non-projected fix (#206).
+- **How it works:** One SQL string runs through our parser+evaluator and the
+  engine CLI against identical data; result multisets must match. DuckDB is
+  the decimal oracle (sqlite stores decimals as IEEE floats).
+- **Watch for:** Known divergences are documented at the top of
+  `LSpecTests/DiffDuckdb.lean` — don't add cases that hit them without
+  deciding which behavior to adopt. Both CLIs are version-pinned.
+
+### 5. LSpec Property Tests (lake exe sql_equiv_lspec)
 - **What it catches:** Edge cases in the evaluator and optimizer that
   hand-written tests miss, especially around NULL propagation, type
   mismatches, and algebraic identity boundary conditions.

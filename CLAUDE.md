@@ -13,3 +13,23 @@ After editing any of these files, suggest running `/audit` before committing:
 - `SqlEquiv/Ast.lean` — `Value`, `BinOp`, `UnaryOp` type definitions
 - `SqlEquiv/Equiv.lean` — equivalence module root
 - `SqlEquiv/Equiv/` — axioms, lemmas, and equivalence definitions
+
+## Workflow
+
+- **Always open a PR for anything substantial** (semantics, proofs, new features,
+  CI changes). Small follow-up fixes can ride on the open PR's branch.
+- **Critical self-review heuristic — review when a bug would be quiet, skip
+  when it would be loud.** Run `/critical-self-review` before merging:
+  semantics changes (evalBinOp, aggregates, NULL paths, SELECT pipeline), new
+  Value types or parser changes, new external surfaces (CI steps, oracles,
+  dependency installs), and any change where the tests were written in the
+  same pass as the code. Skip for docs, lint cleanup, test-only additions,
+  and proof repairs where theorem statements are unchanged (the kernel is a
+  stricter reviewer). Verify findings empirically (probe, don't speculate)
+  before acting on them.
+- **Docs ship with behavior.** Update README/plan checkboxes/TESTING_STRATEGY
+  in the same PR as the change they describe, and run `/doc-freshness` before
+  closing any tracking issue. When adding a Value type, the coverage tool
+  (`tools/definition_coverage_matrix.py`) and the LSpec generators must learn
+  it in the same batch — a coverage tool that doesn't know a type reports
+  vacuous green.

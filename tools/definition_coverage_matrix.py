@@ -18,6 +18,7 @@ Usage:
     uv run python tools/definition_coverage_matrix.py --function evalBinOp --op and
     uv run python tools/definition_coverage_matrix.py --json        # JSON only
     uv run python tools/definition_coverage_matrix.py --no-tests    # skip test scan
+    python3 tools/definition_coverage_matrix.py --check             # CI gate: exit 1 on HIGH gaps
 """
 
 from __future__ import annotations
@@ -37,8 +38,8 @@ from typing import Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SEMANTICS_BASE = PROJECT_ROOT / "SqlEquiv" / "SemanticsBase.lean"
 
-VALUE_TYPES = ["int", "string", "bool", "null"]
-OPTION_VALUE_TYPES = ["int", "string", "bool", "null", "none"]
+VALUE_TYPES = ["int", "decimal", "string", "bool", "null"]
+OPTION_VALUE_TYPES = ["int", "decimal", "string", "bool", "null", "none"]
 
 BINOP_OPS = [
     "add", "sub", "mul", "div", "mod",
@@ -173,6 +174,8 @@ def classify_pattern(pat: str) -> str:
     # Option Value patterns: some (.constructor ...)
     if re.match(r'^some\s+\(\.int\b', pat):
         return "int"
+    if re.match(r'^some\s+\(\.decimal\b', pat):
+        return "decimal"
     if re.match(r'^some\s+\(\.string\b', pat):
         return "string"
     if re.match(r'^some\s+\(\.bool\s+true\)', pat):
@@ -189,6 +192,8 @@ def classify_pattern(pat: str) -> str:
     # Bare Value constructor patterns (for Value.eq, Value.compare, Value.toBool)
     if re.match(r'^\.int\b', pat):
         return "int"
+    if re.match(r'^\.?decimal\b', pat):
+        return "decimal"
     if re.match(r'^\.string\b', pat):
         return "string"
     if re.match(r'^\.bool\s+true\b', pat):
@@ -217,6 +222,10 @@ def classify_result(result: str) -> str:
     result = re.sub(r'\s*--.*$', '', result).strip()
     if result.startswith("some (.int"):
         return "int"
+    if result.startswith("some (.decimal"):
+        return "decimal"
+    if "Value.mkDecimal" in result:
+        return "decimal"
     if result.startswith("some (.string"):
         return "string"
     if result.startswith("some (.bool"):
@@ -245,7 +254,7 @@ def classify_result(result: str) -> str:
     if re.match(r'^some\s+[a-z_]\w*$', result):
         return "passthrough"
     if result.startswith("some (.") and not any(
-        result.startswith(f"some (.{t}") for t in ("int", "string", "bool", "null")
+        result.startswith(f"some (.{t}") for t in ("int", "decimal", "string", "bool", "null")
     ):
         return "passthrough"
     return "other"
@@ -507,6 +516,8 @@ def _pattern_matches_value(pat_class: str, value: str) -> bool:
     if pat_class == "null" and value == "null":
         return True
     if pat_class == "int" and value == "int":
+        return True
+    if pat_class == "decimal" and value == "decimal":
         return True
     if pat_class == "string" and value == "string":
         return True
@@ -776,7 +787,39 @@ KNOWN_GAPS: list[dict] = [
      "severity": "LOW", "desc": "COALESCE conflates none (error) with null via isNullValue"},
     {"function": "Value.compare", "op": "compare", "types": [("bool", "bool")],
      "severity": "LOW", "desc": "Value.compare has no bool×bool arm — some SQL dialects support this"},
+    # Decimal div/mod intentionally fall to the error catch-all: result-scale
+    # policy is engine-specific and deferred (tracked in issue #201).
+    {"function": "evalBinOp", "op": "div",
+     "types": [("decimal", "decimal"), ("int", "decimal"), ("decimal", "int")],
+     "severity": "LOW",
+     "desc": "Decimal division falls to error catch-all — result-scale policy deferred (issue #201)"},
+    {"function": "evalBinOp", "op": "mod",
+     "types": [("decimal", "decimal"), ("int", "decimal"), ("decimal", "int")],
+     "severity": "LOW",
+     "desc": "Decimal modulo falls to error catch-all — result-scale policy deferred (issue #201)"},
+    # No decimal arms in evalFunc yet — decimal scalar functions pending #201.
+    {"function": "evalFunc", "op": "ABS", "types": [("decimal",)],
+     "severity": "LOW",
+     "desc": "ABS(decimal) falls to error catch-all — decimal scalar functions pending #201"},
 ]
+
+# Numeric coverage gate: numeric×numeric cells of these ops that fall to the
+# error catch-all are flagged HIGH unless registered above or intentional.
+NUMERIC_TYPES = ("int", "decimal")
+NUMERIC_GATE_OPS = ("add", "sub", "mul", "div", "mod",
+                    "eq", "ne", "lt", "le", "gt", "ge")
+
+
+def _known_gap_keys() -> set[tuple[str, str, str, str]]:
+    """Keys (function, op, left, right) registered as known/deliberate gaps."""
+    keys: set[tuple[str, str, str, str]] = set()
+    for gap_def in KNOWN_GAPS:
+        for combo in gap_def["types"]:
+            if len(combo) == 2:
+                keys.add((gap_def["function"], gap_def["op"], combo[0], combo[1]))
+            else:
+                keys.add((gap_def["function"], gap_def["op"], combo[0], combo[0]))
+    return keys
 
 INTENTIONAL_WILDCARDS = {
     # (function, op, left, right) -> reason
@@ -843,6 +886,30 @@ def classify_gaps(matrices: list[CoverageMatrix]) -> list[GapEntry]:
                         severity="LOW",
                         description=f"Delegation to {cell.detail} returns none for {cell.left_type}×{cell.right_type}",
                     ))
+
+    # Numeric coverage gate: numeric×numeric arithmetic/comparison cells that
+    # fall to the error catch-all are HIGH unless deliberately registered.
+    known_keys = _known_gap_keys()
+    for m in matrices:
+        if m.function_name != "evalBinOp":
+            continue
+        if m.operator not in NUMERIC_GATE_OPS:
+            continue
+        for cell in m.cells:
+            if cell.left_type in NUMERIC_TYPES and cell.right_type in NUMERIC_TYPES \
+               and cell.result_type == "none":
+                key = ("evalBinOp", cell.op, cell.left_type, cell.right_type)
+                if key in INTENTIONAL_WILDCARDS or key in known_keys:
+                    continue
+                gaps.append(GapEntry(
+                    function="evalBinOp",
+                    op=cell.op,
+                    left_type=cell.left_type,
+                    right_type=cell.right_type,
+                    severity="HIGH",
+                    description=f"Numeric {cell.left_type}×{cell.right_type} falls to "
+                                f"error catch-all for {cell.op} — missing match arm?",
+                ))
 
     return gaps
 
@@ -1083,7 +1150,7 @@ def generate_markdown(matrices: list[CoverageMatrix], gaps: list[GapEntry]) -> s
     # Legend
     lines.append("## Legend")
     lines.append("")
-    lines.append("- **int/string/bool/null** — explicit arm returning that type")
+    lines.append("- **int/decimal/string/bool/null** — explicit arm returning that type")
     lines.append("- **\u2717** — wildcard (falls through to `none`/error)")
     lines.append("- **cond** — conditional result (e.g., div-by-zero check)")
     lines.append("- **v-dep** — value-dependent (different bool values give different results)")
@@ -1292,6 +1359,21 @@ def run(args: argparse.Namespace) -> None:
     if filter_op:
         gaps = [g for g in gaps if g.op == filter_op or g.op == filter_op.upper()]
 
+    # CI gate: exit nonzero if any HIGH severity gap exists
+    if getattr(args, 'check', False):
+        high = [g for g in gaps if g.severity == "HIGH"]
+        if high:
+            print(f"FAIL: {len(high)} HIGH severity definition coverage gap(s):",
+                  file=sys.stderr)
+            for g in high:
+                types = f"{g.left_type}x{g.right_type}" if g.left_type != "N/A" else g.right_type
+                print(f"  [HIGH] {g.function} {g.op} ({types}): {g.description}",
+                      file=sys.stderr)
+            sys.exit(1)
+        print(f"OK: no HIGH severity definition coverage gaps "
+              f"({len(gaps)} known/low-severity gap(s) on record).")
+        return
+
     # Output
     gaps_only = getattr(args, 'gaps_only', False)
     json_only = getattr(args, 'json', False)
@@ -1342,6 +1424,9 @@ def main() -> None:
                         help="Only output JSON report")
     parser.add_argument("--no-tests", action="store_true",
                         help="Skip test cross-reference scan")
+    parser.add_argument("--check", action="store_true",
+                        help="CI gate: exit nonzero if any HIGH severity gap exists "
+                             "(writes no report files)")
     args = parser.parse_args()
     run(args)
 

@@ -92,6 +92,13 @@ The work is divided into 4 batches, each independently shippable.
 proofs: arithmetic commutativity/associativity, comparison flips, aggregate
 semantics (AVG returns float per SQL standard), and type coercion rules.
 
+> **Status (2026-06): Batch 1a (decimal) SHIPPED** — PR #205 (constructor,
+> scale-aligned arithmetic, int↔decimal promotion, parser, proofs, tests),
+> PR #207 (aggregates over decimal + DuckDB oracle), PR #208 (ORDER BY).
+> Checkboxes below: decimal halves are done; float halves await #202.
+> Remaining decimal items tracked on #201: div/mod scale policy, denotation
+> lemmas (IsCanonical/mkDecimal), CAST.
+>
 > **Refresh (2026-06, #200): Batch 1 is split.** Do **decimal first (#201)** —
 > scaled-integer arithmetic is exact, so existing proof patterns carry over.
 > **Float is gated on a design decision (#202)**: IEEE `Float` falsifies theorems

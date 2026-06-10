@@ -19,6 +19,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 
 - **SELECT statements**: `*`, column lists, aliases, DISTINCT
 - **Expressions**: arithmetic, comparisons, boolean logic, CASE/WHEN, BETWEEN, IN, LIKE
+- **Types**: INTEGER, TEXT, BOOLEAN, and exact **DECIMAL/NUMERIC** (scaled-integer arithmetic with int↔decimal promotion — `0.1 + 0.2 = 0.3` exactly)
 - **NULL handling**: Typed NULLs, IS NULL/IS NOT NULL, three-valued logic, NULL propagation
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
@@ -71,6 +72,14 @@ example : ... := by sql_rw_demorgan   -- De Morgan's laws
 example : ... := by sql_rw_distrib    -- Distributivity
 example : ... := by sql_rw_null       -- NULL handling rules
 ```
+
+### Differential Testing
+
+Every release is validated against two real engines as oracles: **sqlite3**
+(broad SQL behavior) and **DuckDB** (true DECIMAL type, strict typing). One SQL
+string drives both our evaluator and the engine; result multisets must agree.
+See `LSpecTests/DiffSqlite.lean` and `LSpecTests/DiffDuckdb.lean` (the latter
+documents known, deliberate divergences).
 
 ### Property-Based Testing
 
