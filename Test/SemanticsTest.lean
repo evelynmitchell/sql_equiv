@@ -607,12 +607,23 @@ def decimalTests : List TestResult := [
   -- int aggregates keep int results (no behavior change)
   testContainsValue "decimal_agg_int_unchanged"
     "SELECT SUM(age) FROM users" (.int 140),
-  -- ORDER BY over the decimal column (scale-aware comparison). The sort key
-  -- must be projected: ORDER BY on non-projected columns is a known engine
-  -- gap (sort runs post-projection) — see issue #206.
+  -- ORDER BY over the decimal column (scale-aware comparison)
   testContainsValue "decimal_order_by"
     "SELECT name, price FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1"
     (.string "Nut"),
+  -- ORDER BY on a NON-projected column (#206 fix): sort keys resolve against
+  -- the source row, so projecting the key is no longer required
+  testContainsValue "order_by_non_projected"
+    "SELECT name FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1"
+    (.string "Nut"),
+  testContainsValue "order_by_non_projected_desc"
+    "SELECT name FROM users ORDER BY age DESC LIMIT 1"
+    (.string "Carol"),
+  -- Projected (aliased) sort keys still win on name clashes and DISTINCT
+  -- still sorts by output columns only
+  testContainsValue "order_by_distinct_output_col"
+    "SELECT DISTINCT department FROM users ORDER BY department LIMIT 1"
+    (.string "Engineering"),
 
   -- COUNT(col) skips NULLs per the SQL standard (3 non-null prices of 4 rows;
   -- regression for the bug the DuckDB oracle found)
