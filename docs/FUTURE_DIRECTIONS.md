@@ -2,19 +2,26 @@
 
 ## Current Roadmap
 
-1. **Prove the 152 axioms** (axioms-first, on current 4 types)
-   - ~120 type-independent axioms carry forward with zero rework
-   - ~30 type-sensitive axioms need revisiting after type expansion
-   - See `scripts/create_axiom_issues.sh` for grouped issues
-   - See `PROVING_AXIOMS_PLAN.md` for phased strategy
+1. ~~**Prove the 152 axioms**~~ ✅ **COMPLETE** (2026-02) — every axiom has been
+   converted to a proven theorem (561 theorems, 0 axioms; the CI ratchet in
+   `tools/axiom_count_minimum.txt` is at 0).
+   See `PROVING_AXIOMS_PLAN.md` for the batch-by-batch record.
 
-2. **Expand SQL types** from 4 to 11
+2. **Expand SQL types** from 4 to 11 — the current main track
    - See `SQL_TYPES_CONCRETE_PLAN.md` for batch ordering
    - Cross-type elimination lemma (`mismatched_types_null`) mitigates proof explosion
 
+3. **Remaining proof debt** (small, tracked)
+   - 3 `decreasing_by sorry` termination proofs in `SqlEquiv/Semantics.lean`
+     (lambda callbacks defeat Lean's termination checker; the functions are
+     total `def`s in practice, but `#print axioms` shows `sorryAx` downstream)
+   - Statement-level certified checkers need `decideSelectStmtEq`/`decideQueryEq`
+     converted from `partial def` to structural recursion before soundness
+     lemmas are possible (see `SqlEquiv/Equiv/Decidable.lean`)
+
 ## Next Project: Datalog Equivalence
 
-After the SQL axioms reach a solid state, a natural companion project is
+With the SQL axioms fully proven, a natural companion project is
 **formally verified Datalog equivalence** in Lean 4.
 
 ### Why Datalog
@@ -42,7 +49,7 @@ A minimal Datalog equivalence prover would cover:
 | Stratification | ~3 | Negation stratification preserves model |
 | Optimization | ~3 | Predicate pushdown (shared with sql_equiv), join ordering |
 
-Total: ~20 theorems for a complete core, vs 152+ for SQL.
+Total: ~20 theorems for a complete core, vs the 561 sql_equiv ultimately needed.
 
 ### What Carries Over from sql_equiv
 
@@ -83,10 +90,14 @@ structure Program where
 
 ### Open Questions
 
-- Share a Lake workspace with sql_equiv, or separate repo?
-- Reuse `Value` type from sql_equiv, or start fresh?
+Two of these are answered in `DATALOG_FORMALIZATION_PLAN.md` (separate repo
+with sql_equiv as a Lake dependency; reuse `Value`). Still open:
+
 - Target Soufflé-style Datalog (with aggregates, ADTs) or pure Datalog?
 - Include negation (stratified Datalog) from the start?
+- Re-verify the novelty claim ("first triple semantic equivalence in a proof
+  assistant") against current literature before committing — the prior-art
+  survey in `DATALOG_FORMALIZATION_PLAN.md` dates from early 2026.
 
 ### Resources
 
