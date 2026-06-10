@@ -546,11 +546,27 @@ def main (args : List String) : IO Unit := do
     catch _ =>
       IO.println s!"{Color.error "Error"}: File not found or could not be read: {filename}"
       IO.Process.exit 1
+  else if args.length >= 2 && args[0]! == "--parse-lines" then
+    -- Machine-readable parse check (Spider baseline, tools/spider_parse_baseline.py):
+    -- one SQL statement per line; prints "ok<TAB>line" or "err<TAB>line<TAB>message".
+    let filename := args[1]!
+    let content ← IO.FS.readFile filename
+    let mut n := 0
+    for line in content.splitOn "\n" do
+      n := n + 1
+      if line.trim.isEmpty then
+        continue
+      match SqlEquiv.parse line with
+      | .ok _ => IO.println s!"ok\t{n}"
+      | .error e =>
+        let msg := (e.splitOn "\n").headD e
+        IO.println s!"err\t{n}\t{msg}"
   else if args.length >= 1 && (args[0]! == "--help" || args[0]! == "-h") then
     IO.println "Usage: sql_equiv [options]"
     IO.println ""
     IO.println "Options:"
     IO.println "  --file <path>   Process SQL file in batch mode"
+    IO.println "  --parse-lines <path>  Parse one statement per line, machine-readable output"
     IO.println "  --help, -h      Show this help message"
     IO.println ""
     IO.println "Without options, starts interactive REPL mode."

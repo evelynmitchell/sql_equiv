@@ -45,3 +45,15 @@ After extraction:
 ## License
 
 CC BY-SA 4.0
+
+## Parse-Rate Baseline (north-star metric)
+
+`dev_queries.sql` contains the 563 unique queries from the Spider dev set
+(extracted from [taoyds/spider](https://github.com/taoyds/spider)
+`evaluation_examples/examples/dev.json`, CC BY-SA 4.0).
+
+`python3 tools/spider_parse_baseline.py` parses all of them through our
+parser and writes `parse_report.md` (rate + failure classes, each an issue
+candidate). The passing count is ratcheted in `tools/spider_parse_minimum.txt`
+and checked in CI. Next stages (evaluate-rate, oracle-agreement-rate) need the
+Spider databases — see Download above.
