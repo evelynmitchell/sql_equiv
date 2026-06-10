@@ -27,3 +27,9 @@ After editing any of these files, suggest running `/audit` before committing:
   and proof repairs where theorem statements are unchanged (the kernel is a
   stricter reviewer). Verify findings empirically (probe, don't speculate)
   before acting on them.
+- **Docs ship with behavior.** Update README/plan checkboxes/TESTING_STRATEGY
+  in the same PR as the change they describe, and run `/doc-freshness` before
+  closing any tracking issue. When adding a Value type, the coverage tool
+  (`tools/definition_coverage_matrix.py`) and the LSpec generators must learn
+  it in the same batch — a coverage tool that doesn't know a type reports
+  vacuous green.

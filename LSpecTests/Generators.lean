@@ -49,11 +49,17 @@ instance : Shrinkable Value where
 
 instance : SampleableExt Value :=
   SampleableExt.mkSelfContained do
-    let choice ← Gen.choose Nat 0 3
+    let choice ← Gen.choose Nat 0 4
     match choice with
     | 0 => pure (.null none)
     | 1 => pure (.bool (← Gen.chooseAny Bool))
     | 2 => pure (.int (← SampleableExt.interpSample Int))
+    | 3 => do
+      -- Canonical decimals (mkDecimal) over small unscaled values/scales,
+      -- so generated data matches the system invariant (#201)
+      let u ← SampleableExt.interpSample Int
+      let sc ← Gen.choose Nat 0 3
+      pure (Value.mkDecimal u sc)
     | _ => do
       let n ← Gen.choose Nat 0 5
       pure (.string s!"s{n}")
@@ -66,7 +72,7 @@ instance : Shrinkable SqlType where shrink _ := []
 
 instance : SampleableExt SqlType :=
   SampleableExt.mkSelfContained $
-    Gen.elements #[.int, .string, .bool, .unknown]
+    Gen.elements #[.int, .string, .bool, .decimal, .unknown]
 
 instance : Shrinkable (Option SqlType) where
   shrink _ := []
