@@ -20,6 +20,17 @@ def Value.toSql : Value → String
   | .int n    => toString n
   | .string s => s!"'{escapeSqlString s}'"
   | .bool b   => if b then "TRUE" else "FALSE"
+  | .decimal u s =>
+    -- u / 10^s with exactly s fractional digits: decimal 12345 2 → "123.45"
+    if s == 0 then toString u
+    else
+      let sign := if u < 0 then "-" else ""
+      let abs := u.natAbs
+      let intPart := abs / 10 ^ s
+      let fracPart := abs % 10 ^ s
+      let fracStr := toString fracPart
+      let padded := String.mk (List.replicate (s - fracStr.length) '0') ++ fracStr
+      s!"{sign}{intPart}.{padded}"
   | .null _   => "NULL"  -- All NULLs print as NULL regardless of type
 
 def ColumnRef.toSql (c : ColumnRef) : String :=

@@ -79,6 +79,12 @@ def Value.eq : Value → Value → Option Bool
   | .int a, .int b => some (a == b)
   | .string a, .string b => some (a == b)
   | .bool a, .bool b => some (a == b)
+  -- Decimal: compare scale-aligned unscaled values (1.0 = 1.00)
+  | .decimal u1 s1, .decimal u2 s2 =>
+    some (u1 * 10 ^ (max s1 s2 - s1) == u2 * 10 ^ (max s1 s2 - s2))
+  -- int↔decimal promotion (#201): 1 = 1.0 is TRUE, not a type error
+  | .int a, .decimal u s => some (a * 10 ^ s == u)
+  | .decimal u s, .int b => some (u == b * 10 ^ s)
   | _, _ => none  -- type mismatch
 
 /-- Compare two values for ordering -/
@@ -87,6 +93,12 @@ def Value.compare : Value → Value → Option Ordering
   | _, .null _ => none
   | .int a, .int b => some (Ord.compare a b)
   | .string a, .string b => some (Ord.compare a b)
+  -- Decimal: compare scale-aligned unscaled values
+  | .decimal u1 s1, .decimal u2 s2 =>
+    some (Ord.compare (u1 * 10 ^ (max s1 s2 - s1)) (u2 * 10 ^ (max s1 s2 - s2)))
+  -- int↔decimal promotion (#201)
+  | .int a, .decimal u s => some (Ord.compare (a * 10 ^ s) u)
+  | .decimal u s, .int b => some (Ord.compare u (b * 10 ^ s))
   | _, _ => none
 
 /-- Convert value to boolean for WHERE clauses -/
@@ -94,6 +106,7 @@ def Value.toBool : Value → Option Bool
   | .bool b => some b
   | .null _ => none
   | .int n => some (n != 0)
+  | .decimal u _ => some (u != 0)
   | _ => none
 
 -- ============================================================================
@@ -129,12 +142,30 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   | .add, some (.null _), some _ => some (.null none)
   | .add, some _, some (.null _) => some (.null none)
   | .add, some (.int a), some (.int b) => some (.int (a + b))
+  -- Decimal arithmetic: scale-align, compute, renormalize (#201).
+  -- int↔decimal promotes the int to scale-0 decimal per the SQL standard.
+  | .add, some (.decimal u1 s1), some (.decimal u2 s2) =>
+    some (Value.mkDecimal
+      (u1 * 10 ^ (max s1 s2 - s1) + u2 * 10 ^ (max s1 s2 - s2)) (max s1 s2))
+  | .add, some (.int a), some (.decimal u s) => some (Value.mkDecimal (a * 10 ^ s + u) s)
+  | .add, some (.decimal u s), some (.int b) => some (Value.mkDecimal (u + b * 10 ^ s) s)
   | .sub, some (.null _), some _ => some (.null none)
   | .sub, some _, some (.null _) => some (.null none)
   | .sub, some (.int a), some (.int b) => some (.int (a - b))
+  | .sub, some (.decimal u1 s1), some (.decimal u2 s2) =>
+    some (Value.mkDecimal
+      (u1 * 10 ^ (max s1 s2 - s1) - u2 * 10 ^ (max s1 s2 - s2)) (max s1 s2))
+  | .sub, some (.int a), some (.decimal u s) => some (Value.mkDecimal (a * 10 ^ s - u) s)
+  | .sub, some (.decimal u s), some (.int b) => some (Value.mkDecimal (u - b * 10 ^ s) s)
   | .mul, some (.null _), some _ => some (.null none)
   | .mul, some _, some (.null _) => some (.null none)
   | .mul, some (.int a), some (.int b) => some (.int (a * b))
+  | .mul, some (.decimal u1 s1), some (.decimal u2 s2) =>
+    some (Value.mkDecimal (u1 * u2) (s1 + s2))
+  | .mul, some (.int a), some (.decimal u s) => some (Value.mkDecimal (a * u) s)
+  | .mul, some (.decimal u s), some (.int b) => some (Value.mkDecimal (u * b) s)
+  -- NOTE: decimal div/mod intentionally fall to the error catch-all for now —
+  -- result-scale policy is engine-specific and deferred (tracked in #201).
   | .div, some (.null _), some _ => some (.null none)
   | .div, some _, some (.null _) => some (.null none)
   | .div, some (.int a), some (.int b) =>
@@ -200,6 +231,7 @@ def evalUnaryOp (op : UnaryOp) (e : Option Value) : Option Value :=
   | .not, some (.bool b) => some (.bool (!b))
   | .not, some (.null _) => some (.null none)  -- NOT NULL = NULL
   | .neg, some (.int n) => some (.int (-n))
+  | .neg, some (.decimal u s) => some (.decimal (-u) s)  -- canonical form preserved
   | .neg, some (.null _) => some (.null none)  -- -NULL = NULL
   | .isNull, v => some (.bool (isNullValue v))
   | .isNotNull, v => some (.bool (!isNullValue v))
@@ -254,6 +286,7 @@ theorem evalBinOp_and_true_iff (l r : Option Value) :
       | null _ => rfl
       | int _ => rfl
       | string _ => rfl
+      | decimal _ _ => rfl
   | some v =>
     cases v with
     | bool b =>
@@ -266,6 +299,7 @@ theorem evalBinOp_and_true_iff (l r : Option Value) :
           | null _ => rfl
           | int _ => rfl
           | string _ => rfl
+          | decimal _ _ => rfl
       | false =>
         cases r with
         | none => rfl
@@ -274,6 +308,7 @@ theorem evalBinOp_and_true_iff (l r : Option Value) :
           | null _ => rfl
           | int _ => rfl
           | string _ => rfl
+          | decimal _ _ => rfl
     | null _ =>
       cases r with
       | none => rfl
@@ -282,6 +317,7 @@ theorem evalBinOp_and_true_iff (l r : Option Value) :
         | null _ => rfl
         | int _ => rfl
         | string _ => rfl
+        | decimal _ _ => rfl
     | int _ =>
       cases r with
       | none => rfl
@@ -290,6 +326,7 @@ theorem evalBinOp_and_true_iff (l r : Option Value) :
         | null _ => rfl
         | int _ => rfl
         | string _ => rfl
+        | decimal _ _ => rfl
     | string _ =>
       cases r with
       | none => rfl
@@ -298,5 +335,15 @@ theorem evalBinOp_and_true_iff (l r : Option Value) :
         | null _ => rfl
         | int _ => rfl
         | string _ => rfl
+        | decimal _ _ => rfl
+    | decimal _ _ =>
+      cases r with
+      | none => rfl
+      | some w => cases w with
+        | bool b => cases b <;> rfl
+        | null _ => rfl
+        | int _ => rfl
+        | string _ => rfl
+        | decimal _ _ => rfl
 
 end SqlEquiv
