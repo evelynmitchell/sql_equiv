@@ -58,6 +58,30 @@ overwhelmingly trivial (`rfl`), but they need to be written.
 
 ---
 
+## NULL Semantics Invariant (binding on every batch)
+
+NULLs are **never** errors. Per the SQL standard:
+
+- **NULL propagation:** any arithmetic/comparison/string op with a NULL operand
+  yields SQL NULL (`some (.null none)`) — never `none`.
+- **Three-valued logic:** AND/OR follow the standard's truth tables, including
+  the dominance rules `FALSE AND NULL = FALSE` and `TRUE OR NULL = TRUE`
+  (short-circuit arms fire before null propagation).
+- **Aggregates:** SUM/AVG/MIN/MAX ignore NULL inputs; empty input yields NULL.
+- `none` is reserved for what the standard rejects as a *type error*
+  (e.g. `1 + 'abc'`) or a genuine evaluation error (missing column).
+
+**Mechanism:** the null-propagation arms in `evalBinOp` use wildcards
+(`| op, some (.null _), some _ => some (.null none)` and its mirror), so every
+new `Value` constructor inherits standard NULL behavior automatically — e.g.
+`decimal + NULL = NULL` holds by construction with zero new arms. When adding a
+type, keep its arms *below* the null-propagation arms and never add a
+constructor-specific null arm. The differential tests against sqlite3 (and
+DuckDB once #203 lands) validate this end-to-end; extend them with
+NULL-with-new-type cases in every batch.
+
+---
+
 ## Implementation Batches
 
 The work is divided into 4 batches, each independently shippable.
