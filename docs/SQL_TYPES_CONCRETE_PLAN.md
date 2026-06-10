@@ -11,14 +11,26 @@ ordered checklist of implementation and proof tasks.
 
 | SqlType   | Value constructor       | Lean backing | Proofs affected |
 |-----------|-------------------------|--------------|-----------------|
-| `int`     | `int : Int -> Value`    | `Int`        | All theorems in Equiv.lean |
-| `string`  | `string : String -> Value` | `String`  | All theorems in Equiv.lean |
-| `bool`    | `bool : Bool -> Value`  | `Bool`       | All theorems in Equiv.lean |
-| `unknown` | `null : Option SqlType -> Value` | -   | All theorems in Equiv.lean |
+| `int`     | `int : Int -> Value`    | `Int`        | All theorems in `Equiv/` modules |
+| `string`  | `string : String -> Value` | `String`  | All theorems in `Equiv/` modules |
+| `bool`    | `bool : Bool -> Value`  | `Bool`       | All theorems in `Equiv/` modules |
+| `unknown` | `null : Option SqlType -> Value` | -   | All theorems in `Equiv/` modules |
 
 **Proof case counts:** Each binary-op commutativity theorem currently does
 exhaustive case analysis over `Option Value x Option Value`. With 4 value
 constructors + `none`, that's 5x5 = 25 cases per theorem. Many resolve by `rfl`.
+
+> **Refresh (2026-06, #200):** All axioms are now proven theorems (561 theorems,
+> ratchet at 0), so adding a constructor means extending *proofs*, not just
+> statements. Measured blast radius — `.null` match-arm sites that need a sibling
+> arm per new constructor: `Equiv/Comparison.lean` 57, `Equiv/ValueLemmas.lean` 55,
+> `SemanticsBase.lean` 43, `Semantics.lean` 21, all other files ≤ 4 each (~190
+> total). The statement-level theorem files (`Equiv/StatementAxioms.lean`: 2) are
+> insulated because they work at expression level. The `first | rfl | ...`
+> fallback combinators in `Comparison.lean` absorb new same-shape cases
+> automatically. The optimizer module was removed in PR #156; optimizer steps
+> below are struck. Tracking issues: #200 (this refresh), #201 (decimal),
+> #202 (float decision), #203 (DuckDB oracle).
 
 ---
 
@@ -55,6 +67,14 @@ The work is divided into 4 batches, each independently shippable.
 **Why first:** These two types are needed for the widest range of SQL equivalence
 proofs: arithmetic commutativity/associativity, comparison flips, aggregate
 semantics (AVG returns float per SQL standard), and type coercion rules.
+
+> **Refresh (2026-06, #200): Batch 1 is split.** Do **decimal first (#201)** —
+> scaled-integer arithmetic is exact, so existing proof patterns carry over.
+> **Float is gated on a design decision (#202)**: IEEE `Float` falsifies theorems
+> this library proves (`NaN ≠ NaN` vs `eq_reflexive`; NaN unordered vs
+> `Value.compare` totality; `-0.0 + 0 = +0.0` vs `x + 0 = x`). Decide
+> IEEE-with-preconditions vs rationals vs defer before touching float.
+> Float-specific checklist items below are deferred with it.
 
 #### Step 1.1: AST changes (`Ast.lean`)
 
@@ -93,26 +113,39 @@ incomplete. Plan to fix all modules in one pass.
 - [ ] `Value.toSql` for float and decimal
 - [ ] Decimal display: `formatDecimal 12345 2 = "123.45"`
 
-#### Step 1.5: Optimizer (`Optimizer.lean`)
+#### ~~Step 1.5: Optimizer (`Optimizer.lean`)~~ — module removed in PR #156
 
-- [ ] Constant folding: `float + float`, `float * float`, etc.
-- [ ] Simplification identities: `x + 0.0 = x`, `x * 1.0 = x`, `x * 0.0 = 0.0`
-- [ ] `valueCompare` in `OptimizerUtils.lean`: add float and decimal ordering
+The certified rewriter (`Rewriter.lean`) replaced the optimizer. If decimal/float
+constant-folding rules are added there, each rule carries its own proof, so this
+is covered by Step 1.6 rather than a separate step. (Note: `x + 0.0 = x` is
+**false** for IEEE float when `x = -0.0` — see #202.)
 
-#### Step 1.6: Proofs (`Equiv.lean`)
+#### Step 1.6: Proofs (`Equiv/` modules — primarily `Comparison.lean`, `ValueLemmas.lean`)
 
 This is the bulk of the work. Each existing commutativity/associativity theorem
 needs new case arms for float and decimal.
 
 **Strategy to manage proof explosion:**
 
-1. **Factor out a "mismatched types" lemma:**
+1. **Factor out a "mismatched types" lemma.** ⚠️ As originally drafted this
+   lemma is **false** under the Option 3 semantics that landed (PR #125):
+   a cross-type operation on non-null operands is an *error* (`none`), not
+   SQL NULL — `Value.eq`/`Value.compare` return `none` on mismatch and
+   `evalBinOp`'s catch-all returns `none`. The correct statement is:
    ```lean
-   lemma cross_type_binop_null (op : BinOp) (v1 v2 : Value)
-     (h : v1.sqlType ≠ v2.sqlType) :
-     evalBinOp op (some v1) (some v2) = some (Value.null none) := by ...
+   theorem mismatched_types_error (op : BinOp) (v1 v2 : Value)
+     (h1 : ¬ v1.isNull) (h2 : ¬ v2.isNull)
+     (h : v1.sqlType ≠ v2.sqlType)
+     (hop : op ∈ [.add, .sub, .mul, .div, .mod, .lt, .le, .gt, .ge]) :
+     evalBinOp op (some v1) (some v2) = none := by ...
    ```
-   This one lemma collapses all cross-type cases (the majority) to a single invocation.
+   (Null operands are excluded — they take the null-propagation arms first.
+   `.eq`/`.ne` also satisfy this today, but keep them out of `hop` if numeric
+   coercion is added, since `1 = 1.0` should then be `true`, not an error.)
+   **Coercion caveat:** SQL promotes `INT op DECIMAL` rather than erroring.
+   If #201 adds int↔decimal promotion, those pairs are carved out of this
+   lemma's `hop`/type hypotheses — decide promotion *before* proving it.
+   This one lemma collapses the remaining cross-type cases to a single invocation.
 
 2. **Use `simp` + `decide` aggressively** for same-type arithmetic cases.
 
@@ -179,12 +212,12 @@ comparisons come "for free" via `String.compare`.
 
 - [ ] `Value.toSql`: `DATE '2024-01-15'`, `TIME '14:30:00'`, `TIMESTAMP '...'`
 
-#### Step 2.5: Optimizer (`Optimizer.lean`)
+#### ~~Step 2.5: Optimizer (`Optimizer.lean`)~~ — module removed in PR #156
 
-- [ ] Constant folding for datetime comparisons
-- [ ] `valueCompare` ordering: `... < date < time < timestamp < ...`
+Datetime constant-folding, if wanted, goes in the certified rewriter
+(`Rewriter.lean`) with per-rule proofs; covered by Step 2.6.
 
-#### Step 2.6: Proofs (`Equiv.lean`)
+#### Step 2.6: Proofs (`Equiv/` modules — primarily `Comparison.lean`, `ValueLemmas.lean`)
 
 Case count grows from 49 (post-batch-1) to 100. Again, all new cross-type cases
 resolve by `rfl`. The same "mismatched types" lemma applies.
@@ -374,12 +407,12 @@ After all 4 batches:
 
 - [ ] `SqlType` covers all 11 types (int, string, bool, unknown, float, decimal, date, time, timestamp, interval, binary)
 - [ ] `lake build` succeeds with no errors
-- [ ] All existing theorems in `Equiv.lean` re-proven with expanded case analysis
+- [ ] All existing theorems in the `Equiv/` modules re-proven with expanded case analysis
 - [ ] New type-specific theorems proven (commutativity, null propagation, comparison flips)
 - [ ] `mismatched_types_null` lemma proven for all type pairs
 - [ ] Parser handles float literals, decimal literals, typed datetime literals, interval literals, hex binary literals
 - [ ] Pretty printer round-trips all new value types
-- [ ] Optimizer constant-folds arithmetic for float and decimal
+- [ ] Certified rewriter (`Rewriter.lean`) constant-folds arithmetic for float and decimal (with per-rule proofs)
 - [ ] Test suite covers all new types
 - [ ] Axiom count does not increase (new theorems should be proven, not axiomatized)
 
@@ -392,7 +425,7 @@ After all 4 batches:
 | `PLAN_expand_types.md` | This plan **concretizes** that plan with proof-level detail |
 | `SQL_GAP_ANALYSIS.md` | Type expansion closes the "Data Types" section gaps |
 | `PROVING_AXIOMS_PLAN.md` | Proof work here is orthogonal -- type expansion doesn't add new axioms |
-| `OPTIMIZER_ROADMAP.md` | Optimizer phases 3-6 can proceed independently |
+| `CERTIFIED_REWRITER.md` | Rewriter rules carry their own proofs; new-type folding rules go there (optimizer removed in PR #156) |
 | `COVERAGE_MATRIX.md` | Updates needed after each batch ships |
 
 ---
