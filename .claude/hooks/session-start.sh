@@ -32,14 +32,17 @@ command -v zstd >/dev/null 2>&1 || missing_pkgs+=(zstd)
 command -v sqlite3 >/dev/null 2>&1 || missing_pkgs+=(sqlite3)
 if [ "${#missing_pkgs[@]}" -gt 0 ]; then
   echo "Installing apt packages: ${missing_pkgs[*]}"
+  if ! apt-get update -qq 2>/dev/null; then sudo apt-get update -qq; fi
   apt-get install -y -qq "${missing_pkgs[@]}" || sudo apt-get install -y -qq "${missing_pkgs[@]}"
 fi
 
 # --- elan (from GitHub releases; elan.lean-lang.org is blocked) ---
+# Pinned: `latest` would let elan behavior change under us with no repo-side diff.
+ELAN_VERSION="v4.2.3"
 if ! command -v elan >/dev/null 2>&1; then
-  echo "Installing elan from GitHub releases..."
+  echo "Installing elan $ELAN_VERSION from GitHub releases..."
   curl -sSfL -o /tmp/elan.tar.gz \
-    https://github.com/leanprover/elan/releases/latest/download/elan-x86_64-unknown-linux-gnu.tar.gz
+    "https://github.com/leanprover/elan/releases/download/$ELAN_VERSION/elan-x86_64-unknown-linux-gnu.tar.gz"
   tar -xzf /tmp/elan.tar.gz -C /tmp
   /tmp/elan-init -y --default-toolchain none
   rm -f /tmp/elan.tar.gz /tmp/elan-init
@@ -68,7 +71,10 @@ cd "$REPO_DIR"
 echo "Lean: $(lean --version)"
 
 # --- Warm the build cache (fetches batteries/LSpec from GitHub on first run; no-op when cached) ---
-lake build
-lake build sql_equiv_test sql_equiv_lspec
+# Non-fatal: the toolchain is already installed at this point, and a transient
+# fetch/build failure here shouldn't take down session setup.
+if ! { lake build && lake build sql_equiv_test sql_equiv_lspec; }; then
+  echo "warning: cache-warming build failed; toolchain is installed, build will retry in-session" >&2
+fi
 
 echo "Session setup complete."
