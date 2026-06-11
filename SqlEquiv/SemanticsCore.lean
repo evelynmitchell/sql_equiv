@@ -450,13 +450,7 @@ def evalQueryCore (db : Database)
     (cteEval : Database → String → Query → Table) : Query → Table
   | .simple sel => selectEval db sel
   | .compound left op right =>
-    let leftResult := queryEval db left
-    let rightResult := queryEval db right
-    match op with
-    | .union => (leftResult ++ rightResult).eraseDups
-    | .unionAll => leftResult ++ rightResult
-    | .intersect => leftResult.filter fun row => rightResult.contains row
-    | .exceptOp => leftResult.filter fun row => !rightResult.contains row
+    applySetOp op (queryEval db left) (queryEval db right)
   | .withCTE ctes query =>
     let dbWithCtes := ctes.foldl (fun db' cte =>
       fun name =>
@@ -488,13 +482,7 @@ theorem evalQueryCore_compound (db : Database)
     (cteEval : Database → String → Query → Table)
     (left right : Query) (op : SetOp) :
     evalQueryCore db selectEval queryEval cteEval (.compound left op right) =
-    let l := queryEval db left
-    let r := queryEval db right
-    match op with
-    | .union => (l ++ r).eraseDups
-    | .unionAll => l ++ r
-    | .intersect => l.filter fun row => r.contains row
-    | .exceptOp => l.filter fun row => !r.contains row := by
+    applySetOp op (queryEval db left) (queryEval db right) := by
   rfl
 
 -- ============================================================================

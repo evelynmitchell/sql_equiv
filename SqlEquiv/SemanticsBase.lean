@@ -287,8 +287,10 @@ def applySetOp (op : SetOp) (l r : Table) : Table :=
   match op with
   | .union => (l ++ r).eraseDups
   | .unionAll => l ++ r
-  | .intersect => l.filter fun row => r.contains row
-  | .exceptOp => l.filter fun row => !r.contains row
+  -- INTERSECT/EXCEPT are set operations per the SQL standard: duplicates are
+  -- eliminated (#223). The ALL variants (kept duplicates) are not parsed yet.
+  | .intersect => (l.filter fun row => r.contains row).eraseDups
+  | .exceptOp => (l.filter fun row => !r.contains row).eraseDups
 
 /-- Check if Option Value is NULL (none or some null) -/
 def isNullValue : Option Value → Bool

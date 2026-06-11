@@ -26,36 +26,40 @@ theorem union_all_length (db : Database) (a b : SelectStmt) :
 /-- A EXCEPT A = empty (self-difference is empty) -/
 theorem except_self_empty (db : Database) (a : SelectStmt) :
     evalQuery db (Query.compound (Query.simple a) .exceptOp (Query.simple a)) = [] := by
-  simp only [evalQuery_compound, evalQuery_simple]
+  simp only [evalQuery_compound, evalQuery_simple, applySetOp]
   generalize evalSelect db a = l
-  rw [List.filter_eq_nil_iff]
-  intro x hx h
-  simp at h
-  exact absurd hx h
+  have h : (l.filter fun row => !l.contains row) = [] := by
+    rw [List.filter_eq_nil_iff]
+    intro x hx h
+    simp at h
+    exact absurd hx h
+  rw [h, List.eraseDups_nil]
 
 /-- INTERSECT with empty is empty -/
 theorem intersect_empty_right (db : Database) (a : SelectStmt) :
     let emptySelect := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none
     evalQuery db (Query.compound (Query.simple a) .intersect (Query.simple emptySelect)) = [] := by
-  simp only [evalQuery_compound, evalQuery_simple]
+  simp only [evalQuery_compound, evalQuery_simple, applySetOp]
   have h : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
       (by rfl) (fun row => by simp [evalExprWithDb_lit])
-  rw [List.filter_eq_nil_iff]
-  intro x _ habs
-  rw [h] at habs
-  exact absurd habs (by simp)
+  rw [h]
+  have hfilt : (List.filter (fun (_ : Row) => false) (evalSelect db a)) = [] := by
+    rw [List.filter_eq_nil_iff]; intro x _ hx; exact absurd hx (by simp)
+  simp [hfilt]
 
-/-- INTERSECT is idempotent: A INTERSECT A = A -/
+/-- INTERSECT is idempotent under set equivalence: A INTERSECT A ≃ˢ A.
+    Downgraded from ≃ᵩ by #223: INTERSECT now deduplicates (SQL set semantics),
+    so when A has duplicate rows, A INTERSECT A = eraseDups A, which is neither
+    equal to nor a permutation of A (a duplicated row appears once vs. twice),
+    ruling out both ≃ᵩ and ≃ᵇ. -/
 theorem intersect_idempotent (a : SelectStmt) :
-    Query.compound (Query.simple a) .intersect (Query.simple a) ≃ᵩ
+    Query.compound (Query.simple a) .intersect (Query.simple a) ≃ˢ
     Query.simple a := by
-  intro db
-  simp only [evalQuery_compound, evalQuery_simple]
-  generalize evalSelect db a = l
-  rw [List.filter_eq_self]
-  intro x hx
-  exact List.contains_iff_mem.mpr hx
+  intro db row
+  simp only [evalQuery_compound, evalQuery_simple, applySetOp, mem_eraseDups,
+    List.mem_filter]
+  exact ⟨fun h => h.1, fun h => ⟨h, List.contains_iff_mem.mpr h⟩⟩
 
 -- ## Bag/Set equivalence theorems (9)
 --
@@ -68,8 +72,8 @@ theorem intersect_idempotent (a : SelectStmt) :
 --
 -- 3 Bag (≃ᵇ): union_all_comm, union_comm, union_assoc
 -- 1 Exact (≃ᵩ): intersect_assoc
--- 5 Set (≃ˢ): intersect_comm, union_idempotent, union_empty_right,
---              union_intersect_distrib, intersect_union_distrib
+-- 6 Set (≃ˢ): intersect_comm, intersect_idempotent, union_idempotent,
+--              union_empty_right, union_intersect_distrib, intersect_union_distrib
 
 /-- UNION ALL is commutative under bag equivalence -/
 theorem union_all_comm (a b : SelectStmt) :
@@ -92,7 +96,7 @@ theorem union_assoc (a b c : Query) :
     Query.compound (Query.compound a .union b) .union c ≃ᵇ
     Query.compound a .union (Query.compound b .union c) := by
   intro db
-  simp only [evalQuery_compound]
+  simp only [evalQuery_compound, applySetOp]
   apply (perm_ext_iff_of_nodup (nodup_eraseDups _) (nodup_eraseDups _)).mpr
   intro row
   simp only [mem_eraseDups, List.mem_append]
@@ -100,24 +104,29 @@ theorem union_assoc (a b c : Query) :
 
 /-- INTERSECT is associative under exact equality.
     Unlike the other set operations, both sides filter the same list (evalQuery db a)
-    in the same order — only the predicate differs, and the predicates are equivalent. -/
+    in the same order — only the predicate differs, and the predicates are equivalent.
+    Survives the #223 dedup because filter commutes with eraseDups
+    (`filter_eraseDups`: both preserve first-occurrence order), so both sides
+    normalize to `eraseDups` of the same doubly-filtered list. -/
 theorem intersect_assoc (a b c : Query) :
     Query.compound (Query.compound a .intersect b) .intersect c ≃ᵩ
     Query.compound a .intersect (Query.compound b .intersect c) := by
   intro db
-  simp only [evalQuery_compound]
-  rw [List.filter_filter]
+  simp only [evalQuery_compound, applySetOp]
+  rw [filter_eraseDups, eraseDups_eraseDups, List.filter_filter]
+  congr 1
   apply List.filter_congr
   intro x _
-  cases hb : (evalQuery db b).contains x <;> cases hc : (evalQuery db c).contains x <;>
-    simp_all
+  simp only [contains_eraseDups, contains_filter]
+  exact Bool.and_comm ..
 
 /-- INTERSECT is commutative under set equivalence -/
 theorem intersect_comm (a b : SelectStmt) :
     Query.compound (Query.simple a) .intersect (Query.simple b) ≃ˢ
     Query.compound (Query.simple b) .intersect (Query.simple a) := by
   intro db row
-  simp only [evalQuery_compound, evalQuery_simple, mem_filter_contains]
+  simp only [evalQuery_compound, evalQuery_simple, applySetOp, mem_eraseDups,
+    mem_filter_contains]
   exact And.comm
 
 /-- UNION is idempotent under set equivalence -/
@@ -125,7 +134,8 @@ theorem union_idempotent (a : SelectStmt) :
     Query.compound (Query.simple a) .union (Query.simple a) ≃ˢ
     Query.simple a := by
   intro db row
-  simp only [evalQuery_compound, evalQuery_simple, mem_eraseDups, List.mem_append]
+  simp only [evalQuery_compound, evalQuery_simple, applySetOp, mem_eraseDups,
+    List.mem_append]
   exact ⟨fun h => h.elim id id, fun h => Or.inl h⟩
 
 /-- UNION with empty is identity under set equivalence -/
@@ -134,7 +144,8 @@ theorem union_empty_right (a : SelectStmt) :
       (Query.simple (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none)) ≃ˢ
     Query.simple a := by
   intro db row
-  simp only [evalQuery_compound, evalQuery_simple, mem_eraseDups, List.mem_append]
+  simp only [evalQuery_compound, evalQuery_simple, applySetOp, mem_eraseDups,
+    List.mem_append]
   have hempty : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
       (by rfl) (fun _row => by simp [evalExprWithDb_lit])
@@ -149,7 +160,8 @@ theorem union_intersect_distrib (a b c : Query) :
     Query.compound a .union (Query.compound b .intersect c) ≃ˢ
     Query.compound (Query.compound a .union b) .intersect (Query.compound a .union c) := by
   intro db row
-  simp only [evalQuery_compound, mem_eraseDups, List.mem_append, mem_filter_contains]
+  simp only [evalQuery_compound, applySetOp, mem_eraseDups, List.mem_append,
+    mem_filter_contains]
   exact or_and_left
 
 /-- Distributivity: A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C)
@@ -158,7 +170,8 @@ theorem intersect_union_distrib (a b c : Query) :
     Query.compound a .intersect (Query.compound b .union c) ≃ˢ
     Query.compound (Query.compound a .intersect b) .union (Query.compound a .intersect c) := by
   intro db row
-  simp only [evalQuery_compound, mem_filter_contains, mem_eraseDups, List.mem_append]
+  simp only [evalQuery_compound, applySetOp, mem_filter_contains, mem_eraseDups,
+    List.mem_append]
   exact and_or_left
 
 -- ============================================================================

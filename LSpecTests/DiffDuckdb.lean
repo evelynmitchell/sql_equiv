@@ -25,10 +25,11 @@
   - ON-less JOIN (`A JOIN B WHERE ...`): we follow Spider/SQLite (cross
     product); DuckDB rejects the spelling outright (requires CROSS JOIN).
     The CROSS JOIN case below covers the shared semantics.
-  - INTERSECT/EXCEPT keep left-side duplicates in our semantics (bag-style);
-    the SQL standard and DuckDB deduplicate (set semantics, with ALL variants
-    for bags). Pre-existing (top-level Query has the same code, factored into
-    applySetOp by #218) — keep set-op oracle cases duplicate-free until fixed.
+  - (resolved by #223) INTERSECT/EXCEPT used to keep left-side duplicates
+    (bag-style); applySetOp now deduplicates per the SQL standard (set
+    semantics), matching DuckDB. Covered by the duplicate-bearing set-op
+    cases below. The ALL variants (INTERSECT ALL/EXCEPT ALL) are still not
+    parsed.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
@@ -54,9 +55,21 @@ private def itemsTable : Table := [
   [("id", .int 4), ("name", .string "Shim"),   ("price", .null (some .decimal))]
 ]
 
-/-- QueryHelpers.testDb (users/orders/products) extended with the items table. -/
+/-- Duplicate-bearing table for INTERSECT/EXCEPT set-semantics cases (#223). -/
+private def dupsTable : Table := [
+  [("x", .int 1)], [("x", .int 1)], [("x", .int 2)], [("x", .int 2)], [("x", .int 3)]
+]
+
+private def otherTable : Table := [
+  [("x", .int 2)], [("x", .int 3)], [("x", .int 3)], [("x", .int 4)]
+]
+
+/-- QueryHelpers.testDb (users/orders/products) extended with items/dups/other. -/
 private def db : Database := fun name =>
-  if name == "items" then itemsTable else testDb name
+  if name == "items" then itemsTable
+  else if name == "dups" then dupsTable
+  else if name == "other" then otherTable
+  else testDb name
 
 private def duckdbSetupSql : String :=
   "CREATE TABLE users (id INTEGER, name TEXT, age INTEGER, department TEXT);\n" ++
@@ -64,7 +77,11 @@ private def duckdbSetupSql : String :=
     "(3, 'Carol', 35, 'Engineering'), (4, 'Dave', 28, 'Marketing'), (5, 'Eve', 22, 'Sales');\n" ++
   "CREATE TABLE items (id INTEGER, name TEXT, price DECIMAL(10,2));\n" ++
   "INSERT INTO items VALUES (1, 'Bolt', 2.50), (2, 'Nut', 1.25), (3, 'Washer', 3), " ++
-    "(4, 'Shim', NULL);\n"
+    "(4, 'Shim', NULL);\n" ++
+  "CREATE TABLE dups (x INTEGER);\n" ++
+  "INSERT INTO dups VALUES (1), (1), (2), (2), (3);\n" ++
+  "CREATE TABLE other (x INTEGER);\n" ++
+  "INSERT INTO other VALUES (2), (3), (3), (4);\n"
 
 -- ============================================================================
 -- DuckDB execution and output parsing
@@ -208,6 +225,12 @@ def runAllTests : IO TestSeq := do
     -- scoping (pre-existing divergence, not a set-op one).
     diffTest "NOT IN with UNION subquery"
       "SELECT name FROM items WHERE name NOT IN (SELECT users.department FROM users UNION SELECT users.name FROM users)",
+    -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
+    -- sides; both engines (and now our semantics) return set results
+    diffTest "INTERSECT dedups duplicate-bearing inputs"
+      "SELECT x FROM dups INTERSECT SELECT x FROM other",
+    diffTest "EXCEPT dedups duplicate-bearing inputs"
+      "SELECT x FROM dups EXCEPT SELECT x FROM other",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)
