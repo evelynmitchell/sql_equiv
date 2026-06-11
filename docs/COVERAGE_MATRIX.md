@@ -88,15 +88,15 @@ Tracks the relationship between code implementation, tutorial coverage, and docu
 
 | Feature | Code | Tutorial | Reference | Notes |
 |---------|------|----------|-----------|-------|
-| OVER clause | ✅ `Ast.lean` | ⚠️ | ⚠️ | Needs tutorial |
-| PARTITION BY | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
-| ORDER BY in OVER | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
-| ROW_NUMBER | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
-| RANK | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
-| DENSE_RANK | ✅ `Ast.lean` | ⚠️ | ⚠️ | |
+| OVER clause | ✅ `Parser.lean`, `Semantics.lean` | ⚠️ | ⚠️ | Parsed + evaluated (#214); needs tutorial |
+| PARTITION BY | ✅ `Parser.lean`, `Semantics.lean` | ⚠️ | ⚠️ | |
+| ORDER BY in OVER | ✅ `Parser.lean`, `Semantics.lean` | ⚠️ | ⚠️ | |
+| ROW_NUMBER | ✅ `Parser.lean`, `Semantics.lean` | ⚠️ | ⚠️ | OVER is mandatory (loud parse error without it) |
+| RANK | ✅ `Parser.lean`, `Semantics.lean` | ⚠️ | ⚠️ | |
+| DENSE_RANK | ✅ `Parser.lean`, `Semantics.lean` | ⚠️ | ⚠️ | |
 | LAG/LEAD | ❌ | ❌ | 📝 Gap doc | |
 | FIRST_VALUE/LAST_VALUE | ❌ | ❌ | 📝 Gap doc | |
-| Window frames (ROWS/RANGE) | ❌ | ❌ | 📝 Gap doc | High priority gap |
+| Window frames (ROWS/RANGE) | ❌ | ❌ | 📝 Gap doc | Explicit frame syntax not parsed; the SQL-default frame (RANGE UNBOUNDED PRECEDING..CURRENT ROW) is what the evaluator implements (#214) |
 
 ### 1.6 Set Operations
 

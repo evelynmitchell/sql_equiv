@@ -234,6 +234,51 @@ def recursiveCTETests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Window Function Tests (#214)
+-- ============================================================================
+
+def windowParserTests : List TestResult := [
+  -- Round trips for the supported forms
+  testRoundTrip "window_row_number"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
+  testRoundTrip "window_rank_desc"
+    "SELECT RANK() OVER (ORDER BY age DESC) AS r FROM users",
+  testRoundTrip "window_dense_rank"
+    "SELECT DENSE_RANK() OVER (ORDER BY age) AS dr FROM users",
+  testRoundTrip "window_sum_partition"
+    "SELECT SUM(age) OVER (PARTITION BY department) AS s FROM users",
+  testRoundTrip "window_avg_empty_over"
+    "SELECT AVG(price) OVER () AS a FROM items",
+  testRoundTrip "window_partition_and_order"
+    "SELECT ROW_NUMBER() OVER (PARTITION BY department ORDER BY age DESC) AS rn FROM users",
+  testRoundTrip "window_count_star_over"
+    "SELECT COUNT(*) OVER () AS c FROM users",
+  testRoundTrip "window_count_arg_multi_partition"
+    "SELECT COUNT(id) OVER (PARTITION BY department, age) AS c FROM users",
+  testRoundTrip "window_lowercase"
+    "select name, row_number() over (order by age) as rn from users",
+  testRoundTrip "window_next_to_plain_agg"
+    "SELECT department, COUNT(*) AS c FROM users GROUP BY department",
+  -- Loud-error cases (#214: these used to silently misparse/swallow)
+  testParseFail "window_row_number_without_over"
+    "SELECT name, ROW_NUMBER() FROM users",
+  testParseFail "window_rank_without_over"
+    "SELECT RANK() FROM users",
+  testParseFail "window_dense_rank_without_over"
+    "SELECT DENSE_RANK() AS dr FROM users",
+  testParseFail "window_stray_over_after_column"
+    "SELECT name OVER (ORDER BY age) FROM users",
+  testParseFail "window_stray_over_second_item"
+    "SELECT name, age OVER (ORDER BY age) FROM users",
+  testParseFail "window_stray_over_after_from"
+    "SELECT name FROM users OVER (ORDER BY age)",
+  testParseFail "window_distinct_rejected"
+    "SELECT SUM(DISTINCT age) OVER () FROM users",
+  testParseFail "window_ranking_takes_no_args"
+    "SELECT ROW_NUMBER(age) OVER (ORDER BY age) FROM users"
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -277,7 +322,7 @@ def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
   insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests ++
-  recursiveCTETests ++ doubleQuoteTests
+  recursiveCTETests ++ doubleQuoteTests ++ windowParserTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests

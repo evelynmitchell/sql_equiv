@@ -297,6 +297,24 @@ def isAggFunc (s : String) : Option AggFunc :=
   | "MAX"   => some .max
   | _       => none
 
+/-- Map an aggregate function to its window-function counterpart
+    (used when an aggregate call is followed by OVER, #214). -/
+def aggToWindowFunc : AggFunc → WindowFunc
+  | .count => .count
+  | .sum   => .sum
+  | .avg   => .avg
+  | .min   => .min
+  | .max   => .max
+
+/-- Check if string is a ranking window function (ROW_NUMBER/RANK/DENSE_RANK).
+    These are only valid with an OVER clause. -/
+def isRankingFunc (s : String) : Option WindowFunc :=
+  match s.toUpper with
+  | "ROW_NUMBER" => some .rowNumber
+  | "RANK"       => some .rank
+  | "DENSE_RANK" => some .denseRank
+  | _            => none
+
 def isWhitespace (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
@@ -699,6 +717,47 @@ partial def parseSubQueryBody : Parser SubQuery := do
     let first ← parseSelectStmt
     parseSubQueryRest (.simple first)
 
+/-- Parse an OVER clause (#214):
+    `OVER ( [PARTITION BY exprs] [ORDER BY items] )`, both parts optional,
+    in that order. The OVER keyword itself is consumed here. -/
+partial def parseOverClause : Parser WindowSpec := do
+  Parser.expect (.keyword "OVER") "Expected OVER"
+  Parser.expect .lparen "Expected ( after OVER"
+  let t ← Parser.peek
+  let partitionBy ←
+    if isKeyword "PARTITION" t then
+      let _ ← Parser.advance
+      Parser.expect (.keyword "BY") "Expected BY after PARTITION"
+      Parser.sepBy1 parseExpr (Parser.expect .comma "")
+    else
+      Parser.pure []
+  let t2 ← Parser.peek
+  let orderBy ←
+    if isKeyword "ORDER" t2 then
+      let _ ← Parser.advance
+      Parser.expect (.keyword "BY") "Expected BY after ORDER"
+      Parser.sepBy1 parseOrderByItem (Parser.expect .comma "")
+    else
+      Parser.pure []
+  Parser.expect .rparen "Expected ) to close OVER clause"
+  return .mk partitionBy orderBy
+
+/-- After a fully parsed aggregate call: if OVER follows, build the
+    window-function form (`wfn`/`warg`); otherwise return the plain
+    aggregate `aggExpr`. DISTINCT inside a window aggregate is rejected
+    loudly — the evaluator does not support it (#214). -/
+partial def finishAggOrWindow (aggExpr : Expr) (wfn : WindowFunc)
+    (warg : Option Expr) (hasDistinct : Bool) : Parser Expr := do
+  let t ← Parser.peek
+  if isKeyword "OVER" t then
+    if hasDistinct then
+      Parser.fail "DISTINCT is not supported in window functions"
+    else
+      let spec ← parseOverClause
+      return .windowFn wfn warg spec
+  else
+    return aggExpr
+
 /-- Parse primary expression (literals, columns, parenthesized, aggregates, EXISTS) -/
 partial def parsePrimary : Parser Expr := do
   let t ← Parser.peek
@@ -781,7 +840,7 @@ partial def parsePrimary : Parser Expr := do
         if aggFn == .count && t'' == .star then
           let _ ← Parser.advance
           Parser.expect .rparen "Expected )"
-          return .countStar
+          finishAggOrWindow .countStar .count none false
         else
           -- Check for DISTINCT
           let hasDistinct ←
@@ -795,17 +854,31 @@ partial def parsePrimary : Parser Expr := do
           if t''' == .star then
             let _ ← Parser.advance
             Parser.expect .rparen "Expected )"
-            return .countStar
+            finishAggOrWindow .countStar .count none hasDistinct
           else
             let arg ← parseExpr
             Parser.expect .rparen "Expected )"
-            return .agg aggFn (some arg) hasDistinct
+            finishAggOrWindow (.agg aggFn (some arg) hasDistinct)
+              (aggToWindowFunc aggFn) (some arg) hasDistinct
       | none =>
-        -- Regular function call
-        let _ ← Parser.advance
-        let args ← Parser.sepBy parseExpr (Parser.expect .comma "")
-        Parser.expect .rparen "Expected )"
-        return .func first args
+        match isRankingFunc first with
+        | some wfn =>
+          -- Ranking window function: zero args, OVER is mandatory (#214) —
+          -- without this, ROW_NUMBER() silently misparsed as Expr.func.
+          let _ ← Parser.advance
+          Parser.expect .rparen s!"Expected ) ({first} takes no arguments)"
+          let t'' ← Parser.peek
+          if isKeyword "OVER" t'' then
+            let spec ← parseOverClause
+            return .windowFn wfn none spec
+          else
+            Parser.fail s!"window function {first} requires OVER clause"
+        | none =>
+          -- Regular function call
+          let _ ← Parser.advance
+          let args ← Parser.sepBy parseExpr (Parser.expect .comma "")
+          Parser.expect .rparen "Expected )"
+          return .func first args
     else if t' == .dot then
       -- Qualified column
       let _ ← Parser.advance
@@ -894,6 +967,11 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
     let _ ← Parser.advance
     let pattern ← parsePrimary
     parsePostfix (.binOp .like e pattern)
+  else if isKeyword "OVER" t then
+    -- A window-eligible call consumes its OVER before postfix parsing, so an
+    -- OVER reaching here is attached to a non-window expression. Error loudly
+    -- instead of leaving it to be silently swallowed (#214).
+    Parser.fail "OVER is only valid immediately after a window or aggregate function call"
   else
     return e
 
@@ -1057,7 +1135,7 @@ partial def parseSelectItem : Parser SelectItem := do
         if aggFn == .count && t'' == .star then
           let _ ← Parser.advance
           Parser.expect .rparen "Expected )"
-          let e := Expr.countStar
+          let e ← finishAggOrWindow .countStar .count none false
           let e' ← parsePostfix e
           let e'' ← continueExprFrom e'
           let alias ← parseAlias
@@ -1073,7 +1151,7 @@ partial def parseSelectItem : Parser SelectItem := do
           if t''' == .star then
             let _ ← Parser.advance
             Parser.expect .rparen "Expected )"
-            let e := Expr.countStar
+            let e ← finishAggOrWindow .countStar .count none hasDistinct
             let e' ← parsePostfix e
             let e'' ← continueExprFrom e'
             let alias ← parseAlias
@@ -1081,7 +1159,8 @@ partial def parseSelectItem : Parser SelectItem := do
           else
             let arg ← parseExpr
             Parser.expect .rparen "Expected )"
-            let e := Expr.agg aggFn (some arg) hasDistinct
+            let e ← finishAggOrWindow (.agg aggFn (some arg) hasDistinct)
+              (aggToWindowFunc aggFn) (some arg) hasDistinct
             let e' ← parsePostfix e
             let e'' ← continueExprFrom e'
             let alias ← parseAlias
@@ -1137,6 +1216,19 @@ where
       -- For simplicity, just return what we have
       return left
     | _ => return left
+
+/-- Parse the remaining `, item` parts of a SELECT list without backtracking
+    (#214): if an item after a comma fails to parse, the error propagates
+    instead of the list being silently truncated (sepBy would backtrack,
+    leaving the tail to be dropped by the top-level parser). -/
+partial def parseSelectItemsRest (acc : List SelectItem) : Parser (List SelectItem) := do
+  let t ← Parser.peek
+  if t == .comma then
+    let _ ← Parser.advance
+    let item ← parseSelectItem
+    parseSelectItemsRest (acc ++ [item])
+  else
+    return acc
 
 /-- Parse table reference with optional alias -/
 partial def parseTableRef : Parser TableRef := do
@@ -1266,8 +1358,17 @@ partial def parseSelectStmt : Parser SelectStmt := do
     else
       Parser.pure false
 
-  -- Select items
-  let items ← Parser.sepBy1 parseSelectItem (Parser.expect .comma "")
+  -- Select items. Parsed without backtracking: a failure in any item after a
+  -- comma is a loud error, not a silent truncation of the statement (#214).
+  let firstItem ← parseSelectItem
+  let items ← parseSelectItemsRest [firstItem]
+
+  -- A leftover OVER here is attached to something that isn't a window or
+  -- aggregate call (e.g. after a bare column); previously the whole tail
+  -- `OVER (...) FROM ...` was silently swallowed (#214).
+  let tOver ← Parser.peek
+  if isKeyword "OVER" tOver then
+    Parser.fail "OVER is only valid immediately after a window or aggregate function call"
 
   -- FROM clause (optional) - with better error detection
   let t1 ← Parser.peek
@@ -1345,6 +1446,13 @@ partial def parseSelectStmt : Parser SelectStmt := do
       | _ => Parser.fail "Expected integer after OFFSET"
     else
       Parser.pure none
+
+  -- Catch-all (#214): an unconsumed OVER after any clause (e.g. `FROM t
+  -- OVER (...)`) must be a loud error — the top-level parser ignores
+  -- leftover tokens, so without this the tail would vanish silently.
+  let tEnd ← Parser.peek
+  if isKeyword "OVER" tEnd then
+    Parser.fail "OVER is only valid immediately after a window or aggregate function call"
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
 

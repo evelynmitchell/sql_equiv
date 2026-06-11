@@ -231,6 +231,26 @@ def runAllTests : IO TestSeq := do
       "SELECT x FROM dups INTERSECT SELECT x FROM other",
     diffTest "EXCEPT dedups duplicate-bearing inputs"
       "SELECT x FROM dups EXCEPT SELECT x FROM other",
+    -- Window functions (#214). AVG window cases are omitted: DuckDB returns
+    -- DOUBLE while we truncate (same known divergence as plain AVG).
+    diffTest "ROW_NUMBER over ORDER BY"
+      "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
+    diffTest "RANK with ties"
+      "SELECT name, RANK() OVER (ORDER BY department) AS r FROM users",
+    diffTest "DENSE_RANK with ties"
+      "SELECT name, DENSE_RANK() OVER (ORDER BY department) AS dr FROM users",
+    diffTest "SUM OVER PARTITION BY"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users",
+    diffTest "running SUM (ORDER BY default frame)"
+      "SELECT name, SUM(age) OVER (ORDER BY age) AS s FROM users",
+    diffTest "running SUM with peers (ties share frame)"
+      "SELECT name, SUM(age) OVER (ORDER BY department) AS s FROM users",
+    diffTest "ROW_NUMBER with PARTITION BY and ORDER BY"
+      "SELECT name, ROW_NUMBER() OVER (PARTITION BY department ORDER BY age) AS rn FROM users",
+    diffTest "SUM OVER () on decimal column skips NULL"
+      "SELECT name, SUM(price) OVER () AS s FROM items",
+    diffTest "COUNT(*) OVER ()"
+      "SELECT name, COUNT(*) OVER () AS c FROM users",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

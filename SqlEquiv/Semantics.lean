@@ -186,19 +186,39 @@ partial def computeDenseRanksParam (exprEval : Database → Row → Expr → Opt
       (row, rank) :: go rest rank (some key)
   go rows 1 none
 
-/-- Parameterized window function evaluator -/
+/-- Default window frame for aggregate window functions (#214): the whole
+    partition when the window has no ORDER BY; otherwise the SQL-standard
+    default `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` — the rows of
+    the sorted partition up to the current row plus its ORDER BY peers
+    (rows with an equal sort key). Matches DuckDB/SQLite/PostgreSQL. -/
+def windowFrameRowsParam (exprEval : Database → Row → Expr → Option Value)
+    (db : Database) (orderBy : List OrderByItem)
+    (sortedPartition : Table) (row : Row) (rowIndex : Nat) : Table :=
+  if orderBy.isEmpty then sortedPartition
+  else
+    let key := fun (r : Row) => orderBy.map fun item => exprEval db r item.expr
+    let curKey := key row
+    sortedPartition.take (rowIndex + 1) ++
+      (sortedPartition.drop (rowIndex + 1)).takeWhile (fun r => key r == curKey)
+
+/-- Parameterized window function evaluator. `sortedPartition` must be the
+    row's PARTITION BY group sorted by `orderBy` (the window's ORDER BY), and
+    `rowIndex` the row's index within it — evalExprWithWindowParam computes
+    both from the WindowSpec. -/
 def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (fn : WindowFunc) (arg : Option Expr)
-    (partition : Table) (sortedPartition : Table) (row : Row) (rowIndex : Nat) : Option Value :=
+    (orderBy : List OrderByItem)
+    (sortedPartition : Table) (row : Row) (rowIndex : Nat) : Option Value :=
+  let frame := windowFrameRowsParam exprEval db orderBy sortedPartition row rowIndex
   match fn with
   | .rowNumber => some (.int (Int.ofNat (rowIndex + 1)))
   | .rank =>
-    let ranks := computeRanksParam exprEval db sortedPartition ([] : List OrderByItem)
+    let ranks := computeRanksParam exprEval db sortedPartition orderBy
     match ranks.find? (fun (r, _) => r == row) with
     | some (_, rank) => some (.int (Int.ofNat rank))
     | none => some (.int (Int.ofNat (rowIndex + 1)))
   | .denseRank =>
-    let ranks := computeDenseRanksParam exprEval db sortedPartition ([] : List OrderByItem)
+    let ranks := computeDenseRanksParam exprEval db sortedPartition orderBy
     match ranks.find? (fun (r, _) => r == row) with
     | some (_, rank) => some (.int (Int.ofNat rank))
     | none => some (.int (Int.ofNat (rowIndex + 1)))
@@ -206,31 +226,33 @@ def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
     match arg with
     | none => none
     | some e =>
-      let vals := partition.filterMap fun r => exprEval db r e
-      some (sumNumeric vals)
+      let vals := frame.filterMap fun r => exprEval db r e
+      -- SUM over no numeric inputs is NULL (matches evalAggOverTableParam)
+      if countNumeric vals == 0 then some (.null none)
+      else some (sumNumeric vals)
   | .avg =>
     match arg with
     | none => none
     | some e =>
-      let vals := partition.filterMap fun r => exprEval db r e
+      let vals := frame.filterMap fun r => exprEval db r e
       some ((avgNumeric vals).getD (.null none))
   | .min =>
     match arg with
     | none => none
     | some e =>
-      let vals := partition.filterMap fun r => exprEval db r e
+      let vals := frame.filterMap fun r => exprEval db r e
       some ((minNumeric vals).getD (.null none))
   | .max =>
     match arg with
     | none => none
     | some e =>
-      let vals := partition.filterMap fun r => exprEval db r e
+      let vals := frame.filterMap fun r => exprEval db r e
       some ((maxNumeric vals).getD (.null none))
   | .count =>
     match arg with
-    | none => some (.int (Int.ofNat partition.length))
+    | none => some (.int (Int.ofNat frame.length))
     | some e =>
-      let nonNullCount := partition.filter fun r =>
+      let nonNullCount := frame.filter fun r =>
         match exprEval db r e with
         | some v => !isNullValue v
         | none => false
@@ -241,9 +263,21 @@ def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Val
     (db : Database) (row : Row) (partition : Table)
     (sortedPartition : Table) (rowIndex : Nat) : Expr → Option Value
   | .windowFn fn arg spec =>
-    let winSorted := if spec.orderBy.isEmpty then sortedPartition
-                     else sortPartitionParam exprEval db partition spec.orderBy
-    evalWindowFnParam exprEval db fn arg partition winSorted row rowIndex
+    -- The caller (evalSelectCore's window branch) passes the full
+    -- HAVING-filtered row set as both `partition` and `sortedPartition`,
+    -- with `rowIndex` relative to it. The WindowSpec is applied HERE (#214):
+    -- PARTITION BY restricts to the current row's group, ORDER BY sorts it,
+    -- and the row's index is recomputed within the sorted partition.
+    let part :=
+      if spec.partitionBy.isEmpty then partition
+      else
+        let key := fun (r : Row) => spec.partitionBy.map (exprEval db r)
+        let curKey := key row
+        partition.filter fun r => key r == curKey
+    let winSorted := if spec.orderBy.isEmpty then part
+                     else sortPartitionParam exprEval db part spec.orderBy
+    let idx := (winSorted.findIdx? (fun r => r == row)).getD rowIndex
+    evalWindowFnParam exprEval db fn arg spec.orderBy winSorted row idx
   | .binOp op l r =>
     let lv := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex l
     let rv := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex r

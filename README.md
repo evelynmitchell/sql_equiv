@@ -23,6 +23,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 - **NULL handling**: Typed NULLs, IS NULL/IS NOT NULL, three-valued logic, NULL propagation
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
+- **Window functions**: ROW_NUMBER, RANK, DENSE_RANK, and aggregate windows (SUM/AVG/MIN/MAX/COUNT) with `OVER ([PARTITION BY ...] [ORDER BY ...])` and the SQL-default frame; explicit ROWS/RANGE frames and DISTINCT inside windows are rejected at parse time
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries
