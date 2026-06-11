@@ -25,6 +25,10 @@
   - ON-less JOIN (`A JOIN B WHERE ...`): we follow Spider/SQLite (cross
     product); DuckDB rejects the spelling outright (requires CROSS JOIN).
     The CROSS JOIN case below covers the shared semantics.
+  - INTERSECT/EXCEPT keep left-side duplicates in our semantics (bag-style);
+    the SQL standard and DuckDB deduplicate (set semantics, with ALL variants
+    for bags). Pre-existing (top-level Query has the same code, factored into
+    applySetOp by #218) — keep set-op oracle cases duplicate-free until fixed.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
