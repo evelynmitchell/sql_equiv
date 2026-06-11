@@ -34,7 +34,7 @@ def evalCaseHelper (evalExpr : Expr → Option Value) (elseVal : Option Value) :
     Single recursive function (not mutual) — uses List.map and List.foldl
     which Lean's WFR checker has built-in support for. -/
 def evalExprCore (db : Database) (row : Row)
-    (subqueryEval : Database → Row → SelectStmt → Table) : Expr → Option Value
+    (subqueryEval : Database → Row → SubQuery → Table) : Expr → Option Value
   | .lit v => some v
   | .col c => row.getQualified c.table c.column
   | .binOp op l r =>
@@ -99,7 +99,7 @@ decreasing_by
 /-- Non-partial FROM clause evaluator, parameterized by expression and select evaluators -/
 def evalFromCore (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table) : FromClause → Table
+    (selectEval : Database → SubQuery → Table) : FromClause → Table
   | .table t =>
     let baseTable := db t.name
     let qualifier := t.alias.getD t.name
@@ -195,42 +195,42 @@ def evalFromCore (db : Database)
 -- ============================================================================
 
 theorem evalExprCore_lit (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (v : Value) :
+    (sqe : Database → Row → SubQuery → Table) (v : Value) :
     evalExprCore db row sqe (.lit v) = some v := by
   simp [evalExprCore]
 
 theorem evalExprCore_col (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (c : ColumnRef) :
+    (sqe : Database → Row → SubQuery → Table) (c : ColumnRef) :
     evalExprCore db row sqe (.col c) = row.getQualified c.table c.column := by
   simp [evalExprCore]
 
 theorem evalExprCore_binOp (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (op : BinOp) (l r : Expr) :
+    (sqe : Database → Row → SubQuery → Table) (op : BinOp) (l r : Expr) :
     evalExprCore db row sqe (.binOp op l r) =
     evalBinOp op (evalExprCore db row sqe l) (evalExprCore db row sqe r) := by
   simp [evalExprCore]
 
 theorem evalExprCore_unaryOp (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (op : UnaryOp) (e : Expr) :
+    (sqe : Database → Row → SubQuery → Table) (op : UnaryOp) (e : Expr) :
     evalExprCore db row sqe (.unaryOp op e) =
     evalUnaryOp op (evalExprCore db row sqe e) := by
   simp [evalExprCore]
 
 theorem evalExprCore_func (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (name : String) (args : List Expr) :
+    (sqe : Database → Row → SubQuery → Table) (name : String) (args : List Expr) :
     evalExprCore db row sqe (.func name args) =
     evalFunc name (args.map fun e => evalExprCore db row sqe e) := by
   simp [evalExprCore]
 
 theorem evalExprCore_between (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (e lo hi : Expr) :
+    (sqe : Database → Row → SubQuery → Table) (e lo hi : Expr) :
     evalExprCore db row sqe (.between e lo hi) =
     evalBinOp .and (evalBinOp .ge (evalExprCore db row sqe e) (evalExprCore db row sqe lo))
                    (evalBinOp .le (evalExprCore db row sqe e) (evalExprCore db row sqe hi)) := by
   simp [evalExprCore]
 
 theorem evalExprCore_inList (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (e : Expr) (neg : Bool) (vals : List Expr) :
+    (sqe : Database → Row → SubQuery → Table) (e : Expr) (neg : Bool) (vals : List Expr) :
     evalExprCore db row sqe (.inList e neg vals) =
     (let ev := evalExprCore db row sqe e
      let result := vals.foldl (fun acc vi =>
@@ -240,7 +240,7 @@ theorem evalExprCore_inList (db : Database) (row : Row)
   simp [evalExprCore]
 
 theorem evalExprCore_exists (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (neg : Bool) (sel : SelectStmt) :
+    (sqe : Database → Row → SubQuery → Table) (neg : Bool) (sel : SubQuery) :
     evalExprCore db row sqe (.exists neg sel) =
     (let subResult := sqe db row sel
      let hasExists := !subResult.isEmpty
@@ -249,7 +249,7 @@ theorem evalExprCore_exists (db : Database) (row : Row)
 
 /-- evalExprCore unfolds for scalar subquery expressions -/
 theorem evalExprCore_subquery (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (sel : SelectStmt) :
+    (sqe : Database → Row → SubQuery → Table) (sel : SubQuery) :
     evalExprCore db row sqe (.subquery sel) =
     (match (sqe db row sel).head? with
      | some subRow => subRow.head?.map (·.2)
@@ -258,7 +258,7 @@ theorem evalExprCore_subquery (db : Database) (row : Row)
 
 /-- evalExprCore unfolds for IN subquery expressions -/
 theorem evalExprCore_inSubquery (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (e : Expr) (neg : Bool) (sel : SelectStmt) :
+    (sqe : Database → Row → SubQuery → Table) (e : Expr) (neg : Bool) (sel : SubQuery) :
     evalExprCore db row sqe (.inSubquery e neg sel) =
     (match evalExprCore db row sqe e with
      | none => none
@@ -316,7 +316,7 @@ private theorem case_foldl_eq_evalCaseHelper (f : Expr → Option Value)
 
 /-- evalExprCore unfolds for CASE expressions to evalCaseHelper. -/
 theorem evalExprCore_case (db : Database) (row : Row)
-    (sqe : Database → Row → SelectStmt → Table) (branches : List (Expr × Expr)) (else_ : Option Expr) :
+    (sqe : Database → Row → SubQuery → Table) (branches : List (Expr × Expr)) (else_ : Option Expr) :
     evalExprCore db row sqe (.case branches else_) =
     (let elseVal := match else_ with
       | some e => evalExprCore db row sqe e
@@ -350,7 +350,7 @@ theorem evalCaseHelper_cons_false (f : Expr → Option Value) (elseVal : Option 
 
 theorem evalFromCore_table (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table)
+    (selectEval : Database → SubQuery → Table)
     (t : TableRef) :
     evalFromCore db exprEval selectEval (.table t) =
     let qualifier := t.alias.getD t.name
@@ -360,14 +360,14 @@ theorem evalFromCore_table (db : Database)
 
 theorem evalFromCore_subquery (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table)
-    (sel : SelectStmt) (alias : String) :
+    (selectEval : Database → SubQuery → Table)
+    (sel : SubQuery) (alias : String) :
     evalFromCore db exprEval selectEval (.subquery sel alias) = selectEval db sel := by
   simp [evalFromCore]
 
 theorem evalFromCore_cross_join (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table)
+    (selectEval : Database → SubQuery → Table)
     (left right : FromClause) :
     evalFromCore db exprEval selectEval (.join left .cross right none) =
     let rightRows := evalFromCore db exprEval selectEval right
@@ -377,7 +377,7 @@ theorem evalFromCore_cross_join (db : Database)
 
 theorem evalFromCore_inner_join (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table)
+    (selectEval : Database → SubQuery → Table)
     (left right : FromClause) (on_ : Option Expr) :
     evalFromCore db exprEval selectEval (.join left .inner right on_) =
     let rightRows := evalFromCore db exprEval selectEval right
@@ -394,7 +394,7 @@ theorem evalFromCore_inner_join (db : Database)
 
 theorem evalFromCore_left_join (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table)
+    (selectEval : Database → SubQuery → Table)
     (left right : FromClause) (on_ : Option Expr) :
     evalFromCore db exprEval selectEval (.join left .left right on_) =
     let rightRows := evalFromCore db exprEval selectEval right
@@ -417,7 +417,7 @@ theorem evalFromCore_left_join (db : Database)
 
 theorem evalFromCore_right_join (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
-    (selectEval : Database → SelectStmt → Table)
+    (selectEval : Database → SubQuery → Table)
     (left right : FromClause) (on_ : Option Expr) :
     evalFromCore db exprEval selectEval (.join left .right right on_) =
     let leftRows := evalFromCore db exprEval selectEval left
@@ -1170,7 +1170,7 @@ theorem evalSelectCore_filter_and (db : Database)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
         exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel)
     (h_and : ∀ row, (exprEval db row (.binOp .and p q) == some (Value.bool true)) =
@@ -1178,7 +1178,7 @@ theorem evalSelectCore_filter_and (db : Database)
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
         (some q) groupBy having orderBy limit offset) =
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
@@ -1208,18 +1208,18 @@ theorem evalSelectCore_filter_commute (db : Database)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
         exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
         (some q) groupBy having orderBy limit offset) =
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.mk false [.star none] from_ (some q) [] none [] none none) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) "inner"))
         (some p) groupBy having orderBy limit offset) := by
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
@@ -1246,13 +1246,13 @@ theorem evalSelectCore_filter_idempotent (db : Database)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
         exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
         (some p) groupBy having orderBy limit offset) =
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
@@ -1287,7 +1287,7 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ sel alias, fromEval db (.subquery sel alias) =
+    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
         exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
@@ -1296,7 +1296,7 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.mk false [.star none] from_ (some filter) [] none [] none none) alias_))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some filter) [] none [] none none)) alias_))
         none groupBy having orderBy limit offset) := by
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
@@ -1415,7 +1415,7 @@ theorem evalSelectCore_distinct_project_where (db : Database) (outerRow : Row)
 -- ============================================================================
 
 /-- Non-partial mirror of `Expr.isGround`, parameterized by a callback for SelectStmt groundness. -/
-def isGroundCore (selectGround : SelectStmt → Bool) : Expr → Bool
+def isGroundCore (selectGround : SubQuery → Bool) : Expr → Bool
   | .lit _ => true
   | .col _ => false
   | .binOp _ l r => isGroundCore selectGround l && isGroundCore selectGround r
@@ -1549,7 +1549,7 @@ theorem inList_foldl_eval_independent
     exact ih (fun vi hvi => h vi (List.mem_cons_of_mem v hvi)) _
 
 /-- Extraction: if isGroundCore on .case is true, then branches foldl is true. -/
-private theorem isGroundCore_case_branches (sg : SelectStmt → Bool)
+private theorem isGroundCore_case_branches (sg : SubQuery → Bool)
     (branches : List (Expr × Expr)) (else_ : Option Expr)
     (h : isGroundCore sg (.case branches else_) = true) :
     branches.foldl (fun acc pair => acc && isGroundCore sg pair.1 && isGroundCore sg pair.2) true = true := by
@@ -1557,7 +1557,7 @@ private theorem isGroundCore_case_branches (sg : SelectStmt → Bool)
   exact (Bool.and_eq_true_iff.mp h).1
 
 /-- Extraction: if isGroundCore on .case with some else is true, then the else expr is ground. -/
-private theorem isGroundCore_case_else (sg : SelectStmt → Bool)
+private theorem isGroundCore_case_else (sg : SubQuery → Bool)
     (branches : List (Expr × Expr)) (e : Expr)
     (h : isGroundCore sg (.case branches (some e)) = true) :
     isGroundCore sg e = true := by
@@ -1565,7 +1565,7 @@ private theorem isGroundCore_case_else (sg : SelectStmt → Bool)
   exact (Bool.and_eq_true_iff.mp h).2
 
 /-- Extraction: if isGroundCore on .inList is true, then the expression is ground. -/
-private theorem isGroundCore_inList_expr (sg : SelectStmt → Bool)
+private theorem isGroundCore_inList_expr (sg : SubQuery → Bool)
     (e : Expr) (neg : Bool) (vals : List Expr)
     (h : isGroundCore sg (.inList e neg vals) = true) :
     isGroundCore sg e = true := by
@@ -1573,7 +1573,7 @@ private theorem isGroundCore_inList_expr (sg : SelectStmt → Bool)
   exact (Bool.and_eq_true_iff.mp h).1
 
 /-- Extraction: if isGroundCore on .inList is true, then the vals foldl is true. -/
-private theorem isGroundCore_inList_vals (sg : SelectStmt → Bool)
+private theorem isGroundCore_inList_vals (sg : SubQuery → Bool)
     (e : Expr) (neg : Bool) (vals : List Expr)
     (h : isGroundCore sg (.inList e neg vals) = true) :
     vals.foldl (fun acc vi => acc && isGroundCore sg vi) true = true := by
@@ -1587,8 +1587,8 @@ private theorem isGroundCore_inList_vals (sg : SelectStmt → Bool)
 /-- If `isGroundCore selectGround e = true` and subqueries are row-independent for ground selects,
     then `evalExprCore` produces the same result for any row. -/
 theorem isGroundCore_eval_independent
-    (selectGround : SelectStmt → Bool)
-    (subqueryEval : Database → Row → SelectStmt → Table)
+    (selectGround : SubQuery → Bool)
+    (subqueryEval : Database → Row → SubQuery → Table)
     (h_sq : ∀ sel, selectGround sel = true →
       ∀ db r1 r2, subqueryEval db r1 sel = subqueryEval db r2 sel)
     (db : Database) (e : Expr) (hg : isGroundCore selectGround e = true)
@@ -1699,7 +1699,7 @@ theorem isGroundCore_eval_independent
 /-- If two subquery evaluators agree on all subqueries that appear inside an expression
     (determined by size bound), then evalExprCore produces the same result. -/
 theorem evalExprCore_sqe_congr (db : Database) (row : Row)
-    (sqe1 sqe2 : Database → Row → SelectStmt → Table)
+    (sqe1 sqe2 : Database → Row → SubQuery → Table)
     (e : Expr)
     (h : ∀ sel, sizeOf sel < sizeOf e → ∀ db' r', sqe1 db' r' sel = sqe2 db' r' sel) :
     evalExprCore db row sqe1 e = evalExprCore db row sqe2 e := by

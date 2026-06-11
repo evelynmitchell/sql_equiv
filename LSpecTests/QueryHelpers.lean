@@ -83,7 +83,7 @@ def mkDistinctWhere (ageVal : Int) : SelectStmt :=
 /-- SELECT * FROM (SELECT * FROM users) AS sub WHERE users.age > {ageVal}. -/
 def mkSubqueryWhere (ageVal : Int) : SelectStmt :=
   let innerSel := mkSelectWhere "users" none
-  let subFrom := FromClause.subquery innerSel "sub"
+  let subFrom := FromClause.subquery (.simple innerSel) "sub"
   let where_ := some (Expr.binOp .gt (qcol "users" "age") (.lit (.int ageVal)))
   .mk false [.star none] (some subFrom) where_ [] none [] none none
 

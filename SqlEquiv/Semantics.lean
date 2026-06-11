@@ -266,7 +266,7 @@ mutual
 
 /-- Evaluate expression against a row (with database for subqueries) -/
 def evalExprWithDb (db : Database) (row : Row) (e : Expr) : Option Value :=
-  evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e
+  evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) e
 termination_by sizeOf e
 decreasing_by all_goals sorry
 -- NOTE: Lambda callbacks make these goals unprovable by Lean 4.27.0's termination
@@ -278,8 +278,19 @@ decreasing_by all_goals sorry
 def evalFrom (db : Database) (fc : FromClause) : Table :=
   evalFromCore db
     (fun db' r expr => evalExprWithDb db' r expr)
-    (fun db' sel => evalSelectWithContext db' [] sel) fc
+    (fun db' sq => evalSubQueryWithContext db' [] sq) fc
 termination_by sizeOf fc
+decreasing_by all_goals sorry
+
+/-- Evaluate a subquery body (#218): a SELECT or a set operation over
+    subqueries. Set-op semantics shared with top-level Query via applySetOp. -/
+def evalSubQueryWithContext (db : Database) (outerRow : Row) (sq : SubQuery) : Table :=
+  match sq with
+  | .simple sel => evalSelectWithContext db outerRow sel
+  | .compound l op r =>
+    applySetOp op (evalSubQueryWithContext db outerRow l)
+                  (evalSubQueryWithContext db outerRow r)
+termination_by sizeOf sq
 decreasing_by all_goals sorry
 
 /-- Evaluate SELECT statement with outer row context (for correlated subqueries) -/
@@ -524,27 +535,38 @@ def evalExpr (row : Row) : Expr → Option Value :=
 -- Bridge axioms: connect partial defs to non-partial core functions
 -- ============================================================================
 
-/-- Bridge: evalExprWithDb equals evalExprCore instantiated with evalSelectWithContext -/
+/-- Bridge: evalSubQueryWithContext unfolds on .simple to evalSelectWithContext (#218) -/
+theorem evalSubQuery_simple (db : Database) (r : Row) (sel : SelectStmt) :
+    evalSubQueryWithContext db r (.simple sel) = evalSelectWithContext db r sel := by
+  rw [evalSubQueryWithContext]
+
+/-- Bridge: evalSubQueryWithContext unfolds on .compound to applySetOp (#218) -/
+theorem evalSubQuery_compound (db : Database) (r : Row) (l : SubQuery) (op : SetOp) (rq : SubQuery) :
+    evalSubQueryWithContext db r (.compound l op rq) =
+    applySetOp op (evalSubQueryWithContext db r l) (evalSubQueryWithContext db r rq) := by
+  rw [evalSubQueryWithContext]
+
+/-- Bridge: evalExprWithDb equals evalExprCore instantiated with evalSubQueryWithContext -/
 theorem evalExprWithDb_eq_evalExprCore (db : Database) (row : Row) (e : Expr) :
-  evalExprWithDb db row e = evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) e := by
+  evalExprWithDb db row e = evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) e := by
   simp [evalExprWithDb]
 
-/-- Bridge: evalCase equals evalCaseHelper instantiated with evalExprCore/evalSelectWithContext -/
+/-- Bridge: evalCase equals evalCaseHelper instantiated with evalExprCore/evalSubQueryWithContext -/
 theorem evalCase_eq_evalCaseHelper (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalCase db row branches else_ =
-    let sqe := fun db' row' sel => evalSelectWithContext db' row' sel
+    let sqe := fun db' row' sq => evalSubQueryWithContext db' row' sq
     let elseVal := match else_ with
       | some e => evalExprCore db row sqe e
       | none => some (.null none)
     evalCaseHelper (evalExprCore db row sqe) elseVal branches := by
-  have h : evalExprWithDb db row = evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) :=
+  have h : evalExprWithDb db row = evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) :=
     funext fun e => evalExprWithDb_eq_evalExprCore db row e
   simp only [evalCase, h]
 
-/-- Bridge: evalFrom equals evalFromCore instantiated with evalExprWithDb and evalSelect -/
+/-- Bridge: evalFrom equals evalFromCore instantiated with evalExprWithDb and evalSubQueryWithContext -/
 theorem evalFrom_eq_evalFromCore (db : Database) (fc : FromClause) :
-  evalFrom db fc = evalFromCore db evalExprWithDb evalSelect fc := by
-  simp only [evalFrom]; congr 1
+  evalFrom db fc = evalFromCore db evalExprWithDb (fun db' sq => evalSubQueryWithContext db' [] sq) fc := by
+  simp only [evalFrom]
 
 -- ============================================================================
 -- Theorems: expression evaluation unfolding (proved via bridge axioms)
@@ -570,25 +592,55 @@ theorem evalExprWithDb_unaryOp (db : Database) (row : Row) (op : UnaryOp) (e : E
   evalExprWithDb db row (Expr.unaryOp op e) = evalUnaryOp op (evalExprWithDb db row e) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_unaryOp ..
 
-/-- evalExprWithDb unfolds for EXISTS expressions -/
-theorem evalExprWithDb_exists (db : Database) (row : Row) (neg : Bool) (sel : SelectStmt) :
-    evalExprWithDb db row (Expr.exists neg sel) =
-    (let subResult := evalSelectWithContext db row sel
+/-- evalExprWithDb unfolds for EXISTS expressions (generic SubQuery payload, #218) -/
+theorem evalExprWithDb_exists (db : Database) (row : Row) (neg : Bool) (sq : SubQuery) :
+    evalExprWithDb db row (Expr.exists neg sq) =
+    (let subResult := evalSubQueryWithContext db row sq
      let hasExists := !subResult.isEmpty
      some (Value.bool (if neg then !hasExists else hasExists))) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_exists ..
 
-/-- evalExprWithDb unfolds for scalar subquery expressions -/
-theorem evalExprWithDb_subquery (db : Database) (row : Row) (sel : SelectStmt) :
-    evalExprWithDb db row (Expr.subquery sel) =
-    (match (evalSelectWithContext db row sel).head? with
+/-- evalExprWithDb unfolds for EXISTS over a simple SELECT subquery -/
+theorem evalExprWithDb_exists_simple (db : Database) (row : Row) (neg : Bool) (sel : SelectStmt) :
+    evalExprWithDb db row (Expr.exists neg (.simple sel)) =
+    (let subResult := evalSelectWithContext db row sel
+     let hasExists := !subResult.isEmpty
+     some (Value.bool (if neg then !hasExists else hasExists))) := by
+  rw [evalExprWithDb_exists, evalSubQuery_simple]
+
+/-- evalExprWithDb unfolds for scalar subquery expressions (generic SubQuery payload, #218) -/
+theorem evalExprWithDb_subquery (db : Database) (row : Row) (sq : SubQuery) :
+    evalExprWithDb db row (Expr.subquery sq) =
+    (match (evalSubQueryWithContext db row sq).head? with
      | some subRow => subRow.head?.map (·.2)
      | none => some (.null none)) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_subquery ..
 
-/-- evalExprWithDb unfolds for IN subquery expressions -/
-theorem evalExprWithDb_inSubquery (db : Database) (row : Row) (e : Expr) (neg : Bool) (sel : SelectStmt) :
-    evalExprWithDb db row (.inSubquery e neg sel) =
+/-- evalExprWithDb unfolds for scalar subqueries over a simple SELECT -/
+theorem evalExprWithDb_subquery_simple (db : Database) (row : Row) (sel : SelectStmt) :
+    evalExprWithDb db row (Expr.subquery (.simple sel)) =
+    (match (evalSelectWithContext db row sel).head? with
+     | some subRow => subRow.head?.map (·.2)
+     | none => some (.null none)) := by
+  rw [evalExprWithDb_subquery, evalSubQuery_simple]
+
+/-- evalExprWithDb unfolds for IN subquery expressions (generic SubQuery payload, #218) -/
+theorem evalExprWithDb_inSubquery (db : Database) (row : Row) (e : Expr) (neg : Bool) (sq : SubQuery) :
+    evalExprWithDb db row (.inSubquery e neg sq) =
+    (match evalExprWithDb db row e with
+     | none => none
+     | some v =>
+       let subResult := evalSubQueryWithContext db row sq
+       let hasMatch := subResult.any fun subRow =>
+         match subRow.head? with
+         | some (_, subVal) => v.eq subVal == some true
+         | none => false
+       some (Value.bool (if neg then !hasMatch else hasMatch))) := by
+  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_inSubquery ..
+
+/-- evalExprWithDb unfolds for IN over a simple SELECT subquery -/
+theorem evalExprWithDb_inSubquery_simple (db : Database) (row : Row) (e : Expr) (neg : Bool) (sel : SelectStmt) :
+    evalExprWithDb db row (.inSubquery e neg (.simple sel)) =
     (match evalExprWithDb db row e with
      | none => none
      | some v =>
@@ -598,13 +650,13 @@ theorem evalExprWithDb_inSubquery (db : Database) (row : Row) (e : Expr) (neg : 
          | some (_, subVal) => v.eq subVal == some true
          | none => false
        some (Value.bool (if neg then !hasMatch else hasMatch))) := by
-  simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_inSubquery ..
+  rw [evalExprWithDb_inSubquery, evalSubQuery_simple]
 
 /-- evalExprWithDb unfolds for case expressions -/
 theorem evalExprWithDb_case (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
   evalExprWithDb db row (Expr.case branches else_) = evalCase db row branches else_ := by
   have h1 := evalExprWithDb_eq_evalExprCore db row (Expr.case branches else_)
-  have h2 := evalExprCore_case db row (fun db' row' sel => evalSelectWithContext db' row' sel) branches else_
+  have h2 := evalExprCore_case db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) branches else_
   have h3 := (evalCase_eq_evalCaseHelper db row branches else_).symm
   exact h1.trans (h2.trans h3)
 
@@ -626,7 +678,7 @@ theorem evalCase_cons_true (db : Database) (row : Row) (cond result : Expr) (res
   evalExprWithDb db row cond = some (.bool true) →
   evalCase db row ((cond, result) :: rest) else_ = evalExprWithDb db row result := by
   intro h
-  have hcore : evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) cond = some (.bool true) := by
+  have hcore : evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) cond = some (.bool true) := by
     rwa [← evalExprWithDb_eq_evalExprCore]
   rw [evalCase_eq_evalCaseHelper]
   simp [evalCaseHelper, hcore]
@@ -637,7 +689,7 @@ theorem evalCase_cons_false (db : Database) (row : Row) (cond result : Expr) (re
   evalExprWithDb db row cond = some (.bool false) →
   evalCase db row ((cond, result) :: rest) else_ = evalCase db row rest else_ := by
   intro h
-  have hcore : evalExprCore db row (fun db' row' sel => evalSelectWithContext db' row' sel) cond = some (.bool false) := by
+  have hcore : evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) cond = some (.bool false) := by
     rwa [← evalExprWithDb_eq_evalExprCore]
   simp only [evalCase_eq_evalCaseHelper]
   simp [evalCaseHelper, hcore]
@@ -680,11 +732,16 @@ theorem evalFrom_table (db : Database) (t : TableRef) :
   simp only [evalFrom_eq_evalFromCore]
   exact evalFromCore_table ..
 
-/-- evalFrom for subquery just returns the inner SELECT result (pass-through). -/
-theorem evalFrom_subquery (db : Database) (sel : SelectStmt) (alias : String) :
-    evalFrom db (.subquery sel alias) = evalSelect db sel := by
+/-- evalFrom for subquery just returns the inner subquery result (pass-through). -/
+theorem evalFrom_subquery (db : Database) (sq : SubQuery) (alias : String) :
+    evalFrom db (.subquery sq alias) = evalSubQueryWithContext db [] sq := by
   simp only [evalFrom_eq_evalFromCore]
   exact evalFromCore_subquery ..
+
+/-- evalFrom for a simple SELECT subquery returns the inner SELECT result. -/
+theorem evalFrom_subquery_simple (db : Database) (sel : SelectStmt) (alias : String) :
+    evalFrom db (.subquery (.simple sel) alias) = evalSelect db sel := by
+  rw [evalFrom_subquery, evalSubQuery_simple]; rfl
 
 /-- evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows. -/
 theorem evalFrom_cross_join (db : Database) (left right : FromClause) :
@@ -1165,9 +1222,9 @@ theorem evalSelect_nondistinct_project_where (db : Database)
     exact evalSelectCore_simple_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
 
-/-- Bridge: evalFrom_subquery connects to evalSelectCore for subqueries. -/
+/-- Bridge: evalFrom_subquery connects to evalSelectCore for simple subqueries. -/
 private theorem evalFrom_subquery_core (db : Database) (sel : SelectStmt) (alias : String) :
-    evalFrom db (.subquery sel alias) =
+    evalFrom db (.subquery (.simple sel) alias) =
     evalSelectCore db []
       (fun db' fc => evalFrom db' fc)
       ee
@@ -1179,7 +1236,7 @@ private theorem evalFrom_subquery_core (db : Database) (sel : SelectStmt) (alias
       selectHasWindowFn
       selectHasAggregate
       sel := by
-  rw [evalFrom_subquery, evalSelect_eq_evalSelectCore]
+  rw [evalFrom_subquery_simple, evalSelect_eq_evalSelectCore]
 
 /-- AND distributes over == some true for evalExprWithDb. -/
 private theorem evalExprWithDb_and_true_iff (db : Database) (row : Row) (p q : Expr) :
@@ -1195,7 +1252,7 @@ theorem evalSelect_filter_and (db : Database) (items : List SelectItem) (from_ :
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
@@ -1213,10 +1270,10 @@ theorem evalSelect_filter_commute (db : Database) (items : List SelectItem) (fro
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some q) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) "inner"))
       (some p) groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   apply evalSelectCore_filter_commute
@@ -1232,7 +1289,7 @@ theorem evalSelect_filter_idempotent (db : Database) (items : List SelectItem) (
     (p : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
       (some p) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
@@ -1250,7 +1307,7 @@ theorem evalSelect_filter_pushdown_table (db : Database) (items : List SelectIte
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items from_ (some filter) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some filter) [] none [] none none) alias_))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some filter) [] none [] none none)) alias_))
       none groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   apply evalSelectCore_filter_pushdown_table
@@ -1293,8 +1350,8 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
       groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a)
-      (some filter) [] none [] none none) "filtered_a") .inner b (some cond)))
+    evalSelect db (.mk false items (some (.join (.subquery (.simple (.mk false [.star none] (some a)
+      (some filter) [] none [] none none)) "filtered_a") .inner b (some cond)))
       none groupBy having orderBy limit offset) := by
   -- Step 1: Push filter into subquery around whole join (filter_pushdown_table)
   rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
@@ -1309,7 +1366,7 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
   simp only [List.nil_append, List.map_id']
   -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_a")
   -- RHS: evalFrom db (.join (.subquery (SELECT * FROM a WHERE filter) "filtered_a") .inner b (some cond))
-  rw [evalFrom_subquery]
+  rw [evalFrom_subquery_simple]
   rw [evalSelect_star_where_eq_filter]
   simp only [List.nil_append, List.map_id']
   -- LHS: (evalFrom db (.join a .inner b (some cond))).filter P
@@ -1317,7 +1374,7 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
   -- LHS: ((evalFrom db a).flatMap F).filter P
   -- RHS: evalFrom db (.join (.subquery ...) .inner b (some cond))
   rw [evalFrom_inner_join (db := db) (left := .subquery _ _)]
-  rw [evalFrom_subquery, evalSelect_star_where_eq_filter]
+  rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
   simp only [List.nil_append, List.map_id']
   -- RHS: ((evalFrom db a).filter Q).flatMap F
   -- Now apply list algebra: flatMap/filter commutation
@@ -1346,8 +1403,8 @@ theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond fi
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
       groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner (.subquery (.mk false [.star none] (some b)
-      (some filter) [] none [] none none) "filtered_b") (some cond)))
+    evalSelect db (.mk false items (some (.join a .inner (.subquery (.simple (.mk false [.star none] (some b)
+      (some filter) [] none [] none none)) "filtered_b") (some cond)))
       none groupBy having orderBy limit offset) := by
   -- Step 1: Push filter into subquery around whole join
   rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
@@ -1359,11 +1416,11 @@ theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond fi
   simp only [List.nil_append, List.map_id']
   -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_b")
   -- RHS: evalFrom db (.join a .inner (.subquery (SELECT * FROM b WHERE filter) "filtered_b") (some cond))
-  rw [evalFrom_subquery, evalSelect_star_where_eq_filter]
+  rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
   simp only [List.nil_append, List.map_id']
   rw [evalFrom_inner_join]
   rw [evalFrom_inner_join (db := db) (right := .subquery _ _)]
-  rw [evalFrom_subquery, evalSelect_star_where_eq_filter]
+  rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
   simp only [List.nil_append, List.map_id']
   -- LHS: ((evalFrom db a).flatMap F_orig).filter P
   -- RHS: (evalFrom db a).flatMap F_filtered

@@ -148,6 +148,12 @@ partial def Expr.toSql : Expr → String
       else s!"ORDER BY {", ".intercalate (spec.orderBy.map OrderByItem.toSql)}"
     s!"{fnName}({argStr}) OVER ({partStr}{orderStr})"
 
+/-- Subquery body (#218): a SELECT or a set operation over subqueries.
+    Mirrors Query.toSql's compound printing. -/
+partial def SubQuery.toSql : SubQuery → String
+  | .simple sel => sel.toSql
+  | .compound l op r => s!"{l.toSql} {op.toSql} {r.toSql}"
+
 -- ============================================================================
 -- SELECT Components Pretty Printing
 -- ============================================================================

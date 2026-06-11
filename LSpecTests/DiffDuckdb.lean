@@ -197,6 +197,13 @@ def runAllTests : IO TestSeq := do
     -- divergences for the ON-less spelling)
     diffTest "CROSS JOIN product"
       "SELECT users.name, items.name FROM users CROSS JOIN items WHERE items.price > 2",
+    -- Set-operation subquery (#218): UNION inside a NOT IN subquery.
+    -- Inner columns are qualified and the outer table differs from the inner
+    -- ones: our correlated-row resolution is outer-first for unqualified and
+    -- same-qualifier names, which would diverge from DuckDB's inner-first
+    -- scoping (pre-existing divergence, not a set-op one).
+    diffTest "NOT IN with UNION subquery"
+      "SELECT name FROM items WHERE name NOT IN (SELECT users.department FROM users UNION SELECT users.name FROM users)",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

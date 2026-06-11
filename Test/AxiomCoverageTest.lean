@@ -935,7 +935,7 @@ def filterTests : List TestResult :=
     let innerSel := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     let outerWithQ := SelectStmt.mk false [.star none]
-      (some (.subquery innerSel "inner")) (some pTrue) [] none [] none none
+      (some (.subquery (.simple innerSel) "inner")) (some pTrue) [] none [] none none
     let combined := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some (.binOp .and pAge30 pTrue)) [] none [] none none
     testLengthEq "filter_and"
@@ -946,11 +946,11 @@ def filterTests : List TestResult :=
     let innerP := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     let outerQ := SelectStmt.mk false [.star none]
-      (some (.subquery innerP "inner")) (some pTrue) [] none [] none none
+      (some (.subquery (.simple innerP) "inner")) (some pTrue) [] none [] none none
     let innerQ := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pTrue) [] none [] none none
     let outerP := SelectStmt.mk false [.star none]
-      (some (.subquery innerQ "inner")) (some pAge30) [] none [] none none
+      (some (.subquery (.simple innerQ) "inner")) (some pAge30) [] none [] none none
     testLengthEq "filter_commute"
       (evalSelect testDb outerQ).length
       (evalSelect testDb outerP).length,
@@ -960,7 +960,7 @@ def filterTests : List TestResult :=
     let innerIdent := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     let outerIdent := SelectStmt.mk false [.star none]
-      (some (.subquery innerIdent "inner")) (some pAge30) [] none [] none none
+      (some (.subquery (.simple innerIdent) "inner")) (some pAge30) [] none [] none none
     let singleFilter := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     testLengthEq "filter_idempotent"
@@ -986,52 +986,52 @@ def subqueryTests : List TestResult :=
   let testRow : Row := [("x", .int 1)]
   [
     -- exists_empty_false: EXISTS (empty) = FALSE
-    let r := evalExprWithDb testDb testRow (.exists false emptySubSel)
+    let r := evalExprWithDb testDb testRow (.exists false (.simple emptySubSel))
     if r == some (.bool false) then .pass "exists_empty_false"
     else .fail "exists_empty_false" s!"Expected FALSE, got {showOptVal r}",
 
     -- not_exists_empty_true: NOT EXISTS (empty) = TRUE
-    let r := evalExprWithDb testDb testRow (.exists true emptySubSel)
+    let r := evalExprWithDb testDb testRow (.exists true (.simple emptySubSel))
     if r == some (.bool true) then .pass "not_exists_empty_true"
     else .fail "not_exists_empty_true" s!"Expected TRUE, got {showOptVal r}",
 
     -- exists_nonempty_true: EXISTS (nonempty) = TRUE
-    let r := evalExprWithDb testDb testRow (.exists false nonemptySubSel)
+    let r := evalExprWithDb testDb testRow (.exists false (.simple nonemptySubSel))
     if r == some (.bool true) then .pass "exists_nonempty_true"
     else .fail "exists_nonempty_true" s!"Expected TRUE, got {showOptVal r}",
 
     -- not_exists_nonempty_false: NOT EXISTS (nonempty) = FALSE
-    let r := evalExprWithDb testDb testRow (.exists true nonemptySubSel)
+    let r := evalExprWithDb testDb testRow (.exists true (.simple nonemptySubSel))
     if r == some (.bool false) then .pass "not_exists_nonempty_false"
     else .fail "not_exists_nonempty_false" s!"Expected FALSE, got {showOptVal r}",
 
     -- not_not_exists: NOT EXISTS sel ≃ₑ NOT (EXISTS sel)
     testExprEquivDb "not_not_exists"
-      (.exists true nonemptySubSel)
-      (.unaryOp .not (.exists false nonemptySubSel))
+      (.exists true (.simple nonemptySubSel))
+      (.unaryOp .not (.exists false (.simple nonemptySubSel)))
       testDb testRow,
 
     -- in_empty_subquery_false: test semantics
     -- When subquery is empty, IN should evaluate to FALSE
-    let inEmptyExpr := Expr.inSubquery (.lit (.int 999)) false emptySubSel
+    let inEmptyExpr := Expr.inSubquery (.lit (.int 999)) false (.simple emptySubSel)
     let r := evalExprWithDb testDb testRow inEmptyExpr
     if r == some (.bool false) then .pass "in_empty_subquery_false"
     else .fail "in_empty_subquery_false" s!"Expected FALSE, got {showOptVal r}",
 
     -- not_in_empty_subquery_true: NOT IN empty subquery = TRUE
-    let notInEmptyExpr := Expr.inSubquery (.lit (.int 999)) true emptySubSel
+    let notInEmptyExpr := Expr.inSubquery (.lit (.int 999)) true (.simple emptySubSel)
     let r := evalExprWithDb testDb testRow notInEmptyExpr
     if r == some (.bool true) then .pass "not_in_empty_subquery_true"
     else .fail "not_in_empty_subquery_true" s!"Expected TRUE, got {showOptVal r}",
 
     -- scalar_subquery_empty_null: scalar subquery on empty = NULL
-    let scalarEmpty := Expr.subquery emptySubSel
+    let scalarEmpty := Expr.subquery (.simple emptySubSel)
     let r := evalExprWithDb testDb testRow scalarEmpty
     if r == some (.null none) then .pass "scalar_subquery_empty_null"
     else .fail "scalar_subquery_empty_null" s!"Expected NULL, got {showOptVal r}",
 
     -- exists_as_count_gt_zero: EXISTS = (count > 0)
-    let existsResult := evalExprWithDb testDb testRow (.exists false nonemptySubSel)
+    let existsResult := evalExprWithDb testDb testRow (.exists false (.simple nonemptySubSel))
     let subRows := evalSelectWithContext testDb testRow nonemptySubSel
     let expected := some (.bool (subRows.length > 0))
     if existsResult == expected then .pass "exists_as_count_gt_zero"
@@ -1039,7 +1039,7 @@ def subqueryTests : List TestResult :=
       s!"EXISTS={showOptVal existsResult}, expected={showOptVal expected}",
 
     -- not_exists_as_count_eq_zero: NOT EXISTS = (count == 0)
-    let notExistsResult := evalExprWithDb testDb testRow (.exists true emptySubSel)
+    let notExistsResult := evalExprWithDb testDb testRow (.exists true (.simple emptySubSel))
     let subRows := evalSelectWithContext testDb testRow emptySubSel
     let expected := some (.bool (subRows.length == 0))
     if notExistsResult == expected then .pass "not_exists_as_count_eq_zero"
@@ -1056,7 +1056,7 @@ def subqueryTests : List TestResult :=
     let selOneCol := SelectStmt.mk false
       [.exprItem (col "id") none]
       (some (.table ⟨"users", none⟩)) none [] none [] (some 1) none
-    let scalarResult := evalExprWithDb testDb testRow (.subquery selOneCol)
+    let scalarResult := evalExprWithDb testDb testRow (.subquery (.simple selOneCol))
     let subRows := evalSelectWithContext testDb testRow selOneCol
     let expectedVal := match subRows.head? with
       | some subRow => subRow.head?.map (·.2)
@@ -1087,7 +1087,7 @@ def subqueryTests : List TestResult :=
       [.exprItem (.lit (.int 42)) (some "val")]
       none none [] none [] (some 1) none
     let inResult := evalExprWithDb testDb testRow
-      (.inSubquery (.lit (.int 42)) false singleValSel)
+      (.inSubquery (.lit (.int 42)) false (.simple singleValSel))
     if inResult == some (.bool true) then .pass "in_singleton_subquery"
     else .fail "in_singleton_subquery" s!"Expected TRUE, got {showOptVal inResult}",
 
@@ -1103,8 +1103,8 @@ def subqueryTests : List TestResult :=
     let supersetSel := SelectStmt.mk false [.star none]
       (some (.table ⟨"orders", none⟩))
       none [] none [] none none
-    let existsSubset := evalExprWithDb testDb testRow (.exists false subsetSel)
-    let existsSuperset := evalExprWithDb testDb testRow (.exists false supersetSel)
+    let existsSubset := evalExprWithDb testDb testRow (.exists false (.simple subsetSel))
+    let existsSuperset := evalExprWithDb testDb testRow (.exists false (.simple supersetSel))
     -- Monotonicity: EXISTS subset = TRUE implies EXISTS superset = TRUE
     if existsSubset == some (.bool true) && existsSuperset == some (.bool true)
     then .pass "exists_monotonic"
@@ -1172,7 +1172,7 @@ def predicatePushdownTests : List TestResult :=
     let innerSel := SelectStmt.mk false [.star none]
       (some (.table tRef)) (some filterExpr) [] none [] none none
     let sel2 := SelectStmt.mk false [.star none]
-      (some (.subquery innerSel (tRef.alias.getD tRef.name))) none [] none [] none none
+      (some (.subquery (.simple innerSel) (tRef.alias.getD tRef.name))) none [] none [] none none
     testLengthEq "filter_pushdown_table"
       (evalSelect testDb sel1).length
       (evalSelect testDb sel2).length,
@@ -1361,13 +1361,13 @@ def subqueryUnnestingTests : List TestResult :=
     -- in_subquery_as_exists: x IN (SELECT t.col FROM t) = EXISTS (SELECT 1 FROM t WHERE t.col = x)
     -- Uses qualified column references and no table alias, matching the theorem signature
     let inSub := Expr.inSubquery (.lit (.int 1)) false
-      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
-        (some (.table ⟨"orders", none⟩)) none [] none [] none none)
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
+        (some (.table ⟨"orders", none⟩)) none [] none [] none none))
     let existsSub := Expr.exists false
-      (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
+      (.simple (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
         (some (.table ⟨"orders", none⟩))
         (some (.binOp .eq (.col ⟨some "orders", "user_id"⟩) (.lit (.int 1))))
-        [] none [] none none)
+        [] none [] none none))
     let inResult := evalExprWithDb testDb unnestRow inSub
     let existsResult := evalExprWithDb testDb unnestRow existsSub
     if inResult == existsResult then .pass "in_subquery_as_exists"
@@ -1376,13 +1376,13 @@ def subqueryUnnestingTests : List TestResult :=
 
     -- not_in_subquery_as_not_exists
     let notInSub := Expr.inSubquery (.lit (.int 999)) true
-      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
-        (some (.table ⟨"orders", none⟩)) none [] none [] none none)
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
+        (some (.table ⟨"orders", none⟩)) none [] none [] none none))
     let notExistsSub := Expr.exists true
-      (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
+      (.simple (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
         (some (.table ⟨"orders", none⟩))
         (some (.binOp .eq (.col ⟨some "orders", "user_id"⟩) (.lit (.int 999))))
-        [] none [] none none)
+        [] none [] none none))
     let notInResult := evalExprWithDb testDb unnestRow notInSub
     let notExistsResult := evalExprWithDb testDb unnestRow notExistsSub
     if notInResult == notExistsResult then .pass "not_in_subquery_as_not_exists"
@@ -1584,9 +1584,9 @@ def equivAdditionalTests : List TestResult :=
     let inSubqueryForm := SelectStmt.mk false [.star (some "users")]
       (some (.table ⟨"users", some "users"⟩))
       (some (.inSubquery (.col ⟨some "users", "id"⟩) false
-        (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+        (.simple (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
           (some (.table ⟨"orders", some "orders"⟩))
-          none [] none [] none none)))
+          none [] none [] none none))))
       [] none [] none none
     let joinForm := SelectStmt.mk true [.star (some "users")]
       (some (.join
@@ -1604,9 +1604,9 @@ def equivAdditionalTests : List TestResult :=
     let notInForm := SelectStmt.mk false [.star (some "users")]
       (some (.table ⟨"users", some "users"⟩))
       (some (.inSubquery (.col ⟨some "users", "id"⟩) true
-        (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
+        (.simple (SelectStmt.mk false [.exprItem (.col ⟨none, "user_id"⟩) none]
           (some (.table ⟨"orders", some "orders"⟩))
-          none [] none [] none none)))
+          none [] none [] none none))))
       [] none [] none none
     let antijoinForm := SelectStmt.mk false [.star (some "users")]
       (some (.join
@@ -1625,9 +1625,9 @@ def equivAdditionalTests : List TestResult :=
     -- Uses qualified column ref and evalFrom for qualified rows (matching theorem signature)
     let testRow : Row := [("x", .int 1)]
     let inExpr := Expr.inSubquery (.lit (.int 1)) false
-      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
         (some (.table ⟨"orders", some "orders"⟩))
-        none [] none [] none none)
+        none [] none [] none none))
     let inResult := evalExprWithDb testDb testRow inExpr
     -- Check that a matching row exists using evalFrom (qualified rows)
     let qualifiedRows := evalFrom testDb (.table ⟨"orders", some "orders"⟩)
@@ -1647,9 +1647,9 @@ def equivAdditionalTests : List TestResult :=
       evalExprWithDb testDb (testRow ++ sRow)
         (.binOp .eq (.lit (.int 2)) (.col ⟨some "orders", "user_id"⟩)) == some (.bool true)
     let inExpr := Expr.inSubquery (.lit (.int 2)) false
-      (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some "orders", "user_id"⟩) none]
         (some (.table ⟨"orders", some "orders"⟩))
-        none [] none [] none none)
+        none [] none [] none none))
     let inResult := evalExprWithDb testDb testRow inExpr
     match matchRow with
     | some _ =>

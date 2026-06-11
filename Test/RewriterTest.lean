@@ -98,12 +98,12 @@ private def unaryOpTests : List TestResult := [
     (.binOp .or (.binOp .lt (col "x") (intLit 1)) (.binOp .gt (col "x") (intLit 10))),
 
   -- NOT(EXISTS) → flipped flag
-  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  let sel : SubQuery := .simple ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
   testRewrite "not_exists_flip (NOT(EXISTS sel) → NOT EXISTS sel)"
     (.unaryOp .not (.«exists» false sel))
     (.«exists» true sel),
 
-  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  let sel : SubQuery := .simple ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
   testRewrite "not_not_exists_flip (NOT(NOT EXISTS sel) → EXISTS sel)"
     (.unaryOp .not (.«exists» true sel))
     (.«exists» false sel),
@@ -220,7 +220,7 @@ private def conditionalBoolTests : List TestResult := [
     (.unaryOp .not (.unaryOp .not (.unaryOp .isNull (col "x"))))
     (.unaryOp .isNull (col "x")),
 
-  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  let sel : SubQuery := .simple ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
   testRewrite "not_not_exists (NOT NOT EXISTS sel → EXISTS sel)"
     (.unaryOp .not (.unaryOp .not (.«exists» false sel)))
     (.«exists» false sel),
@@ -370,7 +370,7 @@ private def leafTests : List TestResult := [
     (.agg .sum (some (col "x")) false)
     (.agg .sum (some (col "x")) false),
 
-  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  let sel : SubQuery := .simple ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
   testRewrite "leaf_subquery (subquery unchanged)"
     (.subquery sel) (.subquery sel),
 
@@ -419,7 +419,7 @@ private def subexprRecursionTests : List TestResult := [
     (.windowFn .rowNumber none spec),
 
   -- InSubquery: recurse into expression
-  let sel : SelectStmt := ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
+  let sel : SubQuery := .simple ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
   testRewrite "inSubquery_recursion ((x OR TRUE) IN subquery → TRUE IN subquery)"
     (.inSubquery (.binOp .or (col "x") (boolLit true)) false sel)
     (.inSubquery (boolLit true) false sel),
