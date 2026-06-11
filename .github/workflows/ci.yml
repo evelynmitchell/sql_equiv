@@ -66,12 +66,23 @@ jobs:
         run: lake build sql_equiv_test
 
       - name: Run tests
-        run: lake exe sql_equiv_test
+        run: |
+          mkdir -p test-results
+          TEST_RESULTS_JSON=test-results/unit.jsonl lake exe sql_equiv_test
 
       - name: Build LSpec property tests
         run: lake build sql_equiv_lspec
 
       - name: Run LSpec property tests
-        run: lake exe sql_equiv_lspec
+        run: |
+          lake exe sql_equiv_lspec | tee test-results/lspec.log
+          python3 tools/lspec_results_to_json.py test-results/lspec.log test-results/lspec.jsonl
         env:
           LSPEC_SAMPLES: "100000"
+
+      - name: Upload per-test results (#209)
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: test-results-${{ github.run_id }}
+          path: test-results/*.jsonl
