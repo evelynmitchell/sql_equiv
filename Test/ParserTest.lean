@@ -130,7 +130,14 @@ def subqueryTests : List TestResult := [
   testRoundTrip "not_exists" "SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM banned WHERE banned.user_id = users.id)",
   testRoundTrip "scalar_subquery" "SELECT name, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) FROM users",
   testRoundTrip "from_subquery" "SELECT * FROM (SELECT name, age FROM users WHERE age > 21) AS adults",
-  testRoundTrip "nested_subquery" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE product_id IN (SELECT id FROM products WHERE price > 100))"
+  testRoundTrip "nested_subquery" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders WHERE product_id IN (SELECT id FROM products WHERE price > 100))",
+  -- Set-operation subqueries (#218)
+  testRoundTrip "not_in_union_subquery" "SELECT AirportName FROM Airports WHERE AirportCode NOT IN (SELECT SourceAirport FROM Flights UNION SELECT DestAirport FROM Flights)",
+  testRoundTrip "in_union_all_subquery" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders UNION ALL SELECT user_id FROM refunds)",
+  testRoundTrip "from_intersect_subquery" "SELECT * FROM (SELECT department FROM users INTERSECT SELECT department FROM admins) AS d",
+  testRoundTrip "exists_except_subquery" "SELECT * FROM users WHERE EXISTS (SELECT id FROM orders EXCEPT SELECT id FROM refunds)",
+  testRoundTrip "scalar_union_subquery" "SELECT (SELECT MAX(id) FROM users UNION SELECT MAX(id) FROM admins) FROM users",
+  testRoundTrip "in_union_chain_subquery" "SELECT * FROM users WHERE id IN (SELECT a FROM t1 UNION SELECT b FROM t2 UNION SELECT c FROM t3)"
 ]
 
 -- ============================================================================
@@ -197,7 +204,10 @@ def parseFailTests : List TestResult := [
   testParseFail "incomplete_select" "SELECT FROM",
   testParseFail "missing_table" "SELECT * FROM",
   testParseFail "unclosed_paren" "SELECT * FROM (SELECT 1",
-  testParseFail "invalid_keyword" "SELECTT * FROM users"
+  testParseFail "invalid_keyword" "SELECTT * FROM users",
+  -- WITH (CTE) is rejected inside subqueries (#218)
+  testParseFail "with_inside_from_subquery" "SELECT * FROM (WITH t AS (SELECT 1) SELECT * FROM t) AS x",
+  testParseFail "with_inside_exists_subquery" "SELECT * FROM users WHERE EXISTS (WITH t AS (SELECT 1) SELECT * FROM t)"
 ]
 
 -- ============================================================================

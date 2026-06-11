@@ -67,7 +67,7 @@ private theorem sizeOf_between_lo (e lo hi : Expr) :
     sizeOf lo < sizeOf (Expr.between e lo hi) := by simp_wf; omega
 private theorem sizeOf_between_hi (e lo hi : Expr) :
     sizeOf hi < sizeOf (Expr.between e lo hi) := by simp_wf; omega
-private theorem sizeOf_inSubquery_e (e : Expr) (neg : Bool) (sel : SelectStmt) :
+private theorem sizeOf_inSubquery_e (e : Expr) (neg : Bool) (sel : SubQuery) :
     sizeOf e < sizeOf (Expr.inSubquery e neg sel) := by simp_wf; omega
 private theorem sizeOf_inList_e (e : Expr) (neg : Bool) (vals : List Expr) :
     sizeOf e < sizeOf (Expr.inList e neg vals) := by simp_wf; omega
@@ -355,10 +355,10 @@ partial def decideExprEq (e1 e2 : Expr) : Bool :=
     v1.length == v2.length &&
     (v1.zip v2).all (fun (x, y) => decideExprEq x y)
   | .inSubquery e1 n1 s1, .inSubquery e2 n2 s2 =>
-    decideExprEq e1 e2 && n1 == n2 && decideSelectStmtEq s1 s2
+    decideExprEq e1 e2 && n1 == n2 && decideSubQueryEq s1 s2
   | .exists n1 s1, .exists n2 s2 =>
-    n1 == n2 && decideSelectStmtEq s1 s2
-  | .subquery s1, .subquery s2 => decideSelectStmtEq s1 s2
+    n1 == n2 && decideSubQueryEq s1 s2
+  | .subquery s1, .subquery s2 => decideSubQueryEq s1 s2
   | .between e1 l1 h1, .between e2 l2 h2 =>
     decideExprEq e1 e2 && decideExprEq l1 l2 && decideExprEq h1 h2
   | .windowFn f1 e1 s1, .windowFn f2 e2 s2 =>
@@ -382,12 +382,20 @@ partial def decideSelectItemEq (s1 s2 : SelectItem) : Bool :=
   | .exprItem e1 a1, .exprItem e2 a2 => decideExprEq e1 e2 && a1 == a2
   | _, _ => false
 
+/-- Decidable equality for SubQuery (#218) -/
+partial def decideSubQueryEq (s1 s2 : SubQuery) : Bool :=
+  match s1, s2 with
+  | .simple a, .simple b => decideSelectStmtEq a b
+  | .compound l1 op1 r1, .compound l2 op2 r2 =>
+    decideSubQueryEq l1 l2 && op1 == op2 && decideSubQueryEq r1 r2
+  | _, _ => false
+
 /-- Decidable equality for FromClause -/
 partial def decideFromClauseEq (f1 f2 : FromClause) : Bool :=
   match f1, f2 with
   | .table t1, .table t2 => t1 == t2
   | .subquery s1 a1, .subquery s2 a2 =>
-    decideSelectStmtEq s1 s2 && a1 == a2
+    decideSubQueryEq s1 s2 && a1 == a2
   | .join l1 jt1 r1 on1, .join l2 jt2 r2 on2 =>
     decideFromClauseEq l1 l2 && jt1 == jt2 && decideFromClauseEq r1 r2 &&
     match on1, on2 with
@@ -541,10 +549,20 @@ decreasing_by
     | omega
     | (have := List.sizeOf_lt_of_mem ‹_›; omega)
 
+/-- Groundness for subquery bodies (#218): a compound is ground iff both sides are. -/
+def SubQuery.isGround (sq : SubQuery) : Bool :=
+  match sq with
+  | .simple s => SelectStmt.isGround s
+  | .compound l _ r => SubQuery.isGround l && SubQuery.isGround r
+termination_by sizeOf sq
+decreasing_by
+  all_goals simp_wf
+  all_goals omega
+
 def FromClause.isGround (fc : FromClause) : Bool :=
   match fc with
   | .table _ => true
-  | .subquery sel _ => SelectStmt.isGround sel
+  | .subquery sel _ => SubQuery.isGround sel
   | .join l _ r on_ =>
     let leftOk := FromClause.isGround l
     let rightOk := FromClause.isGround r
@@ -592,9 +610,9 @@ private theorem foldl_double_and_congr_bridge {f1 g1 f2 g2 : α → Bool} (xs : 
     rw [hf, hg]
     exact ih (init && f2 a && g2 a) (fun x hx => h x (List.mem_cons.mpr (Or.inr hx)))
 
-/-- Bridge: Expr.isGround equals isGroundCore instantiated with SelectStmt.isGround -/
+/-- Bridge: Expr.isGround equals isGroundCore instantiated with SubQuery.isGround -/
 theorem isGround_eq_isGroundCore : (e : Expr) →
-    e.isGround = isGroundCore SelectStmt.isGround e
+    e.isGround = isGroundCore SubQuery.isGround e
   | .lit _ => by simp [Expr.isGround, isGroundCore]
   | .col _ => by simp [Expr.isGround, isGroundCore]
   | .binOp _ l r => by
@@ -938,47 +956,71 @@ private theorem evalSelectCore_ground_outerRow_eq
     exact evalExprWithWindowParam_ground_eq ee db e row1 row2 p1 p2 sp1 sp2 idx hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
 
-/-- Bridge: if a SelectStmt is ground, evalSelectWithContext is row-independent -/
-theorem selectStmtGround_eval_independent (sel : SelectStmt)
-    (hg : sel.isGround = true) :
-    ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel := by
-  -- Strong induction on sizeOf sel
-  suffices key : ∀ (bound : Nat) (sel : SelectStmt), sizeOf sel < bound →
-      sel.isGround = true →
-      ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel by
-    intro db r1 r2; exact key (sizeOf sel + 1) sel (by omega) hg db r1 r2
+/-- Bridge: if a SubQuery is ground, evalSubQueryWithContext is row-independent (#218).
+    Strong induction on sizeOf: a compound is handled by congruence of applySetOp
+    over the two row-independent sub-results; a simple SELECT reuses the
+    evalSelectCore outer-row congruence machinery. -/
+theorem subQueryGround_eval_independent (sq : SubQuery)
+    (hg : sq.isGround = true) :
+    ∀ db r1 r2, evalSubQueryWithContext db r1 sq = evalSubQueryWithContext db r2 sq := by
+  -- Strong induction on sizeOf sq
+  suffices key : ∀ (bound : Nat) (sq : SubQuery), sizeOf sq < bound →
+      sq.isGround = true →
+      ∀ db r1 r2, evalSubQueryWithContext db r1 sq = evalSubQueryWithContext db r2 sq by
+    intro db r1 r2; exact key (sizeOf sq + 1) sq (by omega) hg db r1 r2
   intro bound
   induction bound with
   | zero => intro _ hlt; exact absurd hlt (Nat.not_lt_zero _)
   | succ bound ih =>
-    intro sel hlt hg db r1 r2
-    -- Bridge to evalSelectCore
-    rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
-    -- Establish row-independence of ee for ground expressions
-    let ee := fun db' (r : Row) e => @evalExprWithDb db' r e
-    have h_ee : ∀ e, e.isGround = true → sizeOf e < sizeOf sel →
-        ∀ row1 row2, ee db row1 e = ee db row2 e := by
-      intro e hge h_sz_e row1 row2
-      simp only [ee, evalExprWithDb_eq_evalExprCore]
-      let truncSqe : Database → Row → SelectStmt → Table :=
-        fun db' r' sel' => if sizeOf sel' < bound then evalSelectWithContext db' r' sel' else []
-      have h_bridge : ∀ (r : Row),
-          evalExprCore db r (fun db' r' sel' => evalSelectWithContext db' r' sel') e =
-          evalExprCore db r truncSqe e := by
-        intro r
-        exact evalExprCore_sqe_congr db r _ truncSqe e (fun sel' h_sz db' r' => by
-          simp only [truncSqe]; rw [if_pos (by omega)])
-      rw [h_bridge row1, h_bridge row2]
-      have h_sq : ∀ sel', SelectStmt.isGround sel' = true →
-          ∀ db' r1' r2', truncSqe db' r1' sel' = truncSqe db' r2' sel' := by
-        intro sel' hg' db' r1' r2'
-        simp only [truncSqe]
-        split
-        · next h_lt => exact ih sel' h_lt hg' db' r1' r2'
-        · rfl
-      exact isGroundCore_eval_independent SelectStmt.isGround truncSqe h_sq db e
-        (isGround_eq_isGroundCore e ▸ hge) row1 row2
-    exact evalSelectCore_ground_outerRow_eq db r1 r2 ee sel hg h_ee
+    intro sq hlt hg db r1 r2
+    cases sq with
+    | compound l op r =>
+      have h_sz_l : sizeOf l < sizeOf (SubQuery.compound l op r) := by simp_wf; omega
+      have h_sz_r : sizeOf r < sizeOf (SubQuery.compound l op r) := by simp_wf; omega
+      have hg' : l.isGround = true ∧ r.isGround = true := by
+        simpa [SubQuery.isGround, Bool.and_eq_true] using hg
+      rw [evalSubQuery_compound, evalSubQuery_compound,
+          ih l (by omega) hg'.1 db r1 r2, ih r (by omega) hg'.2 db r1 r2]
+    | simple sel =>
+      have hgs : sel.isGround = true := by simpa [SubQuery.isGround] using hg
+      have h_sz_sel : sizeOf sel < sizeOf (SubQuery.simple sel) := by simp_wf
+      rw [evalSubQuery_simple, evalSubQuery_simple]
+      -- Bridge to evalSelectCore
+      rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
+      -- Establish row-independence of ee for ground expressions
+      let ee := fun db' (r : Row) e => @evalExprWithDb db' r e
+      have h_ee : ∀ e, e.isGround = true → sizeOf e < sizeOf sel →
+          ∀ row1 row2, ee db row1 e = ee db row2 e := by
+        intro e hge h_sz_e row1 row2
+        simp only [ee, evalExprWithDb_eq_evalExprCore]
+        let truncSqe : Database → Row → SubQuery → Table :=
+          fun db' r' sq' => if sizeOf sq' < bound then evalSubQueryWithContext db' r' sq' else []
+        have h_bridge : ∀ (r : Row),
+            evalExprCore db r (fun db' r' sq' => evalSubQueryWithContext db' r' sq') e =
+            evalExprCore db r truncSqe e := by
+          intro r
+          exact evalExprCore_sqe_congr db r _ truncSqe e (fun sq' h_sz db' r' => by
+            simp only [truncSqe]; rw [if_pos (by omega)])
+        rw [h_bridge row1, h_bridge row2]
+        have h_sq : ∀ sq', SubQuery.isGround sq' = true →
+            ∀ db' r1' r2', truncSqe db' r1' sq' = truncSqe db' r2' sq' := by
+          intro sq' hg' db' r1' r2'
+          simp only [truncSqe]
+          split
+          · next h_lt => exact ih sq' h_lt hg' db' r1' r2'
+          · rfl
+        exact isGroundCore_eval_independent SubQuery.isGround truncSqe h_sq db e
+          (isGround_eq_isGroundCore e ▸ hge) row1 row2
+      exact evalSelectCore_ground_outerRow_eq db r1 r2 ee sel hgs h_ee
+
+/-- Bridge: if a SelectStmt is ground, evalSelectWithContext is row-independent -/
+theorem selectStmtGround_eval_independent (sel : SelectStmt)
+    (hg : sel.isGround = true) :
+    ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel := by
+  intro db r1 r2
+  have h := subQueryGround_eval_independent (.simple sel)
+    (by simpa [SubQuery.isGround] using hg) db r1 r2
+  rwa [evalSubQuery_simple, evalSubQuery_simple] at h
 
 -- ============================================================================
 -- Decidable Equivalence via Normalization
@@ -1010,9 +1052,9 @@ theorem ground_expr_eval_independent (e : Expr) (hg : e.isGround = true) :
   simp only [evalExprWithDb_eq_evalExprCore]
   rw [isGround_eq_isGroundCore] at hg
   exact isGroundCore_eval_independent
-    SelectStmt.isGround
-    (fun db' row' sel => evalSelectWithContext db' row' sel)
-    (fun sel hgs db' r1' r2' => selectStmtGround_eval_independent sel hgs db' r1' r2')
+    SubQuery.isGround
+    (fun db' row' sq => evalSubQueryWithContext db' row' sq)
+    (fun sq hgs db' r1' r2' => subQueryGround_eval_independent sq hgs db' r1' r2')
     _ e hg r1 r2
 
 /-- For ground expressions, equivalence is decidable by evaluation -/

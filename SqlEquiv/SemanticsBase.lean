@@ -279,6 +279,17 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   -- Everything else is a genuine error (type mismatch, missing value)
   | _, _, _ => none
 
+/-- Apply a set operation to two result tables. Shared by top-level Query
+    evaluation and SubQuery evaluation (#218); SQL set-op semantics:
+    UNION dedups, UNION ALL concatenates, INTERSECT/EXCEPT filter by
+    membership. -/
+def applySetOp (op : SetOp) (l r : Table) : Table :=
+  match op with
+  | .union => (l ++ r).eraseDups
+  | .unionAll => l ++ r
+  | .intersect => l.filter fun row => r.contains row
+  | .exceptOp => l.filter fun row => !r.contains row
+
 /-- Check if Option Value is NULL (none or some null) -/
 def isNullValue : Option Value → Bool
   | none => true

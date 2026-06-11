@@ -677,6 +677,28 @@ def reservedSelectKeywords : List String := [
 -- Expression parsing uses mutual recursion with SELECT parser (for subqueries)
 mutual
 
+/-- Parse the rest of a subquery body (#218): fold UNION [ALL] / INTERSECT /
+    EXCEPT chains left-associatively into SubQuery.compound (mirrors
+    parseQueryRest for top-level queries). -/
+partial def parseSubQueryRest (left : SubQuery) : Parser SubQuery := do
+  match ← parseSetOp with
+  | some op =>
+    let right ← parseSelectStmt
+    parseSubQueryRest (.compound left op (.simple right))
+  | none =>
+    return left
+
+/-- Parse a subquery body (#218): a SELECT optionally followed by a set-op
+    chain. A bare SELECT becomes `.simple`. WITH (CTEs) is rejected inside
+    subqueries. -/
+partial def parseSubQueryBody : Parser SubQuery := do
+  let t ← Parser.peek
+  if isKeyword "WITH" t then
+    Parser.fail "WITH (CTE) is not supported inside subqueries"
+  else
+    let first ← parseSelectStmt
+    parseSubQueryRest (.simple first)
+
 /-- Parse primary expression (literals, columns, parenthesized, aggregates, EXISTS) -/
 partial def parsePrimary : Parser Expr := do
   let t ← Parser.peek
@@ -707,9 +729,9 @@ partial def parsePrimary : Parser Expr := do
     if isKeyword "EXISTS" t2 then
       let _ ← Parser.advance
       Parser.expect .lparen "Expected ("
-      let sel ← parseSelectStmt
+      let sq ← parseSubQueryBody
       Parser.expect .rparen "Expected )"
-      return .exists true sel  -- negated EXISTS
+      return .exists true sq  -- negated EXISTS
     else
       let e ← parsePrimary
       return .unaryOp .not e
@@ -726,9 +748,9 @@ partial def parsePrimary : Parser Expr := do
   | .keyword "EXISTS" =>
     let _ ← Parser.advance
     Parser.expect .lparen "Expected ("
-    let sel ← parseSelectStmt
+    let sq ← parseSubQueryBody
     Parser.expect .rparen "Expected )"
-    return .exists false sel
+    return .exists false sq
   | .lparen =>
     -- Track paren position for better error messages
     let openPt ← Parser.peekPositioned
@@ -737,10 +759,10 @@ partial def parsePrimary : Parser Expr := do
     -- Could be subquery or parenthesized expression
     let t' ← Parser.peek
     if isKeyword "SELECT" t' then
-      -- Scalar subquery
-      let sel ← parseSelectStmt
+      -- Scalar subquery (possibly a set-op chain, #218)
+      let sq ← parseSubQueryBody
       Parser.expectCloseParen openPt.pos
-      return .subquery sel
+      return .subquery sq
     else
       let e ← parseExpr
       Parser.expectCloseParen openPt.pos
@@ -840,9 +862,9 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
       -- Check if it's a subquery or value list
       let t3 ← Parser.peek
       if isKeyword "SELECT" t3 then
-        let sel ← parseSelectStmt
+        let sq ← parseSubQueryBody
         Parser.expect .rparen "Expected )"
-        parsePostfix (.inSubquery e true sel)  -- negated
+        parsePostfix (.inSubquery e true sq)  -- negated
       else
         let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
         Parser.expect .rparen "Expected )"
@@ -855,9 +877,9 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
     -- Check if it's a subquery or value list
     let t2 ← Parser.peek
     if isKeyword "SELECT" t2 then
-      let sel ← parseSelectStmt
+      let sq ← parseSubQueryBody
       Parser.expect .rparen "Expected )"
-      parsePostfix (.inSubquery e false sel)
+      parsePostfix (.inSubquery e false sq)
     else
       let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
       Parser.expect .rparen "Expected )"
@@ -1166,14 +1188,25 @@ partial def parseJoinType : Parser JoinType := do
 partial def parseFromSource : Parser FromClause := do
   let t ← Parser.peek
   if t == .lparen then
-    -- Subquery in FROM clause
+    -- Subquery in FROM clause (possibly a set-op chain, #218)
     let _ ← Parser.advance
-    let sel ← parseSelectStmt
+    let sq ← parseSubQueryBody
     Parser.expect .rparen "Expected )"
-    -- Must have alias
-    let _ ← Parser.tryP (Parser.expect (.keyword "AS") "")
-    let alias ← parseIdent
-    return .subquery sel alias
+    -- Optional alias (#218): `AS ident`, a bare identifier, or nothing.
+    -- Spider writes anonymous FROM subqueries like
+    -- `SELECT COUNT(*) FROM (SELECT ... INTERSECT SELECT ...)`; the alias
+    -- is not used by evaluation, so anonymous subqueries get "sub".
+    let t' ← Parser.peek
+    if isKeyword "AS" t' then
+      let _ ← Parser.advance
+      let alias ← parseIdent
+      return .subquery sq alias
+    else
+      match t' with
+      | .ident _ =>
+        let alias ← parseIdent
+        return .subquery sq alias
+      | _ => return .subquery sq "sub"
   else
     -- Regular table reference
     let tref ← parseTableRef

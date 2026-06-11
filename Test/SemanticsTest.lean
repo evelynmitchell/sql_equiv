@@ -362,6 +362,40 @@ def setOpQueryTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Set-Operation Subquery Tests (#218): UNION/INTERSECT/EXCEPT inside
+-- IN / NOT IN / FROM subquery positions, parsed and evaluated end-to-end.
+-- ============================================================================
+
+def setOpSubqueryTests : List TestResult := [
+  -- IN with UNION subquery: user_ids with amount>250 {3} ∪ amount<120 {1} = {1,3} → Alice, Carol
+  testRowCount "in_union_subquery"
+    "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 250 UNION SELECT user_id FROM orders WHERE amount < 120)" 2,
+  -- NOT IN with UNION subquery (Airports/Flights shape): user_ids with
+  -- amount<250 {1,2} ∪ amount>250 {3} = {1,2,3} → Dave, Eve remain.
+  -- (Columns are chosen to avoid unqualified-name capture by the outer row:
+  -- `id` would resolve to the correlated users.id, not products.id.)
+  testRowCount "not_in_union_subquery"
+    "SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE amount < 250 UNION SELECT user_id FROM orders WHERE amount > 250)" 2,
+  -- FROM with INTERSECT subquery: departments of (age>25) ∩ (age<30) = {Marketing}
+  testRowCount "from_intersect_subquery"
+    "SELECT * FROM (SELECT department FROM users WHERE age > 25 INTERSECT SELECT department FROM users WHERE age < 30) AS d" 1,
+  -- IN with EXCEPT subquery: orders.user_id [1,1,2,3] minus user_ids with amount>150 {1,3} = {2} → Bob
+  testRowCount "in_except_subquery"
+    "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders EXCEPT SELECT user_id FROM orders WHERE amount > 150)" 1,
+  -- UNION ALL inside IN keeps duplicates but IN semantics unchanged: {1,3} ∪ₐ {1} → Alice, Carol
+  testRowCount "in_union_all_subquery"
+    "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 150 UNION ALL SELECT user_id FROM orders WHERE amount < 120)" 2,
+  -- Scalar subquery with UNION: head of (MAX=300 then MIN=100) is 300
+  testContainsValue "scalar_union_subquery"
+    "SELECT (SELECT MAX(amount) FROM orders UNION SELECT MIN(amount) FROM orders) FROM users WHERE id = 1" (.int 300),
+  -- EXISTS with EXCEPT subquery: all order products appear in products (shared
+  -- alias p so the row keys match; qualified columns avoid capture of `name`
+  -- by the correlated users row) → EXCEPT is empty → NOT EXISTS for every user
+  testRowCount "not_exists_except_subquery"
+    "SELECT name FROM users WHERE NOT EXISTS (SELECT orders.product AS p FROM orders EXCEPT SELECT products.name AS p FROM products)" 5
+]
+
+-- ============================================================================
 -- Arithmetic Expression Tests
 -- ============================================================================
 
@@ -686,6 +720,7 @@ def allSemanticsTests : List TestResult :=
   projectionTests ++ distinctTests ++ orderByTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
+  setOpSubqueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests
 

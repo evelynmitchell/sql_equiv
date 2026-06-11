@@ -271,9 +271,9 @@ inductive Expr where
   | countStar : Expr                                    -- COUNT(*)
   | «case»    : List (Expr × Expr) → Option Expr → Expr
   | inList    : Expr → Bool → List Expr → Expr         -- expr [NOT] IN (values)
-  | inSubquery : Expr → Bool → SelectStmt → Expr       -- expr [NOT] IN (subquery)
-  | exists    : Bool → SelectStmt → Expr               -- [NOT] EXISTS (subquery)
-  | subquery  : SelectStmt → Expr                      -- scalar subquery
+  | inSubquery : Expr → Bool → SubQuery → Expr         -- expr [NOT] IN (subquery)
+  | exists    : Bool → SubQuery → Expr                 -- [NOT] EXISTS (subquery)
+  | subquery  : SubQuery → Expr                        -- scalar subquery
   | between   : Expr → Expr → Expr → Expr
   | windowFn  : WindowFunc → Option Expr → WindowSpec → Expr  -- window function with OVER clause
 
@@ -289,8 +289,15 @@ inductive SelectItem where
 /-- FROM clause source: can be a table, join, or subquery -/
 inductive FromClause where
   | table     : TableRef → FromClause
-  | subquery  : SelectStmt → String → FromClause     -- (SELECT ...) AS alias
+  | subquery  : SubQuery → String → FromClause       -- (SELECT ...) AS alias
   | join      : FromClause → JoinType → FromClause → Option Expr → FromClause
+
+/-- Subquery body: a SELECT or a set operation over subqueries (#218).
+    CTEs are deliberately not permitted inside subqueries — `Query.withCTE`
+    remains top-level only (Option B of the design on issue #218). -/
+inductive SubQuery where
+  | simple   : SelectStmt → SubQuery
+  | compound : SubQuery → SetOp → SubQuery → SubQuery
 
 /-- Full SELECT statement -/
 inductive SelectStmt where
@@ -429,6 +436,10 @@ mutual
     | .between e lo hi => s!"Expr.between ({e.toReprStr}) ({lo.toReprStr}) ({hi.toReprStr})"
     | .windowFn fn arg spec => s!"Expr.windowFn {repr fn} {arg.map Expr.toReprStr} ({WindowSpec.toReprStr spec})"
 
+  partial def SubQuery.toReprStr : SubQuery → String
+    | .simple sel => s!"SubQuery.simple ({sel.toReprStr})"
+    | .compound l op r => s!"SubQuery.compound ({l.toReprStr}) {repr op} ({r.toReprStr})"
+
   partial def WindowSpec.toReprStr : WindowSpec → String
     | .mk partBy orderBy =>
       s!"WindowSpec.mk [{", ".intercalate (partBy.map Expr.toReprStr)}] [{", ".intercalate (orderBy.map OrderByItem.toReprStr)}]"
@@ -525,9 +536,9 @@ mutual
     | .inList e1 n1 v1, .inList e2 n2 v2 =>
       Expr.beq e1 e2 && n1 == n2 && v1.length == v2.length && (v1.zip v2).all (fun (x, y) => Expr.beq x y)
     | .inSubquery e1 n1 s1, .inSubquery e2 n2 s2 =>
-      Expr.beq e1 e2 && n1 == n2 && SelectStmt.beq s1 s2
-    | .exists n1 s1, .exists n2 s2 => n1 == n2 && SelectStmt.beq s1 s2
-    | .subquery s1, .subquery s2 => SelectStmt.beq s1 s2
+      Expr.beq e1 e2 && n1 == n2 && SubQuery.beq s1 s2
+    | .exists n1 s1, .exists n2 s2 => n1 == n2 && SubQuery.beq s1 s2
+    | .subquery s1, .subquery s2 => SubQuery.beq s1 s2
     | .between e1 l1 h1, .between e2 l2 h2 => Expr.beq e1 e2 && Expr.beq l1 l2 && Expr.beq h1 h2
     | .windowFn fn1 arg1 spec1, .windowFn fn2 arg2 spec2 =>
       fn1 == fn2 && WindowSpec.beq spec1 spec2 &&
@@ -547,9 +558,15 @@ mutual
     | .exprItem e1 a1, .exprItem e2 a2 => Expr.beq e1 e2 && a1 == a2
     | _, _ => false
 
+  partial def SubQuery.beq : SubQuery → SubQuery → Bool
+    | .simple s1, .simple s2 => SelectStmt.beq s1 s2
+    | .compound l1 o1 r1, .compound l2 o2 r2 =>
+      SubQuery.beq l1 l2 && o1 == o2 && SubQuery.beq r1 r2
+    | _, _ => false
+
   partial def FromClause.beq : FromClause → FromClause → Bool
     | .table t1, .table t2 => t1 == t2
-    | .subquery s1 a1, .subquery s2 a2 => SelectStmt.beq s1 s2 && a1 == a2
+    | .subquery s1 a1, .subquery s2 a2 => SubQuery.beq s1 s2 && a1 == a2
     | .join l1 jt1 r1 on1, .join l2 jt2 r2 on2 =>
       FromClause.beq l1 l2 && jt1 == jt2 && FromClause.beq r1 r2 &&
       match on1, on2 with
@@ -600,6 +617,7 @@ instance : BEq SelectItem where beq := SelectItem.beq
 instance : BEq FromClause where beq := FromClause.beq
 instance : BEq OrderByItem where beq := OrderByItem.beq
 instance : BEq SelectStmt where beq := SelectStmt.beq
+instance : BEq SubQuery where beq := SubQuery.beq
 instance : BEq Query where beq := Query.beq
 instance : BEq InsertSource where beq := InsertSource.beq
 instance : BEq Assignment where beq := Assignment.beq
@@ -682,6 +700,7 @@ instance : Inhabited FromClause where default := .table ⟨"", none⟩
 instance : Inhabited OrderByItem where default := .mk default .asc
 instance : Inhabited SelectStmt where
   default := .mk false [] none none [] none [] none none
+instance : Inhabited SubQuery where default := .simple default
 instance : Inhabited CTEDef where default := ⟨"", .simple default, false⟩
 instance : Inhabited Query where default := .simple default
 instance : Inhabited InsertSource where default := .values []

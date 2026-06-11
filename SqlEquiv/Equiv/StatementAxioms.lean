@@ -636,20 +636,20 @@ theorem left_join_filter_null_is_inner (db : Database) (a b : FromClause) (on_ :
 /-- EXISTS on empty subquery is FALSE -/
 theorem exists_empty_false (db : Database) (row : Row) (sel : SelectStmt)
     (h : evalSelectWithContext db row sel = []) :
-    evalExprWithDb db row (Expr.exists false sel) = some (.bool false) := by
-  rw [evalExprWithDb_exists]; simp [h]
+    evalExprWithDb db row (Expr.exists false (.simple sel)) = some (.bool false) := by
+  rw [evalExprWithDb_exists_simple]; simp [h]
 
 /-- NOT EXISTS on empty subquery is TRUE -/
 theorem not_exists_empty_true (db : Database) (row : Row) (sel : SelectStmt)
     (h : evalSelectWithContext db row sel = []) :
-    evalExprWithDb db row (Expr.exists true sel) = some (.bool true) := by
-  rw [evalExprWithDb_exists]; simp [h]
+    evalExprWithDb db row (Expr.exists true (.simple sel)) = some (.bool true) := by
+  rw [evalExprWithDb_exists_simple]; simp [h]
 
 /-- EXISTS on non-empty subquery is TRUE -/
 theorem exists_nonempty_true (db : Database) (row : Row) (sel : SelectStmt)
     (h : (evalSelectWithContext db row sel).length > 0) :
-    evalExprWithDb db row (Expr.exists false sel) = some (.bool true) := by
-  rw [evalExprWithDb_exists]
+    evalExprWithDb db row (Expr.exists false (.simple sel)) = some (.bool true) := by
+  rw [evalExprWithDb_exists_simple]
   have hne : (evalSelectWithContext db row sel).isEmpty = false := by
     cases hlist : evalSelectWithContext db row sel with
     | nil => simp [hlist] at h
@@ -659,20 +659,20 @@ theorem exists_nonempty_true (db : Database) (row : Row) (sel : SelectStmt)
 /-- NOT EXISTS on non-empty subquery is FALSE -/
 theorem not_exists_nonempty_false (db : Database) (row : Row) (sel : SelectStmt)
     (h : (evalSelectWithContext db row sel).length > 0) :
-    evalExprWithDb db row (Expr.exists true sel) = some (.bool false) := by
-  rw [evalExprWithDb_exists]
+    evalExprWithDb db row (Expr.exists true (.simple sel)) = some (.bool false) := by
+  rw [evalExprWithDb_exists_simple]
   have hne : (evalSelectWithContext db row sel).isEmpty = false := by
     cases hlist : evalSelectWithContext db row sel with
     | nil => simp [hlist] at h
     | cons _ _ => rfl
   simp [hne]
 
-/-- Double negation: NOT NOT EXISTS = EXISTS -/
-theorem not_not_exists (sel : SelectStmt) :
+/-- Double negation: NOT NOT EXISTS = EXISTS (generic over SubQuery payloads, #218) -/
+theorem not_not_exists (sel : SubQuery) :
     Expr.exists true sel ≃ₑ Expr.unaryOp .not (Expr.exists false sel) := by
   intro row
   simp only [evalExpr, evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
-  cases evalSelectWithContext (fun _ => []) row sel with
+  cases evalSubQueryWithContext (fun _ => []) row sel with
   | nil => rfl
   | cons _ _ => rfl
 
@@ -681,9 +681,9 @@ theorem not_not_exists (sel : SelectStmt) :
     Requires that e evaluates without error (non-none) for all rows. -/
 theorem in_empty_subquery_false (e : Expr) (sel : SelectStmt)
     (hE : ∀ row, evalExpr row e ≠ none) :
-    Expr.inSubquery e false sel ≃ₑ
-    Expr.case [(Expr.unaryOp .not (Expr.exists false sel), Expr.lit (.bool false))]
-              (some (Expr.inSubquery e false sel)) := by
+    Expr.inSubquery e false (.simple sel) ≃ₑ
+    Expr.case [(Expr.unaryOp .not (Expr.exists false (.simple sel)), Expr.lit (.bool false))]
+              (some (Expr.inSubquery e false (.simple sel))) := by
   intro row
   simp only [evalExpr] at hE ⊢
   rw [evalExprWithDb_case]
@@ -691,18 +691,18 @@ theorem in_empty_subquery_false (e : Expr) (sel : SelectStmt)
   | nil =>
     -- Subquery empty: NOT EXISTS = true → CASE returns FALSE
     -- LHS: IN on empty = false (since e evaluates to some value by hE)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false sel)) = some (.bool true) := by
-      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists, hsel]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool true) := by
+      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
-    rw [evalExprWithDb_inSubquery, hsel]
+    rw [evalExprWithDb_inSubquery_simple, hsel]
     cases hev : evalExprWithDb (fun _ => []) row e with
     | none => exact absurd hev (hE row)
     | some v => simp [List.any]
   | cons hd tl =>
     -- Subquery non-empty: NOT EXISTS = false → falls to ELSE = IN(e, sel)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false sel)) = some (.bool false) := by
-      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists, hsel]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
+      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some]
 
@@ -711,9 +711,9 @@ theorem in_empty_subquery_false (e : Expr) (sel : SelectStmt)
     Requires that e evaluates without error (non-none) for all rows. -/
 theorem not_in_empty_subquery_true (e : Expr) (sel : SelectStmt)
     (hE : ∀ row, evalExpr row e ≠ none) :
-    Expr.inSubquery e true sel ≃ₑ
-    Expr.case [(Expr.unaryOp .not (Expr.exists false sel), Expr.lit (.bool true))]
-              (some (Expr.inSubquery e true sel)) := by
+    Expr.inSubquery e true (.simple sel) ≃ₑ
+    Expr.case [(Expr.unaryOp .not (Expr.exists false (.simple sel)), Expr.lit (.bool true))]
+              (some (Expr.inSubquery e true (.simple sel))) := by
   intro row
   simp only [evalExpr] at hE ⊢
   rw [evalExprWithDb_case]
@@ -721,45 +721,45 @@ theorem not_in_empty_subquery_true (e : Expr) (sel : SelectStmt)
   | nil =>
     -- Subquery empty: NOT EXISTS = true → CASE returns TRUE
     -- LHS: NOT IN on empty = true (since e evaluates to some value by hE)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false sel)) = some (.bool true) := by
-      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists, hsel]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool true) := by
+      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
-    rw [evalExprWithDb_inSubquery, hsel]
+    rw [evalExprWithDb_inSubquery_simple, hsel]
     cases hev : evalExprWithDb (fun _ => []) row e with
     | none => exact absurd hev (hE row)
     | some v => simp [List.any]
   | cons hd tl =>
     -- Subquery non-empty: NOT EXISTS = false → falls to ELSE = NOT IN(e, sel)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false sel)) = some (.bool false) := by
-      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists, hsel]
+    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
+      rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some]
 
 /-- Scalar subquery returning empty = NULL -/
 theorem scalar_subquery_empty_null (db : Database) (row : Row) (sel : SelectStmt)
     (h : evalSelectWithContext db row sel = []) :
-    evalExprWithDb db row (Expr.subquery sel) = some (.null none) := by
-  rw [evalExprWithDb_subquery, h]; rfl
+    evalExprWithDb db row (Expr.subquery (.simple sel)) = some (.null none) := by
+  rw [evalExprWithDb_subquery_simple, h]; rfl
 
 /-- EXISTS can be rewritten as COUNT(*) > 0 (semantic equivalence) -/
 theorem exists_as_count_gt_zero (db : Database) (row : Row) (sel : SelectStmt) :
-    let existsResult := evalExprWithDb db row (Expr.exists false sel)
+    let existsResult := evalExprWithDb db row (Expr.exists false (.simple sel))
     let subRows := evalSelectWithContext db row sel
     existsResult = some (.bool (subRows.length > 0)) := by
   simp only
-  rw [evalExprWithDb_exists]
+  rw [evalExprWithDb_exists_simple]
   cases evalSelectWithContext db row sel with
   | nil => rfl
   | cons _ _ => rfl
 
 /-- NOT EXISTS can be rewritten as COUNT(*) = 0 (semantic equivalence) -/
 theorem not_exists_as_count_eq_zero (db : Database) (row : Row) (sel : SelectStmt) :
-    let existsResult := evalExprWithDb db row (Expr.exists true sel)
+    let existsResult := evalExprWithDb db row (Expr.exists true (.simple sel))
     let subRows := evalSelectWithContext db row sel
     existsResult = some (.bool (subRows.length == 0)) := by
   simp only
-  rw [evalExprWithDb_exists]
+  rw [evalExprWithDb_exists_simple]
   cases evalSelectWithContext db row sel with
   | nil => rfl
   | cons _ _ => rfl
@@ -799,17 +799,17 @@ theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
     (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
     (hNoWinLit : selectHasWindowFn [.exprItem (.lit (.int 1)) none] = false) :
     let inSub := Expr.inSubquery e false
-      (SelectStmt.mk false [.exprItem (.col ⟨some tableName, colName⟩) none]
-        (some (.table ⟨tableName, none⟩)) none [] none [] none none)
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some tableName, colName⟩) none]
+        (some (.table ⟨tableName, none⟩)) none [] none [] none none))
     let existsSub := Expr.exists false
-      (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
+      (.simple (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
         (some (.table ⟨tableName, none⟩))
         (some (.binOp .eq (.col ⟨some tableName, colName⟩) e))
-        [] none [] none none)
+        [] none [] none none))
     evalExprWithDb db row inSub = evalExprWithDb db row existsSub := by
   simp only []
   -- Unfold both sides
-  rw [evalExprWithDb_inSubquery, evalExprWithDb_exists]
+  rw [evalExprWithDb_inSubquery_simple, evalExprWithDb_exists_simple]
   -- Substitute heval into the IN side
   rw [heval]
   simp only [Bool.false_eq_true, ↓reduceIte]
@@ -854,16 +854,16 @@ theorem not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
     (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
     (hNoWinLit : selectHasWindowFn [.exprItem (.lit (.int 1)) none] = false) :
     let notInSub := Expr.inSubquery e true
-      (SelectStmt.mk false [.exprItem (.col ⟨some tableName, colName⟩) none]
-        (some (.table ⟨tableName, none⟩)) none [] none [] none none)
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some tableName, colName⟩) none]
+        (some (.table ⟨tableName, none⟩)) none [] none [] none none))
     let notExistsSub := Expr.exists true
-      (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
+      (.simple (SelectStmt.mk false [.exprItem (.lit (.int 1)) none]
         (some (.table ⟨tableName, none⟩))
         (some (.binOp .eq (.col ⟨some tableName, colName⟩) e))
-        [] none [] none none)
+        [] none [] none none))
     evalExprWithDb db row notInSub = evalExprWithDb db row notExistsSub := by
   simp only []
-  rw [evalExprWithDb_inSubquery, evalExprWithDb_exists]
+  rw [evalExprWithDb_inSubquery_simple, evalExprWithDb_exists_simple]
   rw [heval]
   simp only [↓reduceIte]
   rw [evalSelectWithContext_simple_project db row _ _ hNoAggCol hNoWinCol]
@@ -905,21 +905,21 @@ theorem subquery_limit_one (db : Database) (row : Row)
 
 /-- Scalar subquery is equivalent to first value of subquery with LIMIT 1 -/
 theorem scalar_subquery_is_first (db : Database) (row : Row) (sel : SelectStmt) :
-    let result := evalExprWithDb db row (Expr.subquery sel)
+    let result := evalExprWithDb db row (Expr.subquery (.simple sel))
     let subRows := evalSelectWithContext db row sel
     result = match subRows.head? with
       | some subRow => subRow.head?.map (·.2)
       | none => some (.null none) := by
   simp only
-  exact evalExprWithDb_subquery db row sel
+  exact evalExprWithDb_subquery_simple db row sel
 
 /-- EXISTS is monotonic: more rows in subquery doesn't change TRUE to FALSE -/
 theorem exists_monotonic (db : Database) (row : Row) (sel1 sel2 : SelectStmt)
     (h : ∀ r ∈ evalSelectWithContext db row sel1,
          r ∈ evalSelectWithContext db row sel2) :
-    evalExprWithDb db row (Expr.exists false sel1) = some (.bool true) →
-    evalExprWithDb db row (Expr.exists false sel2) = some (.bool true) := by
-  rw [evalExprWithDb_exists, evalExprWithDb_exists]
+    evalExprWithDb db row (Expr.exists false (.simple sel1)) = some (.bool true) →
+    evalExprWithDb db row (Expr.exists false (.simple sel2)) = some (.bool true) := by
+  rw [evalExprWithDb_exists_simple, evalExprWithDb_exists_simple]
   intro hprem
   cases hsel1 : evalSelectWithContext db row sel1 with
   | nil => simp [hsel1] at hprem
@@ -961,9 +961,9 @@ theorem in_singleton_subquery (db : Database) (row : Row) (e : Expr) (sel : Sele
     (colName : String) (v : Value)
     (h : evalSelectWithContext db row sel = [[(colName, v)]])
     (hCompat : ∀ val, evalExprWithDb db row e = some val → ∃ b, val.eq v = some b) :
-    evalExprWithDb db row (Expr.inSubquery e false sel) =
+    evalExprWithDb db row (Expr.inSubquery e false (.simple sel)) =
     evalExprWithDb db row (Expr.binOp .eq e (Expr.lit v)) := by
-  rw [evalExprWithDb_inSubquery, h]
+  rw [evalExprWithDb_inSubquery_simple, h]
   simp [List.any, List.head?]
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
   cases hev : evalExprWithDb db row e with
@@ -1065,10 +1065,10 @@ theorem join_match_implies_in_subquery (db : Database) (row : Row)
     (hMatch : evalExprWithDb db (row ++ sRow)
                 (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true)) :
     evalExprWithDb db row (Expr.inSubquery x false
-      (SelectStmt.mk false
+      (.simple (SelectStmt.mk false
         [.exprItem (.col ⟨some sName, yCol⟩) none]
         (some (.table ⟨sName, some sName⟩))
-        none [] none [] none none)) = some (.bool true) := by
+        none [] none [] none none))) = some (.bool true) := by
   rw [evalExprWithDb_binOp] at hMatch
   rw [← hStable sRow] at hMatch
   generalize hv : evalExprWithDb db row x = valX at hMatch
@@ -1080,7 +1080,7 @@ theorem join_match_implies_in_subquery (db : Database) (row : Row)
     | none => simp [evalBinOp] at hMatch
     | some w =>
       have heq := eq_true_of_evalBinOp_eq hMatch
-      rw [evalExprWithDb_inSubquery, hv]
+      rw [evalExprWithDb_inSubquery_simple, hv]
       simp only [Bool.false_eq_true, ↓reduceIte]
       rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin]
       rw [List.any_map, List.any_map]
@@ -1125,10 +1125,10 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
         (some (.inSubquery
           (.col ⟨some tName, xCol⟩)
           true  -- negated (NOT IN)
-          (SelectStmt.mk false
+          (.simple (SelectStmt.mk false
             [.exprItem (.col ⟨some sName, yCol⟩) none]
             (some (.table ⟨sName, some sName⟩))
-            none [] none [] none none)))  -- WHERE t.x NOT IN (SELECT s.y FROM s)
+            none [] none [] none none))))  -- WHERE t.x NOT IN (SELECT s.y FROM s)
         [] none [] none none
     let antijoinForm := SelectStmt.mk false
         [.star (some tName)]  -- SELECT t.*
@@ -1147,8 +1147,8 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
   rw [evalSelect_nondistinct_project_where db [.star (some tName)]
     (.table ⟨tName, some tName⟩)
     (Expr.inSubquery (.col ⟨some tName, xCol⟩) true
-      (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-        (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+      (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+        (some (.table ⟨sName, some sName⟩)) none [] none [] none none)))
     (selectHasAggregate_qualified_star tName) (selectHasWindowFn_qualified_star tName)]
   simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem_qualified_star]
   -- Decompose RHS: SELECT t.* FROM t LEFT JOIN s ON ... WHERE IS NULL(...)
@@ -1179,8 +1179,8 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
   -- This bridges the compiled match form via definitional equality
   show (if (evalExprWithDb db lr
       (Expr.inSubquery (.col ⟨some tName, xCol⟩) true
-        (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-          (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+        (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+          (some (.table ⟨sName, some sName⟩)) none [] none [] none none)))
       == some (Value.bool true)) = true
     then [lr.filter (fun x => x.fst.startsWith s!"{tName}.")] else []) =
     (let matchingRows := (evalFrom db (.table ⟨sName, some sName⟩)).filterMap (fun rr =>
@@ -1208,10 +1208,10 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
     -- First show NOT IN returns true
     have hNotInTrue : evalExprWithDb db lr
         (.inSubquery (.col ⟨some tName, xCol⟩) true
-          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+          (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none)))
         = some (.bool true) := by
-      rw [evalExprWithDb_inSubquery]
+      rw [evalExprWithDb_inSubquery_simple]
       obtain ⟨v, hv⟩ := hEvalSome lr hlr
       rw [hv]
       simp only [↓reduceIte]
@@ -1250,8 +1250,8 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
     -- LHS: if notInPred lr then [proj lr] else []
     rw [show (evalExprWithDb db lr
         (.inSubquery (.col ⟨some tName, xCol⟩) true
-          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+          (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none)))
         == some (Value.bool true)) = true from by rw [beq_iff_eq]; exact hNotInTrue]
     simp only [↓reduceIte]
     -- RHS: matchingRows = [] → isEmpty = true
@@ -1322,13 +1322,13 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
     -- NOT IN = !(IN) = false
     have hNotInFalse : evalExprWithDb db lr
         (.inSubquery (.col ⟨some tName, xCol⟩) true
-          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+          (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none)))
         = some (.bool false) := by
-      rw [evalExprWithDb_inSubquery]
+      rw [evalExprWithDb_inSubquery_simple]
       obtain ⟨v, hv⟩ := hEvalSome lr hlr
       rw [hv]; simp only [↓reduceIte]
-      rw [evalExprWithDb_inSubquery] at hINTrue
+      rw [evalExprWithDb_inSubquery_simple] at hINTrue
       rw [hv] at hINTrue
       simp only [Bool.false_eq_true, ↓reduceIte] at hINTrue
       have := Option.some.inj hINTrue
@@ -1337,8 +1337,8 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
     -- LHS: if false then [proj lr] else [] = []
     rw [show (evalExprWithDb db lr
         (.inSubquery (.col ⟨some tName, xCol⟩) true
-          (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-            (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
+          (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+            (some (.table ⟨sName, some sName⟩)) none [] none [] none none)))
         == some (Value.bool true)) = false from by rw [hNotInFalse]; decide]
     simp only
     -- RHS: matchingRows non-empty, so ljBody = matchingRows
@@ -1418,15 +1418,15 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
     (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (h : evalExprWithDb db row (Expr.inSubquery x false
-           (SelectStmt.mk false
+           (.simple (SelectStmt.mk false
              [.exprItem (.col ⟨some sName, yCol⟩) none]
              (some (.table ⟨sName, some sName⟩))
-             none [] none [] none none)) = some (.bool true)) :
+             none [] none [] none none))) = some (.bool true)) :
     ∃ sRow ∈ evalFrom db (.table ⟨sName, some sName⟩),
       evalExprWithDb db (row ++ sRow)
         (Expr.binOp .eq x (.col ⟨some sName, yCol⟩)) = some (.bool true) := by
   -- Unfold the IN subquery
-  rw [evalExprWithDb_inSubquery] at h
+  rw [evalExprWithDb_inSubquery_simple] at h
   -- Case split on evalExprWithDb db row x
   generalize hv : evalExprWithDb db row x = val at h
   cases val with
@@ -1502,10 +1502,10 @@ theorem in_subquery_unnest_to_join (db : Database)
         (some (.inSubquery
           (.col ⟨some tName, xCol⟩)
           false  -- not negated (IN, not NOT IN)
-          (SelectStmt.mk false
+          (.simple (SelectStmt.mk false
             [.exprItem (.col ⟨some sName, yCol⟩) none]  -- qualified
             (some (.table ⟨sName, some sName⟩))
-            none [] none [] none none)))  -- WHERE t.x IN (SELECT s.y FROM s)
+            none [] none [] none none))))  -- WHERE t.x IN (SELECT s.y FROM s)
         [] none [] none none
     let joinForm := SelectStmt.mk true  -- DISTINCT
         [.star (some tName)]  -- SELECT DISTINCT t.*
@@ -1524,8 +1524,8 @@ theorem in_subquery_unnest_to_join (db : Database)
   let sRows := evalFrom db (.table ⟨sName, some sName⟩)
   let proj := fun (row : Row) => row.filter (fun (k, _) => k.startsWith s!"{tName}.")
   let inExpr := Expr.inSubquery (.col ⟨some tName, xCol⟩) false
-    (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
-      (some (.table ⟨sName, some sName⟩)) none [] none [] none none)
+    (.simple (SelectStmt.mk false [.exprItem (.col ⟨some sName, yCol⟩) none]
+      (some (.table ⟨sName, some sName⟩)) none [] none [] none none))
   let eqExpr := Expr.binOp .eq (.col ⟨some tName, xCol⟩) (.col ⟨some sName, yCol⟩)
   -- Decompose LHS: SELECT DISTINCT t.* FROM t WHERE IN(...)
   rw [evalSelect_distinct_project_where db [.star (some tName)]

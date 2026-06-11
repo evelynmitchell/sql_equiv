@@ -96,9 +96,9 @@ theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool
     simp only
     cases neg with
     | false =>
-      exact ⟨!(evalSelectWithContext _ row sel).isEmpty, rfl⟩
+      exact ⟨!(evalSubQueryWithContext _ row sel).isEmpty, rfl⟩
     | true =>
-      exact ⟨!!(evalSelectWithContext _ row sel).isEmpty, rfl⟩
+      exact ⟨!!(evalSubQueryWithContext _ row sel).isEmpty, rfl⟩
   | _ => simp [Expr.isDefinitelyBool] at h
 
 /-- If `isDefinitelyInt` returns true, then `e` is semantically int-valued:
@@ -254,7 +254,7 @@ private theorem windowFn_congr (fn : WindowFunc) (arg1 arg2 : Option Expr) (spec
   simp [evalExprCore]
 
 /-- IN subquery congruence for the expression argument -/
-private theorem inSubquery_congr_expr {e1 e2 : Expr} (neg : Bool) (sel : SelectStmt)
+private theorem inSubquery_congr_expr {e1 e2 : Expr} (neg : Bool) (sel : SubQuery)
     (h : e1 ≃ₑ e2) :
     Expr.inSubquery e1 neg sel ≃ₑ Expr.inSubquery e2 neg sel := by
   intro row; simp only [evalExpr]
@@ -267,11 +267,11 @@ private theorem inSubquery_congr_expr {e1 e2 : Expr} (neg : Bool) (sel : SelectS
 -- ============================================================================
 
 /-- NOT(EXISTS true sel) ≃ₑ EXISTS false sel (flip negation flag) -/
-private theorem not_exists_true_flip (sel : SelectStmt) :
+private theorem not_exists_true_flip (sel : SubQuery) :
     Expr.unaryOp .not (Expr.«exists» true sel) ≃ₑ Expr.«exists» false sel := by
   intro row
   simp only [evalExpr, evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
-  cases evalSelectWithContext (fun _ => []) row sel with
+  cases evalSubQueryWithContext (fun _ => []) row sel with
   | nil => rfl
   | cons _ _ => rfl
 

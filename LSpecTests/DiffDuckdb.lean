@@ -25,6 +25,10 @@
   - ON-less JOIN (`A JOIN B WHERE ...`): we follow Spider/SQLite (cross
     product); DuckDB rejects the spelling outright (requires CROSS JOIN).
     The CROSS JOIN case below covers the shared semantics.
+  - INTERSECT/EXCEPT keep left-side duplicates in our semantics (bag-style);
+    the SQL standard and DuckDB deduplicate (set semantics, with ALL variants
+    for bags). Pre-existing (top-level Query has the same code, factored into
+    applySetOp by #218) — keep set-op oracle cases duplicate-free until fixed.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
@@ -197,6 +201,13 @@ def runAllTests : IO TestSeq := do
     -- divergences for the ON-less spelling)
     diffTest "CROSS JOIN product"
       "SELECT users.name, items.name FROM users CROSS JOIN items WHERE items.price > 2",
+    -- Set-operation subquery (#218): UNION inside a NOT IN subquery.
+    -- Inner columns are qualified and the outer table differs from the inner
+    -- ones: our correlated-row resolution is outer-first for unqualified and
+    -- same-qualifier names, which would diverge from DuckDB's inner-first
+    -- scoping (pre-existing divergence, not a set-op one).
+    diffTest "NOT IN with UNION subquery"
+      "SELECT name FROM items WHERE name NOT IN (SELECT users.department FROM users UNION SELECT users.name FROM users)",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

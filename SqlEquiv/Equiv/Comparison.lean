@@ -24,7 +24,7 @@ theorem filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
     (h_filter_left : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join (.subquery (.mk false [.star none] (some a) (some filter) [] none [] none none) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset) :=
+    evalSelect db (.mk false items (some (.join (.subquery (.simple (.mk false [.star none] (some a) (some filter) [] none [] none none)) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset) :=
   evalSelect_filter_join_left db a b cond filter items groupBy having orderBy limit offset h_filter_left
 
 /-- Predicate pushdown: push filter into the right side of an inner join.
@@ -38,7 +38,7 @@ theorem filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr
     (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner (.subquery (.mk false [.star none] (some b) (some filter) [] none [] none none) "filtered_b") (some cond))) none groupBy having orderBy limit offset) :=
+    evalSelect db (.mk false items (some (.join a .inner (.subquery (.simple (.mk false [.star none] (some b) (some filter) [] none [] none none)) "filtered_b") (some cond))) none groupBy having orderBy limit offset) :=
   evalSelect_filter_join_right db a b cond filter items groupBy having orderBy limit offset h_filter_right
 
 /-- Filter pushdown for basic FROM clause with table.
@@ -47,7 +47,7 @@ theorem filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items (some (.table t)) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.subquery (.mk false [.star none] (some (.table t)) (some filter) [] none [] none none) (t.alias.getD t.name))) none groupBy having orderBy limit offset) :=
+    evalSelect db (.mk false items (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some filter) [] none [] none none)) (t.alias.getD t.name))) none groupBy having orderBy limit offset) :=
   evalSelect_filter_pushdown_table db items (some (.table t)) (t.alias.getD t.name) filter groupBy having orderBy limit offset
 
 -- ============================================================================
@@ -212,7 +212,7 @@ theorem filter_and (db : Database) (items : List SelectItem) (from_ : Option Fro
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) :=
   evalSelect_filter_and db items from_ p q groupBy having orderBy limit offset
@@ -222,10 +222,10 @@ theorem filter_commute (db : Database) (items : List SelectItem) (from_ : Option
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some q) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) "inner"))
       (some p) groupBy having orderBy limit offset) :=
   evalSelect_filter_commute db items from_ p q groupBy having orderBy limit offset
 
@@ -234,7 +234,7 @@ theorem filter_idempotent (db : Database) (items : List SelectItem) (from_ : Opt
     (p : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.mk false [.star none] from_ (some p) [] none [] none none) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
       (some p) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) :=
   evalSelect_filter_idempotent db items from_ p groupBy having orderBy limit offset
