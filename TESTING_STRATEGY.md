@@ -37,6 +37,14 @@ and the redundancy means a gap in one layer is covered by another.
   `LSpecTests/DiffDuckdb.lean` — don't add cases that hit them without
   deciding which behavior to adopt. Both CLIs are version-pinned.
 
+### Per-test result artifacts (#209)
+Every CI run uploads `test-results/*.jsonl` (one JSON object per test:
+suite, name, pass) — the unit runner emits directly via the
+`TEST_RESULTS_JSON` env var; the LSpec log is converted by
+`tools/lspec_results_to_json.py`. History enables flake detection for the
+subprocess-based oracle tests and feeds the mutation-testing sensitivity
+matrix (#210).
+
 ### 5. LSpec Property Tests (lake exe sql_equiv_lspec)
 - **What it catches:** Edge cases in the evaluator and optimizer that
   hand-written tests miss, especially around NULL propagation, type

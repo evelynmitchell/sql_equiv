@@ -77,11 +77,39 @@ def TestResult.name : TestResult → String
   | .pass n => n
   | .fail n _ => n
 
+/-- Escape a string for inclusion in a JSON string literal -/
+def jsonEscape (s : String) : String :=
+  s.foldl (fun acc c =>
+    acc ++ match c with
+    | '"' => "\\\""
+    | '\\' => "\\\\"
+    | '\n' => "\\n"
+    | '\t' => "\\t"
+    | c => String.singleton c) ""
+
+/-- If TEST_RESULTS_JSON is set, append one JSON line per test to that path
+    (#209): {"suite":...,"name":...,"pass":...}. JSONL so suites can append
+    independently; CI uploads the file as a per-run artifact. -/
+def appendResultsJson (suiteName : String) (tests : List TestResult) : IO Unit := do
+  match ← IO.getEnv "TEST_RESULTS_JSON" with
+  | none => pure ()
+  | some path =>
+    let lines := tests.map fun r =>
+      let (name, pass) := match r with
+        | .pass n => (n, "true")
+        | .fail n _ => (n, "false")
+      "{\"suite\":\"" ++ jsonEscape suiteName ++ "\",\"name\":\"" ++
+        jsonEscape name ++ "\",\"pass\":" ++ pass ++ "}"
+    let h ← IO.FS.Handle.mk path .append
+    h.putStr (String.intercalate "\n" lines ++ "\n")
+
 /-- Run a list of tests and print results -/
 def runTests (suiteName : String) (tests : List TestResult) : IO (Nat × Nat) := do
   IO.println s!"═══════════════════════════════════"
   IO.println suiteName
   IO.println s!"═══════════════════════════════════"
+
+  appendResultsJson suiteName tests
 
   let mut passed := 0
   let mut failed := 0
