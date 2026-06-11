@@ -101,6 +101,86 @@ theorem Perm_eraseDups [BEq α] [LawfulBEq α] {l₁ l₂ : List α}
   exact h.mem_iff
 
 -- ============================================================================
+-- eraseDups/filter interaction (needed since INTERSECT/EXCEPT dedup, #223)
+-- ============================================================================
+
+/-- Filtering commutes with eraseDups: both preserve first-occurrence order,
+    so `(l.eraseDups).filter p = (l.filter p).eraseDups`.
+    Strong induction on length (eraseDups_cons recurses on a filtered tail). -/
+theorem filter_eraseDups [BEq α] [LawfulBEq α] (p : α → Bool) (l : List α) :
+    l.eraseDups.filter p = (l.filter p).eraseDups := by
+  suffices ∀ (n : Nat) (l : List α), l.length ≤ n →
+      l.eraseDups.filter p = (l.filter p).eraseDups from
+    this l.length l (Nat.le_refl _)
+  intro n
+  induction n with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil => simp
+    | cons _ _ => simp at hl
+  | succ k ih =>
+    intro l hl
+    match l with
+    | [] => simp
+    | x :: xs =>
+      have hfilt_len : (xs.filter (! · == x)).length ≤ k :=
+        Nat.le_trans (List.length_filter_le _ _) (by simp at hl; omega)
+      cases hp : p x with
+      | true =>
+        simp only [List.eraseDups_cons, List.filter_cons, hp, ↓reduceIte]
+        rw [ih _ hfilt_len]
+        congr 1
+        congr 1
+        rw [List.filter_filter, List.filter_filter]
+        apply List.filter_congr
+        intro a _
+        exact Bool.and_comm ..
+      | false =>
+        simp only [List.eraseDups_cons, List.filter_cons, hp, Bool.false_eq_true,
+          ↓reduceIte]
+        rw [ih _ hfilt_len]
+        congr 1
+        rw [List.filter_filter]
+        apply List.filter_congr
+        intro a _
+        by_cases hax : a = x
+        · subst hax; simp [hp]
+        · simp [hax]
+
+/-- eraseDups is the identity on lists without duplicates -/
+theorem eraseDups_eq_self_of_nodup [BEq α] [LawfulBEq α] {l : List α}
+    (h : l.Nodup) : l.eraseDups = l := by
+  induction l with
+  | nil => simp
+  | cons x xs ih =>
+    rw [List.eraseDups_cons]
+    obtain ⟨hx, hxs⟩ := List.nodup_cons.mp h
+    have hfilt : xs.filter (fun b => !b == x) = xs := by
+      rw [List.filter_eq_self]
+      intro a ha
+      simp only [Bool.not_eq_eq_eq_not, Bool.not_true, beq_eq_false_iff_ne, ne_eq]
+      intro heq
+      exact hx (heq ▸ ha)
+    rw [hfilt, ih hxs]
+
+/-- eraseDups is idempotent -/
+theorem eraseDups_eraseDups [BEq α] [LawfulBEq α] (l : List α) :
+    l.eraseDups.eraseDups = l.eraseDups :=
+  eraseDups_eq_self_of_nodup (nodup_eraseDups l)
+
+/-- contains on a filtered list: membership plus the predicate -/
+theorem contains_filter [BEq α] [LawfulBEq α] (l : List α) (p : α → Bool) (x : α) :
+    (l.filter p).contains x = (l.contains x && p x) := by
+  rw [Bool.eq_iff_iff]
+  simp [List.mem_filter]
+
+/-- contains is invariant under eraseDups -/
+theorem contains_eraseDups [BEq α] [LawfulBEq α] (l : List α) (x : α) :
+    l.eraseDups.contains x = l.contains x := by
+  by_cases h : x ∈ l <;> simp [mem_eraseDups, h]
+
+-- ============================================================================
 -- Filter + contains membership lemma
 -- ============================================================================
 

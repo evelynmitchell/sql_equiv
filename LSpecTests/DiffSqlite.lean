@@ -5,6 +5,19 @@
   (not just optimizer bugs) by verifying that evalSelect produces the same
   results as running the equivalent SQL against SQLite with the same data.
 
+  Two runners coexist:
+  - the original AST-based diffCountTest/diffFullTest (kept for continuity:
+    they exercise hand-built SelectStmt values without going through the
+    parser), and
+  - the parse-based diffTest (retrofit of the DiffDuckdb design): ONE SQL
+    string is parsed with our parser, evaluated against the Lean-side tables,
+    run through sqlite3, and the normalized result multisets are compared.
+    This exercises parser + evaluator together.
+
+  SQLite-specific coverage: the ON-less JOIN spelling (`A JOIN B WHERE ...`)
+  is accepted by SQLite (cross product) but rejected by DuckDB, so this is
+  the oracle that covers it.
+
   Uses IO-based tests since each test shells out to sqlite3.
 -/
 import LSpec
@@ -36,7 +49,55 @@ private def sqliteSetupSql : String :=
   "CREATE TABLE products (id INTEGER, name TEXT, price INTEGER);\n" ++
   "INSERT INTO products VALUES (1, 'Widget', 50);\n" ++
   "INSERT INTO products VALUES (2, 'Gadget', 100);\n" ++
-  "INSERT INTO products VALUES (3, 'Gizmo', 150);\n"
+  "INSERT INTO products VALUES (3, 'Gizmo', 150);\n" ++
+  -- Items with INTEGER prices (no decimals — SQLite has no true DECIMAL),
+  -- one NULL price for COUNT(col)/IS NULL coverage.
+  "CREATE TABLE items (id INTEGER, name TEXT, price INTEGER);\n" ++
+  "INSERT INTO items VALUES (1, 'Bolt', 3);\n" ++
+  "INSERT INTO items VALUES (2, 'Nut', 1);\n" ++
+  "INSERT INTO items VALUES (3, 'Washer', 2);\n" ++
+  "INSERT INTO items VALUES (4, 'Shim', NULL);\n" ++
+  -- Duplicate-bearing tables for INTERSECT/EXCEPT set-semantics cases (#223).
+  "CREATE TABLE dups (x INTEGER);\n" ++
+  "INSERT INTO dups VALUES (1);\n" ++
+  "INSERT INTO dups VALUES (1);\n" ++
+  "INSERT INTO dups VALUES (2);\n" ++
+  "INSERT INTO dups VALUES (2);\n" ++
+  "INSERT INTO dups VALUES (3);\n" ++
+  "CREATE TABLE other (x INTEGER);\n" ++
+  "INSERT INTO other VALUES (2);\n" ++
+  "INSERT INTO other VALUES (3);\n" ++
+  "INSERT INTO other VALUES (3);\n" ++
+  "INSERT INTO other VALUES (4);\n"
+
+-- ============================================================================
+-- Lean-side tables mirroring the SQLite setup above (for the parse-based
+-- diffTest runner; the AST-based tests keep using QueryHelpers.testDb)
+-- ============================================================================
+
+/-- Items with INTEGER prices, one NULL (mirrors the items table above). -/
+private def itemsTable : Table := [
+  [("id", .int 1), ("name", .string "Bolt"),   ("price", .int 3)],
+  [("id", .int 2), ("name", .string "Nut"),    ("price", .int 1)],
+  [("id", .int 3), ("name", .string "Washer"), ("price", .int 2)],
+  [("id", .int 4), ("name", .string "Shim"),   ("price", .null (some .int))]
+]
+
+/-- Duplicate-bearing table for set-op semantics (#223). -/
+private def dupsTable : Table := [
+  [("x", .int 1)], [("x", .int 1)], [("x", .int 2)], [("x", .int 2)], [("x", .int 3)]
+]
+
+private def otherTable : Table := [
+  [("x", .int 2)], [("x", .int 3)], [("x", .int 3)], [("x", .int 4)]
+]
+
+/-- QueryHelpers.testDb (users/orders/products) extended with items/dups/other. -/
+private def db : Database := fun name =>
+  if name == "items" then itemsTable
+  else if name == "dups" then dupsTable
+  else if name == "other" then otherTable
+  else testDb name
 
 -- ============================================================================
 -- SQLite query execution
@@ -162,6 +223,28 @@ private def diffFullTest (description : String) (sel : SelectStmt) (sqlQuery : S
       IO.eprintln s!"  Result mismatch for '{description}': ours={ourResult.length} rows, sqlite={sqliteResult.length} rows"
       return (description, false)
 
+/-- Parse-based runner (retrofit of the DiffDuckdb design): parse the SQL with
+    our parser, evaluate against the Lean-side `db`, run the same SQL through
+    sqlite3, compare normalized result multisets. -/
+private def diffTest (description : String) (sql : String) : IO (String × Bool) := do
+  match parse sql with
+  | .error e =>
+    IO.eprintln s!"  Our parser failed for '{description}': {e}"
+    return (description, false)
+  | .ok stmt =>
+    let ourResult := ((evalStmt db stmt).2).getD []
+    match ← runSqliteRaw sql with
+    | .error err =>
+      IO.eprintln s!"  SQLite error for '{description}': {err}"
+      return (description, false)
+    | .ok output =>
+      let sqliteResult := parseSqliteOutput output
+      if resultsMatch ourResult sqliteResult then
+        return (description, true)
+      else
+        IO.eprintln s!"  Mismatch for '{description}': ours={repr (sortTable ourResult)} sqlite={repr (sortTable sqliteResult)}"
+        return (description, false)
+
 -- ============================================================================
 -- Test definitions
 -- ============================================================================
@@ -232,7 +315,39 @@ def runAllTests : IO TestSeq := do
       "SELECT * FROM users WHERE age >= 25 AND age <= 30",
     diffFullTest "WHERE name != 'Alice'"
       (mkSelectWhere "users" (some (.binOp .ne (qcol "users" "name") (.lit (.string "Alice")))))
-      "SELECT * FROM users WHERE name != 'Alice'"
+      "SELECT * FROM users WHERE name != 'Alice'",
+    -- ------------------------------------------------------------------
+    -- Parse-based cases (one SQL string drives both engines), ported from
+    -- the DiffDuckdb harness where sqlite-safe (no decimals)
+    -- ------------------------------------------------------------------
+    -- ORDER BY on a non-projected column; LIMIT makes the sort observable
+    diffTest "ORDER BY non-projected column with LIMIT"
+      "SELECT name FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1",
+    diffTest "ORDER BY non-projected DESC with LIMIT"
+      "SELECT name FROM users ORDER BY age DESC LIMIT 2",
+    -- COUNT(col) skips NULLs (items has one NULL price)
+    diffTest "COUNT skips NULLs"
+      "SELECT COUNT(price) AS c FROM items",
+    -- Set-operation subquery (#218): UNION inside an IN subquery
+    diffTest "IN with UNION subquery"
+      "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 150 UNION SELECT user_id FROM orders WHERE amount < 120)",
+    -- ON-less JOIN: SQLite accepts this spelling (cross product); DuckDB
+    -- rejects it, so this oracle is the one that covers it
+    diffTest "ON-less JOIN (cross product + WHERE)"
+      "SELECT users.name, orders.product FROM users JOIN orders WHERE users.id = orders.user_id",
+    -- DISTINCT and WHERE variants (parse-based versions)
+    diffTest "DISTINCT department (parsed)"
+      "SELECT DISTINCT department FROM users",
+    diffTest "WHERE with AND (parsed)"
+      "SELECT * FROM users WHERE age > 25 AND department = 'Engineering'",
+    diffTest "WHERE with OR (parsed)"
+      "SELECT * FROM users WHERE age < 25 OR age > 30",
+    -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
+    -- sides; both engines (and now our semantics) return set results
+    diffTest "INTERSECT dedups duplicate-bearing inputs"
+      "SELECT x FROM dups INTERSECT SELECT x FROM other",
+    diffTest "EXCEPT dedups duplicate-bearing inputs"
+      "SELECT x FROM dups EXCEPT SELECT x FROM other"
   ].mapM id
   -- Build TestSeq from results
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

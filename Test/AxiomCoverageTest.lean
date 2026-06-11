@@ -572,8 +572,10 @@ def setOpTests : List TestResult :=
       (.simple selUsers)
       testDb,
 
-    -- intersect_idempotent: A INTERSECT A ≃ᵩ A (exact equiv)
-    testQueryEquiv "intersect_idempotent"
+    -- intersect_idempotent: A INTERSECT A ≃ˢ A (set equiv; downgraded from ≃ᵩ
+    -- by #223 — INTERSECT now deduplicates, so exact equality fails on
+    -- duplicate-bearing inputs)
+    testQuerySetEquiv "intersect_idempotent"
       (.compound (.simple selUsers) .intersect (.simple selUsers))
       (.simple selUsers)
       testDb,
@@ -1747,15 +1749,15 @@ def infrastructureAxiomTests : List TestResult :=
     if compoundResult == expectedResult then .pass "evalQuery_compound (UNION ALL = append)"
     else .fail "evalQuery_compound (UNION ALL = append)" s!"Results differ: {compoundResult.length} vs {expectedResult.length} rows",
 
-    -- evalQuery_compound: INTERSECT decomposes to filter+contains
+    -- evalQuery_compound: INTERSECT decomposes to filter+contains+eraseDups (#223)
     let selUsers := mkSimpleSelect "users"
     let selOrders := mkSimpleSelect "orders"
     let intersectResult := evalQuery testDb (.compound (.simple selUsers) .intersect (.simple selOrders))
     let usersResult := evalQuery testDb (.simple selUsers)
     let ordersResult := evalQuery testDb (.simple selOrders)
-    let expectedIntersect := usersResult.filter (ordersResult.contains ·)
-    if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains)"
-    else .fail "evalQuery_compound (INTERSECT = filter+contains)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows",
+    let expectedIntersect := (usersResult.filter (ordersResult.contains ·)).eraseDups
+    if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains+eraseDups)"
+    else .fail "evalQuery_compound (INTERSECT = filter+contains+eraseDups)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows",
 
     -- evalQuery_compound: UNION decomposes to append+eraseDups
     let selUsers := mkSimpleSelect "users"
@@ -1767,15 +1769,15 @@ def infrastructureAxiomTests : List TestResult :=
     if unionResult == expectedUnion then .pass "evalQuery_compound (UNION = append+eraseDups)"
     else .fail "evalQuery_compound (UNION = append+eraseDups)" s!"Results differ: {unionResult.length} vs {expectedUnion.length} rows",
 
-    -- evalQuery_compound: EXCEPT decomposes to filter+!contains
+    -- evalQuery_compound: EXCEPT decomposes to filter+!contains+eraseDups (#223)
     let selUsers := mkSimpleSelect "users"
     let selOrders := mkSimpleSelect "orders"
     let exceptResult := evalQuery testDb (.compound (.simple selUsers) .exceptOp (.simple selOrders))
     let usersResult := evalQuery testDb (.simple selUsers)
     let ordersResult := evalQuery testDb (.simple selOrders)
-    let expectedExcept := usersResult.filter (!ordersResult.contains ·)
-    if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains)"
-    else .fail "evalQuery_compound (EXCEPT = filter+!contains)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows",
+    let expectedExcept := (usersResult.filter (!ordersResult.contains ·)).eraseDups
+    if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains+eraseDups)"
+    else .fail "evalQuery_compound (EXCEPT = filter+!contains+eraseDups)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows",
 
     -- evalFrom_cross_join: CROSS JOIN = flatMap/map
     let tU := FromClause.table ⟨"users", none⟩

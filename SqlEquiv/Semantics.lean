@@ -900,13 +900,7 @@ def evalQuery (db : Database) (q : Query) : Table :=
   match q with
   | .simple sel => evalSelect db sel
   | .compound left op right =>
-    let leftResult := evalQuery db left
-    let rightResult := evalQuery db right
-    match op with
-    | .union => (leftResult ++ rightResult).eraseDups
-    | .unionAll => leftResult ++ rightResult
-    | .intersect => leftResult.filter fun row => rightResult.contains row
-    | .exceptOp => leftResult.filter fun row => !rightResult.contains row
+    applySetOp op (evalQuery db left) (evalQuery db right)
   | .withCTE [] query => evalQuery db query
   | .withCTE (cte :: rest) query =>
     let cteResult :=
@@ -1089,13 +1083,7 @@ theorem evalQuery_simple (db : Database) (sel : SelectStmt) :
     Proved via evalQueryCore bridge. -/
 theorem evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     evalQuery db (.compound left op right) =
-    let l : Table := evalQuery db left
-    let r : Table := evalQuery db right
-    match op with
-    | .union => (l ++ r).eraseDups
-    | .unionAll => l ++ r
-    | .intersect => l.filter (r.contains ·)
-    | .exceptOp => l.filter (!r.contains ·) :=
+    applySetOp op (evalQuery db left) (evalQuery db right) :=
   (evalQuery_eq_evalQueryCore_compound db left right op).trans (evalQueryCore_compound ..)
 
 -- ============================================================================
