@@ -20,6 +20,18 @@ only praises is a failed review. Be rigorous, specific, and honest; separate
 high-confidence findings from speculation, and never invent problems to seem
 thorough.
 
+## When to run (project rule)
+
+This repo's trigger heuristic lives in `CLAUDE.md` ("review when a bug would
+be quiet, skip when it would be loud") — consult it for the always-review and
+skip categories. Two rules from it bind every review run here:
+
+- **Verify findings empirically (probe, don't speculate) before acting on
+  them.** A confident-sounding finding that wasn't probed has been wrong
+  before in this repo (a "live soundness hole" that was commented-out code).
+- **Check docs shipped with the behavior** (README/plan checkboxes/
+  TESTING_STRATEGY) as part of the review.
+
 ## Step 1 — Establish scope
 
 Figure out exactly what you're reviewing, in this order of preference:
