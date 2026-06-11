@@ -141,7 +141,9 @@ partial def Expr.toSql : Expr → String
       | .count => "COUNT"
     let argStr := match arg with
       | some e => e.toSql
-      | none => ""
+      -- COUNT with no argument is COUNT(*) (the parser maps COUNT(*) OVER to
+      -- windowFn .count none, #214); ranking functions take no argument.
+      | none => if fn == WindowFunc.count then "*" else ""
     let partStr := if spec.partitionBy.isEmpty then ""
       else s!"PARTITION BY {", ".intercalate (spec.partitionBy.map Expr.toSql)} "
     let orderStr := if spec.orderBy.isEmpty then ""

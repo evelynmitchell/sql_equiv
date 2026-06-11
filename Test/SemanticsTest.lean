@@ -115,6 +115,17 @@ def testExactRows (name : String) (sql : String) (expected : Nat) (checkFirst : 
           else .fail name s!"First value: expected {v.toSql}, got {actual.toSql}"
         | none => .fail name "Could not get first value"
 
+/-- Check the values of one named output column, in result-row order. -/
+def testColumn (name : String) (sql : String) (col : String) (expected : List Value) : TestResult :=
+  match evalQuery sql with
+  | .error e => .fail name s!"Parse/eval error: {e}"
+  | .ok result =>
+    let actual := result.map fun row =>
+      ((row.find? (fun (k, _) => k == col)).map (·.2)).getD (.null none)
+    if actual == expected then .pass name
+    else .fail name
+      s!"Column {col}: expected {expected.map (·.toSql)}, got {actual.map (·.toSql)}"
+
 -- ============================================================================
 -- Basic Query Tests
 -- ============================================================================
@@ -712,6 +723,77 @@ def crossTypeTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Window Function Tests (#214)
+-- ============================================================================
+-- Output rows stay in source-row order (users: Alice 30 Eng, Bob 25 Sales,
+-- Carol 35 Eng, Dave 28 Mktg, Eve 22 Sales); expectations verified against
+-- DuckDB v1.5.3.
+
+def windowTests : List TestResult := [
+  -- ROW_NUMBER over ORDER BY: ages 30,25,35,28,22 → positions 4,2,5,3,1
+  testColumn "window_row_number_order_by"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users"
+    "rn" [.int 4, .int 2, .int 5, .int 3, .int 1],
+  -- RANK with ties (departments: Eng,Eng tie at 1; Marketing 3; Sales,Sales 4)
+  testColumn "window_rank_ties"
+    "SELECT name, RANK() OVER (ORDER BY department) AS r FROM users"
+    "r" [.int 1, .int 4, .int 1, .int 3, .int 4],
+  -- DENSE_RANK with ties (no gaps: Eng 1, Marketing 2, Sales 3)
+  testColumn "window_dense_rank_ties"
+    "SELECT name, DENSE_RANK() OVER (ORDER BY department) AS dr FROM users"
+    "dr" [.int 1, .int 3, .int 1, .int 2, .int 3],
+  -- SUM over PARTITION BY: Eng 30+35=65, Sales 25+22=47, Marketing 28
+  testColumn "window_sum_partition_by"
+    "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users"
+    "s" [.int 65, .int 47, .int 65, .int 28, .int 47],
+  -- AVG over PARTITION BY (truncating int division: 65/2=32, 47/2=23)
+  testColumn "window_avg_partition_by"
+    "SELECT name, AVG(age) OVER (PARTITION BY department) AS a FROM users"
+    "a" [.int 32, .int 23, .int 32, .int 28, .int 23],
+  -- MIN/MAX over PARTITION BY
+  testColumn "window_min_partition_by"
+    "SELECT name, MIN(age) OVER (PARTITION BY department) AS lo FROM users"
+    "lo" [.int 30, .int 22, .int 30, .int 28, .int 22],
+  testColumn "window_max_partition_by"
+    "SELECT name, MAX(age) OVER (PARTITION BY department) AS hi FROM users"
+    "hi" [.int 35, .int 25, .int 35, .int 28, .int 25],
+  -- Window aggregates over a DECIMAL column (items: 2.5, 1.25, 3, NULL;
+  -- NULL price row still gets the partition-wide value, NULL is skipped)
+  testColumn "window_sum_decimal"
+    "SELECT name, SUM(price) OVER () AS s FROM items"
+    "s" [.decimal 675 2, .decimal 675 2, .decimal 675 2, .decimal 675 2],
+  testColumn "window_avg_decimal"
+    "SELECT name, AVG(price) OVER () AS a FROM items"
+    "a" [.decimal 225 2, .decimal 225 2, .decimal 225 2, .decimal 225 2],
+  -- COUNT(*) OVER () counts the whole partition on every row
+  testColumn "window_count_star"
+    "SELECT name, COUNT(*) OVER () AS c FROM users"
+    "c" [.int 5, .int 5, .int 5, .int 5, .int 5],
+  -- PARTITION BY + ORDER BY combined: row numbers restart per department
+  testColumn "window_partition_and_order"
+    "SELECT name, ROW_NUMBER() OVER (PARTITION BY department ORDER BY age) AS rn FROM users"
+    "rn" [.int 1, .int 2, .int 2, .int 1, .int 1],
+  -- Aggregate window with ORDER BY uses the default frame (running sum,
+  -- RANGE: peers included): sorted ages 22,25,28,30,35 → 22,47,75,105,140
+  testColumn "window_running_sum"
+    "SELECT name, SUM(age) OVER (ORDER BY age) AS s FROM users"
+    "s" [.int 105, .int 47, .int 140, .int 75, .int 22],
+  -- Running sum with ties: department peers share the frame total
+  -- (Eng 65,65; Marketing 93; Sales 140,140)
+  testColumn "window_running_sum_peers"
+    "SELECT name, SUM(age) OVER (ORDER BY department) AS s FROM users"
+    "s" [.int 65, .int 140, .int 65, .int 93, .int 140],
+  -- Window fn + outer ORDER BY on a NON-projected column (#208 aligned-sort
+  -- path): rows come out age-sorted with their window values intact
+  testColumn "window_outer_order_by_nonprojected_rn"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY age"
+    "rn" [.int 1, .int 2, .int 3, .int 4, .int 5],
+  testColumn "window_outer_order_by_nonprojected_names"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY age"
+    "name" [.string "Eve", .string "Bob", .string "Dave", .string "Alice", .string "Carol"]
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -722,7 +804,8 @@ def allSemanticsTests : List TestResult :=
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   setOpSubqueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
-  subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests
+  subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
+  windowTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests

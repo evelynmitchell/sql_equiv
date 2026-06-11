@@ -347,7 +347,13 @@ def runAllTests : IO TestSeq := do
     diffTest "INTERSECT dedups duplicate-bearing inputs"
       "SELECT x FROM dups INTERSECT SELECT x FROM other",
     diffTest "EXCEPT dedups duplicate-bearing inputs"
-      "SELECT x FROM dups EXCEPT SELECT x FROM other"
+      "SELECT x FROM dups EXCEPT SELECT x FROM other",
+    -- Window functions (#214; sqlite3 >= 3.25 supports them). Integer-valued
+    -- columns only — the output parser types unknown columns as INTEGER.
+    diffTest "ROW_NUMBER over ORDER BY (window)"
+      "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
+    diffTest "SUM OVER PARTITION BY (window)"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users"
   ].mapM id
   -- Build TestSeq from results
   return results.foldr (fun (name, passed) acc => test name passed $ acc)
