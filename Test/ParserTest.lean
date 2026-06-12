@@ -318,11 +318,41 @@ def doubleQuoteTests : List TestResult := [
    | .error e => .fail "join_with_on_unaffected" s!"{e}")
 ]
 
+/-- Full-input consumption (#228): trailing tokens are loud errors, and the
+    grammar gaps the old silent-discard masked now genuinely parse. -/
+def trailingInputTests : List TestResult := [
+  (match parse "SELECT * FROM users GARBAGE here" with
+   | .error e =>
+     if (s!"{e}").startsWith "Parse error" then .pass "trailing_garbage_errors"
+     else .fail "trailing_garbage_errors" s!"wrong error: {e}"
+   | .ok _ => .fail "trailing_garbage_errors" "should not parse"),
+  (match parse "SELECT 1; extra" with
+   | .error _ => .pass "trailing_after_semicolon_errors"
+   | .ok _ => .fail "trailing_after_semicolon_errors" "should not parse"),
+  (match parse "SELECT 1;" with
+   | .ok _ => .pass "trailing_semicolon_ok"
+   | .error e => .fail "trailing_semicolon_ok" s!"{e}"),
+  -- Previously masked: select-item arithmetic from a bare column
+  (match parse "SELECT age + 10 * 2 FROM users" with
+   | .ok (.query (.simple sel)) =>
+     (match sel.items with
+      | [.exprItem (.binOp .add _ (.binOp .mul _ _)) _] => .pass "select_item_arithmetic_precedence"
+      | _ => .fail "select_item_arithmetic_precedence" "wrong AST shape")
+   | _ => .fail "select_item_arithmetic_precedence" "parse failure"),
+  -- Previously masked: comma-separated FROM = implicit cross join
+  (match parse "SELECT * FROM users, orders" with
+   | .ok (.query (.simple sel)) =>
+     (match sel.fromClause with
+      | some (.join _ .cross _ none) => .pass "comma_join_is_cross"
+      | _ => .fail "comma_join_is_cross" "wrong FROM shape")
+   | _ => .fail "comma_join_is_cross" "parse failure")
+]
+
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
   insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests ++
-  recursiveCTETests ++ doubleQuoteTests ++ windowParserTests
+  recursiveCTETests ++ doubleQuoteTests ++ trailingInputTests ++ windowParserTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests
