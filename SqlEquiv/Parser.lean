@@ -980,8 +980,8 @@ partial def parseMulDiv : Parser Expr := do
   let left ← parsePrimary
   let left' ← parsePostfix left
   parseMulDivRest left'
-where
-  parseMulDivRest (left : Expr) : Parser Expr := do
+
+partial def parseMulDivRest (left : Expr) : Parser Expr := do
     let t ← Parser.peek
     match t with
     | .star =>
@@ -1005,8 +1005,8 @@ where
 partial def parseAddSub : Parser Expr := do
   let left ← parseMulDiv
   parseAddSubRest left
-where
-  parseAddSubRest (left : Expr) : Parser Expr := do
+
+partial def parseAddSubRest (left : Expr) : Parser Expr := do
     let t ← Parser.peek
     match t with
     | .op "+" =>
@@ -1027,8 +1027,8 @@ where
 partial def parseComparison : Parser Expr := do
   let left ← parseAddSub
   parseCompRest left
-where
-  parseCompRest (left : Expr) : Parser Expr := do
+
+partial def parseCompRest (left : Expr) : Parser Expr := do
     let t ← Parser.peek
     match t with
     | .op "=" =>
@@ -1202,20 +1202,15 @@ where
     else
       return none
 
-  -- Continue parsing expression from a starting expression (for operator precedence)
+  -- Continue parsing an expression from an already-parsed postfix expression
+  -- (#228): resume the precedence chain (mul/div/mod → add/sub/concat →
+  -- comparison) instead of punting and leaving trailing operators — the old
+  -- "just return what we have" comment relied on the top-level parser
+  -- silently discarding the rest of the statement.
   continueExprFrom (left : Expr) : Parser Expr := do
-    let t ← Parser.peek
-    match t with
-    | .star => do
-      let _ ← Parser.advance
-      let right ← parsePrimary
-      let right' ← parsePostfix right
-      continueExprFrom (.binOp .mul left right')
-    | .op "+" | .op "-" | .op "/" | .op "||" | .op "%" =>
-      -- There's more to the expression, but we've already consumed part
-      -- For simplicity, just return what we have
-      return left
-    | _ => return left
+    let l1 ← parseMulDivRest left
+    let l2 ← parseAddSubRest l1
+    parseCompRest l2
 
 /-- Parse the remaining `, item` parts of a SELECT list without backtracking
     (#214): if an item after a comma fails to parse, the error propagates
@@ -1327,6 +1322,12 @@ where
         else
           Parser.pure none
       parseJoins (.join left jtype right on_)
+    else if t == .comma then
+      -- Comma-separated FROM list = implicit cross join (#228; previously
+      -- the tail after the comma was silently discarded)
+      let _ ← Parser.advance
+      let right ← parseFromSource
+      parseJoins (.join left .cross right none)
     else
       return left
 
@@ -1631,13 +1632,26 @@ partial def parseStmt : Parser Stmt := do
 
 end -- mutual
 
-/-- Parse SQL string to AST -/
+/-- Require that parsing consumed the whole input (#228): leftover tokens
+    beyond a trailing semicolon are a loud error, never silently discarded —
+    the enabler of the OVER-clause and similar swallow bugs. -/
+private def requireConsumed (state : ParseState) : Except String Unit :=
+  let rest := match state.tokens with
+    | ⟨.semicolon, _, _⟩ :: rest' => rest'
+    | rest' => rest'
+  match rest with
+  | [] => Except.ok ()
+  | pt :: _ =>
+    Except.error s!"Parse error at line {pt.pos.line}, column {pt.pos.column}: Unexpected trailing input starting with {pt.token.describe}"
+
 def parse (input : String) : Except String Stmt := do
   let tokens ← (tokenize input).mapError toString
   let state : ParseState := { tokens := tokens, pos := 0, input := input, parenStack := [] }
   match parseStmt state with
   | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
-  | .ok (stmt, _) => Except.ok stmt
+  | .ok (stmt, state') => do
+    requireConsumed state'
+    Except.ok stmt
 
 /-- Parse SELECT statement specifically -/
 def parseSelectStr (input : String) : Except String SelectStmt := do
@@ -1645,6 +1659,8 @@ def parseSelectStr (input : String) : Except String SelectStmt := do
   let state : ParseState := { tokens := tokens, pos := 0, input := input, parenStack := [] }
   match parseSelect state with
   | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
-  | .ok (stmt, _) => Except.ok stmt
+  | .ok (stmt, state') => do
+    requireConsumed state'
+    Except.ok stmt
 
 end SqlEquiv

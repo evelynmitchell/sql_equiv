@@ -59,11 +59,16 @@ def testDb : Database := fun name =>
 -- Test Helpers
 -- ============================================================================
 
-/-- Parse and evaluate a SELECT query -/
+/-- Parse and evaluate a query (full statement grammar, so set operations
+    and CTEs are visible — parseSelectStr would silently see only the first
+    SELECT, #228) -/
 def evalQuery (sql : String) : Except String Table :=
-  match parseSelectStr sql with
+  match parse sql with
   | .error e => .error e
-  | .ok sel => .ok (evalSelect testDb sel)
+  | .ok stmt =>
+    match (evalStmt testDb stmt).2 with
+    | some t => .ok t
+    | none => .error "statement produced no result table"
 
 /-- Check if result has expected number of rows -/
 def testRowCount (name : String) (sql : String) (expected : Nat) : TestResult :=
