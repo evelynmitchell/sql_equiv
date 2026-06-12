@@ -1017,29 +1017,29 @@ private theorem list_flatMap_congr_mem {α β : Type} {l : List α} {f g : α �
     rw [h a List.mem_cons_self]
     exact congrArg _ (ih (fun x hx => h x (List.mem_cons_of_mem a hx)))
 
-/-- lookup on l₁ ++ l₂: if l₁.lookup = none, falls through to l₂ -/
-private theorem lookup_append_none_left :
+/-- lookupCI on l₁ ++ l₂: if l₁.lookupCI = none, falls through to l₂ -/
+private theorem lookupCI_append_none_left :
     ∀ (l₁ l₂ : List (String × Value)) (key : String),
-    l₁.lookup key = none → (l₁ ++ l₂).lookup key = l₂.lookup key
-  | [], _, _, _ => by simp
+    Row.lookupCI l₁ key = none → Row.lookupCI (l₁ ++ l₂) key = Row.lookupCI l₂ key
+  | [], _, _, _ => rfl
   | (_k, _v) :: rest, l₂, key, h => by
-    simp only [List.cons_append, List.lookup] at h ⊢
-    split
-    · rename_i heq; simp only [heq] at h; exact nomatch h
+    simp only [List.cons_append, Row.lookupCI] at h ⊢
+    split at h
+    · exact nomatch h
     · rename_i hne
-      simp only [hne] at h
-      exact lookup_append_none_left rest l₂ key h
+      rw [if_neg hne]
+      exact lookupCI_append_none_left rest l₂ key h
 
-/-- isNullValue of any lookup on a null-padded list is true -/
-private theorem isNullValue_lookup_nullPad :
+/-- isNullValue of any lookupCI on a null-padded list is true -/
+private theorem isNullValue_lookupCI_nullPad :
     ∀ (l : List (String × Value)) (key : String),
-    isNullValue ((l.map (fun (k, _) => (k, Value.null none))).lookup key) = true
-  | [], _ => by simp [isNullValue]
+    isNullValue (Row.lookupCI (l.map (fun (k, _) => (k, Value.null none))) key) = true
+  | [], _ => by simp [Row.lookupCI, isNullValue]
   | (_k, _v) :: rest, key => by
-    simp only [List.map_cons, List.lookup]
+    simp only [List.map_cons, Row.lookupCI]
     split
     · simp [isNullValue]
-    · exact isNullValue_lookup_nullPad rest key
+    · exact isNullValue_lookupCI_nullPad rest key
 
 /-- filter_append + showing null-padded right side filters to empty -/
 private theorem filter_null_pad_empty (lr : List (String × Value))
@@ -1289,10 +1289,10 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
           == some (Value.bool true)) = true from by
         rw [beq_iff_eq, evalExprWithDb_unaryOp, evalExprWithDb_col]
         simp only [Row.getQualified]
-        have hLrNone : lr.lookup s!"{sName}.{yCol}" = none := by
+        have hLrNone : Row.lookupCI lr s!"{sName}.{yCol}" = none := by
           have := hNotInLeft lr hlr; simp only [Row.getQualified] at this; exact this
-        rw [lookup_append_none_left _ _ _ hLrNone]
-        simp [evalUnaryOp, isNullValue_lookup_nullPad]]
+        rw [lookupCI_append_none_left _ _ _ hLrNone]
+        simp [evalUnaryOp, isNullValue_lookupCI_nullPad]]
       simp only [↓reduceIte]
       -- Show proj(lr ++ nullPad(rightRow)) = proj(lr)
       congr 1
