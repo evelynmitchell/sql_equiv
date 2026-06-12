@@ -75,7 +75,9 @@ Purpose: Evaluate expression with database context (for subqueries)
 
 Semantics by constructor:
   lit v         → some v
-  col c         → lookup column in row
+  col c         → lookup column in row (case-insensitive — SQL identifiers
+                  are case-insensitive, so `country` resolves a column
+                  stored as `Country`; first match wins on case collisions)
   binOp op l r  → evalBinOp op (eval l) (eval r)
   unaryOp op e  → evalUnaryOp op (eval e)
   func name args → evalFunc name (map eval args)

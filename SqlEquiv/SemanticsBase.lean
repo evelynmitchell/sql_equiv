@@ -51,20 +51,31 @@ where
 -- Row Operations
 -- ============================================================================
 
+/-- Case-insensitive key lookup. SQL identifiers are case-insensitive
+    (`country` resolves a column stored as `Country`), so all row lookups
+    compare case-folded keys. First match wins: two columns whose names
+    differ only by case collide deliberately, the same shadowing
+    `List.lookup` already gave exact-duplicate keys.
+    Structured like `List.lookup` so lookup lemmas port directly. -/
+def Row.lookupCI : Row → String → Option Value
+  | [], _ => none
+  | (k, v) :: rest, key =>
+    if k.toLower == key.toLower then some v else Row.lookupCI rest key
+
 /-- Get value from row by column name -/
 def Row.get (row : Row) (col : String) : Option Value :=
-  row.lookup col
+  row.lookupCI col
 
 /-- Get value from row by qualified column name -/
 def Row.getQualified (row : Row) (table : Option String) (col : String) : Option Value :=
   match table with
-  | some t => row.lookup s!"{t}.{col}"
+  | some t => row.lookupCI s!"{t}.{col}"
   | none =>
     -- Try unqualified first, then any qualified match
-    match row.lookup col with
+    match row.lookupCI col with
     | some v => some v
     | none =>
-      match row.find? (fun (k, _) => k.endsWith s!".{col}") with
+      match row.find? (fun (k, _) => k.toLower.endsWith s!".{col.toLower}") with
       | some (_, v) => some v
       | none => none
 

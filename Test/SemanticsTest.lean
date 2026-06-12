@@ -47,12 +47,20 @@ def itemsTable : Table := [
   [("id", .int 4), ("name", .string "Shim"), ("price", .null (some .decimal))]
 ]
 
+/-- Spider-style table: original-case column names (queries lowercase them) -/
+def singerTable : Table := [
+  [("Singer_ID", .int 1), ("Name", .string "Joe"), ("Country", .string "France"), ("Age", .int 52)],
+  [("Singer_ID", .int 2), ("Name", .string "Tribal King"), ("Country", .string "France"), ("Age", .int 25)],
+  [("Singer_ID", .int 3), ("Name", .string "Rose White"), ("Country", .string "UK"), ("Age", .int 18)]
+]
+
 def testDb : Database := fun name =>
   match name with
   | "users" => usersTable
   | "orders" => ordersTable
   | "products" => productsTable
   | "items" => itemsTable
+  | "singer" => singerTable
   | _ => []
 
 -- ============================================================================
@@ -799,6 +807,40 @@ def windowTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Case-Insensitive Identifier Resolution (#231)
+-- ============================================================================
+
+/-- SQL identifiers are case-insensitive: Spider queries write `country`
+    against a schema column `Country`. These mirror the probe on #231. -/
+def caseInsensitiveTests : List TestResult := [
+  -- The #231 probe: lowercase WHERE/SELECT identifiers, original-case schema
+  testColumn "ci_where_lowercase"
+    "SELECT DISTINCT country FROM singer WHERE age > 20"
+    "country" [.string "France"],
+  testColumn "ci_qualified_alias"
+    "SELECT T1.name AS n FROM singer AS T1 WHERE T1.age < 20"
+    "n" [.string "Rose White"],
+  testContainsValue "ci_upper_ref_lower_schema"
+    "SELECT NAME FROM users WHERE AGE = 30" (.string "Alice"),
+  testColumn "ci_order_by"
+    "SELECT name FROM singer ORDER BY age"
+    "name" [.string "Rose White", .string "Tribal King", .string "Joe"],
+  testRowCount "ci_group_by"
+    "SELECT country, COUNT(*) FROM singer GROUP BY country" 2,
+  -- First match wins on a case-only collision (same shadowing List.lookup
+  -- gave exact duplicates)
+  (if Row.get [("a", .int 1), ("A", .int 2)] "A" == some (.int 1)
+   then .pass "ci_collision_first_key_wins"
+   else .fail "ci_collision_first_key_wins" "expected leftmost case-insensitive match"),
+  (if Row.getQualified [("T.Country", .string "x")] none "COUNTRY" == some (.string "x")
+   then .pass "ci_qualified_suffix_fallback"
+   else .fail "ci_qualified_suffix_fallback" "expected case-insensitive .col suffix fallback"),
+  (if Row.getQualified [("T.Country", .string "x")] (some "t") "country" == some (.string "x")
+   then .pass "ci_qualified_table"
+   else .fail "ci_qualified_table" "expected case-insensitive qualified lookup")
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -810,7 +852,7 @@ def allSemanticsTests : List TestResult :=
   setOpSubqueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
-  windowTests
+  windowTests ++ caseInsensitiveTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
