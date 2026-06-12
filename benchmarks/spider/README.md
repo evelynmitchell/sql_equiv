@@ -57,3 +57,12 @@ parser and writes `parse_report.md` (rate + failure classes, each an issue
 candidate). The passing count is ratcheted in `tools/spider_parse_minimum.txt`
 and checked in CI. Next stages (evaluate-rate, oracle-agreement-rate) need the
 Spider databases — see Download above.
+
+## Evaluate-Rate Baseline (north-star metric, stage 2)
+
+`python3 tools/spider_eval_baseline.py` builds every dev schema
+(`dev_tables.json`) with deterministic FK-aware synthetic data, evaluates all
+564 `dev_queries.jsonl` pairs with our engine (`sql_equiv --spider-eval`) and
+with in-process sqlite3 (the Spider-fidelity oracle), and compares result
+multisets. Report: `eval_report.md`; ratchet: `tools/spider_eval_minimum.txt`
+(CI-checked). Failure classes are issue candidates, per the operating loop.

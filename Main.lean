@@ -561,6 +561,94 @@ def main (args : List String) : IO Unit := do
       | .error e =>
         let msg := (e.splitOn "\n").headD e
         IO.println s!"err\t{n}\t{msg}"
+  else if args.length >= 2 && args[0]! == "--spider-eval" then
+    -- Batch evaluation for the Spider evaluate-rate baseline (#225,
+    -- tools/spider_eval_baseline.py). Manifest format, one item per line:
+    --   #DB <db_id>          start a database
+    --   #TABLE <name>        start a table (within current db)
+    --   col1|col2            header row for current table
+    --   v1|v2                data row (shape-parsed: NULL / int / d.d / text)
+    --   #QUERY <db_id>       next line is the SQL (one line)
+    -- Output per query: "#RESULT <i> ok" + header-less pipe rows + "#END",
+    -- or "#RESULT <i> err <msg>".
+    let content ← IO.FS.readFile args[1]!
+    let parseCell : String → SqlEquiv.Value := fun c =>
+      if c == "NULL" then .null none
+      else match c.toInt? with
+      | some n => .int n
+      | none =>
+        match c.splitOn "." with
+        | [ip, fp] =>
+          if fp.length > 0 && fp.all Char.isDigit then
+            match (ip ++ fp).toInt? with
+            | some u => SqlEquiv.Value.mkDecimal u fp.length
+            | none => .string c
+          else .string c
+        | _ => .string c
+    let renderCell : SqlEquiv.Value → String := fun v =>
+      match v with
+      | .int n => toString n
+      | .string st => st
+      | .bool b => if b then "1" else "0"
+      | .null _ => "NULL"
+      | .decimal _ _ => v.toSql
+    let mut dbs : List (String × List (String × SqlEquiv.Table)) := []
+    let mut curDb : String := ""
+    let mut curTable : String := ""
+    let mut curCols : List String := []
+    let mut curRows : SqlEquiv.Table := []
+    let mut queries : List (String × String) := []
+    let mut pendingQueryDb : Option String := none
+    let flushTable : List (String × List (String × SqlEquiv.Table)) → String → String →
+        List String → SqlEquiv.Table → List (String × List (String × SqlEquiv.Table)) :=
+      fun dbs' db tbl _cols rows =>
+        if db == "" || tbl == "" then dbs'
+        else match dbs'.lookup db with
+        | some tbls => (db, (tbl, rows.reverse) :: tbls) :: dbs'.filter (·.1 != db)
+        | none => (db, [(tbl, rows.reverse)]) :: dbs'
+    for line in content.splitOn "\n" do
+      match pendingQueryDb with
+      | some qdb =>
+        queries := queries ++ [(qdb, line)]
+        pendingQueryDb := none
+      | none =>
+        if line.startsWith "#DB " then
+          dbs := flushTable dbs curDb curTable curCols curRows
+          curDb := (line.drop 4).trimAscii.toString
+          curTable := ""; curCols := []; curRows := []
+        else if line.startsWith "#TABLE " then
+          dbs := flushTable dbs curDb curTable curCols curRows
+          curTable := (line.drop 7).trimAscii.toString
+          curCols := []; curRows := []
+        else if line.startsWith "#QUERY " then
+          dbs := flushTable dbs curDb curTable curCols curRows
+          curTable := ""; curCols := []; curRows := []
+          pendingQueryDb := some ((line.drop 7).trimAscii.toString)
+        else if line.trimAscii.isEmpty then
+          pure ()
+        else if curTable != "" && curCols.isEmpty then
+          curCols := line.splitOn "|"
+        else if curTable != "" then
+          let cells := (line.splitOn "|").map parseCell
+          curRows := (curCols.zip cells) :: curRows
+    dbs := flushTable dbs curDb curTable curCols curRows
+    let mut i := 0
+    for (qdb, sql) in queries do
+      i := i + 1
+      let tbls := (dbs.lookup qdb).getD []
+      let database : SqlEquiv.Database := fun n =>
+        ((tbls.find? (fun (tn, _) => tn.toLower == n.toLower)).map (·.2)).getD []
+      match SqlEquiv.parse sql with
+      | .error e =>
+        IO.println s!"#RESULT {i} err parse: {(s!"{e}".splitOn "\n").headD ""}"
+      | .ok stmt =>
+        match (SqlEquiv.evalStmt database stmt).2 with
+        | none => IO.println s!"#RESULT {i} err no-result"
+        | some tableResult =>
+          IO.println s!"#RESULT {i} ok"
+          for row in tableResult do
+            IO.println (String.intercalate "|" (row.map (fun (_, v) => renderCell v)))
+          IO.println "#END"
   else if args.length >= 1 && (args[0]! == "--help" || args[0]! == "-h") then
     IO.println "Usage: sql_equiv [options]"
     IO.println ""
