@@ -723,8 +723,8 @@ theorem isNullValue_bool (b : Bool) : isNullValue (some (.bool b)) = false := by
     by `List.find?`), not `some (.null _)`. Since `none ≠ some _` in Lean,
     the axiom could derive `False`. The precondition `isNullValue v = false`
     eliminates that case and makes this theorem provably sound. -/
-private theorem coalesce_toUpper : "COALESCE".toUpper = "COALESCE" := by native_decide
-private theorem nullif_toUpper : "NULLIF".toUpper = "NULLIF" := by native_decide
+private theorem coalesce_toUpper : "COALESCE".toUpper = "COALESCE" := by decide +kernel
+private theorem nullif_toUpper : "NULLIF".toUpper = "NULLIF" := by decide +kernel
 
 theorem coalesce_null_left_nonnull (t : Option SqlType) (v : Option Value)
     (hv : isNullValue v = false) :
@@ -1398,7 +1398,7 @@ theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
 /-- simpleLike with empty pattern reduces to string equality -/
 private theorem simpleLike_empty (s : String) : simpleLike s "" = (s == "") := by
   unfold simpleLike
-  have h1 : ("" == "%") = false := by native_decide
+  have h1 : ("" == "%") = false := by decide +kernel
   simp [h1]
 
 /-- Value-level: LIKE '' behaves the same as = '' for all Option Value -/
@@ -1508,7 +1508,7 @@ private theorem simpleLike_self (s : String) : simpleLike s s = true := by
             -- rest ≠ [] (otherwise s = "%", contradicting h1)
             have hrest_ne : rest ≠ [] := by
               intro heq
-              exact h1 (String.toList_injective (by rw [hsc, heq]; native_decide))
+              exact h1 (String.toList_injective (by rw [hsc, heq]; decide +kernel))
             -- rest has at least 2 elements (since rest.dropLast is non-empty)
             obtain ⟨b, bs, rfl⟩ : ∃ b bs, rest = b :: bs := by
               cases rest with
@@ -1571,14 +1571,14 @@ theorem like_self (e : Expr) (h : e.isStringOrNull) :
 private theorem evalFunc_concat_empty_left (v : Option Value) :
     (∃ s, v = some (.string s)) ∨ v = some (.null none) ∨ v = none →
     evalFunc "CONCAT" [some (.string ""), v] = v := by
-  have hup : "CONCAT".toUpper = "CONCAT" := by native_decide
+  have hup : "CONCAT".toUpper = "CONCAT" := by decide +kernel
   intro h; rcases h with ⟨s, hs⟩ | hn | hn <;> subst_vars <;> simp [evalFunc, hup]
 
 -- Value-level helper: CONCAT(v, "") = v for string/untyped-null/none values
 private theorem evalFunc_concat_empty_right (v : Option Value) :
     (∃ s, v = some (.string s)) ∨ v = some (.null none) ∨ v = none →
     evalFunc "CONCAT" [v, some (.string "")] = v := by
-  have hup : "CONCAT".toUpper = "CONCAT" := by native_decide
+  have hup : "CONCAT".toUpper = "CONCAT" := by decide +kernel
   intro h; rcases h with ⟨s, hs⟩ | hn | hn <;> subst_vars <;> simp [evalFunc, hup]
 
 /-- CONCAT('', x) = x (empty string is identity for concat).
@@ -1613,8 +1613,8 @@ private theorem evalFunc_length_concat (av bv : Option Value)
     (hb : (∃ s, bv = some (.string s)) ∨ (∃ n, bv = some (.null n)) ∨ bv = none) :
     evalFunc "LENGTH" [evalFunc "CONCAT" [av, bv]] =
     evalBinOp .add (evalFunc "LENGTH" [av]) (evalFunc "LENGTH" [bv]) := by
-  have hL : "LENGTH".toUpper = "LENGTH" := by native_decide
-  have hC : "CONCAT".toUpper = "CONCAT" := by native_decide
+  have hL : "LENGTH".toUpper = "LENGTH" := by decide +kernel
+  have hC : "CONCAT".toUpper = "CONCAT" := by decide +kernel
   rcases ha with ⟨s, rfl⟩ | ⟨n, rfl⟩ | rfl <;>
     rcases hb with ⟨s', rfl⟩ | ⟨n', rfl⟩ | rfl <;>
     simp [evalFunc, hC, hL, evalBinOp, String.length_append]
@@ -1722,7 +1722,7 @@ private theorem string_toLower_idem (s : String) : s.toLower.toLower = s.toLower
 -- Value-level helpers for evalFunc
 private theorem evalFunc_upper_idem (v : Option Value) :
     evalFunc "UPPER" [evalFunc "UPPER" [v]] = evalFunc "UPPER" [v] := by
-  have hup : "UPPER".toUpper = "UPPER" := by native_decide
+  have hup : "UPPER".toUpper = "UPPER" := by decide +kernel
   match v with
   | some (.string s) => simp [evalFunc, hup, string_toUpper_idem]
   | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
@@ -1730,7 +1730,7 @@ private theorem evalFunc_upper_idem (v : Option Value) :
 
 private theorem evalFunc_lower_idem (v : Option Value) :
     evalFunc "LOWER" [evalFunc "LOWER" [v]] = evalFunc "LOWER" [v] := by
-  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
+  have hlo : "LOWER".toUpper = "LOWER" := by decide +kernel
   match v with
   | some (.string s) => simp [evalFunc, hlo, string_toLower_idem]
   | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
@@ -1764,8 +1764,8 @@ private theorem string_toLower_toUpper_toLower (s : String) :
 -- Value-level helpers for evalFunc (cross-composition)
 private theorem evalFunc_upper_lower_upper (v : Option Value) :
     evalFunc "UPPER" [evalFunc "LOWER" [evalFunc "UPPER" [v]]] = evalFunc "UPPER" [v] := by
-  have hup : "UPPER".toUpper = "UPPER" := by native_decide
-  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
+  have hup : "UPPER".toUpper = "UPPER" := by decide +kernel
+  have hlo : "LOWER".toUpper = "LOWER" := by decide +kernel
   match v with
   | some (.string s) => simp [evalFunc, hup, hlo, string_toUpper_toLower_toUpper]
   | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
@@ -1773,8 +1773,8 @@ private theorem evalFunc_upper_lower_upper (v : Option Value) :
 
 private theorem evalFunc_lower_upper_lower (v : Option Value) :
     evalFunc "LOWER" [evalFunc "UPPER" [evalFunc "LOWER" [v]]] = evalFunc "LOWER" [v] := by
-  have hlo : "LOWER".toUpper = "LOWER" := by native_decide
-  have hup : "UPPER".toUpper = "UPPER" := by native_decide
+  have hlo : "LOWER".toUpper = "LOWER" := by decide +kernel
+  have hup : "UPPER".toUpper = "UPPER" := by decide +kernel
   match v with
   | some (.string s) => simp [evalFunc, hlo, hup, string_toLower_toUpper_toLower]
   | some (.int _) | some (.decimal _ _) | some (.bool _) | some (.null _) | none =>
@@ -1801,7 +1801,7 @@ theorem length_empty :
   simp only [evalExpr]
   rw [evalExprWithDb_func, evalExprWithDb_lit]
   simp only [List.map, evalExprWithDb_lit]
-  have h : "LENGTH".toUpper = "LENGTH" := by native_decide
+  have h : "LENGTH".toUpper = "LENGTH" := by decide +kernel
   simp [evalFunc, h]
 
 -- ============================================================================
