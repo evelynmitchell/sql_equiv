@@ -273,6 +273,161 @@ def notNotTests (cfg : Configuration) : TestSeq :=
       evalExpr [] (certifiedRewrite (.unaryOp .not (.unaryOp .not e.expr))).val ==
         evalExpr [] (.unaryOp .not (.unaryOp .not e.expr)))
 
+
+-- ============================================================================
+-- Context sweep: rows, real databases, errors, subqueries (#AUDIT)
+-- ============================================================================
+-- `≃ₑ` (and therefore the kernel proof behind `certifiedRewrite`) only
+-- quantifies over rows evaluated against the EMPTY database, and the
+-- properties above only evaluate ground expressions with `evalExpr []`.
+-- This sweep checks the compiled rewriter against the evaluator in the
+-- contexts the proof does not cover: column references bound by real rows,
+-- missing columns, evaluation errors (`none`), every `Value` kind, and
+-- EXISTS / IN (subquery) against a non-empty database.
+
+private def sweepSel (s : String) : SubQuery :=
+  match parseSelectStr s with
+  | .ok x => .simple x
+  | .error e => panic! s!"sweepSel: {e}"
+
+private def sweepCol (c : String) : Expr := .col ⟨none, c⟩
+
+private def subqNonEmpty : SubQuery := sweepSel "SELECT a FROM t"
+private def subqEmpty : SubQuery := sweepSel "SELECT a FROM t WHERE a > 100"
+
+/-- Operands: every Value kind, identity/absorbing constants, NULLs,
+    erroring expressions, bound/missing columns, EXISTS. -/
+private def sweepAtoms : List Expr := [
+  .lit (.int 0), .lit (.int 1), .lit (.int (-3)), .lit (.int 7),
+  .lit (.string ""), .lit (.string "a"), .lit (.string "%"),
+  .lit (.bool true), .lit (.bool false),
+  .lit (Value.mkDecimal 15 1), .lit (Value.mkDecimal 0 0),
+  .lit (.null none), .lit (.null (some .int)),
+  .binOp .add (.lit (.string "x")) (.lit (.int 1)),  -- type error → none
+  .binOp .div (.lit (.int 1)) (.lit (.int 0)),       -- div by zero
+  sweepCol "i", sweepCol "s", sweepCol "b", sweepCol "n", sweepCol "missing",
+  .«exists» false subqNonEmpty,
+  .«exists» true subqEmpty ]
+
+/-- Smaller operand set for nested shapes. -/
+private def sweepSmall : List Expr := [
+  .lit (.int 0), .lit (.int 1), .lit (.string "a"), .lit (.bool true),
+  .lit (.bool false), .lit (.null none), .lit (Value.mkDecimal 15 1),
+  .binOp .add (.lit (.string "x")) (.lit (.int 1)),
+  sweepCol "i", sweepCol "b", .«exists» false subqNonEmpty ]
+
+private def sweepBinOps : List BinOp :=
+  [.add, .sub, .mul, .div, .mod, .eq, .ne, .lt, .le, .gt, .ge, .and, .or, .concat, .like]
+private def sweepUnOps : List UnaryOp := [.not, .neg, .isNull, .isNotNull]
+
+/-- Every shape a rewriter arm matches, over the operand sets above. -/
+def sweepCases : List Expr := Id.run do
+  let mut out : Array Expr := #[]
+  for op in sweepBinOps do
+    for a in sweepAtoms do
+      for b in sweepAtoms do out := out.push (.binOp op a b)
+  for op in sweepUnOps do
+    for a in sweepAtoms do out := out.push (.unaryOp op a)
+  for u in sweepUnOps do
+    for op in sweepBinOps do
+      for a in sweepSmall do
+        for b in sweepSmall do out := out.push (.unaryOp u (.binOp op a b))
+  for u in sweepUnOps do
+    for u2 in sweepUnOps do
+      for a in sweepSmall do out := out.push (.unaryOp u (.unaryOp u2 a))
+  for op in sweepBinOps do
+    for op2 in [BinOp.and, .or, .add, .mul, .eq, .lt] do
+      for a in sweepSmall do
+        for b in sweepSmall do
+          out := out.push (.binOp op (.binOp op2 a b) (.lit (.bool true)))
+          out := out.push (.binOp op (.lit (.int 0)) (.binOp op2 a b))
+          out := out.push (.binOp op (.binOp op2 a b) (.lit (.int 1)))
+  for a in sweepSmall do
+    for lo in sweepSmall do
+      for hi in sweepSmall do
+        out := out.push (.between a lo hi)
+        out := out.push (.unaryOp .not (.between a lo hi))
+  for a in sweepAtoms do
+    for neg in [false, true] do
+      out := out.push (.inList a neg [])
+      for v in sweepSmall do
+        out := out.push (.inList a neg [v])
+        out := out.push (.inList a neg [v, .lit (.int 1)])
+      out := out.push (.inSubquery a neg subqNonEmpty)
+      out := out.push (.inSubquery a neg subqEmpty)
+  for c in sweepSmall do
+    for x in sweepSmall do
+      out := out.push (.«case» [] (some x))
+      out := out.push (.«case» [] none)
+      out := out.push (.«case» [(c, x)] (some (.lit (.int 9))))
+      out := out.push (.«case» [(c, x)] none)
+  for neg in [false, true] do
+    for sq in [subqNonEmpty, subqEmpty] do
+      out := out.push (.unaryOp .not (.«exists» neg sq))
+      out := out.push (.unaryOp .not (.unaryOp .not (.«exists» neg sq)))
+  for a in sweepSmall do
+    out := out.push (.func "COALESCE" [.binOp .add a (.lit (.int 0)), .lit (.int 5)])
+    out := out.push (.func "UPPER" [.binOp .like a (.lit (.string ""))])
+  return out.toList
+
+/-- Rows binding the sweep's columns (plus the generator's x/y/z), and an empty row. -/
+def sweepRows : List Row := [
+  [("i", .int 4), ("s", .string "q"), ("b", .bool true), ("n", .null none),
+   ("x", .int 3), ("y", .bool false), ("z", .string "w")],
+  [("i", .int 0), ("s", .string ""), ("b", .bool false), ("n", .null (some .int)),
+   ("x", .null none), ("y", .int 0), ("z", .bool true)],
+  [] ]
+
+def sweepEmptyDb : Database := fun _ => []
+def sweepRealDb : Database := fun n =>
+  if n == "t" then [[("a", .int 1)], [("a", .int 4)], [("a", .null none)]] else []
+
+/-- Does rewriting `e` change its value in any sweep row, under either database? -/
+def rewriteMismatch (e : Expr) : Bool :=
+  let e' := (certifiedRewrite e).val
+  [sweepEmptyDb, sweepRealDb].any fun db =>
+    sweepRows.any fun r => evalExprWithDb db r e != evalExprWithDb db r e'
+
+def contextSweepTests : TestSeq :=
+  let mismatches := sweepCases.filter rewriteMismatch
+  let rewritten := (sweepCases.filter fun e => !((certifiedRewrite e).val == e)).length
+  let firstBad := match mismatches.head? with
+    | some e => s!" first: {e.toSql} ⇒ {(certifiedRewrite e).val.toSql}"
+    | none => ""
+  -- Vacuity guards: the sweep must actually trigger rewrites, and the real
+  -- database must actually change subquery results.
+  test s!"sweep triggers rewrites ({rewritten} of {sweepCases.length})" (rewritten ≥ 5000) $
+  test "real database changes EXISTS / IN-subquery results" (
+    evalExprWithDb sweepEmptyDb [] (.«exists» false subqNonEmpty) !=
+      evalExprWithDb sweepRealDb [] (.«exists» false subqNonEmpty) &&
+    evalExprWithDb sweepEmptyDb [] (.inSubquery (.lit (.int 4)) false subqNonEmpty) !=
+      evalExprWithDb sweepRealDb [] (.inSubquery (.lit (.int 4)) false subqNonEmpty)) $
+  test "sweep detects an unguarded `a AND TRUE → a` (oracle self-check)" (
+    let e : Expr := .binOp .and (.lit (.int 42)) (.lit (.bool true))
+    evalExprWithDb sweepEmptyDb [] e != evalExprWithDb sweepEmptyDb [] (.lit (.int 42))) $
+  test s!"rewrite preserves evaluation across rows and empty/real db ({mismatches.length} mismatches){firstBad}"
+    mismatches.isEmpty
+
+/-- Wrap a random expression in each context that triggers a rewriter arm. -/
+private def rewriteContexts (e : Expr) : List Expr := [
+  e,
+  .binOp .and e (.lit (.bool true)), .binOp .and (.lit (.bool true)) e,
+  .binOp .or e (.lit (.bool false)), .binOp .or (.lit (.bool false)) e,
+  .binOp .add e (.lit (.int 0)), .binOp .mul (.lit (.int 1)) e,
+  .binOp .sub e (.lit (.int 0)),
+  .unaryOp .not e, .unaryOp .not (.unaryOp .not e),
+  .binOp .like e (.lit (.string "")),
+  .inList e false [sweepCol "x"], .inList e true [sweepCol "x"],
+  .between e (sweepCol "x") (.lit (.int 5)),
+  .unaryOp .not (.between e (.lit (.int 0)) (sweepCol "x")),
+  .«case» [(e, sweepCol "x")] (some (.lit (.int 1))),
+  .inSubquery e false subqNonEmpty,
+  .binOp .and e (.«exists» false subqNonEmpty) ]
+
+def contextPropertyTests (cfg : Configuration) : TestSeq :=
+  check (cfg := cfg) "rewrite preserves evaluation across rows and empty/real db (ColumnGroundExpr in rewrite contexts)"
+    (∀ e : ColumnGroundExpr, (rewriteContexts e.expr).all (fun c => !rewriteMismatch c))
+
 -- ============================================================================
 -- All rewriter property tests
 -- ============================================================================
@@ -292,6 +447,8 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "LIKE" likeTests $
   group "Boolean Identity" (boolIdentityTests cfg) $
   group "Arithmetic Identity" (arithIdentityTests cfg) $
-  group "NOT NOT" (notNotTests cfg)
+  group "NOT NOT" (notNotTests cfg) $
+  group "Context Sweep (rows, real db, subqueries)" contextSweepTests $
+  group "Context Property (rows, real db)" (contextPropertyTests cfg)
 
 end RewriterProperties

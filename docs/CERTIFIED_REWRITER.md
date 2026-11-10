@@ -18,6 +18,8 @@ The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplif
 
 `propext`, `Classical.choice`, and `Quot.sound` are Lean's standard axioms. `sorryAx` is inherited from the semantics rather than the rewriter: the mutual evaluator in `SqlEquiv/Semantics.lean` (`evalExprWithDb` and friends) discharges its termination goals with `decreasing_by all_goals sorry`, and `≃ₑ` is defined via that evaluator. Closing those termination proofs would remove `sorryAx` from every `≃ₑ` theorem, this one included.
 
+**Scope of `≃ₑ`.** `ExprEquiv` quantifies over rows evaluated against the *empty* database (`evalExpr = evalExprWithDb (fun _ => [])`). For expressions containing subqueries (`EXISTS`, `IN (subquery)`, scalar subqueries), the proof therefore does not cover non-empty databases. The LSpec context sweep tests those cases against a real database but does not prove them. See issue #242.
+
 ## Simplification Rules
 
 The rewriter implements **34 rules**: 24 unconditional + 10 conditional (guarded by static type checks).
@@ -217,7 +219,7 @@ The proof witness can be used with `expr_equiv_subst` to substitute equivalent e
 ## Testing
 
 - **79 unit tests** (`Test/RewriterTest.lean`): structural tests for each rule, guard-pass and guard-fail cases, bottom-up composition, conditional composition, idempotency, leaf node preservation, and subexpression recursion (func, case, inList vals, agg, windowFn, inSubquery).
-- **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions (bool/int/bounded generators), structural idempotency, BETWEEN elimination, short-circuit properties, boolean/arithmetic identity, and NOT-NOT.
+- **LSpec property tests** (`LSpecTests/RewriterProperties.lean`): SlimCheck-powered tests for semantic equivalence across random expressions (bool/int/bounded generators), structural idempotency, BETWEEN elimination, short-circuit properties, boolean/arithmetic identity, and NOT-NOT. A deterministic **context sweep** (~52k expressions covering every arm shape, every `Value` kind, NULLs, erroring operands, bound/missing columns, `EXISTS`/`IN (subquery)`) plus a randomized `ColumnGroundExpr` property check the compiled rewriter against `evalExprWithDb` across several rows and both an empty and a non-empty database. Self-checks guard against vacuity: a minimum rewrite count, the real database actually changing subquery results, and an oracle check that catches an unguarded `a AND TRUE → a`.
 - **Compile-time verification**: the type signature `{ e' : Expr // e ≃ₑ e' }` means Lean's type checker verifies correctness at compile time. Tests confirm the evaluator agrees with the proofs.
 
 ## File Layout
@@ -226,4 +228,4 @@ The proof witness can be used with `expr_equiv_subst` to substitute equivalent e
 |------|-------|---------|
 | `SqlEquiv/Rewriter.lean` | ~750 | Rewriter implementation, type guards, bridge lemmas, congruence lemmas, WFR proof |
 | `Test/RewriterTest.lean` | ~470 | Unit tests (79 tests) |
-| `LSpecTests/RewriterProperties.lean` | ~300 | LSpec property tests |
+| `LSpecTests/RewriterProperties.lean` | ~460 | LSpec property tests, including the context sweep |
