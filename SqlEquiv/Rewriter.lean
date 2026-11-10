@@ -2,8 +2,12 @@
   Certified Expression Rewriter
 
   Each simplification step is justified by an existing proven theorem —
-  producing both the simplified expression AND a proof of equivalence,
-  with zero new axioms or sorry.
+  producing both the simplified expression AND a proof of equivalence.
+  The rewriter itself adds no `axiom` declarations, `sorry`, or
+  `native_decide`. `#print axioms certifiedRewriteAux_equiv` reports
+  `[propext, sorryAx, Classical.choice, Quot.sound]`: the `sorryAx` is
+  inherited from the semantics (`decreasing_by sorry` in the mutual
+  evaluator in `Semantics.lean`, through `≃ₑ`), not from this file.
 
   Phase 1: Unconditional rules (no type preconditions).
   Phase 2a: Conditional rules guarded by static type checks.
@@ -703,7 +707,9 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
           (by simp [Option.map] at step1; exact h_unfold)
 
 /-- Certified expression rewriter: simplifies bottom-up, returning both
-    the result and a proof of equivalence. Zero axioms, zero sorry. -/
+    the result and a proof of equivalence. No axioms, `sorry`, or
+    `native_decide` of its own; see the module docstring for the
+    `sorryAx` inherited from the evaluator's termination proofs. -/
 def certifiedRewrite (e : Expr) : { e' : Expr // e ≃ₑ e' } :=
   ⟨certifiedRewriteAux e, certifiedRewriteAux_equiv e⟩
 

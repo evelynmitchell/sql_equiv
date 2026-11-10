@@ -10,6 +10,21 @@ open SqlEquiv
 open Test
 
 -- ============================================================================
+-- Axiom Guard
+-- ============================================================================
+
+-- Compile-time regression guard: the rewriter's correctness proof must not
+-- depend on compiler trust (`Lean.ofReduceBool` / `Lean.trustCompiler`, i.e.
+-- `native_decide`). `sorryAx` is inherited from the evaluator's
+-- `decreasing_by sorry` in Semantics.lean; update this expectation (removing
+-- it) when those termination proofs are closed.
+/--
+info: 'SqlEquiv.certifiedRewriteAux_equiv' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms certifiedRewriteAux_equiv
+
+-- ============================================================================
 -- Test Helpers
 -- ============================================================================
 

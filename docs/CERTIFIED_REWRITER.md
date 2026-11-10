@@ -10,7 +10,13 @@ def certifiedRewrite : (e : Expr) → { e' : Expr // e ≃ₑ e' }
 
 The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplified expression `e'` and a proof that `e` is semantically equivalent to `e'`. This means the rewriter **cannot produce incorrect simplifications** — any bug would be a compile-time error, not a runtime one.
 
-**Zero axioms. Zero sorry. Fully proven.**
+**No new axioms, no `sorry`, no `native_decide` in the rewriter or the lemmas it uses.** `#print axioms certifiedRewriteAux_equiv` reports:
+
+```
+[propext, sorryAx, Classical.choice, Quot.sound]
+```
+
+`propext`, `Classical.choice`, and `Quot.sound` are Lean's standard axioms. `sorryAx` is inherited from the semantics rather than the rewriter: the mutual evaluator in `SqlEquiv/Semantics.lean` (`evalExprWithDb` and friends) discharges its termination goals with `decreasing_by all_goals sorry`, and `≃ₑ` is defined via that evaluator. Closing those termination proofs would remove `sorryAx` from every `≃ₑ` theorem, this one included.
 
 ## Simplification Rules
 
