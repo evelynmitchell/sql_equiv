@@ -528,10 +528,56 @@ def subqueryUnnestingTests : List TestResult := [
 -- Test Runner
 -- ============================================================================
 
+-- ============================================================================
+-- Certified checker: database scope (#242)
+-- ============================================================================
+
+private def checkKind {e1 e2 : Expr} : EquivCheckResult e1 e2 → String
+  | .equiv _ => "equiv"
+  | .notEquiv _ => "notEquiv"
+  | .unknown => "unknown"
+
+private def existsT : Expr :=
+  match parseSelectStr "SELECT 1 FROM t" with
+  | .ok s => .exists false (.simple s)
+  | .error e => panic! e
+
+private def testCheckKind (name : String) (e1 e2 : Expr) (expected : String) : TestResult :=
+  let k := checkKind (checkEquivFull e1 e2)
+  if k == expected then .pass name else .fail name s!"expected {expected}, got {k}"
+
+/-- `EXISTS (SELECT 1 FROM t)` is ground and agrees with FALSE on the empty database,
+    but not on a database where `t` has rows. `≃ₑ` quantifies over all databases,
+    so the checker must not return `equiv` (it did before #242). -/
+def checkerDbScopeTests : List TestResult := [
+  (if existsT.isGround && !existsT.isClosed
+   then .pass "EXISTS (SELECT 1 FROM t) is ground but not closed"
+   else .fail "EXISTS (SELECT 1 FROM t) is ground but not closed" s!"isGround={existsT.isGround} isClosed={existsT.isClosed}"),
+  -- The pre-#242 checker returned `equiv` exactly when this empty-database decision was true.
+  (match h1 : existsT.isGround, h2 : (Expr.lit (.bool false)).isGround with
+   | true, true =>
+     if decideGroundExprEquiv existsT (.lit (.bool false)) h1 h2
+     then .pass "empty-db decision says EXISTS (SELECT 1 FROM t) = FALSE (only ≃ₑ₀)"
+     else .fail "empty-db decision says EXISTS (SELECT 1 FROM t) = FALSE (only ≃ₑ₀)" "decided false"
+   | _, _ => .fail "empty-db decision says EXISTS (SELECT 1 FROM t) = FALSE (only ≃ₑ₀)" "not ground"),
+  testCheckKind "checkEquivFull: ground subquery vs FALSE is not proved equivalent"
+    existsT (.lit (.bool false)) "unknown",
+  (let tDb : Database := fun n => if n == "t" then [[("a", .int 1)]] else []
+   if evalExprWithDb tDb [] existsT != evalExprWithDb tDb [] (.lit (.bool false))
+   then .pass "EXISTS (SELECT 1 FROM t) differs from FALSE on a non-empty database"
+   else .fail "EXISTS (SELECT 1 FROM t) differs from FALSE on a non-empty database" "evaluated equal"),
+  testCheckKind "checkEquivFull: closed 1 + 1 vs 2 is equiv"
+    (.binOp .add (.lit (.int 1)) (.lit (.int 1))) (.lit (.int 2)) "equiv",
+  testCheckKind "checkEquivFull: closed 1 vs 2 is notEquiv"
+    (.lit (.int 1)) (.lit (.int 2)) "notEquiv",
+  testCheckKind "checkEquivFull: ground subquery vs TRUE is notEquiv (differs on empty db)"
+    existsT (.lit (.bool true)) "notEquiv"
+]
+
 def allEquivTests : List TestResult :=
   commutativityTests ++ reflexivityTests ++
   nonEquivTests ++ nestedExprTests ++ semanticEquivTests ++
-  normalizationTests ++ subqueryUnnestingTests
+  normalizationTests ++ subqueryUnnestingTests ++ checkerDbScopeTests
 
 def runEquivTests : IO (Nat × Nat) := do
   IO.println "═══════════════════════════════════"

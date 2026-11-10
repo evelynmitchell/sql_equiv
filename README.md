@@ -37,8 +37,12 @@ The project is designed for compatibility with the Spider benchmark and supports
 Define and prove equivalences at multiple levels:
 
 ```lean
--- Expression equivalence
+-- Expression equivalence (every database and every row, so subqueries are covered)
 def ExprEquiv (e1 e2 : Expr) : Prop :=
+  forall (db : Database) (row : Row), evalExprWithDb db row e1 = evalExprWithDb db row e2
+
+-- Weaker: equivalence against the empty database only (`≃ₑ₀`)
+def ExprEquivEmptyDb (e1 e2 : Expr) : Prop :=
   forall row : Row, evalExpr row e1 = evalExpr row e2
 
 -- SELECT statement equivalence

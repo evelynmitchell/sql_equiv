@@ -683,9 +683,9 @@ theorem not_exists_nonempty_false (db : Database) (row : Row) (sel : SelectStmt)
 /-- Double negation: NOT NOT EXISTS = EXISTS (generic over SubQuery payloads, #218) -/
 theorem not_not_exists (sel : SubQuery) :
     Expr.exists true sel ≃ₑ Expr.unaryOp .not (Expr.exists false sel) := by
-  intro row
-  simp only [evalExpr, evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
-  cases evalSubQueryWithContext (fun _ => []) row sel with
+  intro db row
+  simp only [evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
+  cases evalSubQueryWithContext db row sel with
   | nil => rfl
   | cons _ _ => rfl
 
@@ -693,28 +693,27 @@ theorem not_not_exists (sel : SubQuery) :
     otherwise falls through to IN(e, sel).
     Requires that e evaluates without error (non-none) for all rows. -/
 theorem in_empty_subquery_false (e : Expr) (sel : SelectStmt)
-    (hE : ∀ row, evalExpr row e ≠ none) :
+    (hE : ∀ db row, evalExprWithDb db row e ≠ none) :
     Expr.inSubquery e false (.simple sel) ≃ₑ
     Expr.case [(Expr.unaryOp .not (Expr.exists false (.simple sel)), Expr.lit (.bool false))]
               (some (Expr.inSubquery e false (.simple sel))) := by
-  intro row
-  simp only [evalExpr] at hE ⊢
+  intro db row
   rw [evalExprWithDb_case]
-  cases hsel : evalSelectWithContext (fun _ => []) row sel with
+  cases hsel : evalSelectWithContext db row sel with
   | nil =>
     -- Subquery empty: NOT EXISTS = true → CASE returns FALSE
     -- LHS: IN on empty = false (since e evaluates to some value by hE)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool true) := by
+    have hcond : evalExprWithDb db row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool true) := by
       rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
     rw [evalExprWithDb_inSubquery_simple, hsel]
-    cases hev : evalExprWithDb (fun _ => []) row e with
-    | none => exact absurd hev (hE row)
+    cases hev : evalExprWithDb db row e with
+    | none => exact absurd hev (hE db row)
     | some v => simp [List.any]
   | cons hd tl =>
     -- Subquery non-empty: NOT EXISTS = false → falls to ELSE = IN(e, sel)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
+    have hcond : evalExprWithDb db row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
       rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some]
@@ -723,28 +722,27 @@ theorem in_empty_subquery_false (e : Expr) (sel : SelectStmt)
     otherwise falls through to NOT IN(e, sel).
     Requires that e evaluates without error (non-none) for all rows. -/
 theorem not_in_empty_subquery_true (e : Expr) (sel : SelectStmt)
-    (hE : ∀ row, evalExpr row e ≠ none) :
+    (hE : ∀ db row, evalExprWithDb db row e ≠ none) :
     Expr.inSubquery e true (.simple sel) ≃ₑ
     Expr.case [(Expr.unaryOp .not (Expr.exists false (.simple sel)), Expr.lit (.bool true))]
               (some (Expr.inSubquery e true (.simple sel))) := by
-  intro row
-  simp only [evalExpr] at hE ⊢
+  intro db row
   rw [evalExprWithDb_case]
-  cases hsel : evalSelectWithContext (fun _ => []) row sel with
+  cases hsel : evalSelectWithContext db row sel with
   | nil =>
     -- Subquery empty: NOT EXISTS = true → CASE returns TRUE
     -- LHS: NOT IN on empty = true (since e evaluates to some value by hE)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool true) := by
+    have hcond : evalExprWithDb db row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool true) := by
       rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
     rw [evalExprWithDb_inSubquery_simple, hsel]
-    cases hev : evalExprWithDb (fun _ => []) row e with
-    | none => exact absurd hev (hE row)
+    cases hev : evalExprWithDb db row e with
+    | none => exact absurd hev (hE db row)
     | some v => simp [List.any]
   | cons hd tl =>
     -- Subquery non-empty: NOT EXISTS = false → falls to ELSE = NOT IN(e, sel)
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
+    have hcond : evalExprWithDb db row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
       rw [evalExprWithDb_unaryOp, evalExprWithDb_exists_simple, hsel]
       simp [List.isEmpty, evalUnaryOp]
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some]

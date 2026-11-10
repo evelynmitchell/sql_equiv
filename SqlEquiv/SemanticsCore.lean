@@ -1680,6 +1680,117 @@ theorem isGroundCore_eval_independent
           ih hi (by omega) hg.2 r1 r2]
     | windowFn _ _ _ => simp [evalExprCore]
 
+/-- Database-and-row independence (#242): if `isGroundCore selectGround e = true` and the
+    subqueries accepted by `selectGround` are independent of both database and row, then
+    `evalExprCore` gives the same result for any database and any row. Instantiated with
+    `selectGround := fun _ => false` (no subqueries at all) the hypothesis is vacuous. -/
+theorem isGroundCore_eval_db_row_independent
+    (selectGround : SubQuery → Bool)
+    (subqueryEval : Database → Row → SubQuery → Table)
+    (h_sq : ∀ sel, selectGround sel = true →
+      ∀ db1 db2 r1 r2, subqueryEval db1 r1 sel = subqueryEval db2 r2 sel)
+    (e : Expr) (hg : isGroundCore selectGround e = true)
+    (db1 db2 : Database) (r1 r2 : Row) :
+    evalExprCore db1 r1 subqueryEval e = evalExprCore db2 r2 subqueryEval e := by
+  -- Expr is mutually inductive so `induction` doesn't work directly.
+  -- Use strong induction on sizeOf via Nat induction.
+  suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
+      isGroundCore selectGround e = true →
+      ∀ (db1 db2 : Database) (r1 r2 : Row),
+        evalExprCore db1 r1 subqueryEval e = evalExprCore db2 r2 subqueryEval e by
+    exact key (sizeOf e + 1) e (Nat.lt_succ_of_le (Nat.le_refl _)) hg db1 db2 r1 r2
+  intro n
+  induction n with
+  | zero => intro e hlt; exact absurd hlt (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt hg db1 db2 r1 r2
+    cases e with
+    | lit _ => simp [evalExprCore]
+    | col _ => simp [isGroundCore] at hg
+    | binOp op l r =>
+      simp [isGroundCore] at hg
+      have h_sz_l : sizeOf l < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have h_sz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      simp only [evalExprCore]
+      rw [ih l (by omega) hg.1 db1 db2 r1 r2, ih r (by omega) hg.2 db1 db2 r1 r2]
+    | unaryOp op e =>
+      simp [isGroundCore] at hg
+      have h_sz : sizeOf e < sizeOf (Expr.unaryOp op e) := by simp_wf; omega
+      simp only [evalExprCore]
+      rw [ih e (by omega) hg db1 db2 r1 r2]
+    | func name args =>
+      simp only [evalExprCore]
+      congr 1
+      apply List.map_congr_left
+      intro e he
+      simp [isGroundCore] at hg
+      have hge := foldl_and_true_forall hg he
+      have h_sz : sizeOf e < sizeOf (Expr.func name args) := by
+        have := List.sizeOf_lt_of_mem he; simp_wf; omega
+      exact ih e (by omega) hge db1 db2 r1 r2
+    | agg _ _ _ => simp [evalExprCore]
+    | countStar => simp [evalExprCore]
+    | «case» branches else_ =>
+      rw [evalExprCore_case, evalExprCore_case]
+      apply evalCaseHelper_congr
+      · cases else_ with
+        | none => rfl
+        | some e =>
+          have hg_else := isGroundCore_case_else _ _ _ hg
+          have h_sz : sizeOf e < sizeOf (Expr.case branches (some e)) := by simp_wf; omega
+          exact ih e (by omega) hg_else db1 db2 r1 r2
+      · intro pair hp
+        have hg_branches := isGroundCore_case_branches _ _ _ hg
+        have ⟨hc, hr⟩ := case_foldl_true_forall hg_branches hp
+        have h_pair_lt := List.sizeOf_lt_of_mem hp
+        have h_pair_sz : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+          obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+        have h_sz_case : sizeOf branches < sizeOf (Expr.case branches else_) := by simp_wf; omega
+        exact ⟨ih pair.1 (by omega) hc db1 db2 r1 r2, ih pair.2 (by omega) hr db1 db2 r1 r2⟩
+    | inList e _neg vals =>
+      have hge := isGroundCore_inList_expr _ _ _ _ hg
+      have hgv := isGroundCore_inList_vals _ _ _ _ hg
+      have h_sz_e : sizeOf e < sizeOf (Expr.inList e _neg vals) := by simp_wf; omega
+      rw [evalExprCore_inList, evalExprCore_inList]
+      have h_ev := ih e (by omega) hge db1 db2 r1 r2
+      have h_foldl := inList_foldl_eval_independent
+        (evalExprCore db1 r1 subqueryEval) (evalExprCore db2 r2 subqueryEval)
+        (evalExprCore db1 r1 subqueryEval e) (evalExprCore db2 r2 subqueryEval e)
+        h_ev vals
+        (fun vi hvi => by
+          have hgvi := foldl_and_true_forall hgv hvi
+          have h_sz_vi : sizeOf vi < sizeOf (Expr.inList e _neg vals) := by
+            have := List.sizeOf_lt_of_mem hvi; simp_wf; omega
+          exact ih vi (by omega) hgvi db1 db2 r1 r2)
+        (some (.bool false))
+      -- Reduce let bindings, then rewrite the foldl
+      dsimp only []
+      rw [h_foldl]
+    | inSubquery e _neg sel =>
+      simp [isGroundCore] at hg
+      have h_sz_e : sizeOf e < sizeOf (Expr.inSubquery e _neg sel) := by simp_wf; omega
+      simp only [evalExprCore]
+      rw [ih e (by omega) hg.1 db1 db2 r1 r2, h_sq sel hg.2 db1 db2 r1 r2]
+    | «exists» _neg sel =>
+      simp [isGroundCore] at hg
+      simp only [evalExprCore]
+      rw [h_sq sel hg db1 db2 r1 r2]
+    | subquery sel =>
+      simp [isGroundCore] at hg
+      simp only [evalExprCore]
+      rw [h_sq sel hg db1 db2 r1 r2]
+    | between e lo hi =>
+      simp [isGroundCore] at hg
+      have h_sz_e : sizeOf e < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have h_sz_lo : sizeOf lo < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      have h_sz_hi : sizeOf hi < sizeOf (Expr.between e lo hi) := by simp_wf; omega
+      simp only [evalExprCore]
+      -- hg has structure: (isGroundCore sg e ∧ isGroundCore sg lo) ∧ isGroundCore sg hi
+      rw [ih e (by omega) hg.1.1 db1 db2 r1 r2,
+          ih lo (by omega) hg.1.2 db1 db2 r1 r2,
+          ih hi (by omega) hg.2 db1 db2 r1 r2]
+    | windowFn _ _ _ => simp [evalExprCore]
+
 -- ============================================================================
 -- Subquery evaluator congruence
 -- ============================================================================

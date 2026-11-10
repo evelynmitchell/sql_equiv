@@ -10,9 +10,20 @@ namespace SqlEquiv
 -- Equivalence Definitions
 -- ============================================================================
 
+/-- Expression equivalence: equal results for every database and every row.
+    Quantifying over `db` matters for subquery-bearing expressions
+    (`EXISTS`, `IN (subquery)`, scalar subqueries), see issue #242. -/
 def ExprEquiv (e1 e2 : Expr) : Prop :=
-  ∀ row : Row, evalExpr row e1 = evalExpr row e2
+  ∀ (db : Database) (row : Row), evalExprWithDb db row e1 = evalExprWithDb db row e2
 scoped infix:50 " ≃ₑ " => ExprEquiv
+
+/-- Weaker, pre-#242 notion: equal results for every row against the EMPTY
+    database only (`evalExpr = evalExprWithDb (fun _ => [])`). Kept for
+    lemmas that only hold there. Every `≃ₑ` fact implies it
+    (`ExprEquiv.toEmptyDb`). -/
+def ExprEquivEmptyDb (e1 e2 : Expr) : Prop :=
+  ∀ row : Row, evalExpr row e1 = evalExpr row e2
+scoped infix:50 " ≃ₑ₀ " => ExprEquivEmptyDb
 
 def SelectEquiv (s1 s2 : SelectStmt) : Prop :=
   ∀ db : Database, evalSelect db s1 = evalSelect db s2
@@ -45,42 +56,46 @@ scoped infix:50 " ≃ " => StmtEquiv
     or non-boolean values (ints, strings, nulls). Needed for boolean algebra identities
     (NOT NOT, AND TRUE, OR FALSE, idempotence, complement, absorption). -/
 def Expr.isBoolValued (e : Expr) : Prop :=
-  ∀ row : Row, ∃ b : Bool, evalExpr row e = some (.bool b)
+  ∀ (db : Database) (row : Row), ∃ b : Bool, evalExprWithDb db row e = some (.bool b)
 
 /-- Type precondition: expression always evaluates to a string, null, or error.
     Excludes int/bool values. Needed for string identity axioms
     (CONCAT('', e) = e, CONCAT(e, '') = e). -/
 def Expr.isStringOrNullValued (e : Expr) : Prop :=
-  ∀ row : Row, (∃ s : String, evalExpr row e = some (.string s)) ∨
-              (∃ n, evalExpr row e = some (.null n)) ∨
-              evalExpr row e = none
+  ∀ (db : Database) (row : Row), (∃ s : String, evalExprWithDb db row e = some (.string s)) ∨
+              (∃ n, evalExprWithDb db row e = some (.null n)) ∨
+              evalExprWithDb db row e = none
 
 /-- Stronger than isStringOrNullValued: null values must be untyped (`.null none`).
     Satisfied by any expression whose values have passed through an evaluator operation,
     since all evalBinOp/evalUnaryOp/evalFunc null arms return `some (.null none)`. -/
 def Expr.isStringOrUntypedNullValued (e : Expr) : Prop :=
-  ∀ row : Row, (∃ s : String, evalExpr row e = some (.string s)) ∨
-              evalExpr row e = some (.null none) ∨
-              evalExpr row e = none
+  ∀ (db : Database) (row : Row), (∃ s : String, evalExprWithDb db row e = some (.string s)) ∨
+              evalExprWithDb db row e = some (.null none) ∨
+              evalExprWithDb db row e = none
 
 /-- Type precondition: expression always evaluates to a string or null value.
     Excludes int/bool values AND errors (none). Needed for LIKE pattern axioms
     (like_match_all, like_self) where evalBinOp .like only handles string/null inputs. -/
 def Expr.isStringOrNull (e : Expr) : Prop :=
-  ∀ row : Row, (∃ s : String, evalExpr row e = some (.string s)) ∨
-              (∃ n, evalExpr row e = some (.null n))
+  ∀ (db : Database) (row : Row), (∃ s : String, evalExprWithDb db row e = some (.string s)) ∨
+              (∃ n, evalExprWithDb db row e = some (.null n))
 
 /-- Mild precondition: expression always evaluates to SOME value.
     This excludes only error-producing expressions (missing columns, aggregates
     without group context). All well-formed SQL in a valid context satisfies this.
     Used by eq_reflexive, between_expansion, not_between_expansion. -/
 def Expr.evaluable (e : Expr) : Prop :=
-  ∀ row : Row, ∃ v : Value, evalExpr row e = some v
+  ∀ (db : Database) (row : Row), ∃ v : Value, evalExprWithDb db row e = some v
 
 
-theorem expr_equiv_refl (e : Expr) : e ≃ₑ e := by intro row; rfl
-theorem expr_equiv_symm {e1 e2 : Expr} (h : e1 ≃ₑ e2) : e2 ≃ₑ e1 := by intro row; exact (h row).symm
-theorem expr_equiv_trans {e1 e2 e3 : Expr} (h12 : e1 ≃ₑ e2) (h23 : e2 ≃ₑ e3) : e1 ≃ₑ e3 := by intro row; rw [h12 row, h23 row]
+theorem expr_equiv_refl (e : Expr) : e ≃ₑ e := by intro db row; rfl
+theorem expr_equiv_symm {e1 e2 : Expr} (h : e1 ≃ₑ e2) : e2 ≃ₑ e1 := by intro db row; exact (h db row).symm
+theorem expr_equiv_trans {e1 e2 e3 : Expr} (h12 : e1 ≃ₑ e2) (h23 : e2 ≃ₑ e3) : e1 ≃ₑ e3 := by intro db row; rw [h12 db row, h23 db row]
+
+/-- `≃ₑ` (all databases) implies `≃ₑ₀` (empty database only). -/
+theorem ExprEquiv.toEmptyDb {e1 e2 : Expr} (h : e1 ≃ₑ e2) : e1 ≃ₑ₀ e2 :=
+  fun row => h (fun _ => []) row
 
 theorem select_equiv_refl (s : SelectStmt) : s ≃ₛ s := by intro db; rfl
 theorem select_equiv_symm {s1 s2 : SelectStmt} (h : s1 ≃ₛ s2) : s2 ≃ₛ s1 := by intro db; exact (h db).symm

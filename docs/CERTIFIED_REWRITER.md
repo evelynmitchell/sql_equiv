@@ -18,7 +18,7 @@ The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplif
 
 `propext`, `Classical.choice`, and `Quot.sound` are Lean's standard axioms. `sorryAx` is inherited from the semantics rather than the rewriter: the mutual evaluator in `SqlEquiv/Semantics.lean` (`evalExprWithDb` and friends) discharges its termination goals with `decreasing_by all_goals sorry`, and `≃ₑ` is defined via that evaluator. Closing those termination proofs would remove `sorryAx` from every `≃ₑ` theorem, this one included.
 
-**Scope of `≃ₑ`.** `ExprEquiv` quantifies over rows evaluated against the *empty* database (`evalExpr = evalExprWithDb (fun _ => [])`). For expressions containing subqueries (`EXISTS`, `IN (subquery)`, scalar subqueries), the proof therefore does not cover non-empty databases. The LSpec context sweep tests those cases against a real database but does not prove them. See issue #242.
+**Scope of `≃ₑ`.** `ExprEquiv` quantifies over every database and every row (`∀ db row, evalExprWithDb db row e1 = evalExprWithDb db row e2`), so the rewriter's proof covers subquery-bearing expressions (`EXISTS`, `IN (subquery)`, scalar subqueries) on real tables. The type preconditions (`isBoolValued`, `isIntValued`, …) are quantified the same way. Before #242, `≃ₑ` only covered the empty database; that weaker relation remains available as `≃ₑ₀` (`ExprEquivEmptyDb`, with `ExprEquiv.toEmptyDb : e1 ≃ₑ e2 → e1 ≃ₑ₀ e2`). The LSpec context sweep additionally checks the compiled rewriter against the evaluator on a non-empty database.
 
 ## Simplification Rules
 

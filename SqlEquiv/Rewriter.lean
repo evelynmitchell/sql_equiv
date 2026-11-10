@@ -49,11 +49,10 @@ def Expr.isDefinitelyInt : Expr → Bool
 -- ============================================================================
 
 /-- If `isDefinitelyBool` returns true, then `e` is semantically bool-valued:
-    for every row, `evalExpr row e = some (.bool b)` for some `b`. -/
+    for every database and row, `evalExprWithDb db row e = some (.bool b)` for some `b`. -/
 theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool = true) :
     e.isBoolValued := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   cases e with
   | lit v =>
     cases v with
@@ -63,18 +62,17 @@ theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool
     cases op with
     | isNull =>
       rw [evalExprWithDb_unaryOp]
-      cases evalExprWithDb _ row inner with
+      cases evalExprWithDb db row inner with
       | none => exact ⟨true, rfl⟩
       | some v => cases v <;> exact ⟨_, rfl⟩
     | isNotNull =>
       rw [evalExprWithDb_unaryOp]
-      cases evalExprWithDb _ row inner with
+      cases evalExprWithDb db row inner with
       | none => exact ⟨false, rfl⟩
       | some v => cases v <;> exact ⟨_, rfl⟩
     | not =>
       simp [Expr.isDefinitelyBool] at h
-      have ⟨b, hb⟩ := isDefinitelyBool_implies_isBoolValued inner h row
-      simp only [evalExpr] at hb
+      have ⟨b, hb⟩ := isDefinitelyBool_implies_isBoolValued inner h db row
       rw [evalExprWithDb_unaryOp, hb]
       exact ⟨!b, rfl⟩
     | neg => simp [Expr.isDefinitelyBool] at h
@@ -82,16 +80,14 @@ theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool
     cases op with
     | «and» =>
       simp [Expr.isDefinitelyBool] at h
-      have ⟨bl, hbl⟩ := isDefinitelyBool_implies_isBoolValued l h.1 row
-      have ⟨br, hbr⟩ := isDefinitelyBool_implies_isBoolValued r h.2 row
-      simp only [evalExpr] at hbl hbr
+      have ⟨bl, hbl⟩ := isDefinitelyBool_implies_isBoolValued l h.1 db row
+      have ⟨br, hbr⟩ := isDefinitelyBool_implies_isBoolValued r h.2 db row
       rw [evalExprWithDb_binOp, hbl, hbr]
       exact ⟨bl && br, rfl⟩
     | «or» =>
       simp [Expr.isDefinitelyBool] at h
-      have ⟨bl, hbl⟩ := isDefinitelyBool_implies_isBoolValued l h.1 row
-      have ⟨br, hbr⟩ := isDefinitelyBool_implies_isBoolValued r h.2 row
-      simp only [evalExpr] at hbl hbr
+      have ⟨bl, hbl⟩ := isDefinitelyBool_implies_isBoolValued l h.1 db row
+      have ⟨br, hbr⟩ := isDefinitelyBool_implies_isBoolValued r h.2 db row
       rw [evalExprWithDb_binOp, hbl, hbr]
       exact ⟨bl || br, rfl⟩
     | _ => simp [Expr.isDefinitelyBool] at h
@@ -100,17 +96,16 @@ theorem isDefinitelyBool_implies_isBoolValued (e : Expr) (h : e.isDefinitelyBool
     simp only
     cases neg with
     | false =>
-      exact ⟨!(evalSubQueryWithContext _ row sel).isEmpty, rfl⟩
+      exact ⟨!(evalSubQueryWithContext db row sel).isEmpty, rfl⟩
     | true =>
-      exact ⟨!!(evalSubQueryWithContext _ row sel).isEmpty, rfl⟩
+      exact ⟨!!(evalSubQueryWithContext db row sel).isEmpty, rfl⟩
   | _ => simp [Expr.isDefinitelyBool] at h
 
 /-- If `isDefinitelyInt` returns true, then `e` is semantically int-valued:
-    for every row, `evalExpr row e = some (.int n)` for some `n`. -/
+    for every database and row, `evalExprWithDb db row e = some (.int n)` for some `n`. -/
 theorem isDefinitelyInt_implies_isIntValued (e : Expr) (h : e.isDefinitelyInt = true) :
     e.isIntValued := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   cases e with
   | lit v =>
     cases v with
@@ -120,23 +115,20 @@ theorem isDefinitelyInt_implies_isIntValued (e : Expr) (h : e.isDefinitelyInt = 
     cases op with
     | add =>
       simp [Expr.isDefinitelyInt] at h
-      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 row
-      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 row
-      simp only [evalExpr] at hnl hnr
+      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 db row
+      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 db row
       rw [evalExprWithDb_binOp, hnl, hnr]
       exact ⟨nl + nr, rfl⟩
     | sub =>
       simp [Expr.isDefinitelyInt] at h
-      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 row
-      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 row
-      simp only [evalExpr] at hnl hnr
+      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 db row
+      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 db row
       rw [evalExprWithDb_binOp, hnl, hnr]
       exact ⟨nl - nr, rfl⟩
     | mul =>
       simp [Expr.isDefinitelyInt] at h
-      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 row
-      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 row
-      simp only [evalExpr] at hnl hnr
+      have ⟨nl, hnl⟩ := isDefinitelyInt_implies_isIntValued l h.1 db row
+      have ⟨nr, hnr⟩ := isDefinitelyInt_implies_isIntValued r h.2 db row
       rw [evalExprWithDb_binOp, hnl, hnr]
       exact ⟨nl * nr, rfl⟩
     | _ => simp [Expr.isDefinitelyInt] at h
@@ -144,8 +136,7 @@ theorem isDefinitelyInt_implies_isIntValued (e : Expr) (h : e.isDefinitelyInt = 
     cases op with
     | neg =>
       simp [Expr.isDefinitelyInt] at h
-      have ⟨n, hn⟩ := isDefinitelyInt_implies_isIntValued inner h row
-      simp only [evalExpr] at hn
+      have ⟨n, hn⟩ := isDefinitelyInt_implies_isIntValued inner h db row
       rw [evalExprWithDb_unaryOp, hn]
       exact ⟨-n, rfl⟩
     | _ => simp [Expr.isDefinitelyInt] at h
@@ -159,24 +150,22 @@ theorem isDefinitelyInt_implies_isIntValued (e : Expr) (h : e.isDefinitelyInt = 
 theorem between_congr {e1 e2 lo1 lo2 hi1 hi2 : Expr}
     (he : e1 ≃ₑ e2) (hlo : lo1 ≃ₑ lo2) (hhi : hi1 ≃ₑ hi2) :
     Expr.between e1 lo1 hi1 ≃ₑ Expr.between e2 lo2 hi2 := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_between, evalExprWithDb_between]
   dsimp only []
-  have he' := he row; simp only [evalExpr] at he'
-  have hlo' := hlo row; simp only [evalExpr] at hlo'
-  have hhi' := hhi row; simp only [evalExpr] at hhi'
+  have he' := he db row
+  have hlo' := hlo db row
+  have hhi' := hhi db row
   rw [he', hlo', hhi']
 
 /-- IN list congruence for the expression argument -/
 theorem inList_congr_expr {e1 e2 : Expr} (neg : Bool) (vals : List Expr)
     (h : e1 ≃ₑ e2) :
     Expr.inList e1 neg vals ≃ₑ Expr.inList e2 neg vals := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_inList]
   dsimp only []
-  have h' := h row; simp only [evalExpr] at h'
+  have h' := h db row
   rw [h']
 
 /-- CASE congruence: if branch conditions, results, and else are pairwise equivalent, CASE is equivalent -/
@@ -189,40 +178,40 @@ private theorem case_congr (branches : List (Expr × Expr)) (else_ : Option Expr
     Expr.case (branches.map fun p => (f p.1, f p.2)) (else_.map f) := by
   cases else_ with
   | none =>
-    intro row; simp only [evalExpr]
+    intro db row
     rw [evalExprWithDb_case, evalExprWithDb_case]
     simp only [evalCase, Option.map]
-    exact (evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
+    exact (evalCaseHelper_map_congr (evalExprWithDb db row)
       f f branches _
-      (fun p hp => by have := hc p hp row; simp only [evalExpr] at this; exact this.symm)
-      (fun p hp => by have := hr p hp row; simp only [evalExpr] at this; exact this.symm)).symm
+      (fun p hp => by have := hc p hp db row; exact this.symm)
+      (fun p hp => by have := hr p hp db row; exact this.symm)).symm
   | some elseExpr =>
-    intro row; simp only [evalExpr]
+    intro db row
     rw [evalExprWithDb_case, evalExprWithDb_case]
     simp only [evalCase, Option.map]
-    have helse_eq : evalExprWithDb (fun _ => []) row (f elseExpr) =
-        evalExprWithDb (fun _ => []) row elseExpr := by
-      have := helse elseExpr rfl row; simp only [evalExpr] at this; exact this.symm
+    have helse_eq : evalExprWithDb db row (f elseExpr) =
+        evalExprWithDb db row elseExpr := by
+      have := helse elseExpr rfl db row; exact this.symm
     rw [helse_eq]
-    exact (evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
+    exact (evalCaseHelper_map_congr (evalExprWithDb db row)
       f f branches _
-      (fun p hp => by have := hc p hp row; simp only [evalExpr] at this; exact this.symm)
-      (fun p hp => by have := hr p hp row; simp only [evalExpr] at this; exact this.symm)).symm
+      (fun p hp => by have := hc p hp db row; exact this.symm)
+      (fun p hp => by have := hr p hp db row; exact this.symm)).symm
 
 /-- IN list congruence for the value list -/
 private theorem inList_congr_vals (e : Expr) (neg : Bool) (vals : List Expr) (f : Expr → Expr)
     (h : ∀ v ∈ vals, v ≃ₑ f v) :
     Expr.inList e neg vals ≃ₑ Expr.inList e neg (vals.map f) := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_inList]
   dsimp only []
   suffices hfoldl : ∀ init,
       vals.foldl (fun acc vi =>
-        evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
-          (evalExprWithDb (fun _ => []) row vi))) init =
+        evalBinOp .or acc (evalBinOp .eq (evalExprWithDb db row e)
+          (evalExprWithDb db row vi))) init =
       (vals.map f).foldl (fun acc vi =>
-        evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
-          (evalExprWithDb (fun _ => []) row vi))) init by
+        evalBinOp .or acc (evalBinOp .eq (evalExprWithDb db row e)
+          (evalExprWithDb db row vi))) init by
     rw [hfoldl]
   intro init
   induction vals generalizing init with
@@ -230,30 +219,30 @@ private theorem inList_congr_vals (e : Expr) (neg : Bool) (vals : List Expr) (f 
   | cons v rest ih =>
     simp only [List.foldl, List.map]
     have hv := h v List.mem_cons_self
-    have hv' := hv row; simp only [evalExpr] at hv'
+    have hv' := hv db row
     rw [hv']
     exact ih (fun vi hvi => h vi (List.mem_cons_of_mem v hvi)) _
 
 /-- Function congruence: if args evaluate the same, func is equivalent -/
 private theorem func_congr (name : String) (args1 args2 : List Expr)
-    (h : ∀ row, args1.map (evalExprWithDb (fun _ => []) row) =
-                args2.map (evalExprWithDb (fun _ => []) row)) :
+    (h : ∀ db row, args1.map (evalExprWithDb db row) =
+                args2.map (evalExprWithDb db row)) :
     Expr.func name args1 ≃ₑ Expr.func name args2 := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_func, evalExprWithDb_func]
-  exact congrArg (evalFunc name) (h row)
+  exact congrArg (evalFunc name) (h db row)
 
 /-- Aggregate congruence: trivially true since evalExprCore returns none for .agg -/
 private theorem agg_congr (fn : AggFunc) (arg1 arg2 : Option Expr) (d : Bool) :
     Expr.agg fn arg1 d ≃ₑ Expr.agg fn arg2 d := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_eq_evalExprCore, evalExprWithDb_eq_evalExprCore]
   simp [evalExprCore]
 
 /-- Window function congruence: trivially true since evalExprCore returns none for .windowFn -/
 private theorem windowFn_congr (fn : WindowFunc) (arg1 arg2 : Option Expr) (spec : WindowSpec) :
     Expr.windowFn fn arg1 spec ≃ₑ Expr.windowFn fn arg2 spec := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_eq_evalExprCore, evalExprWithDb_eq_evalExprCore]
   simp [evalExprCore]
 
@@ -261,9 +250,9 @@ private theorem windowFn_congr (fn : WindowFunc) (arg1 arg2 : Option Expr) (spec
 private theorem inSubquery_congr_expr {e1 e2 : Expr} (neg : Bool) (sel : SubQuery)
     (h : e1 ≃ₑ e2) :
     Expr.inSubquery e1 neg sel ≃ₑ Expr.inSubquery e2 neg sel := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inSubquery, evalExprWithDb_inSubquery]
-  have h' := h row; simp only [evalExpr] at h'
+  have h' := h db row
   rw [h']
 
 -- ============================================================================
@@ -273,9 +262,9 @@ private theorem inSubquery_congr_expr {e1 e2 : Expr} (neg : Bool) (sel : SubQuer
 /-- NOT(EXISTS true sel) ≃ₑ EXISTS false sel (flip negation flag) -/
 private theorem not_exists_true_flip (sel : SubQuery) :
     Expr.unaryOp .not (Expr.«exists» true sel) ≃ₑ Expr.«exists» false sel := by
-  intro row
-  simp only [evalExpr, evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
-  cases evalSubQueryWithContext (fun _ => []) row sel with
+  intro db row
+  simp only [evalExprWithDb_unaryOp, evalExprWithDb_exists, evalUnaryOp]
+  cases evalSubQueryWithContext db row sel with
   | nil => rfl
   | cons _ _ => rfl
 
@@ -496,7 +485,7 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
     have transport {e expanded : Expr}
         (step : e ≃ₑ expanded) (h_unfold : certifiedRewriteAux e = expanded) :
         e ≃ₑ certifiedRewriteAux e :=
-      fun row => (step row).trans (congrArg (evalExpr row) h_unfold).symm
+      fun db row => (step db row).trans (congrArg (evalExprWithDb db row) h_unfold).symm
     cases e with
     | lit v =>
       exact transport (expr_equiv_refl _) (by simp [certifiedRewriteAux])
@@ -537,9 +526,9 @@ theorem certifiedRewriteAux_equiv (e : Expr) : e ≃ₑ certifiedRewriteAux e :=
         simp [certifiedRewriteAux]
       exact transport
         (func_congr name args (args.map certifiedRewriteAux) (by
-          intro row; rw [List.map_map]
+          intro db row; rw [List.map_map]
           exact List.map_congr_left fun e he => by
-            have := hargs e he row; simp only [evalExpr] at this; exact this))
+            have := hargs e he db row; exact this))
         h_unfold
     | binOp op l r =>
       have hl : l ≃ₑ certifiedRewriteAux l := ih l (by

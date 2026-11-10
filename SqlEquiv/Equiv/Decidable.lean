@@ -82,12 +82,12 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
   | succ n ih =>
     intro e hlt
     cases e with
-    | lit v => intro row; simp
-    | col c => intro row; simp
-    | countStar => intro row; simp
-    | windowFn fn arg spec => intro row; simp
-    | «exists» neg sel => intro row; simp
-    | subquery sel => intro row; simp
+    | lit v => intro db row; simp
+    | col c => intro db row; simp
+    | countStar => intro db row; simp
+    | windowFn fn arg spec => intro db row; simp
+    | «exists» neg sel => intro db row; simp
+    | subquery sel => intro db row; simp
     | binOp op a b =>
       have h_a_sz : sizeOf a < n := by
         have := sizeOf_binOp_left op a b; omega
@@ -162,9 +162,9 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
         ih inner (by have := sizeOf_unaryOp_inner op inner; omega)
       have h_unfold : normalizeExpr (.unaryOp op inner) = .unaryOp op (normalizeExpr inner) := by
         simp
-      intro row; simp only [evalExpr]
+      intro db row
       rw [h_unfold, evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
-      exact congrArg (evalUnaryOp op) (by have := hi row; simp only [evalExpr] at this; exact this)
+      exact congrArg (evalUnaryOp op) (by have := hi db row; exact this)
     | func name args =>
       have hargs : ∀ e ∈ args, normalizeExpr e ≃ₑ e := by
         intro e hmem
@@ -175,67 +175,67 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
       have h_unfold : normalizeExpr (.func name args) =
           .func name (args.foldl (fun acc e => acc ++ [normalizeExpr e]) []) := by
         simp [normalizeExpr]
-      intro row; simp only [evalExpr]
+      intro db row
       rw [h_unfold, foldl_append_singleton_eq_map, evalExprWithDb_func, evalExprWithDb_func]
       congr 1
       apply List.ext_getElem (by simp)
       intro i hi hi'
       simp only [List.getElem_map]
       have hi_args : i < args.length := by simp [List.length_map] at hi'; exact hi'
-      have := hargs (args[i]) (List.getElem_mem hi_args) row
-      simp only [evalExpr] at this; exact this
+      have := hargs (args[i]) (List.getElem_mem hi_args) db row
+      exact this
     | agg fn arg distinct =>
       -- .agg returns none in basic expression context, so both sides are none
       rw [normalizeExpr_agg]
-      intro row; simp only [evalExpr]
+      intro db row
       rw [evalExprWithDb_eq_evalExprCore, evalExprWithDb_eq_evalExprCore]
       simp [evalExprCore]
     | «case» branches else_ =>
       -- Helper for branch congruence (shared between none/some cases)
-      have hbr_c : ∀ row, ∀ p ∈ branches,
-          evalExprWithDb (fun _ => []) row (normalizeExpr p.1) =
-          evalExprWithDb (fun _ => []) row p.1 := by
-        intro row p hp
+      have hbr_c : ∀ db row, ∀ p ∈ branches,
+          evalExprWithDb db row (normalizeExpr p.1) =
+          evalExprWithDb db row p.1 := by
+        intro db row p hp
         have h_p_sz := List.sizeOf_lt_of_mem hp
         have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
           obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
         have : sizeOf (Expr.case branches else_) = 1 + sizeOf branches + sizeOf else_ := by
           simp [Expr.case.sizeOf_spec]
-        have := (ih p.1 (by omega)) row
-        simp only [evalExpr] at this; exact this
-      have hbr_r : ∀ row, ∀ p ∈ branches,
-          evalExprWithDb (fun _ => []) row (normalizeExpr p.2) =
-          evalExprWithDb (fun _ => []) row p.2 := by
-        intro row p hp
+        have := (ih p.1 (by omega)) db row
+        exact this
+      have hbr_r : ∀ db row, ∀ p ∈ branches,
+          evalExprWithDb db row (normalizeExpr p.2) =
+          evalExprWithDb db row p.2 := by
+        intro db row p hp
         have h_p_sz := List.sizeOf_lt_of_mem hp
         have h_pair_sz : sizeOf p = 1 + sizeOf p.fst + sizeOf p.snd := by
           obtain ⟨a, b⟩ := p; simp [Prod.mk.sizeOf_spec]
         have : sizeOf (Expr.case branches else_) = 1 + sizeOf branches + sizeOf else_ := by
           simp [Expr.case.sizeOf_spec]
-        have := (ih p.2 (by omega)) row
-        simp only [evalExpr] at this; exact this
+        have := (ih p.2 (by omega)) db row
+        exact this
       cases else_ with
       | none =>
-        intro row; simp only [evalExpr]
+        intro db row
         rw [normalizeExpr_case, evalExprWithDb_case, evalExprWithDb_case]
         simp only [evalCase]
-        exact evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
-          normalizeExpr normalizeExpr branches _ (hbr_c row) (hbr_r row)
+        exact evalCaseHelper_map_congr (evalExprWithDb db row)
+          normalizeExpr normalizeExpr branches _ (hbr_c db row) (hbr_r db row)
       | some elseExpr =>
         have helse : normalizeExpr elseExpr ≃ₑ elseExpr := ih elseExpr (by
           have h1 : sizeOf (Expr.case branches (some elseExpr)) = 1 + sizeOf branches + sizeOf (some elseExpr) := by
             simp [Expr.case.sizeOf_spec]
           have h2 : sizeOf (some elseExpr) = 1 + sizeOf elseExpr := by simp [Option.some.sizeOf_spec]
           omega)
-        intro row; simp only [evalExpr]
+        intro db row
         rw [normalizeExpr_case, evalExprWithDb_case, evalExprWithDb_case]
         simp only [evalCase]
-        have helse_eq : evalExprWithDb (fun _ => []) row (normalizeExpr elseExpr) =
-            evalExprWithDb (fun _ => []) row elseExpr := by
-          have := helse row; simp only [evalExpr] at this; exact this
+        have helse_eq : evalExprWithDb db row (normalizeExpr elseExpr) =
+            evalExprWithDb db row elseExpr := by
+          have := helse db row; exact this
         rw [helse_eq]
-        exact evalCaseHelper_map_congr (evalExprWithDb (fun _ => []) row)
-          normalizeExpr normalizeExpr branches _ (hbr_c row) (hbr_r row)
+        exact evalCaseHelper_map_congr (evalExprWithDb db row)
+          normalizeExpr normalizeExpr branches _ (hbr_c db row) (hbr_r db row)
     | inList e neg vals =>
       have he : normalizeExpr e ≃ₑ e :=
         ih e (by have := sizeOf_inList_e e neg vals; omega)
@@ -246,30 +246,30 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
           simp [Expr.inList.sizeOf_spec]
         exact ih v (by omega)
       rw [normalizeExpr_inList]
-      intro row; simp only [evalExpr]
+      intro db row
       rw [foldl_append_singleton_eq_map, evalExprWithDb_inList, evalExprWithDb_inList]
       -- Inline lets from evalExprWithDb_inList
       dsimp only []
-      have he_eq : evalExprWithDb (fun _ => []) row (normalizeExpr e) =
-          evalExprWithDb (fun _ => []) row e := by
-        have := he row; simp only [evalExpr] at this; exact this
+      have he_eq : evalExprWithDb db row (normalizeExpr e) =
+          evalExprWithDb db row e := by
+        have := he db row; exact this
       rw [he_eq]
       -- Only difference: foldl over (vals.map normalizeExpr) vs foldl over vals
       -- Prove foldl congruence using pointwise evaluation equality
-      have hvals_eval : ∀ v ∈ vals, evalExprWithDb (fun _ => []) row (normalizeExpr v) =
-          evalExprWithDb (fun _ => []) row v := by
+      have hvals_eval : ∀ v ∈ vals, evalExprWithDb db row (normalizeExpr v) =
+          evalExprWithDb db row v := by
         intro v hmem
-        have := hvals v hmem row; simp only [evalExpr] at this; exact this
+        have := hvals v hmem db row; exact this
       suffices hfoldl : ∀ init (vs : List Expr),
-          (∀ v ∈ vs, evalExprWithDb (fun _ => []) row (normalizeExpr v) =
-            evalExprWithDb (fun _ => []) row v) →
+          (∀ v ∈ vs, evalExprWithDb db row (normalizeExpr v) =
+            evalExprWithDb db row v) →
           vs.foldl (fun acc vi =>
-            evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
-              (evalExprWithDb (fun _ => []) row (normalizeExpr vi))))
+            evalBinOp .or acc (evalBinOp .eq (evalExprWithDb db row e)
+              (evalExprWithDb db row (normalizeExpr vi))))
             init =
           vs.foldl (fun acc vi =>
-            evalBinOp .or acc (evalBinOp .eq (evalExprWithDb (fun _ => []) row e)
-              (evalExprWithDb (fun _ => []) row vi)))
+            evalBinOp .or acc (evalBinOp .eq (evalExprWithDb db row e)
+              (evalExprWithDb db row vi)))
             init by
         rw [List.foldl_map, hfoldl _ vals hvals_eval]
       intro init vs hvs
@@ -286,18 +286,18 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
         ih lo (by have := sizeOf_between_lo e lo hi; omega)
       have hhi : normalizeExpr hi ≃ₑ hi :=
         ih hi (by have := sizeOf_between_hi e lo hi; omega)
-      intro row; simp only [evalExpr]
+      intro db row
       rw [normalizeExpr_between, evalExprWithDb_between, evalExprWithDb_between]
-      have he' := he row; simp only [evalExpr] at he'
-      have hlo' := hlo row; simp only [evalExpr] at hlo'
-      have hhi' := hhi row; simp only [evalExpr] at hhi'
+      have he' := he db row
+      have hlo' := hlo db row
+      have hhi' := hhi db row
       rw [he', hlo', hhi']
     | inSubquery e neg sel =>
       have he : normalizeExpr e ≃ₑ e :=
         ih e (by have := sizeOf_inSubquery_e e neg sel; omega)
-      intro row; simp only [evalExpr]
+      intro db row
       rw [normalizeExpr_inSubquery, evalExprWithDb_inSubquery, evalExprWithDb_inSubquery]
-      have he' := he row; simp only [evalExpr] at he'
+      have he' := he db row
       rw [he']
 
 /-- If normalized forms are syntactically equal, expressions are equivalent.
@@ -314,8 +314,8 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
 theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
     e1 ≃ₑ e2 := by
   have heq : normalizeExpr e1 = normalizeExpr e2 := by simpa [syntacticEquiv] using h
-  intro row
-  rw [← normalizeExpr_equiv e1 row, ← normalizeExpr_equiv e2 row, heq]
+  intro db row
+  rw [← normalizeExpr_equiv e1 db row, ← normalizeExpr_equiv e2 db row, heq]
 
 -- ============================================================================
 -- DecidableEq instances for AST types (mutual types need manual instances)
@@ -714,7 +714,7 @@ private theorem filterMap_const_eq {f : α → Option β} {xs ys : List α}
       | none => exact ih hlen'
       | some v => exact congrArg (v :: ·) (ih hlen')
 
-/-- evalAggOverTableParam depends only on rows.length when ee is row-independent for arg -/
+/-- evalAggOverTableParam depends only on rows.length when ee is db row-independent for arg -/
 private theorem evalAggOverTableParam_ground_eq
     (ee : Database → Row → Expr → Option Value)
     (db : Database) (fn : AggFunc) (arg : Option Expr) (distinct : Bool)
@@ -729,7 +729,7 @@ private theorem evalAggOverTableParam_ground_eq
     have hv := filterMap_const_eq (fun a b => harg e rfl a b) hlen
     simp only [evalAggOverTableParam, hv]
 
-/-- evalExprWithAggParam is row/length-independent for ground expressions -/
+/-- evalExprWithAggParam is db row/length-independent for ground expressions -/
 private theorem evalExprWithAggParam_ground_eq
     (ee : Database → Row → Expr → Option Value)
     (db : Database) (rows1 rows2 : Table) (s1 s2 : Row) (e : Expr)
@@ -786,7 +786,7 @@ private theorem evalExprWithAggParam_ground_eq
     | between _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | windowFn _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
 
-/-- evalExprWithWindowParam is row/partition-independent for ground expressions -/
+/-- evalExprWithWindowParam is db row/partition-independent for ground expressions -/
 private theorem evalExprWithWindowParam_ground_eq
     (ee : Database → Row → Expr → Option Value)
     (db : Database) (e : Expr) (row1 row2 : Row)
@@ -839,7 +839,7 @@ private theorem evalExprWithWindowParam_ground_eq
     | subquery _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | between _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
 
-/-- When expression evaluation is row-independent for ground expressions,
+/-- When expression evaluation is db row-independent for ground expressions,
     evalSelectCore doesn't depend on outerRow for a ground SELECT. -/
 private theorem evalSelectCore_ground_outerRow_eq
     (db : Database) (r1 r2 : Row)
@@ -889,21 +889,21 @@ private theorem evalSelectCore_ground_outerRow_eq
     intro e hhv; have h := h_having_ok; rw [hhv] at h; exact h
   -- Apply the congruence lemma
   apply evalSelectCore_outerRow_congr
-  -- h_wc: WHERE clause row-independence
+  -- h_wc: WHERE clause db row-independence
   · intro e hwc row1 row2
     have hge := h_wc_ground e hwc
     have hwc' : wc = some e := hwc
     have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
       subst hwc'; simp_wf; omega
     exact h_ee e hge h_sz row1 row2
-  -- h_gb: GROUP BY row-independence
+  -- h_gb: GROUP BY db row-independence
   · intro e hmem row1 row2
     have hge := h_gb_ground e hmem
     have hmem' : e ∈ gb := hmem
     have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
       have := List.sizeOf_lt_of_mem hmem'; simp_wf; omega
     exact h_ee e hge h_sz row1 row2
-  -- h_hv: HAVING clause row-independence
+  -- h_hv: HAVING clause db row-independence
   · intro e hhv row1 row2
     have hge := h_hv_ground e hhv
     have hhv' : hv = some e := hhv
@@ -913,7 +913,7 @@ private theorem evalSelectCore_ground_outerRow_eq
   -- h_items_no_star
   · intro item hitem
     exact h_items_no_star item hitem
-  -- h_si: selectItemParam row-independence
+  -- h_si: selectItemParam db row-independence
   · intro item hitem row1 row2
     obtain ⟨e, alias_, heq⟩ := h_items_no_star item hitem
     rw [heq]; simp only [evalSelectItemParam]
@@ -924,7 +924,7 @@ private theorem evalSelectCore_ground_outerRow_eq
       have : sizeOf e < sizeOf item := by rw [heq]; simp_wf; omega
       simp_wf; omega
     rw [h_ee e hge h_sz row1 row2]
-  -- h_sia: selectItemWithAggParam row/length-independence
+  -- h_sia: selectItemWithAggParam db row/length-independence
   · intro item hitem rows1 rows2 s1 s2 hlen
     obtain ⟨e, alias_, heq⟩ := h_items_no_star item hitem
     rw [heq]; simp only [evalSelectItemWithAggParam]
@@ -945,7 +945,7 @@ private theorem evalSelectCore_ground_outerRow_eq
       subst hhv'; simp_wf; omega
     exact evalExprWithAggParam_ground_eq ee db rows1 rows2 s1 s2 e hlen hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
-  -- h_ew: exprWithWindowParam row/partition-independence
+  -- h_ew: exprWithWindowParam db row/partition-independence
   · intro e alias_ hitem row1 row2 p1 p2 sp1 sp2 idx hplen
     have hge := h_item_ground (.exprItem e alias_) hitem e alias_ rfl
     have hitem' : SelectItem.exprItem e alias_ ∈ items := hitem
@@ -956,9 +956,9 @@ private theorem evalSelectCore_ground_outerRow_eq
     exact evalExprWithWindowParam_ground_eq ee db e row1 row2 p1 p2 sp1 sp2 idx hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
 
-/-- Bridge: if a SubQuery is ground, evalSubQueryWithContext is row-independent (#218).
+/-- Bridge: if a SubQuery is ground, evalSubQueryWithContext is db row-independent (#218).
     Strong induction on sizeOf: a compound is handled by congruence of applySetOp
-    over the two row-independent sub-results; a simple SELECT reuses the
+    over the two db row-independent sub-results; a simple SELECT reuses the
     evalSelectCore outer-row congruence machinery. -/
 theorem subQueryGround_eval_independent (sq : SubQuery)
     (hg : sq.isGround = true) :
@@ -987,7 +987,7 @@ theorem subQueryGround_eval_independent (sq : SubQuery)
       rw [evalSubQuery_simple, evalSubQuery_simple]
       -- Bridge to evalSelectCore
       rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
-      -- Establish row-independence of ee for ground expressions
+      -- Establish db row-independence of ee for ground expressions
       let ee := fun db' (r : Row) e => @evalExprWithDb db' r e
       have h_ee : ∀ e, e.isGround = true → sizeOf e < sizeOf sel →
           ∀ row1 row2, ee db row1 e = ee db row2 e := by
@@ -1013,7 +1013,7 @@ theorem subQueryGround_eval_independent (sq : SubQuery)
           (isGround_eq_isGroundCore e ▸ hge) row1 row2
       exact evalSelectCore_ground_outerRow_eq db r1 r2 ee sel hgs h_ee
 
-/-- Bridge: if a SelectStmt is ground, evalSelectWithContext is row-independent -/
+/-- Bridge: if a SelectStmt is ground, evalSelectWithContext is db row-independent -/
 theorem selectStmtGround_eval_independent (sel : SelectStmt)
     (hg : sel.isGround = true) :
     ∀ db r1 r2, evalSelectWithContext db r1 sel = evalSelectWithContext db r2 sel := by
@@ -1041,57 +1041,107 @@ theorem decideExprEquiv_sound {e1 e2 : Expr} :
 /-- Ground expressions: expressions with no free variables -/
 def GroundExpr := { e : Expr // e.isGround = true }
 
-/-- Evaluation of ground expressions is row-independent.
-    Proved via isGroundCore_eval_independent (SemanticsCore.lean) + bridge axioms. -/
+/-- Evaluation of ground expressions is row-independent (for any fixed database).
+    Proved via isGroundCore_eval_independent (SemanticsCore.lean) + bridge axioms.
+    Ground expressions may still contain subqueries over tables, so this does NOT
+    give database-independence; see `closed_expr_eval_independent`. -/
 theorem ground_expr_eval_independent (e : Expr) (hg : e.isGround = true) :
-    ∀ r1 r2 : Row, evalExpr r1 e = evalExpr r2 e := by
-  intro r1 r2
-  -- evalExpr row e = evalExprWithDb (fun _ => []) row e (by definition)
-  -- evalExprWithDb db row e = evalExprCore db row sqe e (bridge axiom)
-  show evalExprWithDb (fun _ => []) r1 e = evalExprWithDb (fun _ => []) r2 e
+    ∀ (db : Database) (r1 r2 : Row), evalExprWithDb db r1 e = evalExprWithDb db r2 e := by
+  intro db r1 r2
   simp only [evalExprWithDb_eq_evalExprCore]
   rw [isGround_eq_isGroundCore] at hg
   exact isGroundCore_eval_independent
     SubQuery.isGround
     (fun db' row' sq => evalSubQueryWithContext db' row' sq)
     (fun sq hgs db' r1' r2' => subQueryGround_eval_independent sq hgs db' r1' r2')
-    _ e hg r1 r2
+    db e hg r1 r2
 
-/-- For ground expressions, equivalence is decidable by evaluation -/
+/-- Closed expressions (#242): no column references, no subqueries, no window
+    functions. Unlike `isGround`, which accepts `EXISTS (SELECT .. FROM t)`,
+    a closed expression cannot observe the database. -/
+def Expr.isClosed (e : Expr) : Bool := isGroundCore (fun _ => false) e
+
+/-- Closed expressions evaluate the same on every database and every row. -/
+theorem closed_expr_eval_independent (e : Expr) (hc : e.isClosed = true) :
+    ∀ (db1 db2 : Database) (r1 r2 : Row),
+      evalExprWithDb db1 r1 e = evalExprWithDb db2 r2 e := by
+  intro db1 db2 r1 r2
+  simp only [evalExprWithDb_eq_evalExprCore]
+  exact isGroundCore_eval_db_row_independent (fun _ => false)
+    (fun db' row' sq => evalSubQueryWithContext db' row' sq)
+    (fun _ h => absurd h (by simp)) e hc db1 db2 r1 r2
+
+/-- For ground expressions, equivalence on the empty database is decidable by evaluation -/
 def decideGroundExprEquiv (e1 e2 : Expr) (_h1 : e1.isGround = true) (_h2 : e2.isGround = true) : Bool :=
-  -- Ground expressions evaluate the same on any row, so use empty row
+  -- Ground expressions evaluate the same on any row, so use the empty row
   -- Use DecidableEq (not BEq) so proofs can extract propositional equality
   if evalExpr [] e1 = evalExpr [] e2 then true else false
 
-/-- Soundness for ground expression equivalence.
-    If ground expressions evaluate equally on the empty row,
-    they are equivalent (since ground expressions are row-independent).
-    Proved using `ground_expr_eval_independent`. -/
+/-- Soundness for ground expression equivalence, on the EMPTY database (`≃ₑ₀`).
+    Ground expressions may contain subqueries over tables (`EXISTS (SELECT a FROM t)`),
+    whose value depends on the database, so evaluation on the empty database only
+    decides `≃ₑ₀`. For database-independent equivalence see
+    `decideGroundExprEquiv_sound_closed`. -/
 theorem decideGroundExprEquiv_sound {e1 e2 : Expr}
     (hg1 : e1.isGround = true) (hg2 : e2.isGround = true) :
-    decideGroundExprEquiv e1 e2 hg1 hg2 = true → e1 ≃ₑ e2 := by
+    decideGroundExprEquiv e1 e2 hg1 hg2 = true → e1 ≃ₑ₀ e2 := by
   intro h
   unfold decideGroundExprEquiv at h
   split at h
   next h_eq =>
     intro row
-    rw [← ground_expr_eval_independent e1 hg1 [] row,
-        ← ground_expr_eval_independent e2 hg2 [] row, h_eq]
+    simp only [evalExpr] at h_eq ⊢
+    rw [← ground_expr_eval_independent e1 hg1 _ [] row,
+        ← ground_expr_eval_independent e2 hg2 _ [] row, h_eq]
   next => contradiction
 
-/-- Decidable instance for equivalence of ground expressions -/
-instance decideGroundExprEquivInst (e1 e2 : GroundExpr) : Decidable (e1.val ≃ₑ e2.val) :=
+/-- Soundness for closed expressions: one evaluation decides full `≃ₑ`. -/
+theorem decideGroundExprEquiv_sound_closed {e1 e2 : Expr}
+    (hg1 : e1.isGround = true) (hg2 : e2.isGround = true)
+    (hc1 : e1.isClosed = true) (hc2 : e2.isClosed = true) :
+    decideGroundExprEquiv e1 e2 hg1 hg2 = true → e1 ≃ₑ e2 := by
+  intro h
+  unfold decideGroundExprEquiv at h
+  split at h
+  next h_eq =>
+    intro db row
+    simp only [evalExpr] at h_eq
+    rw [closed_expr_eval_independent e1 hc1 db (fun _ => []) row [],
+        closed_expr_eval_independent e2 hc2 db (fun _ => []) row [], h_eq]
+  next => contradiction
+
+/-- Differing on the empty database and empty row refutes `≃ₑ` (which implies `≃ₑ₀`). -/
+theorem not_equiv_of_eval_ne {e1 e2 : Expr} (h : evalExpr [] e1 ≠ evalExpr [] e2) :
+    ¬(e1 ≃ₑ e2) := fun heq => h (heq.toEmptyDb [])
+
+/-- Decidable instance for empty-database equivalence of ground expressions -/
+instance decideGroundExprEquivInst (e1 e2 : GroundExpr) : Decidable (e1.val ≃ₑ₀ e2.val) :=
   if h : evalExpr [] e1.val = evalExpr [] e2.val then
     isTrue (by
       intro row
-      have h1 := ground_expr_eval_independent e1.val e1.property [] row
-      have h2 := ground_expr_eval_independent e2.val e2.property [] row
+      simp only [evalExpr] at h ⊢
+      have h1 := ground_expr_eval_independent e1.val e1.property (fun _ => []) [] row
+      have h2 := ground_expr_eval_independent e2.val e2.property (fun _ => []) [] row
       rw [← h1, ← h2, h])
   else
     isFalse (by
       intro heq
       apply h
       exact heq [])
+
+/-- Closed expressions: expressions that cannot observe row or database -/
+def ClosedExpr := { e : Expr // e.isClosed = true }
+
+/-- Decidable instance for full (all-database) equivalence of closed expressions -/
+instance decideClosedExprEquivInst (e1 e2 : ClosedExpr) : Decidable (e1.val ≃ₑ e2.val) :=
+  if h : evalExpr [] e1.val = evalExpr [] e2.val then
+    isTrue (by
+      intro db row
+      simp only [evalExpr] at h
+      rw [closed_expr_eval_independent e1.val e1.property db (fun _ => []) row [],
+          closed_expr_eval_independent e2.val e2.property db (fun _ => []) row [], h])
+  else
+    isFalse (not_equiv_of_eval_ne h)
 
 -- ============================================================================
 -- Certified Equivalence Checker
@@ -1107,22 +1157,28 @@ inductive EquivCheckResult (e1 e2 : Expr) where
 /-- Certified equivalence checker. Tries syntactic normalization first, then
     semantic evaluation for ground expressions. Every `equiv`/`notEquiv` result
     carries a kernel-checked proof; `unknown` means the check was inconclusive
-    (non-ground expressions that don't normalize to the same form). -/
+    (non-ground expressions that don't normalize to the same form, or ground
+    expressions with subqueries that agree on the empty database — their
+    values can still differ on a non-empty database, #242). -/
 def checkEquivFull (e1 e2 : Expr) : EquivCheckResult e1 e2 :=
   -- First try syntactic normalization
   if h : decideExprEquiv e1 e2 = true then
     .equiv (decideExprEquiv_sound h)
   -- For ground expressions, use semantic evaluation
-  else if hg1 : e1.isGround = true then
-    if hg2 : e2.isGround = true then
+  else if e1.isGround = true then
+    if e2.isGround = true then
       if heval : evalExpr [] e1 = evalExpr [] e2 then
-        .equiv (fun row => by
-          rw [← ground_expr_eval_independent e1 hg1 [] row,
-              ← ground_expr_eval_independent e2 hg2 [] row, heval])
+        if hc1 : e1.isClosed = true then
+          if hc2 : e2.isClosed = true then
+            .equiv (fun db row => by
+              simp only [evalExpr] at heval
+              rw [closed_expr_eval_independent e1 hc1 db (fun _ => []) row [],
+                  closed_expr_eval_independent e2 hc2 db (fun _ => []) row [], heval])
+          else .unknown
+        else .unknown
       else
-        -- Ground expressions are row-independent, so differing on the empty
-        -- row refutes equivalence outright.
-        .notEquiv (fun heq => heval (heq []))
+        -- Differing on the empty database and row refutes equivalence outright.
+        .notEquiv (not_equiv_of_eval_ne heval)
     else
       .unknown
   else
