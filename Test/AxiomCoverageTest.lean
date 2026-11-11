@@ -535,6 +535,12 @@ def setOpTests : List TestResult :=
   let selUsers := mkSimpleSelect "users"
   let selOrders := mkSimpleSelect "orders"
   let selEmpty := mkEmptySelect
+  -- Same-schema, overlapping subsets of users (#180): age > 25 → {Alice, Carol},
+  -- age < 35 → {Alice, Bob}; intersection {Alice}.
+  let selOld : SelectStmt := .mk false [.star none] (some (.table ⟨"users", none⟩))
+    (some (.binOp .gt (.col ⟨none, "age"⟩) (.lit (.int 25)))) [] none [] none none
+  let selYoung : SelectStmt := .mk false [.star none] (some (.table ⟨"users", none⟩))
+    (some (.binOp .lt (.col ⟨none, "age"⟩) (.lit (.int 35)))) [] none [] none none
   [
     -- union_comm: A UNION B ≃ᵇ B UNION A (bag equiv)
     testQueryBagEquiv "union_comm"
@@ -550,9 +556,12 @@ def setOpTests : List TestResult :=
 
     -- intersect_comm: A INTERSECT B ≃ˢ B INTERSECT A (set equiv)
     testQuerySetEquiv "intersect_comm"
-      (.compound (.simple selUsers) .intersect (.simple selOrders))
-      (.compound (.simple selOrders) .intersect (.simple selUsers))
+      (.compound (.simple selOld) .intersect (.simple selYoung))
+      (.compound (.simple selYoung) .intersect (.simple selOld))
       testDb,
+    -- Non-vacuity guard (#180): the intersection above is non-empty
+    testLengthGe "intersect_comm_nonempty"
+      (evalQuery testDb (.compound (.simple selOld) .intersect (.simple selYoung))).length 1,
 
     -- union_assoc: (A UNION B) UNION C ≃ᵇ A UNION (B UNION C) (bag equiv)
     testQueryBagEquiv "union_assoc"
@@ -562,9 +571,13 @@ def setOpTests : List TestResult :=
 
     -- intersect_assoc: (A ∩ B) ∩ C ≃ᵩ A ∩ (B ∩ C) (exact equiv)
     testQueryEquiv "intersect_assoc"
-      (.compound (.compound (.simple selUsers) .intersect (.simple selOrders)) .intersect (.simple selEmpty))
-      (.compound (.simple selUsers) .intersect (.compound (.simple selOrders) .intersect (.simple selEmpty)))
+      (.compound (.compound (.simple selUsers) .intersect (.simple selOld)) .intersect (.simple selYoung))
+      (.compound (.simple selUsers) .intersect (.compound (.simple selOld) .intersect (.simple selYoung)))
       testDb,
+    -- Non-vacuity guard (#180): the associated intersection is non-empty
+    testLengthGe "intersect_assoc_nonempty"
+      (evalQuery testDb (.compound (.compound (.simple selUsers) .intersect (.simple selOld))
+        .intersect (.simple selYoung))).length 1,
 
     -- union_idempotent: A UNION A ≃ˢ A (set equiv)
     testQuerySetEquiv "union_idempotent"
@@ -767,6 +780,7 @@ def joinTests : List TestResult :=
   let tUsers := FromClause.table ⟨"users", none⟩
   let tOrders := FromClause.table ⟨"orders", none⟩
   let tEmpty := FromClause.table ⟨"empty", none⟩
+  let tProducts := FromClause.table ⟨"products", none⟩
   let condTrue := Expr.lit (.bool true)
   let condFalse := Expr.lit (.bool false)
   [
@@ -781,9 +795,12 @@ def joinTests : List TestResult :=
       ((evalFrom testDb tUsers).length * (evalFrom testDb tOrders).length),
 
     -- cross_join_assoc_cardinality: (A × B) × C has same count as A × (B × C)
+    -- (#180: used the empty table, so both sides were 0.) 3 × 3 × 2 = 18.
     testLengthEq "cross_join_assoc_cardinality"
-      (evalFrom testDb (.join (.join tUsers .cross tOrders none) .cross tEmpty none)).length
-      (evalFrom testDb (.join tUsers .cross (.join tOrders .cross tEmpty none) none)).length,
+      (evalFrom testDb (.join (.join tUsers .cross tOrders none) .cross tProducts none)).length
+      (evalFrom testDb (.join tUsers .cross (.join tOrders .cross tProducts none) none)).length,
+    testLengthEq "cross_join_assoc_cardinality_nonempty"
+      (evalFrom testDb (.join (.join tUsers .cross tOrders none) .cross tProducts none)).length 18,
 
     -- inner_join_true_is_cross: INNER JOIN ON TRUE = CROSS JOIN
     testLengthEq "inner_join_true_is_cross"
@@ -1121,9 +1138,14 @@ def subqueryTests : List TestResult :=
 def normalizationDecisionTests : List TestResult :=
   [
     -- normalizeExpr_equiv: normalized form evaluates same as original
-    let e := Expr.binOp .and (col "x") (col "y")
+    -- (#180: was evaluated on intRow, where AND returns none on both sides.)
+    -- `b AND a` is not in normal order, so normalizeExpr actually swaps it.
+    let e := Expr.binOp .and (col "b") (col "a")
     let ne := normalizeExpr e
-    testExprEquiv "normalizeExpr_equiv (AND)" ne e intRow,
+    testExprEquiv "normalizeExpr_equiv (AND)" ne e boolRow,
+    (let e := Expr.binOp .and (col "b") (col "a")
+     if normalizeExpr e != e && (evalExpr boolRow e).isSome then .pass "normalizeExpr_equiv (AND) nonvacuous"
+     else .fail "normalizeExpr_equiv (AND) nonvacuous" "normalizeExpr left it unchanged or it evaluates to none"),
 
     let e := Expr.binOp .or (col "a") (col "b")
     let ne := normalizeExpr e
