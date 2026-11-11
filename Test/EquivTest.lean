@@ -126,6 +126,26 @@ open Test
 #check @ground_expr_eval_independent
 #check @decideGroundExprEquiv_sound
 
+-- WHERE congruence (#238): ≃ₑ lifts through WHERE, correlated subqueries, EXISTS and IN
+#check @select_where_congr
+#check @selectWithContext_where_congr
+#check @exists_where_congr
+#check @inSubquery_where_congr
+
+-- Applying a proved law inside WHERE
+example (a b : Expr) (d : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (g : List Expr) (hv : Option Expr) (o : List OrderByItem) (lim off : Option Nat) :
+    SelectStmt.mk d items from_ (some (.binOp .and a b)) g hv o lim off ≃ₛ
+    SelectStmt.mk d items from_ (some (.binOp .and b a)) g hv o lim off :=
+  select_where_congr (SqlEquiv.and_comm a b) d items from_ g hv o lim off
+
+-- A certified WHERE rewrite: the certified rewriter's proof lifts to ≃ₛ
+example (p : Expr) (d : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (g : List Expr) (hv : Option Expr) (o : List OrderByItem) (lim off : Option Nat) :
+    SelectStmt.mk d items from_ (some p) g hv o lim off ≃ₛ
+    SelectStmt.mk d items from_ (some (certifiedRewrite p).val) g hv o lim off :=
+  select_where_congr (certifiedRewrite p).property d items from_ g hv o lim off
+
 -- Predicate pushdown axioms
 #check @filter_join_left
 #check @filter_join_right

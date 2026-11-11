@@ -1880,4 +1880,65 @@ theorem order_limit_deterministic (db : Database)
   rw [evalSelect_S0]
 
 
+-- ============================================================================
+-- Lifting ≃ₑ through WHERE (#238)
+-- ============================================================================
+-- With `≃ₑ` quantified over every database and row (#242), an expression-level
+-- equivalence can be substituted into a WHERE clause: at the top level (`≃ₛ`),
+-- inside correlated subqueries (`evalSelectWithContext`), and therefore under
+-- `EXISTS` / `IN (subquery)` back at the expression level (`≃ₑ`).
+
+/-- Replacing a WHERE predicate by an `≃ₑ`-equivalent one preserves the SELECT. -/
+theorem select_where_congr {p q : Expr} (h : p ≃ₑ q)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (limit offset : Option Nat) :
+    SelectStmt.mk distinct items from_ (some p) groupBy having orderBy limit offset ≃ₛ
+    SelectStmt.mk distinct items from_ (some q) groupBy having orderBy limit offset := by
+  intro db
+  apply evalSelect_where_congr
+  intro row
+  simp only [h db row]
+
+/-- WHERE congruence for correlated subqueries: same result for every outer row. -/
+theorem selectWithContext_where_congr {p q : Expr} (h : p ≃ₑ q)
+    (db : Database) (outerRow : Row)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (limit offset : Option Nat) :
+    evalSelectWithContext db outerRow
+      (SelectStmt.mk distinct items from_ (some p) groupBy having orderBy limit offset) =
+    evalSelectWithContext db outerRow
+      (SelectStmt.mk distinct items from_ (some q) groupBy having orderBy limit offset) := by
+  apply evalSelectWithContext_where_congr
+  intro row
+  simp only [h db row]
+
+/-- `[NOT] EXISTS (SELECT … WHERE p)` ≃ₑ `[NOT] EXISTS (SELECT … WHERE q)` when `p ≃ₑ q`. -/
+theorem exists_where_congr {p q : Expr} (h : p ≃ₑ q) (neg : Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (limit offset : Option Nat) :
+    Expr.exists neg (.simple
+      (SelectStmt.mk distinct items from_ (some p) groupBy having orderBy limit offset)) ≃ₑ
+    Expr.exists neg (.simple
+      (SelectStmt.mk distinct items from_ (some q) groupBy having orderBy limit offset)) := by
+  intro db row
+  rw [evalExprWithDb_exists_simple, evalExprWithDb_exists_simple,
+      selectWithContext_where_congr h db row]
+
+/-- `e [NOT] IN (SELECT … WHERE p)` ≃ₑ `e [NOT] IN (SELECT … WHERE q)` when `p ≃ₑ q`. -/
+theorem inSubquery_where_congr {p q : Expr} (h : p ≃ₑ q) (e : Expr) (neg : Bool)
+    (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (limit offset : Option Nat) :
+    Expr.inSubquery e neg (.simple
+      (SelectStmt.mk distinct items from_ (some p) groupBy having orderBy limit offset)) ≃ₑ
+    Expr.inSubquery e neg (.simple
+      (SelectStmt.mk distinct items from_ (some q) groupBy having orderBy limit offset)) := by
+  intro db row
+  rw [evalExprWithDb_inSubquery_simple, evalExprWithDb_inSubquery_simple,
+      selectWithContext_where_congr h db row]
+
+
 end SqlEquiv
