@@ -1,5 +1,7 @@
 # Mutual Recursion Audit and Refactoring Plan
 
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **622 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. Category D below is out of date: see the correction there.
+
 This document catalogs every `mutual` block in the codebase, classifies each by
 whether the mutual recursion is necessary, and proposes a prioritized refactoring
 plan based on the lessons learned from the Semantics.lean conversion (PR #153).
@@ -105,6 +107,12 @@ because queries can contain recursive CTEs.
 The single remaining axiom `evalQuery_eq_evalQueryCore` is a direct consequence
 of this block and cannot be eliminated without fundamentally changing the CTE
 evaluation strategy (e.g., bounded fuel as a `Nat` parameter).
+
+> **Correction (PR #174):** this block was since converted: `evalQuery` and
+> `evalRecursiveCTE` are now plain `def`s (`SqlEquiv/Semantics.lean`), the CTE
+> iteration being bounded by `maxCTEIterations` (1000), and the bridge to
+> `evalQueryCore` is proved (`evalQuery_eq_evalQueryCore_simple` /
+> `_compound`). The codebase has no axioms.
 
 ---
 
