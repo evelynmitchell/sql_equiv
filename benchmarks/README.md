@@ -1,6 +1,6 @@
 # SQL Benchmarks and Test Corpora
 
-This directory contains real-world SQL queries for testing sql_equiv's parser, semantics, and optimizer.
+SQL corpora for testing sql_equiv's parser and semantics. Two are in the tree today (`spider/`, `real-world/`); the other sources below are candidates that have not been imported yet.
 
 ---
 
@@ -8,21 +8,18 @@ This directory contains real-world SQL queries for testing sql_equiv's parser, s
 
 ```
 benchmarks/
-├── spider/           # Text-to-SQL benchmark (academic)
-├── tpc-h/            # TPC-H analytics benchmark
-├── tpc-ds/           # TPC-DS complex analytics
-├── sqlite-compat/    # SQLite compatibility tests
-├── duckdb/           # DuckDB test queries
-├── sqlglot/          # SQLGlot transpiler tests
-├── real-world/       # Anonymized production queries
-└── regression/       # Bug-fix regression tests
+├── spider/           # Spider dev set: queries, schemas, parse + evaluate reports
+└── real-world/       # Anonymized production-style queries (analytics, etl, transactional)
 ```
+
+Create a directory when a source is actually imported; empty placeholders were
+removed (#179) so the tree reflects what exists.
 
 ---
 
 ## Benchmark Sources
 
-### Spider (Text-to-SQL)
+### Spider (Text-to-SQL) — in the tree
 
 **Source:** https://yale-lily.github.io/spider
 **License:** CC BY-SA 4.0
@@ -47,6 +44,8 @@ unzip spider.zip
 - `tables.json` - Database schemas
 
 ---
+
+## Candidate sources (not yet imported)
 
 ### TPC-H (Analytics Benchmark)
 
@@ -129,6 +128,8 @@ SQL transpilation test cases:
 
 ---
 
+## Other corpora in the tree
+
 ### Real-World Queries
 
 Anonymized queries from production systems. Use the sql_anonymizer tool before contributing:
@@ -159,8 +160,9 @@ python sql_anonymize.py /path/to/queries.sql \
 Queries that exposed bugs or edge cases:
 - Parser failures
 - Incorrect semantic evaluation
-- Optimizer incorrectness
 - Performance issues
+
+(Not imported yet: regression cases currently live as Lean tests under `Test/`.)
 
 **Format:**
 ```sql
@@ -224,34 +226,26 @@ Example `pair_001.json`:
 
 ## Running Benchmarks
 
-### Parse All Queries
+The Spider corpus is measured by two scripts, both ratcheted in CI:
+
 ```bash
-lake exe sql_equiv_test --benchmark spider/
+lake build sql_equiv
+python3 tools/spider_parse_baseline.py      # parse rate  → spider/parse_report.md
+python3 tools/spider_eval_baseline.py       # evaluate rate vs sqlite → spider/eval_report.md
 ```
 
-### Check Equivalence Pairs
-```bash
-lake exe sql_equiv_test --equiv-pairs equivalence/
-```
-
-### Generate Coverage Report
-```bash
-lake exe sql_equiv_test --coverage benchmarks/ > coverage_report.txt
-```
+Pass `--check` to only check the ratchet (`tools/spider_*_minimum.txt`), or
+`--update-ratchet` after an improvement.
 
 ---
 
 ## Statistics
 
-| Benchmark | Queries | Parsed | Failed | Coverage |
-|-----------|---------|--------|--------|----------|
-| Spider | 10,181 | - | - | - |
-| TPC-H | 22 | - | - | - |
-| TPC-DS | 99 | - | - | - |
-| SQLite | - | - | - | - |
-| Real-world | - | - | - | - |
+See the generated reports for current numbers:
 
-*(To be updated as benchmarks are added)*
+- `spider/parse_report.md`: parse rate over the 563 unique dev queries
+- `spider/eval_report.md`: evaluate-agreement with sqlite on synthetic data,
+  including tie-valid ORDER BY … LIMIT answers
 
 ---
 
@@ -262,7 +256,8 @@ lake exe sql_equiv_test --coverage benchmarks/ > coverage_report.txt
 3. **Regression tests**: Include issue number and fix commit
 4. **Equivalence pairs**: Verify both queries are semantically equivalent
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for full guidelines.
+Add a corpus's directory together with its files, and wire it into a script
+under `tools/` so it is measured.
 
 ---
 

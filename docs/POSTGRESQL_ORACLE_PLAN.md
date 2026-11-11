@@ -1,5 +1,7 @@
 # PostgreSQL as a Testing Oracle for sql_equiv
 
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **622 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
+
 ## Motivation
 
 The project already uses SQLite as a differential testing oracle

@@ -3,6 +3,12 @@
 This plan turns the type expansion roadmap (`PLAN_expand_types.md`) into a concrete,
 ordered checklist of implementation and proof tasks.
 
+> **Status (2026-11):** Batch 1a (DECIMAL/NUMERIC) has shipped (#201; PRs #205,
+> #207, #208), so `Value` now has five constructors: `int`, `string`, `bool`,
+> `decimal`, `null`. The optimizer steps are struck through because that module
+> was removed (PR #156). The "Current State" section below describes the plan's
+> starting point; counts in it are as of writing (now: 0 axioms, 622 theorems).
+
 ---
 
 ## Current State

@@ -911,7 +911,7 @@ theorem List.length_filterMap_congr_isSome {α β γ : Type _}
   | cons x xs ih =>
     have hx := h x List.mem_cons_self
     have ih' := ih (fun y hy => h y (List.mem_cons_of_mem x hy))
-    cases hf : f x <;> cases hg : g x <;> simp_all [List.filterMap_cons]
+    cases hf : f x <;> cases hg : g x <;> simp_all
 
 /-- In the grouped path without DISTINCT, the per-group sort-key rows align
     1:1 with the projected rows (#234): both are a `filterMap` over the same

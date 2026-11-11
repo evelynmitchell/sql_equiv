@@ -1,5 +1,7 @@
 # LeanDojo Trace Report
 
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **622 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
+
 **Date:** 2026-02-19
 **Commit:** `bc5c584`
 **Tooling:** LeanDojo-v2 1.0.0, Lean 4.27.0
