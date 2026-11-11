@@ -4276,3 +4276,40 @@ hold for any `db`), and no caller needed the empty-database-only version.
   and the subquery theorems is unchanged:
   `[propext, sorryAx, Classical.choice, Quot.sound]`.
 - `≃ₑ` theorems now cover every database.
+
+## Batch 50: lifting `≃ₑ` through WHERE (#238)
+
+**Issue**: #238 (item 3 of the #240 assessment)
+
+With `≃ₑ` quantified over every database (Batch 49), an expression
+equivalence can be substituted into a WHERE clause. Four theorems, at the end
+of `SqlEquiv/Equiv/StatementAxioms.lean`:
+
+| Theorem | Statement |
+|---------|-----------|
+| `select_where_congr` | `p ≃ₑ q → SELECT … WHERE p ≃ₛ SELECT … WHERE q` |
+| `selectWithContext_where_congr` | same, for `evalSelectWithContext db outerRow` (correlated subqueries) |
+| `exists_where_congr` | `[NOT] EXISTS (SELECT … WHERE p) ≃ₑ [NOT] EXISTS (SELECT … WHERE q)` |
+| `inSubquery_where_congr` | `e [NOT] IN (SELECT … WHERE p) ≃ₑ e [NOT] IN (SELECT … WHERE q)` |
+
+### Proof technique
+
+Each is a few lines on top of the existing infrastructure lemmas
+`evalSelect_where_congr` / `evalSelectWithContext_where_congr` (Semantics.lean),
+whose hypothesis is that the two WHERE predicates filter every row the same
+way for a fixed `db`. `h db row` from `p ≃ₑ q` discharges it with
+`simp only [h db row]`. The subquery forms then rewrite with
+`evalExprWithDb_exists_simple` / `evalExprWithDb_inSubquery_simple`.
+
+None of these could be stated before Batch 49: under the old empty-database
+`≃ₑ`, `h` only gave `db = fun _ => []`, but `≃ₛ` quantifies over every `db`.
+
+### Usage
+
+`select_where_congr (certifiedRewrite p).property` is a certified rewrite of a
+WHERE clause. Compile-time examples are in `Test/EquivTest.lean`.
+
+### Net change
+
+- 4 theorems; axiom count 0 → 0; `#print axioms` is the standard
+  `[propext, sorryAx, Classical.choice, Quot.sound]`.

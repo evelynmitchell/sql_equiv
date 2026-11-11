@@ -20,6 +20,8 @@ The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplif
 
 **Scope of `≃ₑ`.** `ExprEquiv` quantifies over every database and every row (`∀ db row, evalExprWithDb db row e1 = evalExprWithDb db row e2`), so the rewriter's proof covers subquery-bearing expressions (`EXISTS`, `IN (subquery)`, scalar subqueries) on real tables. The type preconditions (`isBoolValued`, `isIntValued`, …) are quantified the same way. Before #242, `≃ₑ` only covered the empty database; that weaker relation remains available as `≃ₑ₀` (`ExprEquivEmptyDb`, with `ExprEquiv.toEmptyDb : e1 ≃ₑ e2 → e1 ≃ₑ₀ e2`). The LSpec context sweep additionally checks the compiled rewriter against the evaluator on a non-empty database.
 
+**Rewriting inside WHERE.** Because `≃ₑ` covers every database, an expression-level proof lifts to whole statements: `select_where_congr : p ≃ₑ q → SELECT … WHERE p ≃ₛ SELECT … WHERE q` (#238). Combined with the rewriter, `select_where_congr (certifiedRewrite p).property` is a certified rewrite of a WHERE clause. Companion lemmas cover correlated subqueries (`selectWithContext_where_congr`), `EXISTS` (`exists_where_congr`) and `IN (subquery)` (`inSubquery_where_congr`). All are in `SqlEquiv/Equiv/StatementAxioms.lean`.
+
 ## Simplification Rules
 
 The rewriter implements **34 rules**: 24 unconditional + 10 conditional (guarded by static type checks).
