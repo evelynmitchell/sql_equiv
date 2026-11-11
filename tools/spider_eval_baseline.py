@@ -9,7 +9,10 @@ data (FK-aware so joins discriminate), evaluates the query with our engine
 oracle per the role split on #225), and compares result multisets.
 
 Failure classes become issues; the agree-count is ratcheted in
-tools/spider_eval_minimum.txt.
+tools/spider_eval_minimum.txt. The count is exact multiset matches plus
+"tie-valid" answers: `ORDER BY … LIMIT n` where the cutoff falls inside a
+tie and our rows are a valid tie-break (see `tie_valid`, guarded by a
+self-test that runs on every invocation).
 
 Usage:
     python3 tools/spider_eval_baseline.py            # report + ratchet check
@@ -113,6 +116,103 @@ def normalize(rows_) -> Counter:
     return Counter(tuple(cell_str(c) for c in row) for row in rows_)
 
 
+_TAIL = re.compile(
+    r"(?is)^\s*select\s+(?P<cols>.*?)\s+from\s+(?P<rest>.*)\s+order\s+by\s+"
+    r"(?P<ob>.*?)\s+limit\s+(?P<n>\d+)\s*;?\s*$")
+
+
+def _split_top_level(s: str) -> list[str]:
+    """Split on commas that are not inside parentheses."""
+    parts, depth, cur = [], 0, []
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return [p.strip() for p in parts]
+
+
+def tie_valid(conn: sqlite3.Connection, query: str, ours_rows: list, sq_rows: list) -> bool:
+    """True when a mismatch is only a tie-break difference (#234 follow-up).
+
+    For a query ending in a top-level `ORDER BY k1[, k2…] LIMIT n` (no
+    DISTINCT, no set operation), sqlite's rows are re-fetched with the sort
+    keys prepended and without the LIMIT. Our result is a valid answer iff it
+    has the same row count and consists of every row sorting strictly before
+    the cutoff key plus some choice of rows tied at the cutoff. A NULL key at
+    the cutoff is NOT accepted (that is the NULL-ordering divergence, a real
+    difference), and any probe error counts as a real mismatch.
+    """
+    if not ours_rows or len(ours_rows) != len(sq_rows):
+        return False
+    m = _TAIL.match(query)
+    if not m:
+        return False
+    cols, rest, ob, n = m.group("cols"), m.group("rest"), m.group("ob"), int(m.group("n"))
+    if re.match(r"(?i)distinct\b", cols.strip()) or re.search(
+            r"(?i)\b(union|intersect|except)\b", rest):
+        return False
+    keys = [re.sub(r"(?i)\s+(asc|desc)$", "", k) for k in _split_top_level(ob)]
+    # A positional key (`ORDER BY 1`) would be re-selected as a constant,
+    # making every row look tied; never accept those.
+    if any(re.fullmatch(r"\d+", k) for k in keys):
+        return False
+    try:
+        full = conn.execute(
+            f"SELECT {', '.join(keys)}, {cols} FROM {rest} ORDER BY {ob}").fetchall()
+    except sqlite3.Error:
+        return False
+    if len(full) < n:
+        return False
+    nk = len(keys)
+    cut = tuple(full[n - 1][:nk])
+    if any(v is None for v in cut):
+        return False
+    payload = lambda r: tuple(cell_str(c) for c in r[nk:])
+    strict = Counter(payload(r) for r in full[:n] if tuple(r[:nk]) != cut)
+    tied = Counter(payload(r) for r in full if tuple(r[:nk]) == cut)
+    ours = Counter(tuple(r) for r in ours_rows)
+    if strict - ours:          # every strictly-better row must be present
+        return False
+    return not ((ours - strict) - tied)   # the rest must come from the tied rows
+
+
+def _self_test_tie_valid() -> None:
+    """Guards the tie classifier against accepting wrong answers. Runs on
+    every invocation (including CI's --check); cheap, in-memory sqlite."""
+    c = sqlite3.connect(":memory:")
+    c.execute("CREATE TABLE t (name TEXT, k INTEGER)")
+    c.executemany("INSERT INTO t VALUES (?, ?)",
+                  [("a", 1), ("b", 2), ("c", 2), ("d", 3), ("e", None)])
+    q1 = "SELECT name FROM t WHERE k IS NOT NULL ORDER BY k DESC LIMIT 1"
+    q2 = "SELECT name FROM t WHERE k IS NOT NULL ORDER BY k LIMIT 2"
+    sq2 = c.execute(q2).fetchall()                      # a, then b or c
+    cases = [
+        # (description, query, ours, expected)
+        ("tied row is a valid tie-break", q2, [["a"], ["c"]], True),
+        ("missing the strictly-better row", q2, [["b"], ["c"]], False),
+        ("non-tie: wrong row", q1, [["b"]], False),
+        ("row from outside the tie", q2, [["a"], ["d"]], False),
+        ("NULL key at the cutoff", "SELECT name FROM t ORDER BY k LIMIT 1", [["a"]], False),
+        ("DISTINCT is not analysed",
+         "SELECT DISTINCT name FROM t WHERE k IS NOT NULL ORDER BY k LIMIT 2",
+         [["a"], ["c"]], False),
+        ("empty result is never a tie", q2, [], False),
+        ("positional ORDER BY is not analysed",
+         "SELECT name FROM t WHERE k IS NOT NULL ORDER BY 1 LIMIT 2", [["d"], ["c"]], False),
+    ]
+    for desc, q, ours, expected in cases:
+        sq = sq2 if q == q2 else c.execute(q).fetchall()
+        got = tie_valid(c, q, ours, sq)
+        if got != expected:
+            sys.exit(f"FAIL: tie_valid self-test '{desc}': expected {expected}, got {got}")
+
+
 def classify_query(sql: str) -> str:
     """Feature signature for failure grouping."""
     u = sql.upper()
@@ -125,6 +225,7 @@ def classify_query(sql: str) -> str:
 def main() -> None:
     check_only = "--check" in sys.argv
     update = "--update-ratchet" in sys.argv
+    _self_test_tie_valid()
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
 
@@ -176,6 +277,7 @@ def main() -> None:
             cur_rows.append(line.split("|"))
 
     agree = 0
+    tie_ok: list[str] = []
     failures: dict[str, list[tuple[str, str]]] = defaultdict(list)
     oracle_err = 0
     for i, p in enumerate(pairs, start=1):
@@ -192,12 +294,16 @@ def main() -> None:
             continue
         if normalize(payload) == normalize(sq_rows):
             agree += 1
+        elif tie_valid(conns[p["db"]], p["query"], payload, sq_rows):
+            tie_ok.append(p["query"])
         else:
             failures[f"mismatch: {classify_query(p['query'])}"].append(
                 (p["query"], f"ours {len(payload)} rows vs sqlite {len(sq_rows)} rows"))
 
     total = len(pairs) - oracle_err
-    rate = 100.0 * agree / total if total else 0.0
+    accepted = agree + len(tie_ok)
+    rate = 100.0 * accepted / total if total else 0.0
+    strict_rate = 100.0 * agree / total if total else 0.0
     if not check_only:
         lines = [
             "# Spider Dev-Set Evaluate Report",
@@ -205,8 +311,14 @@ def main() -> None:
             "Generated by `tools/spider_eval_baseline.py` — do not edit by hand.",
             "",
             f"**Evaluate-agreement rate vs sqlite (Spider-fidelity oracle): "
-            f"{agree}/{total} ({rate:.1f}%)** "
+            f"{accepted}/{total} ({rate:.1f}%)** "
             f"({oracle_err} queries errored on the oracle and are excluded)",
+            "",
+            f"- Exact multiset match: {agree}/{total} ({strict_rate:.1f}%)",
+            f"- Tie-valid: {len(tie_ok)}: `ORDER BY … LIMIT n` where the cutoff falls inside",
+            "  a tie and our rows are a valid tie-break (every row sorting strictly before",
+            "  the cutoff, plus tied rows). Not counted as failures. A NULL key at the",
+            "  cutoff is not accepted as a tie.",
             "",
             "Deterministic synthetic data (5 rows/table, FK-aware) over the dev",
             "schemas; multiset comparison of result rows.",
@@ -221,16 +333,18 @@ def main() -> None:
             q = (q[:70] + "…") if len(q) > 70 else q
             lines.append(f"| {len(items)} | {cls} | `{q}` | {d[:60]} |")
         REPORT.write_text("\n".join(lines) + "\n")
-        print(f"Evaluate-agreement: {agree}/{total} ({rate:.1f}%) — report: {REPORT}")
+        print(f"Evaluate-agreement: {accepted}/{total} ({rate:.1f}%) "
+              f"[exact {agree}, tie-valid {len(tie_ok)}] — report: {REPORT}")
 
     minimum = int(RATCHET.read_text().strip()) if RATCHET.exists() else 0
+    # The ratchet counts exact matches plus tie-valid answers.
     if update or not RATCHET.exists():
-        RATCHET.write_text(f"{agree}\n")
-        print(f"Ratchet set to {agree}")
+        RATCHET.write_text(f"{accepted}\n")
+        print(f"Ratchet set to {accepted}")
         return
-    if agree < minimum:
-        sys.exit(f"FAIL: Spider evaluate-agreement regressed: {agree} < ratchet {minimum}")
-    print(f"Ratchet check passed: {agree} >= {minimum}")
+    if accepted < minimum:
+        sys.exit(f"FAIL: Spider evaluate-agreement regressed: {accepted} < ratchet {minimum}")
+    print(f"Ratchet check passed: {accepted} >= {minimum}")
 
 
 if __name__ == "__main__":
