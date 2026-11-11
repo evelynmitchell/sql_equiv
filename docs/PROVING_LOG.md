@@ -4170,3 +4170,109 @@ bridge theorem, reducing both `evalSelect` calls to `tRows.flatMap(...)` form.
 
 - **1 axiom → theorem**: 1 → 0
 - **ALL AXIOMS ELIMINATED** — the codebase is now axiom-free
+
+## Batch 49: `≃ₑ` over all databases (#242, PR #244)
+
+**Branch**: `claude/sleepy-brown-1irk6n` | **Issue**: #242 | **PR**: #244
+
+### The gap
+
+`ExprEquiv` was defined as
+
+```lean
+def ExprEquiv (e1 e2 : Expr) : Prop :=
+  ∀ row : Row, evalExpr row e1 = evalExpr row e2
+```
+
+with `evalExpr row = evalExprWithDb (fun _ => []) row`. So every `≃ₑ` theorem
+was a statement about the **empty database only**. For expressions containing
+subqueries (`EXISTS`, `IN (subquery)`, scalar subqueries) the theorems said
+nothing about real tables, even though the selection-level relations (`≃ₛ`,
+`≃ᵩ`, `≃`) quantify over `db`. The kernel proof behind `certifiedRewrite`
+inherited the same limit. Found by a `/audit` run; the LSpec context sweep
+(PR #243) confirmed the compiled rewriter agreed with the evaluator on a
+non-empty database, but that was testing, not proof.
+
+### Decision (issue #242: options A and B)
+
+- **A — restate `≃ₑ`:**
+  ```lean
+  def ExprEquiv (e1 e2 : Expr) : Prop :=
+    ∀ (db : Database) (row : Row), evalExprWithDb db row e1 = evalExprWithDb db row e2
+  ```
+  The type preconditions (`isBoolValued`, `isIntValued`, `isStringOrNullValued`,
+  `isStringOrUntypedNullValued`, `isStringOrNull`, `evaluable`) are quantified the
+  same way.
+- **B — keep the old relation** as `ExprEquivEmptyDb` (`≃ₑ₀`), with
+  `ExprEquiv.toEmptyDb : e1 ≃ₑ e2 → e1 ≃ₑ₀ e2`. Old `≃ₑ` is exactly new `≃ₑ₀`.
+
+### Porting
+
+Every expression-level proof was already database-generic; the proofs only
+fixed `db := fun _ => []` because the definition did. The port was mechanical:
+
+| Old | New |
+|-----|-----|
+| `intro row; simp only [evalExpr]` | `intro db row` |
+| `evalExprWithDb (fun _ => []) row e` | `evalExprWithDb db row e` |
+| `h row` (equivalence / precondition) | `h db row` |
+| `(hE : ∀ row, evalExpr row e ≠ none)` | `(hE : ∀ db row, evalExprWithDb db row e ≠ none)` |
+
+This includes the subquery theorems `not_not_exists`, `in_empty_subquery_false`
+and `not_in_empty_subquery_true` (StatementAxioms), which now hold on every
+database. Selection-level lemmas that already took an explicit `db`
+(`where_true_elim`, `join_comm`, `predicate_pushdown`, …) were left as they were.
+
+Files: `Equiv/Defs.lean`, `Equiv/ExprAxioms.lean`, `Equiv/Comparison.lean`,
+`Equiv/Decidable.lean`, `Equiv/StatementAxioms.lean`, `Rewriter.lean`,
+`SemanticsCore.lean`.
+
+### Soundness fix: the ground decider
+
+`Expr.isGround` accepts `EXISTS (SELECT 1 FROM t)` (`FromClause.isGround
+(.table _) = true`), whose value depends on the database. The old
+`decideGroundExprEquiv_sound` and `checkEquivFull` decided equivalence from
+one evaluation on the empty database. That is correct for `≃ₑ₀` but would be
+unsound for the new `≃ₑ`: `checkEquivFull` returned `equiv` for
+`EXISTS (SELECT 1 FROM t)` vs `FALSE`, which differ as soon as `t` has a row.
+
+- `decideGroundExprEquiv_sound` and the `GroundExpr` `Decidable` instance now
+  conclude `≃ₑ₀` (same strength as before).
+- New `Expr.isClosed e := isGroundCore (fun _ => false) e` — no columns, no
+  subqueries, no window functions.
+- New `isGroundCore_eval_db_row_independent` (SemanticsCore): generalizes
+  `isGroundCore_eval_independent` to vary the database as well as the row.
+  Instantiated with `selectGround := fun _ => false`, its subquery hypothesis
+  is vacuous, giving `closed_expr_eval_independent`.
+- New `decideGroundExprEquiv_sound_closed` and a `ClosedExpr` `Decidable`
+  instance conclude full `≃ₑ`; `not_equiv_of_eval_ne` refutes `≃ₑ` from a
+  difference on the empty database.
+- `checkEquivFull` returns `equiv` only when both sides are closed, `notEquiv`
+  when the empty-database evaluations differ, and `unknown` otherwise.
+- Regression tests: `checkerDbScopeTests` in `Test/EquivTest.lean`.
+
+### Trade-off
+
+Conclusions are strictly stronger. Preconditions are stronger too, so
+conditional theorems (`and_true`, `not_not`, `expr_add_zero`, …) need e.g.
+`isBoolValued` on every database. The rewriter's static guards prove that
+(`isDefinitelyBool_implies_isBoolValued`, `isDefinitelyInt_implies_isIntValued`
+hold for any `db`), and no caller needed the empty-database-only version.
+
+### Key challenges
+
+- **Auto-bound implicits.** A scripted rewrite can turn a statement's `db`
+  into an auto-bound implicit `{db : Database}`, silently weakening the
+  theorem (this happened once, in `expr_equiv_subst`, and was fixed by binding
+  `db` explicitly). Check: a `MetaM` scan of every `SqlEquiv` constant's type
+  for implicit `Database` binders — none remain; the scanner flags a planted
+  example.
+- **Comments and select-level proofs.** The rewrite must skip comments and the
+  select-level proofs whose `intro row` / `fun row` are not about `≃ₑ`.
+
+### Net change
+
+- Axiom count: 0 → 0. `#print axioms` for `certifiedRewrite`, `checkEquivFull`
+  and the subquery theorems is unchanged:
+  `[propext, sorryAx, Classical.choice, Quot.sound]`.
+- `≃ₑ` theorems now cover every database.

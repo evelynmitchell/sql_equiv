@@ -307,6 +307,11 @@ scoped infix:50 " ≃ᵩ " => QueryEquiv
 `ExprEquiv e1 e2` means "for every database and row, evaluating `e1`
 and `e2` gives the same result."
 
+The weaker `e1 ≃ₑ₀ e2` (`ExprEquivEmptyDb`) only requires agreement against the
+empty database. It matters for subqueries: `EXISTS (SELECT 1 FROM t)` and
+`FALSE` are `≃ₑ₀`-equivalent but not `≃ₑ`-equivalent. Every `≃ₑ` fact gives a
+`≃ₑ₀` fact via `ExprEquiv.toEmptyDb` (#242).
+
 ---
 
 ## Level 4: Surviving the Type Expansion
