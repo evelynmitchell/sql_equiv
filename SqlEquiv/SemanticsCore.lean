@@ -489,6 +489,88 @@ theorem evalQueryCore_compound (db : Database)
 -- Non-Partial Core SELECT Evaluator
 -- ============================================================================
 
+/-- ORDER BY + OFFSET + LIMIT where sort keys can also resolve against an
+    aligned source row (#206): when `useSources` is true, each projected row
+    is paired 1:1 with its pre-projection source row and sort keys evaluate
+    against `projected ++ source` (output columns win on name clashes).
+    With `useSources := false` this is `applyOrderByLimitOffset`. -/
+def applyOrderByLimitOffsetAligned
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (useSources : Bool) (sources : Table) (rows : Table) : Table :=
+  let orderedRows : Table := if orderBy.isEmpty then rows else
+    if useSources then
+      ((rows.zip sources).mergeSort fun p1 p2 =>
+        compareEval db (p1.1 ++ p1.2) (p2.1 ++ p2.2) orderBy).map (·.1)
+    else
+      rows.mergeSort fun r1 r2 =>
+        compareEval db r1 r2 orderBy
+  let offsetRows : Table := match offset with
+    | some n => orderedRows.drop n
+    | none => orderedRows
+  match limit with
+  | some n => offsetRows.take n
+  | none => offsetRows
+
+-- ============================================================================
+-- Grouped ORDER BY sort keys (#234)
+-- ============================================================================
+
+/-- Name of the hidden sort-key column for the `k`-th ORDER BY item of a
+    grouped query. Never part of the query output. -/
+def groupOrderKeyName (k : Nat) : String := s!"__group_orderkey_{k}"
+
+/-- Grouped ORDER BY items, rewritten to reference the per-group sort-key
+    columns built by `groupOrderKeyRow` (same length and directions). -/
+def groupOrderByItems (orderBy : List OrderByItem) : List OrderByItem :=
+  ((List.range orderBy.length).zip orderBy).map fun (k, item) =>
+    OrderByItem.mk (.col ⟨none, groupOrderKeyName k⟩) item.dir
+
+/-- Sort-key row for one group (#234). Each ORDER BY expression is evaluated
+    in the group's aggregate context (the same one SELECT items and HAVING
+    use) against `projected ++ sampleRow`: aggregates such as `count(*)` range
+    over the group's rows, and column names resolve against the output row
+    first, so aliases win over source columns, and expressions may mix both
+    (`total + COUNT(*)`). Non-projected grouping columns resolve against the
+    sample row. Keys that evaluate to `none` are omitted (compared as before:
+    skipped). -/
+def groupOrderKeyRow (db : Database)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (orderBy : List OrderByItem) (groupRows : Table) (sampleRow projected : Row) : Row :=
+  ((List.range orderBy.length).zip orderBy).filterMap fun (k, item) =>
+    (exprWithAggEval db groupRows (projected ++ sampleRow) item.expr).map
+      fun v => (groupOrderKeyName k, v)
+
+/-- Per-group sort-key rows for a GROUP BY query, aligned 1:1 with the
+    grouped projection in `evalSelectCore` / `evalSelectProjectDistinct`
+    (same grouping, same per-group HAVING test, same order). -/
+def evalSelectGroupOrderKeys (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (filteredRows : Table) : Table :=
+  let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
+      List (List (Option Value) × Table) :=
+    let key := groupBy.map (exprEval db row)
+    match groups.find? (fun (k, _) => k == key) with
+    | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+    | none => groups ++ [(key, [row])]
+  let groups := filteredRows.foldl addToGroups []
+  groups.filterMap fun (_key, groupRows) =>
+    match groupRows.head? with
+    | none => none
+    | some sampleRow =>
+      let passesHaving := match having with
+        | none => true
+        | some cond =>
+          exprWithAggEval db groupRows sampleRow cond == some (Value.bool true)
+      if passesHaving then
+        some (groupOrderKeyRow db exprWithAggEval orderBy groupRows sampleRow
+          (items.flatMap (selectItemWithAggEval db groupRows sampleRow)))
+      else
+        none
+
 /-- Non-partial SELECT evaluator, parameterized by evaluation callbacks.
     Mirrors evalSelectWithContext (Semantics.lean) exactly, with partial def
     calls replaced by parameters. Not recursive — delegates to parameters
@@ -584,58 +666,29 @@ def evalSelectCore (db : Database) (outerRow : Row)
   else
     projectedRows
 
-  -- 7. ORDER BY
+  -- 7. ORDER BY, 8. OFFSET and LIMIT
   -- Sort keys resolve against `projected ++ source` rows so ORDER BY can
   -- reference non-projected columns (#206); output columns win on name
-  -- clashes. This applies only where projected rows align 1:1 with source
-  -- rows (plain and window paths, no DISTINCT). With DISTINCT the sources
-  -- are ambiguous after dedup, and grouped/aggregate rows have no single
-  -- source row — in those cases the SQL standard restricts sort keys to
-  -- output columns, which is the fallback branch.
-  let orderedRows : Table := if sel.orderBy.isEmpty then distinctRows else
-    if !sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items then
-      ((distinctRows.zip (havingRows.map (List.drop outerRow.length))).mergeSort fun p1 p2 =>
-        compareEval db (p1.1 ++ p1.2) (p2.1 ++ p2.2) sel.orderBy).map (·.1)
-    else
-      distinctRows.mergeSort fun r1 r2 =>
-        compareEval db r1 r2 sel.orderBy
-
-  -- 8. OFFSET and LIMIT
-  let offsetRows : Table := match sel.offsetVal with
-    | some n => orderedRows.drop n
-    | none => orderedRows
-  let limitRows : Table := match sel.limitVal with
-    | some n => offsetRows.take n
-    | none => offsetRows
-
-  limitRows
+  -- clashes. Plain and window paths (no DISTINCT) align 1:1 with the
+  -- HAVING-filtered source rows. Grouped paths (no DISTINCT) align 1:1 with
+  -- per-group sort-key rows, so ORDER BY can use aggregates such as
+  -- `count(*)` and non-projected grouping columns (#234). With DISTINCT the
+  -- sources are ambiguous after dedup, so sort keys resolve against output
+  -- columns only.
+  let groupedSort := !sel.distinct && !sel.groupBy.isEmpty
+  applyOrderByLimitOffsetAligned compareEval db
+    (if groupedSort then groupOrderByItems sel.orderBy else sel.orderBy)
+    sel.limitVal sel.offsetVal
+    ((!sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items) || groupedSort)
+    (if groupedSort then
+      evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+        sel.items sel.groupBy sel.having sel.orderBy filteredRows
+     else havingRows.map (List.drop outerRow.length))
+    distinctRows
 
 -- ============================================================================
 -- Equational Theorems for evalSelectCore
 -- ============================================================================
-
-/-- ORDER BY + OFFSET + LIMIT where sort keys can also resolve against an
-    aligned source row (#206): when `useSources` is true, each projected row
-    is paired 1:1 with its pre-projection source row and sort keys evaluate
-    against `projected ++ source` (output columns win on name clashes).
-    With `useSources := false` this is `applyOrderByLimitOffset`. -/
-def applyOrderByLimitOffsetAligned
-    (compareEval : Database → Row → Row → List OrderByItem → Bool)
-    (db : Database) (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (useSources : Bool) (sources : Table) (rows : Table) : Table :=
-  let orderedRows : Table := if orderBy.isEmpty then rows else
-    if useSources then
-      ((rows.zip sources).mergeSort fun p1 p2 =>
-        compareEval db (p1.1 ++ p1.2) (p2.1 ++ p2.2) orderBy).map (·.1)
-    else
-      rows.mergeSort fun r1 r2 =>
-        compareEval db r1 r2 orderBy
-  let offsetRows : Table := match offset with
-    | some n => orderedRows.drop n
-    | none => orderedRows
-  match limit with
-  | some n => offsetRows.take n
-  | none => offsetRows
 
 /-- Aligned ORDER BY + OFFSET + LIMIT on empty input is empty (regardless of
     sources, since zipping with an empty list is empty). -/
@@ -676,6 +729,75 @@ theorem applyOrderByLimitOffsetAligned_length_eq
   simp only [applyOrderByLimitOffsetAligned]
   cases limit <;> cases offset <;>
     simp only [List.length_take, List.length_drop, hlen]
+
+/-- General form of `applyOrderByLimitOffsetAligned_length_eq`: the output
+    length depends only on `rows`, `limit` and `offset`, for any sort keys,
+    sources and `useSources` flag, as long as sources align with rows
+    whenever they are used. -/
+theorem applyOrderByLimitOffsetAligned_length_eq_general
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (orderBy1 orderBy2 : List OrderByItem)
+    (limit offset : Option Nat) (useSources1 useSources2 : Bool)
+    (sources1 sources2 rows : Table)
+    (halign1 : useSources1 = true → sources1.length = rows.length)
+    (halign2 : useSources2 = true → sources2.length = rows.length) :
+    (applyOrderByLimitOffsetAligned compareEval db orderBy1 limit offset
+      useSources1 sources1 rows).length =
+    (applyOrderByLimitOffsetAligned compareEval db orderBy2 limit offset
+      useSources2 sources2 rows).length := by
+  have hlen : ∀ (ob : List OrderByItem) (us : Bool) (srcs : Table),
+      (us = true → srcs.length = rows.length) →
+      (if ob.isEmpty then rows else
+        if us then
+          ((rows.zip srcs).mergeSort fun p1 p2 =>
+            compareEval db (p1.1 ++ p1.2) (p2.1 ++ p2.2) ob).map (·.1)
+        else
+          rows.mergeSort fun r1 r2 => compareEval db r1 r2 ob).length = rows.length := by
+    intro ob us srcs hal
+    by_cases hob : ob.isEmpty = true
+    · simp [hob]
+    · by_cases huse : us = true
+      · simp [hob, huse, List.length_mergeSort, List.length_zip, hal huse]
+      · simp [hob, huse, List.length_mergeSort]
+  simp only [applyOrderByLimitOffsetAligned]
+  cases limit <;> cases offset <;>
+    simp only [List.length_take, List.length_drop, hlen _ _ _ halign1, hlen _ _ _ halign2]
+
+/-- With at most one row, ORDER BY cannot reorder anything: the result is
+    independent of the sort keys and (aligned) sources. -/
+theorem applyOrderByLimitOffsetAligned_of_length_le_one
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (orderBy1 orderBy2 : List OrderByItem)
+    (limit offset : Option Nat) (useSources1 useSources2 : Bool)
+    (sources1 sources2 rows : Table) (hrows : rows.length ≤ 1)
+    (halign1 : useSources1 = true → sources1.length = rows.length)
+    (halign2 : useSources2 = true → sources2.length = rows.length) :
+    applyOrderByLimitOffsetAligned compareEval db orderBy1 limit offset
+      useSources1 sources1 rows =
+    applyOrderByLimitOffsetAligned compareEval db orderBy2 limit offset
+      useSources2 sources2 rows := by
+  have hsorted : ∀ (ob : List OrderByItem) (us : Bool) (srcs : Table),
+      (us = true → srcs.length = rows.length) →
+      (if ob.isEmpty then rows else
+        if us then
+          ((rows.zip srcs).mergeSort fun p1 p2 =>
+            compareEval db (p1.1 ++ p1.2) (p2.1 ++ p2.2) ob).map (·.1)
+        else
+          rows.mergeSort fun r1 r2 => compareEval db r1 r2 ob) = rows := by
+    intro ob us srcs hal
+    match rows, hrows with
+    | [], _ => simp
+    | [r], _ =>
+      by_cases hob : ob.isEmpty = true
+      · simp [hob]
+      · by_cases hus : us = true
+        · have hl := hal hus
+          match srcs, hl with
+          | [s], _ => simp [hob, hus]
+        · simp [hob, hus]
+    | _ :: _ :: _, h => simp at h
+  simp only [applyOrderByLimitOffsetAligned]
+  rw [hsorted _ _ _ halign1, hsorted _ _ _ halign2]
 
 /-- Steps 3-6 of the evaluation pipeline (after WHERE, before ORDER BY):
     GROUP BY, HAVING, projection, DISTINCT. -/
@@ -778,6 +900,52 @@ theorem evalSelectProjectDistinct_length_aligned (db : Database)
   · simp [hwin, List.length_map, List.length_zip, List.length_range]
   · simp [hwin, List.length_map]
 
+/-- `filterMap` over the same list with the same success pattern gives
+    lists of the same length. -/
+theorem List.length_filterMap_congr_isSome {α β γ : Type _}
+    (f : α → Option β) (g : α → Option γ) (l : List α)
+    (h : ∀ x ∈ l, (f x).isSome = (g x).isSome) :
+    (l.filterMap f).length = (l.filterMap g).length := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx := h x List.mem_cons_self
+    have ih' := ih (fun y hy => h y (List.mem_cons_of_mem x hy))
+    cases hf : f x <;> cases hg : g x <;> simp_all [List.filterMap_cons]
+
+/-- In the grouped path without DISTINCT, the per-group sort-key rows align
+    1:1 with the projected rows (#234): both are a `filterMap` over the same
+    groups with the same per-group HAVING test. -/
+theorem evalSelectGroupOrderKeys_length_aligned (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (filteredRows : Table)
+    (h : (!distinct && !groupBy.isEmpty) = true) :
+    (evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+      items groupBy having orderBy filteredRows).length =
+    (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
+      groupBy having filteredRows).length := by
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨hd, hgb⟩ := h
+  have hgb' : (!groupBy.isEmpty) = true := by simp [hgb]
+  simp only [evalSelectGroupOrderKeys, evalSelectProjectDistinct, hd, hgb', if_true,
+    Bool.false_eq_true, if_false]
+  apply List.length_filterMap_congr_isSome
+  intro ⟨_k, groupRows⟩ _
+  cases groupRows.head? with
+  | none => rfl
+  | some sampleRow =>
+    dsimp only
+    split <;> (try split) <;> simp
+
 /-- Steps 3-9 of the evaluation pipeline (after WHERE filtering).
     Takes filteredRows as input and applies GROUP BY, HAVING, projection,
     DISTINCT, ORDER BY, OFFSET, and LIMIT. Factored as composition of
@@ -803,12 +971,53 @@ def evalSelectAfterFilter (db : Database)
   -- Sort sources have the correlated outer-row prefix stripped: outer columns
   -- are constant per query instance, so they can never affect sort order, and
   -- stripping them keeps ground SELECTs row-context independent (#206).
-  applyOrderByLimitOffsetAligned compareEval db orderBy limit offset
-    (!distinct && groupBy.isEmpty && !hasAgg items)
-    (havingRows.map (List.drop ctxLen))
+  -- Grouped queries without DISTINCT sort on per-group key rows (#234).
+  let groupedSort := !distinct && !groupBy.isEmpty
+  applyOrderByLimitOffsetAligned compareEval db
+    (if groupedSort then groupOrderByItems orderBy else orderBy) limit offset
+    ((!distinct && groupBy.isEmpty && !hasAgg items) || groupedSort)
+    (if groupedSort then
+      evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+        items groupBy having orderBy filteredRows
+     else havingRows.map (List.drop ctxLen))
     (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
       groupBy having filteredRows)
+
+/-- ORDER BY never changes the row count of the post-WHERE pipeline: sort
+    sources align with the projected rows in both the plain path (#206) and
+    the grouped path (#234). -/
+theorem evalSelectAfterFilter_orderBy_length (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr)
+    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat)
+    (ctxLen : Nat) (filteredRows : Table) :
+    (evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      distinct items groupBy having orderBy1 limit offset ctxLen filteredRows).length =
+    (evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      distinct items groupBy having orderBy2 limit offset ctxLen filteredRows).length := by
+  simp only [evalSelectAfterFilter]
+  apply applyOrderByLimitOffsetAligned_length_eq_general
+  all_goals
+    intro huse
+    by_cases hg : (!distinct && !groupBy.isEmpty) = true
+    · rw [if_pos hg]
+      exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ _ hg
+    · rw [if_neg hg, List.length_map]
+      have hplain : (!distinct && groupBy.isEmpty && !hasAgg items) = true := by
+        simpa [hg] using huse
+      exact (evalSelectProjectDistinct_length_aligned _ _ _ _ _ _ _ _
+        _ _ _ _ _ hplain).symm
 
 /-- evalSelectProjectDistinct on empty input produces empty output
     when there are no aggregates. -/
@@ -904,13 +1113,8 @@ theorem evalSelectCore_orderBy_length (db : Database) (outerRow : Row)
     (evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length := by
-  simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter]
-  -- Both sides have the same evalSelectProjectDistinct result. Only orderBy differs.
-  exact applyOrderByLimitOffsetAligned_length_eq _ _ _ _ _ _ _ _ _
-    (fun huse => by
-      rw [List.length_map]
-      exact (evalSelectProjectDistinct_length_aligned _ _ _ _ _ _ _ _
-        _ _ _ _ _ huse).symm)
+  simp only [evalSelectCore_eq_afterFilter]
+  exact evalSelectAfterFilter_orderBy_length _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 /-- Infrastructure: WHERE clause only affects filtering; equivalent WHERE clauses produce identical results. -/
 theorem evalSelectCore_where_congr (db : Database) (outerRow : Row)
@@ -2141,6 +2345,40 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
             · exact hlen
   }
 
+/-- With row-independent GROUP BY keys there is at most one group, so the
+    grouped projection (without DISTINCT) has at most one row. -/
+theorem evalSelectProjectDistinct_grouped_length_le_one
+    (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (distinct : Bool) (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr) (fr : Table)
+    (h_gb : ∀ e ∈ groupBy, ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
+    (hg : (!distinct && !groupBy.isEmpty) = true) :
+    (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
+      groupBy having fr).length ≤ 1 := by
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at hg
+  obtain ⟨hd, hgb⟩ := hg
+  have hgb' : (!groupBy.isEmpty) = true := by simp [hgb]
+  simp only [evalSelectProjectDistinct, hd, hgb', if_true, Bool.false_eq_true, if_false]
+  cases fr with
+  | nil => simp
+  | cons row rest =>
+    have hk0 : ∀ r, groupBy.map (exprEval db r) = groupBy.map (exprEval db row) :=
+      fun r => List.map_congr_left fun e he => h_gb e he r row
+    have hfold := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row rest
+      rfl (fun r _ => hk0 r)
+    unfold addToGroupsByKey at hfold
+    rw [hfold]
+    simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons]
+    split <;> simp
+
 -- ============================================================================
 -- evalSelectCore outer row congruence
 -- ============================================================================
@@ -2183,50 +2421,85 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
   simp only [SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having,
              SelectStmt.items] at *
   simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter]
-  -- The aligned ORDER BY takes (sources, rows); both are row-context
-  -- independent: sources because the outer prefix is stripped, rows by the
-  -- existing projection congruence.
-  have congr2 : ∀ {α β γ : Type} (f : α → β → γ) {a₁ a₂ : α} {b₁ b₂ : β},
-      a₁ = a₂ → b₁ = b₂ → f a₁ b₁ = f a₂ b₂ := by
-    intro _ _ _ f _ _ _ _ h1 h2; rw [h1, h2]
-  apply congr2
-  · -- sources: (havingRows).map (drop outer.length) is context-independent
-    cases wc with
-    | none =>
-      cases hv with
+  by_cases hg : (!d && !gb.isEmpty) = true
+  · -- Grouped, no DISTINCT (#234): ORDER BY uses per-group key rows. The
+    -- GROUP BY keys are row-independent, so there is at most one group, and
+    -- sorting at most one row is the identity whatever the keys are.
+    simp only [hg, ↓reduceIte, Bool.or_true]
+    have key : ∀ (K1 K2 P1 P2 : Table), P1 = P2 → P1.length ≤ 1 →
+        K1.length = P1.length → K2.length = P2.length →
+        applyOrderByLimitOffsetAligned compareEval db (groupOrderByItems ob) lim off
+          true K1 P1 =
+        applyOrderByLimitOffsetAligned compareEval db (groupOrderByItems ob) lim off
+          true K2 P2 := by
+      intro K1 K2 P1 P2 hP hle hK1 hK2
+      subst hP
+      exact applyOrderByLimitOffsetAligned_of_length_le_one _ _ _ _ _ _ _ _ _ _ _ hle
+        (fun _ => hK1) (fun _ => hK2)
+    apply key
+    · -- rows: projection congruence (unchanged machinery)
+      cases wc with
       | none =>
-        simp [List.map_map, Function.comp_def]
-      | some hcond =>
-        simp only [List.filter_map, List.map_map, Function.comp_def,
-          List.drop_left, List.map_id']
-        exact List.filter_congr (fun row _ => by
-          congr 1; exact h_hv hcond rfl (r1 ++ row) (r2 ++ row))
-    | some wcond =>
-      cases hv with
+        exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
+          d items gb hv _ _ (by simp [List.length_map])
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+      | some wcond =>
+        exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
+          d items gb hv _ _
+          (by apply filter_const_length_eq' _ _ _
+                (exprEval db r1 wcond == some (Value.bool true))
+              · intro row; congr 1; exact h_wc wcond rfl row r1
+              · simp [List.length_map])
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+    · exact evalSelectProjectDistinct_grouped_length_le_one _ _ _ _ _ _ _ _ _ _ _ _ _ h_gb hg
+    · exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ _ hg
+    · exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ _ hg
+  · have hg' : (!d && !gb.isEmpty) = false := by simpa using hg
+    simp only [hg', Bool.false_eq_true, ↓reduceIte, Bool.or_false]
+    -- The aligned ORDER BY takes (sources, rows); both are row-context
+    -- independent: sources because the outer prefix is stripped, rows by the
+    -- existing projection congruence.
+    have congr2 : ∀ {α β γ : Type} (f : α → β → γ) {a₁ a₂ : α} {b₁ b₂ : β},
+        a₁ = a₂ → b₁ = b₂ → f a₁ b₁ = f a₂ b₂ := by
+      intro _ _ _ f _ _ _ _ h1 h2; rw [h1, h2]
+    apply congr2
+    · -- sources: (havingRows).map (drop outer.length) is context-independent
+      cases wc with
       | none =>
-        simp only [List.filter_map, List.map_map, Function.comp_def,
-          List.drop_left, List.map_id']
-        exact List.filter_congr (fun row _ => by
-          congr 1; exact h_wc wcond rfl (r1 ++ row) (r2 ++ row))
-      | some hcond =>
-        simp only [List.filter_map, List.map_map, Function.comp_def,
-          List.drop_left, List.map_id', List.filter_filter]
-        exact List.filter_congr (fun row _ => by
-          rw [h_wc wcond rfl (r1 ++ row) (r2 ++ row),
-              h_hv hcond rfl (r1 ++ row) (r2 ++ row)])
-  · -- rows: projection congruence (unchanged machinery)
-    cases wc with
-    | none =>
-      exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
-        d items gb hv _ _ (by simp [List.length_map])
-        h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
-    | some wcond =>
-      exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
-        d items gb hv _ _
-        (by apply filter_const_length_eq' _ _ _
-              (exprEval db r1 wcond == some (Value.bool true))
-            · intro row; congr 1; exact h_wc wcond rfl row r1
-            · simp [List.length_map])
-        h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+        cases hv with
+        | none =>
+          simp [List.map_map, Function.comp_def]
+        | some hcond =>
+          simp only [List.filter_map, List.map_map, Function.comp_def,
+            List.drop_left, List.map_id']
+          exact List.filter_congr (fun row _ => by
+            congr 1; exact h_hv hcond rfl (r1 ++ row) (r2 ++ row))
+      | some wcond =>
+        cases hv with
+        | none =>
+          simp only [List.filter_map, List.map_map, Function.comp_def,
+            List.drop_left, List.map_id']
+          exact List.filter_congr (fun row _ => by
+            congr 1; exact h_wc wcond rfl (r1 ++ row) (r2 ++ row))
+        | some hcond =>
+          simp only [List.filter_map, List.map_map, Function.comp_def,
+            List.drop_left, List.map_id', List.filter_filter]
+          exact List.filter_congr (fun row _ => by
+            rw [h_wc wcond rfl (r1 ++ row) (r2 ++ row),
+                h_hv hcond rfl (r1 ++ row) (r2 ++ row)])
+    · -- rows: projection congruence (unchanged machinery)
+      cases wc with
+      | none =>
+        exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
+          d items gb hv _ _ (by simp [List.length_map])
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+      | some wcond =>
+        exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
+          d items gb hv _ _
+          (by apply filter_const_length_eq' _ _ _
+                (exprEval db r1 wcond == some (Value.bool true))
+              · intro row; congr 1; exact h_wc wcond rfl row r1
+              · simp [List.length_map])
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
 
 end SqlEquiv

@@ -27,7 +27,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries
-- **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET
+- **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET. ORDER BY may use non-projected columns; in GROUP BY queries it may also sort on aggregates (`ORDER BY COUNT(*) DESC`), non-projected grouping columns, and expressions mixing output aliases with aggregates. Known gaps: with DISTINCT, sort keys resolve against output columns only; NULL sort keys don't follow the sqlite/Postgres "NULLs first/last" rule.
 - **INSERT statements**: VALUES, INSERT...SELECT
 - **UPDATE statements**: SET with WHERE conditions
 - **DELETE statements**: With WHERE conditions
