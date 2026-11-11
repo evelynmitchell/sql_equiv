@@ -275,15 +275,15 @@ def notNotTests (cfg : Configuration) : TestSeq :=
 
 
 -- ============================================================================
--- Context sweep: rows, real databases, errors, subqueries (#AUDIT)
+-- Context sweep: rows, real databases, errors, subqueries (#242)
 -- ============================================================================
--- `≃ₑ` (and therefore the kernel proof behind `certifiedRewrite`) only
--- quantifies over rows evaluated against the EMPTY database, and the
--- properties above only evaluate ground expressions with `evalExpr []`.
--- This sweep checks the compiled rewriter against the evaluator in the
--- contexts the proof does not cover: column references bound by real rows,
--- missing columns, evaluation errors (`none`), every `Value` kind, and
--- EXISTS / IN (subquery) against a non-empty database.
+-- `≃ₑ` quantifies over every database and row (#242), so the kernel proof
+-- behind `certifiedRewrite` already covers these contexts. The properties
+-- above only evaluate ground expressions with `evalExpr []`; this sweep
+-- checks that the COMPILED rewriter agrees with the evaluator on column
+-- references bound by real rows, missing columns, evaluation errors
+-- (`none`), every `Value` kind, and EXISTS / IN (subquery) against a
+-- non-empty database. It guards the runtime path, not the proof.
 
 private def sweepSel (s : String) : SubQuery :=
   match parseSelectStr s with

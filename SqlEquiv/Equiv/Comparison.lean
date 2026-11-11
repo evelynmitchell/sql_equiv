@@ -998,42 +998,37 @@ theorem count_distinct_le_count (vs : List Value) :
 /-- CASE WHEN TRUE THEN x ELSE y END = x -/
 theorem case_when_true (x y : Expr) :
     Expr.case [(Expr.lit (.bool true), x)] (some y) ≃ₑ x := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_case]
-  have h := evalExprWithDb_lit (fun _ => []) row (.bool true)
+  have h := evalExprWithDb_lit db row (.bool true)
   rw [evalCase_cons_true _ _ _ _ _ _ h]
 
 /-- CASE WHEN FALSE THEN x ELSE y END = y -/
 theorem case_when_false (x y : Expr) :
     Expr.case [(Expr.lit (.bool false), x)] (some y) ≃ₑ y := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_case]
-  have h := evalExprWithDb_lit (fun _ => []) row (.bool false)
+  have h := evalExprWithDb_lit db row (.bool false)
   rw [evalCase_cons_false _ _ _ _ _ _ h, evalCase_nil_some]
 
 /-- CASE WHEN FALSE THEN x END = NULL (no else clause) -/
 theorem case_when_false_no_else (x : Expr) :
     Expr.case [(Expr.lit (.bool false), x)] none ≃ₑ Expr.lit (.null none) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_case]
-  have h := evalExprWithDb_lit (fun _ => []) row (.bool false)
+  have h := evalExprWithDb_lit db row (.bool false)
   rw [evalCase_cons_false _ _ _ _ _ _ h, evalCase_nil_none, evalExprWithDb_lit]
 
 /-- CASE with no branches and ELSE = ELSE value -/
 theorem case_empty_else (y : Expr) :
     Expr.case [] (some y) ≃ₑ y := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_case, evalCase_nil_some]
 
 /-- CASE with no branches and no ELSE = NULL -/
 theorem case_empty_no_else :
     Expr.case [] none ≃ₑ Expr.lit (.null none) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_case, evalCase_nil_none, evalExprWithDb_lit]
 
 -- ============================================================================
@@ -1073,17 +1068,15 @@ theorem predicate_pushdown (db : Database) (t : String) (p q : Expr) :
     This excludes expressions that produce errors (type mismatches, missing columns)
     or non-integer values (strings, booleans, nulls). Needed for arithmetic identities. -/
 def Expr.isIntValued (e : Expr) : Prop :=
-  ∀ row : Row, ∃ n : Int, evalExpr row e = some (.int n)
+  ∀ (db : Database) (row : Row), ∃ n : Int, evalExprWithDb db row e = some (.int n)
 
 /-- x + 0 = x for expressions evaluating to int.
     Requires `isIntValued` — the expression must always produce an integer. -/
 theorem expr_add_zero (e : Expr) (h : e.isIntValued) :
     Expr.binOp .add e (Expr.lit (.int 0)) ≃ₑ e := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (n + 0)) = some (Value.int n)
   rw [Int.add_zero]
@@ -1091,11 +1084,9 @@ theorem expr_add_zero (e : Expr) (h : e.isIntValued) :
 /-- 0 + x = x for expressions evaluating to int. -/
 theorem expr_zero_add (e : Expr) (h : e.isIntValued) :
     Expr.binOp .add (Expr.lit (.int 0)) e ≃ₑ e := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (0 + n)) = some (Value.int n)
   rw [Int.zero_add]
@@ -1103,11 +1094,9 @@ theorem expr_zero_add (e : Expr) (h : e.isIntValued) :
 /-- x * 1 = x for expressions evaluating to int. -/
 theorem expr_mul_one (e : Expr) (h : e.isIntValued) :
     Expr.binOp .mul e (Expr.lit (.int 1)) ≃ₑ e := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (n * 1)) = some (Value.int n)
   rw [Int.mul_one]
@@ -1115,11 +1104,9 @@ theorem expr_mul_one (e : Expr) (h : e.isIntValued) :
 /-- 1 * x = x for expressions evaluating to int. -/
 theorem expr_one_mul (e : Expr) (h : e.isIntValued) :
     Expr.binOp .mul (Expr.lit (.int 1)) e ≃ₑ e := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (1 * n)) = some (Value.int n)
   rw [Int.one_mul]
@@ -1127,11 +1114,9 @@ theorem expr_one_mul (e : Expr) (h : e.isIntValued) :
 /-- x * 0 = 0 for expressions evaluating to int. -/
 theorem expr_mul_zero (e : Expr) (h : e.isIntValued) :
     Expr.binOp .mul e (Expr.lit (.int 0)) ≃ₑ Expr.lit (.int 0) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (n * 0)) = some (Value.int 0)
   rw [Int.mul_zero]
@@ -1139,11 +1124,9 @@ theorem expr_mul_zero (e : Expr) (h : e.isIntValued) :
 /-- 0 * x = 0 for expressions evaluating to int. -/
 theorem expr_zero_mul (e : Expr) (h : e.isIntValued) :
     Expr.binOp .mul (Expr.lit (.int 0)) e ≃ₑ Expr.lit (.int 0) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (0 * n)) = some (Value.int 0)
   rw [Int.zero_mul]
@@ -1151,11 +1134,9 @@ theorem expr_zero_mul (e : Expr) (h : e.isIntValued) :
 /-- x - 0 = x for expressions evaluating to int. -/
 theorem expr_sub_zero (e : Expr) (h : e.isIntValued) :
     Expr.binOp .sub e (Expr.lit (.int 0)) ≃ₑ e := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨n, hn⟩ := h row
-  simp only [evalExpr] at hn
+  obtain ⟨n, hn⟩ := h db row
   rw [hn]
   show some (Value.int (n - 0)) = some (Value.int n)
   rw [Int.sub_zero]
@@ -1192,8 +1173,7 @@ private theorem evalUnaryOp_not_eq (l r : Option Value) :
     No preconditions needed — empty foldl returns `some (.bool false)` regardless of `e`. -/
 theorem in_empty_false (e : Expr) :
     Expr.inList e false [] ≃ₑ Expr.lit (.bool false) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_lit]
   simp [List.foldl]
 
@@ -1201,8 +1181,7 @@ theorem in_empty_false (e : Expr) :
     No preconditions needed — empty foldl returns `some (.bool false)`, NOT flips to TRUE. -/
 theorem not_in_empty_true (e : Expr) :
     Expr.inList e true [] ≃ₑ Expr.lit (.bool true) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_lit]
   simp [List.foldl, evalUnaryOp]
 
@@ -1266,8 +1245,7 @@ private theorem not_foldl_or_eq_is_foldl_and_ne (db : Database) (row : Row) (e :
 /-- x IN (a) = (x = a) (singleton IN list). -/
 theorem in_singleton (e a : Expr) :
     Expr.inList e false [a] ≃ₑ Expr.binOp .eq e a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_binOp]
   simp [List.foldl]
   exact evalBinOp_or_false_left_eq _ _
@@ -1275,8 +1253,7 @@ theorem in_singleton (e a : Expr) :
 /-- x NOT IN (a) = (x <> a) (singleton NOT IN list). -/
 theorem not_in_singleton (e a : Expr) :
     Expr.inList e true [a] ≃ₑ Expr.binOp .ne e a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_binOp]
   simp [List.foldl]
   rw [evalBinOp_or_false_left_eq]
@@ -1286,8 +1263,7 @@ theorem not_in_singleton (e a : Expr) :
 theorem in_pair (e a b : Expr) :
     Expr.inList e false [a, b] ≃ₑ
     Expr.binOp .or (Expr.binOp .eq e a) (Expr.binOp .eq e b) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   simp [List.foldl]
   congr 1
@@ -1297,8 +1273,7 @@ theorem in_pair (e a b : Expr) :
 theorem not_in_pair (e a b : Expr) :
     Expr.inList e true [a, b] ≃ₑ
     Expr.binOp .and (Expr.binOp .ne e a) (Expr.binOp .ne e b) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   simp [List.foldl]
   rw [evalBinOp_or_false_left_eq]
@@ -1311,11 +1286,10 @@ theorem in_list_or_expansion (e : Expr) (vals : List Expr) :
     Expr.inList e false vals ≃ₑ
     vals.foldl (fun acc v => Expr.binOp .or acc (Expr.binOp .eq e v))
                (Expr.lit (.bool false)) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList]
   dsimp only []
-  have h := eval_foldl_or_eq (fun _ => []) row e vals (Expr.lit (.bool false))
+  have h := eval_foldl_or_eq db row e vals (Expr.lit (.bool false))
   rw [evalExprWithDb_lit] at h
   exact h
 
@@ -1324,8 +1298,7 @@ theorem not_in_list_and_expansion (e : Expr) (vals : List Expr) :
     Expr.inList e true vals ≃ₑ
     vals.foldl (fun acc v => Expr.binOp .and acc (Expr.binOp .ne e v))
                (Expr.lit (.bool true)) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_inList]
   dsimp only []
   simp only [ite_true]
@@ -1342,8 +1315,7 @@ theorem not_in_list_and_expansion (e : Expr) (vals : List Expr) :
 theorem between_expansion (e lo hi : Expr) :
     Expr.between e lo hi ≃ₑ
     Expr.binOp .and (Expr.binOp .ge e lo) (Expr.binOp .le e hi) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_between, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
 
 /-- BETWEEN reflexivity as an expression equivalence:
@@ -1369,11 +1341,9 @@ theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
     Expr.binOp .like e (Expr.lit (.string "%")) ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool true))) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   -- Get the hypothesis for this row
-  have hrow := h row
-  simp only [evalExpr] at hrow
+  have hrow := h db row
   -- Unfold LHS
   rw [evalExprWithDb_binOp]
   simp only [evalExprWithDb_lit]
@@ -1382,14 +1352,14 @@ theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
   rcases hrow with ⟨s, hs⟩ | ⟨n, hn⟩
   · -- String case: e evaluates to some (.string s)
     rw [hs]
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+    have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
         some (.bool false) := by
       rw [evalExprWithDb_unaryOp, hs]; rfl
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, simpleLike_pct]
   · -- Null case: e evaluates to some (.null n)
     rw [hn]
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+    have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
         some (.bool true) := by
       rw [evalExprWithDb_unaryOp, hn]; rfl
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
@@ -1417,8 +1387,7 @@ private theorem evalBinOp_like_empty_eq_eq (v : Option Value) :
 theorem like_empty_pattern (e : Expr) :
     Expr.binOp .like e (Expr.lit (.string "")) ≃ₑ
     Expr.binOp .eq e (Expr.lit (.string "")) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   simp only [evalExprWithDb_lit]
   exact evalBinOp_like_empty_eq_eq _
@@ -1541,23 +1510,21 @@ theorem like_self (e : Expr) (h : e.isStringOrNull) :
     Expr.binOp .like e e ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool true))) := by
-  intro row
-  simp only [evalExpr]
-  have hrow := h row
-  simp only [evalExpr] at hrow
+  intro db row
+  have hrow := h db row
   rw [evalExprWithDb_binOp]
   rw [evalExprWithDb_case]
   rcases hrow with ⟨s, hs⟩ | ⟨n, hn⟩
   · -- String case: e evaluates to some (.string s)
     rw [hs]
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+    have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
         some (.bool false) := by
       rw [evalExprWithDb_unaryOp, hs]; rfl
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
     simp [evalBinOp, simpleLike_self]
   · -- Null case: e evaluates to some (.null n)
     rw [hn]
-    have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+    have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
         some (.bool true) := by
       rw [evalExprWithDb_unaryOp, hn]; rfl
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
@@ -1587,9 +1554,9 @@ private theorem evalFunc_concat_empty_right (v : Option Value) :
     CONCAT normalizes null type to `none`. -/
 theorem concat_empty_left (e : Expr) (h : e.isStringOrUntypedNullValued) :
     Expr.func "CONCAT" [Expr.lit (.string ""), e] ≃ₑ e := by
-  intro row
-  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
-  exact evalFunc_concat_empty_left _ (h row)
+  intro db row
+  simp only [evalExprWithDb_func, List.map, evalExprWithDb_lit]
+  exact evalFunc_concat_empty_left _ (h db row)
 
 /-- CONCAT(x, '') = x (empty string is identity for concat).
     Requires `isStringOrUntypedNullValued` — expression must evaluate to string,
@@ -1597,9 +1564,9 @@ theorem concat_empty_left (e : Expr) (h : e.isStringOrUntypedNullValued) :
     CONCAT normalizes null type to `none`. -/
 theorem concat_empty_right (e : Expr) (h : e.isStringOrUntypedNullValued) :
     Expr.func "CONCAT" [e, Expr.lit (.string "")] ≃ₑ e := by
-  intro row
-  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_lit]
-  exact evalFunc_concat_empty_right _ (h row)
+  intro db row
+  simp only [evalExprWithDb_func, List.map, evalExprWithDb_lit]
+  exact evalFunc_concat_empty_right _ (h db row)
 
 -- ============================================================================
 -- LENGTH(CONCAT(a, b)) = LENGTH(a) + LENGTH(b)
@@ -1625,9 +1592,9 @@ private theorem evalFunc_length_concat (av bv : Option Value)
 theorem length_concat (a b : Expr) (ha : a.isStringOrNullValued) (hb : b.isStringOrNullValued) :
     Expr.func "LENGTH" [Expr.func "CONCAT" [a, b]] ≃ₑ
     Expr.binOp .add (Expr.func "LENGTH" [a]) (Expr.func "LENGTH" [b]) := by
-  intro row
-  simp only [evalExpr, evalExprWithDb_func, List.map, evalExprWithDb_binOp]
-  exact evalFunc_length_concat _ _ (ha row) (hb row)
+  intro db row
+  simp only [evalExprWithDb_func, List.map, evalExprWithDb_binOp]
+  exact evalFunc_length_concat _ _ (ha db row) (hb db row)
 
 -- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
 -- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
@@ -1739,13 +1706,13 @@ private theorem evalFunc_lower_idem (v : Option Value) :
 /-- UPPER(UPPER(x)) = UPPER(x) (idempotent) -/
 theorem upper_idempotent (e : Expr) :
     Expr.func "UPPER" [Expr.func "UPPER" [e]] ≃ₑ Expr.func "UPPER" [e] := by
-  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  intro db row; simp only [evalExprWithDb_func, List.map]
   exact evalFunc_upper_idem _
 
 /-- LOWER(LOWER(x)) = LOWER(x) (idempotent) -/
 theorem lower_idempotent (e : Expr) :
     Expr.func "LOWER" [Expr.func "LOWER" [e]] ≃ₑ Expr.func "LOWER" [e] := by
-  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  intro db row; simp only [evalExprWithDb_func, List.map]
   exact evalFunc_lower_idem _
 
 -- String-level cross-composition (lifted from Char)
@@ -1784,21 +1751,20 @@ private theorem evalFunc_lower_upper_lower (v : Option Value) :
 theorem upper_lower_upper (e : Expr) :
     Expr.func "UPPER" [Expr.func "LOWER" [Expr.func "UPPER" [e]]] ≃ₑ
     Expr.func "UPPER" [e] := by
-  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  intro db row; simp only [evalExprWithDb_func, List.map]
   exact evalFunc_upper_lower_upper _
 
 /-- LOWER(UPPER(LOWER(x))) = LOWER(x) -/
 theorem lower_upper_lower (e : Expr) :
     Expr.func "LOWER" [Expr.func "UPPER" [Expr.func "LOWER" [e]]] ≃ₑ
     Expr.func "LOWER" [e] := by
-  intro row; simp only [evalExpr, evalExprWithDb_func, List.map]
+  intro db row; simp only [evalExprWithDb_func, List.map]
   exact evalFunc_lower_upper_lower _
 
 /-- LENGTH('') = 0 -/
 theorem length_empty :
     Expr.func "LENGTH" [Expr.lit (.string "")] ≃ₑ Expr.lit (.int 0) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_func, evalExprWithDb_lit]
   simp only [List.map, evalExprWithDb_lit]
   have h : "LENGTH".toUpper = "LENGTH" := by decide +kernel
@@ -1815,16 +1781,14 @@ theorem eq_reflexive (e : Expr) (h : e.evaluable) :
     Expr.binOp .eq e e ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool true))) := by
-  intro row
-  simp only [evalExpr]
-  obtain ⟨v, hv⟩ := h row
-  simp only [evalExpr] at hv
+  intro db row
+  obtain ⟨v, hv⟩ := h db row
   -- Unfold LHS: binOp .eq e e → evalBinOp .eq (some v) (some v)
   rw [evalExprWithDb_binOp, hv]
   -- Unfold RHS: case → evalCase
   rw [evalExprWithDb_case]
   -- Compute the isNull condition value
-  have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+  have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
       some (.bool (isNullValue (some v))) := by
     rw [evalExprWithDb_unaryOp, hv]; rfl
   match v with
@@ -1851,12 +1815,10 @@ theorem ne_irreflexive (e : Expr) (h : e.evaluable) :
     Expr.binOp .ne e e ≃ₑ
     Expr.case [(Expr.unaryOp .isNull e, Expr.lit (.null none))]
               (some (Expr.lit (.bool false))) := by
-  intro row
-  simp only [evalExpr]
-  obtain ⟨v, hv⟩ := h row
-  simp only [evalExpr] at hv
+  intro db row
+  obtain ⟨v, hv⟩ := h db row
   rw [evalExprWithDb_binOp, hv, evalExprWithDb_case]
-  have hcond : evalExprWithDb (fun _ => []) row (Expr.unaryOp .isNull e) =
+  have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
       some (.bool (isNullValue (some v))) := by
     rw [evalExprWithDb_unaryOp, hv]; rfl
   match v with
@@ -1970,48 +1932,42 @@ private theorem evalUnaryOp_not_ge (l r : Option Value) :
 /-- NOT (x = y) = (x <> y) -/
 theorem not_eq_is_ne (a b : Expr) :
     Expr.unaryOp .not (Expr.binOp .eq a b) ≃ₑ Expr.binOp .ne a b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_eq _ _
 
 /-- NOT (x <> y) = (x = y) -/
 theorem not_ne_is_eq (a b : Expr) :
     Expr.unaryOp .not (Expr.binOp .ne a b) ≃ₑ Expr.binOp .eq a b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_ne _ _
 
 /-- NOT (x < y) = (x >= y) -/
 theorem not_lt_is_ge (a b : Expr) :
     Expr.unaryOp .not (Expr.binOp .lt a b) ≃ₑ Expr.binOp .ge a b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_lt _ _
 
 /-- NOT (x <= y) = (x > y) -/
 theorem not_le_is_gt (a b : Expr) :
     Expr.unaryOp .not (Expr.binOp .le a b) ≃ₑ Expr.binOp .gt a b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_le _ _
 
 /-- NOT (x > y) = (x <= y) -/
 theorem not_gt_is_le (a b : Expr) :
     Expr.unaryOp .not (Expr.binOp .gt a b) ≃ₑ Expr.binOp .le a b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_gt _ _
 
 /-- NOT (x >= y) = (x < y) -/
 theorem not_ge_is_lt (a b : Expr) :
     Expr.unaryOp .not (Expr.binOp .ge a b) ≃ₑ Expr.binOp .lt a b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalUnaryOp_not_ge _ _
 
@@ -2021,8 +1977,7 @@ theorem not_ge_is_lt (a b : Expr) :
 theorem not_between_expansion (e lo hi : Expr) :
     Expr.unaryOp .not (Expr.between e lo hi) ≃ₑ
     Expr.binOp .or (Expr.binOp .lt e lo) (Expr.binOp .gt e hi) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_between,
       evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
   -- Goal: NOT(AND(GE ev evlo, LE ev evhi)) = OR(LT ev evlo, GT ev evhi)
@@ -2071,32 +2026,28 @@ private theorem evalBinOp_le_eq_ge_flip (l r : Option Value) :
 /-- x < y = y > x (flip) -/
 theorem lt_flip (a b : Expr) :
     Expr.binOp .lt a b ≃ₑ Expr.binOp .gt b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_lt_eq_gt_flip _ _
 
 /-- x <= y = y >= x (flip) -/
 theorem le_flip (a b : Expr) :
     Expr.binOp .le a b ≃ₑ Expr.binOp .ge b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_le_eq_ge_flip _ _
 
 /-- x > y = y < x (flip) -/
 theorem gt_flip (a b : Expr) :
     Expr.binOp .gt a b ≃ₑ Expr.binOp .lt b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact (evalBinOp_lt_eq_gt_flip _ _).symm
 
 /-- x >= y = y <= x (flip) -/
 theorem ge_flip (a b : Expr) :
     Expr.binOp .ge a b ≃ₑ Expr.binOp .le b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact (evalBinOp_le_eq_ge_flip _ _).symm
 

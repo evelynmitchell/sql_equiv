@@ -7,26 +7,22 @@ import SqlEquiv.Equiv.ValueLemmas
 namespace SqlEquiv
 
 theorem and_comm (a b : Expr) : Expr.binOp .and a b ≃ₑ Expr.binOp .and b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_and_comm _ _
 
 theorem or_comm (a b : Expr) : Expr.binOp .or a b ≃ₑ Expr.binOp .or b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_or_comm _ _
 
 theorem add_comm (a b : Expr) : Expr.binOp .add a b ≃ₑ Expr.binOp .add b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_add_comm _ _
 
 theorem mul_comm (a b : Expr) : Expr.binOp .mul a b ≃ₑ Expr.binOp .mul b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_mul_comm _ _
 
@@ -44,57 +40,50 @@ theorem not_not_bool (b : Bool) :
     Requires `isBoolValued` — NOT on non-boolean yields none, so NOT NOT e = none ≠ e. -/
 theorem not_not (e : Expr) (h : e.isBoolValued) :
     Expr.unaryOp .not (Expr.unaryOp .not e) ≃ₑ e := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact not_not_bool b
 
 theorem eq_comm (a b : Expr) : Expr.binOp .eq a b ≃ₑ Expr.binOp .eq b a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
   exact evalBinOp_eq_comm _ _
 
 theorem and_assoc (a b c : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and (Expr.binOp .and a b) c ≃ₑ Expr.binOp .and a (Expr.binOp .and b c) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row; obtain ⟨bc, hbc⟩ := hc row
-  simp only [evalExpr] at hba hbb hbc; rw [hba, hbb, hbc]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row; obtain ⟨bc, hbc⟩ := hc db row
+  rw [hba, hbb, hbc]
   exact evalBinOp_and_assoc ba bb bc
 
 theorem or_assoc (a b c : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or (Expr.binOp .or a b) c ≃ₑ Expr.binOp .or a (Expr.binOp .or b c) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row; obtain ⟨bc, hbc⟩ := hc row
-  simp only [evalExpr] at hba hbb hbc; rw [hba, hbb, hbc]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row; obtain ⟨bc, hbc⟩ := hc db row
+  rw [hba, hbb, hbc]
   exact evalBinOp_or_assoc ba bb bc
 
 -- De Morgan's Laws (require isBoolValued)
 theorem not_and (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Expr.unaryOp .not (Expr.binOp .and a b) ≃ₑ Expr.binOp .or (Expr.unaryOp .not a) (Expr.unaryOp .not b) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp]
   rw [evalExprWithDb_binOp, evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row
-  simp only [evalExpr] at hba hbb; rw [hba, hbb]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row
+  rw [hba, hbb]
   exact evalUnaryOp_not_and ba bb
 
 theorem not_or (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Expr.unaryOp .not (Expr.binOp .or a b) ≃ₑ Expr.binOp .and (Expr.unaryOp .not a) (Expr.unaryOp .not b) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_binOp]
   rw [evalExprWithDb_binOp, evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row
-  simp only [evalExpr] at hba hbb; rw [hba, hbb]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row
+  rw [hba, hbb]
   exact evalUnaryOp_not_or ba bb
 
 -- Distributivity Laws
@@ -107,44 +96,44 @@ theorem not_or (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
 theorem and_or_distrib_left (a b c : Expr)
     (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and a (Expr.binOp .or b c) ≃ₑ Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp,
       evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row; obtain ⟨bc, hbc⟩ := hc row
-  simp only [evalExpr] at hba hbb hbc; rw [hba, hbb, hbc]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row; obtain ⟨bc, hbc⟩ := hc db row
+  rw [hba, hbb, hbc]
   exact evalBinOp_and_or_distrib ba bb bc
 
 /-- AND distributes over OR (right) for boolean-valued SQL expressions. -/
 theorem and_or_distrib_right (a b c : Expr)
     (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and (Expr.binOp .or a b) c ≃ₑ Expr.binOp .or (Expr.binOp .and a c) (Expr.binOp .and b c) := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp,
       evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row; obtain ⟨bc, hbc⟩ := hc row
-  simp only [evalExpr] at hba hbb hbc; rw [hba, hbb, hbc]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row; obtain ⟨bc, hbc⟩ := hc db row
+  rw [hba, hbb, hbc]
   exact evalBinOp_and_or_distrib_right ba bb bc
 
 /-- OR distributes over AND (left) for boolean-valued SQL expressions. -/
 theorem or_and_distrib_left (a b c : Expr)
     (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or a (Expr.binOp .and b c) ≃ₑ Expr.binOp .and (Expr.binOp .or a b) (Expr.binOp .or a c) := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp,
       evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row; obtain ⟨bc, hbc⟩ := hc row
-  simp only [evalExpr] at hba hbb hbc; rw [hba, hbb, hbc]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row; obtain ⟨bc, hbc⟩ := hc db row
+  rw [hba, hbb, hbc]
   exact evalBinOp_or_and_distrib ba bb bc
 
 /-- OR distributes over AND (right) for boolean-valued SQL expressions. -/
 theorem or_and_distrib_right (a b c : Expr)
     (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or (Expr.binOp .and a b) c ≃ₑ Expr.binOp .and (Expr.binOp .or a c) (Expr.binOp .or b c) := by
-  intro row; simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp, evalExprWithDb_binOp,
       evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row; obtain ⟨bb, hbb⟩ := hb row; obtain ⟨bc, hbc⟩ := hc row
-  simp only [evalExpr] at hba hbb hbc; rw [hba, hbb, hbc]
+  obtain ⟨ba, hba⟩ := ha db row; obtain ⟨bb, hbb⟩ := hb db row; obtain ⟨bc, hbc⟩ := hc db row
+  rw [hba, hbb, hbc]
   exact evalBinOp_or_and_distrib_right ba bb bc
 
 -- Absorption Laws
@@ -156,12 +145,10 @@ theorem or_and_distrib_right (a b c : Expr)
     Requires `isBoolValued` — non-boolean AND/OR yields none. -/
 theorem and_absorb_or (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Expr.binOp .and a (Expr.binOp .or a b) ≃ₑ a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row
-  obtain ⟨bb, hbb⟩ := hb row
-  simp only [evalExpr] at hba hbb
+  obtain ⟨ba, hba⟩ := ha db row
+  obtain ⟨bb, hbb⟩ := hb db row
   rw [hba, hbb]
   exact evalBinOp_and_absorb_or ba bb
 
@@ -169,12 +156,10 @@ theorem and_absorb_or (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Requires `isBoolValued` — non-boolean AND/OR yields none. -/
 theorem or_absorb_and (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Expr.binOp .or a (Expr.binOp .and a b) ≃ₑ a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
-  obtain ⟨ba, hba⟩ := ha row
-  obtain ⟨bb, hbb⟩ := hb row
-  simp only [evalExpr] at hba hbb
+  obtain ⟨ba, hba⟩ := ha db row
+  obtain ⟨bb, hbb⟩ := hb db row
   rw [hba, hbb]
   exact evalBinOp_or_absorb_and ba bb
 
@@ -187,11 +172,9 @@ theorem or_absorb_and (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Requires `isBoolValued` — for non-boolean a, (a AND TRUE) = none ≠ a. -/
 theorem and_true (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and a (Expr.lit (.bool true)) ≃ₑ a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact evalBinOp_and_true_right b
 
@@ -199,26 +182,22 @@ theorem and_true (a : Expr) (h : a.isBoolValued) :
     Requires `isBoolValued` — for non-boolean a, (a OR FALSE) = none ≠ a. -/
 theorem or_false (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or a (Expr.lit (.bool false)) ≃ₑ a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact evalBinOp_or_false_right b
 
 -- These ARE provable due to short-circuit evaluation
 theorem and_false (a : Expr) :
     Expr.binOp .and a (Expr.lit (.bool false)) ≃ₑ Expr.lit (.bool false) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
   exact evalBinOp_and_false_right _
 
 theorem or_true (a : Expr) :
     Expr.binOp .or a (Expr.lit (.bool true)) ≃ₑ Expr.lit (.bool true) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
   exact evalBinOp_or_true_right _
 
@@ -398,7 +377,7 @@ theorem normalizeExpr_inList (e : Expr) (neg : Bool) (vals : List Expr) :
     At runtime, `native_decide` resolves through `@[implemented_by]` to the BEq instance. -/
 def syntacticEquiv (e1 e2 : Expr) : Bool := decide (normalizeExpr e1 = normalizeExpr e2)
 
-theorem expr_equiv_subst {e1 e2 : Expr} (h : e1 ≃ₑ e2) (row : Row) : evalExpr row e1 = evalExpr row e2 := h row
+theorem expr_equiv_subst {e1 e2 : Expr} (h : e1 ≃ₑ e2) (db : Database) (row : Row) : evalExprWithDb db row e1 = evalExprWithDb db row e2 := h db row
 
 -- ============================================================================
 -- Additional Identity Laws (commuted versions)
@@ -406,31 +385,31 @@ theorem expr_equiv_subst {e1 e2 : Expr} (h : e1 ≃ₑ e2) (row : Row) : evalExp
 
 theorem true_and (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and (Expr.lit (.bool true)) a ≃ₑ a := by
-  intro row
-  have hc := and_comm (Expr.lit (.bool true)) a row
+  intro db row
+  have hc := and_comm (Expr.lit (.bool true)) a db row
   rw [hc]
-  exact and_true a h row
+  exact and_true a h db row
 
 theorem false_or (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or (Expr.lit (.bool false)) a ≃ₑ a := by
-  intro row
-  have hc := or_comm (Expr.lit (.bool false)) a row
+  intro db row
+  have hc := or_comm (Expr.lit (.bool false)) a db row
   rw [hc]
-  exact or_false a h row
+  exact or_false a h db row
 
 theorem false_and (a : Expr) :
     Expr.binOp .and (Expr.lit (.bool false)) a ≃ₑ Expr.lit (.bool false) := by
-  intro row
-  have h := and_comm (Expr.lit (.bool false)) a row
+  intro db row
+  have h := and_comm (Expr.lit (.bool false)) a db row
   rw [h]
-  exact and_false a row
+  exact and_false a db row
 
 theorem true_or (a : Expr) :
     Expr.binOp .or (Expr.lit (.bool true)) a ≃ₑ Expr.lit (.bool true) := by
-  intro row
-  have h := or_comm (Expr.lit (.bool true)) a row
+  intro db row
+  have h := or_comm (Expr.lit (.bool true)) a db row
   rw [h]
-  exact or_true a row
+  exact or_true a db row
 
 -- ============================================================================
 -- Idempotent Laws
@@ -443,11 +422,9 @@ theorem true_or (a : Expr) :
     Requires `isBoolValued` — for non-boolean a, (a AND a) = none ≠ a. -/
 theorem and_self (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and a a ≃ₑ a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact evalBinOp_and_idem b
 
@@ -455,11 +432,9 @@ theorem and_self (a : Expr) (h : a.isBoolValued) :
     Requires `isBoolValued` — for non-boolean a, (a OR a) = none ≠ a. -/
 theorem or_self (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or a a ≃ₑ a := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact evalBinOp_or_idem b
 
@@ -474,11 +449,9 @@ theorem or_self (a : Expr) (h : a.isBoolValued) :
     Requires `isBoolValued` — NOT on non-boolean yields none. -/
 theorem and_not_self (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool false) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_unaryOp, evalExprWithDb_lit]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact evalBinOp_and_not_self b
 
@@ -486,27 +459,25 @@ theorem and_not_self (a : Expr) (h : a.isBoolValued) :
     Requires `isBoolValued` — NOT on non-boolean yields none. -/
 theorem or_not_self (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or a (Expr.unaryOp .not a) ≃ₑ Expr.lit (.bool true) := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_unaryOp, evalExprWithDb_lit]
-  obtain ⟨b, hb⟩ := h row
-  simp only [evalExpr] at hb
+  obtain ⟨b, hb⟩ := h db row
   rw [hb]
   exact evalBinOp_or_not_self b
 
 theorem not_self_and (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .and (Expr.unaryOp .not a) a ≃ₑ Expr.lit (.bool false) := by
-  intro row
-  have hc := and_comm (Expr.unaryOp .not a) a row
+  intro db row
+  have hc := and_comm (Expr.unaryOp .not a) a db row
   rw [hc]
-  exact and_not_self a h row
+  exact and_not_self a h db row
 
 theorem not_self_or (a : Expr) (h : a.isBoolValued) :
     Expr.binOp .or (Expr.unaryOp .not a) a ≃ₑ Expr.lit (.bool true) := by
-  intro row
-  have hc := or_comm (Expr.unaryOp .not a) a row
+  intro db row
+  have hc := or_comm (Expr.unaryOp .not a) a db row
   rw [hc]
-  exact or_not_self a h row
+  exact or_not_self a h db row
 
 -- ============================================================================
 -- Reverse De Morgan Laws (for factoring)
@@ -515,12 +486,12 @@ theorem not_self_or (a : Expr) (h : a.isBoolValued) :
 theorem or_not_not (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Expr.binOp .or (Expr.unaryOp .not a) (Expr.unaryOp .not b) ≃ₑ
     Expr.unaryOp .not (Expr.binOp .and a b) := by
-  intro row; exact (not_and a b ha hb row).symm
+  intro db row; exact (not_and a b ha hb db row).symm
 
 theorem and_not_not (a b : Expr) (ha : a.isBoolValued) (hb : b.isBoolValued) :
     Expr.binOp .and (Expr.unaryOp .not a) (Expr.unaryOp .not b) ≃ₑ
     Expr.unaryOp .not (Expr.binOp .or a b) := by
-  intro row; exact (not_or a b ha hb row).symm
+  intro db row; exact (not_or a b ha hb db row).symm
 
 -- ============================================================================
 -- Reverse Distributivity (factoring)
@@ -530,13 +501,13 @@ theorem or_and_factor_left (a b c : Expr)
     (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .or (Expr.binOp .and a b) (Expr.binOp .and a c) ≃ₑ
     Expr.binOp .and a (Expr.binOp .or b c) := by
-  intro row; exact (and_or_distrib_left a b c ha hb hc row).symm
+  intro db row; exact (and_or_distrib_left a b c ha hb hc db row).symm
 
 theorem and_or_factor_left (a b c : Expr)
     (ha : a.isBoolValued) (hb : b.isBoolValued) (hc : c.isBoolValued) :
     Expr.binOp .and (Expr.binOp .or a b) (Expr.binOp .or a c) ≃ₑ
     Expr.binOp .or a (Expr.binOp .and b c) := by
-  intro row; exact (or_and_distrib_left a b c ha hb hc row).symm
+  intro db row; exact (or_and_distrib_left a b c ha hb hc db row).symm
 
 -- ============================================================================
 -- Congruence Theorems
@@ -546,23 +517,19 @@ theorem and_or_factor_left (a b c : Expr)
 theorem binOp_congr {op : BinOp} {a1 a2 b1 b2 : Expr}
     (ha : a1 ≃ₑ a2) (hb : b1 ≃ₑ b2) :
     Expr.binOp op a1 b1 ≃ₑ Expr.binOp op a2 b2 := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_binOp, evalExprWithDb_binOp]
-  have ha' := ha row
-  have hb' := hb row
-  simp only [evalExpr] at ha' hb'
+  have ha' := ha db row
+  have hb' := hb db row
   rw [ha', hb']
 
 /-- Unary operation congruence -/
 theorem unaryOp_congr {op : UnaryOp} {a b : Expr}
     (h : a ≃ₑ b) :
     Expr.unaryOp op a ≃ₑ Expr.unaryOp op b := by
-  intro row
-  simp only [evalExpr]
+  intro db row
   rw [evalExprWithDb_unaryOp, evalExprWithDb_unaryOp]
-  have h' := h row
-  simp only [evalExpr] at h'
+  have h' := h db row
   rw [h']
 
 /-- Binary operation left congruence -/
