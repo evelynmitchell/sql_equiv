@@ -527,9 +527,14 @@ def subqueryUnnestingTests : List TestResult := [
     "SELECT DISTINCT users.* FROM users INNER JOIN orders ON users.id = orders.user_id",
 
   -- Both forms should return 2 users (Alice and Bob have orders, Carol doesn't)
-  testSemanticEquiv "unnest_row_count_in"
-    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders)"
-    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders)",
+  -- (#180: previously compared a query with itself against a db without
+  -- these tables.) Alice and Bob have orders, Carol doesn't: exactly 2 rows.
+  (match parseSelectStr "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders)" with
+   | .ok sel =>
+     let n := (evalSelect unnestTestDb sel).length
+     if n == 2 then .pass "unnest_row_count_in"
+     else .fail "unnest_row_count_in" s!"expected 2 rows, got {n}"
+   | .error e => .fail "unnest_row_count_in" s!"Parse error: {e}"),
 
   -- NOT IN unnesting to anti-join
   -- NOT IN: SELECT * FROM users WHERE id NOT IN (SELECT user_id FROM orders)
@@ -539,9 +544,19 @@ def subqueryUnnestingTests : List TestResult := [
     "SELECT users.* FROM users LEFT JOIN orders ON users.id = orders.user_id WHERE orders.user_id IS NULL",
 
   -- Empty subquery case: no matches means JOIN returns empty
-  testSemanticEquiv "unnest_empty_subquery"
+  -- (#180: previously compared a query with itself against a db without
+  -- these tables.) IN form vs JOIN form when the subquery is empty.
+  testUnnestingEquiv "unnest_empty_subquery"
     "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders WHERE amount > 1000)"
-    "SELECT * FROM users WHERE users.id IN (SELECT user_id FROM orders WHERE amount > 1000)"
+    "SELECT DISTINCT users.* FROM users INNER JOIN orders ON users.id = orders.user_id WHERE orders.amount > 1000",
+  -- Non-vacuity guard for the above: the tables exist and the unfiltered
+  -- forms are non-empty, so the empty result comes from the filter.
+  (match parseSelectStr "SELECT DISTINCT users.* FROM users INNER JOIN orders ON users.id = orders.user_id" with
+   | .ok sel =>
+     let n := (evalSelect unnestTestDb sel).length
+     if n > 0 then .pass "unnest_empty_subquery_guard"
+     else .fail "unnest_empty_subquery_guard" "unfiltered join is empty: the test above would be vacuous"
+   | .error e => .fail "unnest_empty_subquery_guard" s!"Parse error: {e}")
 ]
 
 -- ============================================================================
