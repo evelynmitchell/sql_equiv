@@ -277,6 +277,50 @@ def orderByTests : List TestResult := [
 -- LIMIT/OFFSET Tests
 -- ============================================================================
 
+-- Grouped ORDER BY (#234): sort keys may be aggregates or non-projected
+-- grouping columns, evaluated per group. The aggregate / non-projected cases
+-- fail on the pre-fix evaluator (groups left in encounter order; checked);
+-- the two alias cases passed before too and guard that output columns still
+-- take precedence over source columns.
+-- orders: user 1 → 2 rows (100, 200), user 2 → 1 (150), user 3 → 1 (300);
+--         Widget → 2 rows (100, 150), Gadget → 1 (200), Gizmo → 1 (300).
+def groupedOrderByTests : List TestResult := [
+  -- COUNT(*) ASC: first count-1 group is user 2 (encounter order would give user 1)
+  testColumn "group_order_count_asc"
+    "SELECT user_id FROM orders GROUP BY user_id ORDER BY COUNT(*) ASC LIMIT 1"
+    "user_id" [.int 2],
+  -- SUM(amount) DESC, not projected: Gizmo 300, Widget 250, Gadget 200
+  testColumn "group_order_sum_desc"
+    "SELECT product FROM orders GROUP BY product ORDER BY SUM(amount) DESC"
+    "product" [.string "Gizmo", .string "Widget", .string "Gadget"],
+  -- Expression over an aggregate: 0 - COUNT(*) DESC puts count-1 groups first
+  testColumn "group_order_agg_expr"
+    "SELECT user_id FROM orders GROUP BY user_id ORDER BY 0 - COUNT(*) DESC LIMIT 1"
+    "user_id" [.int 2],
+  -- Projected aggregate via alias (output column)
+  testColumn "group_order_alias"
+    "SELECT product, SUM(amount) AS total FROM orders GROUP BY product ORDER BY total"
+    "product" [.string "Gadget", .string "Widget", .string "Gizmo"],
+  -- Output alias wins over a source column of the same name: `amount` here is
+  -- COUNT(*) (Widget 2, others 1), not orders.amount (which would give Gizmo first)
+  testColumn "group_order_alias_shadows_source"
+    "SELECT product, COUNT(*) AS amount FROM orders GROUP BY product ORDER BY amount DESC"
+    "product" [.string "Widget", .string "Gadget", .string "Gizmo"],
+  -- Mixed output alias + aggregate (sqlite agrees): total + COUNT(*) gives
+  -- Gadget 201, Widget 252, Gizmo 301
+  testColumn "group_order_alias_plus_agg"
+    "SELECT product, SUM(amount) AS total FROM orders GROUP BY product ORDER BY total + COUNT(*)"
+    "product" [.string "Gadget", .string "Widget", .string "Gizmo"],
+  -- Non-projected grouping column: Engineering 2, Marketing 1, Sales 2
+  testColumn "group_order_nonprojected_group_col"
+    "SELECT COUNT(*) AS c FROM users GROUP BY department ORDER BY department"
+    "c" [.int 2, .int 1, .int 2],
+  -- With HAVING: Sales (avg 23) before Engineering (avg 32)
+  testColumn "group_order_having_avg"
+    "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 ORDER BY AVG(age) ASC"
+    "department" [.string "Sales", .string "Engineering"]
+]
+
 def limitOffsetTests : List TestResult := [
   testRowCount "limit" "SELECT * FROM users LIMIT 3" 3,
   testRowCount "limit_offset" "SELECT * FROM users LIMIT 2 OFFSET 2" 2,
@@ -846,7 +890,7 @@ def caseInsensitiveTests : List TestResult := [
 
 def allSemanticsTests : List TestResult :=
   basicQueryTests ++ whereQueryTests ++ joinQueryTests ++
-  projectionTests ++ distinctTests ++ orderByTests ++
+  projectionTests ++ distinctTests ++ orderByTests ++ groupedOrderByTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   setOpSubqueryTests ++
