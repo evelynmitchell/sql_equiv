@@ -395,7 +395,14 @@ def nullOrderingTests : List TestResult := [
   -- Columns named first/last are still ordinary identifiers
   (match parseSelectStr "SELECT first, last FROM t ORDER BY last" with
    | .ok _ => .pass "nulls_words_not_reserved"
-   | .error e => .fail "nulls_words_not_reserved" e)
+   | .error e => .fail "nulls_words_not_reserved" e),
+  -- docs/IMPLEMENTATION_DEFINED.md row 12 (#235, decided): a TEXT value
+  -- compared with a number is a type error in our core semantics, so the
+  -- row is dropped. sqlite would compare as text (column affinity); the
+  -- Spider harness emulates that by quoting the literal, the core does not.
+  testRowCount "text_vs_number_is_type_error" "SELECT * FROM singer WHERE Country >= 2014" 0,
+  testRowCount "text_vs_quoted_number_compares_as_text"
+    "SELECT * FROM singer WHERE Country >= '2014'" 3
 ]
 
 def limitOffsetTests : List TestResult := [

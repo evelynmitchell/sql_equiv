@@ -94,9 +94,9 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 7 | AVG over integers (`AVG` of 1, 2) | Implementation-defined precision/scale | 1.5 | 1.5 | 1.5 | **1** (truncates; no fractional result type for integer AVG) | **open**: diverges from all three; tied to #201 (decimal division policy) and #202 (floats). *Not* the main cause of the AVG-in-subquery Spider failures (see "Bugs found" below) | Unit pin `avg` (750/4 → 187); DuckDB KNOWN DIVERGENCES (AVG over decimals) |
 | 8 | LIKE case sensitivity `'abc' LIKE 'ABC'` | Collation-dependent | true (ASCII case-insensitive by default) | false | false | false | decided (implicitly; matches DuckDB/Postgres) | **no unit pin; no sqlite disagreement test** |
 | 9 | String ordering `'a' < 'B'` | Collation-dependent | false (binary) | false | false (`C.UTF-8` here; an `en_US` collation gives true) | false (code point) | decided (implicitly) | **no unit pin** |
-| 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **open** (#127) | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error` |
-| 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap**: diverges from all three; no Spider query hits it today | **none** |
-| 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **open** (#235): 6 Spider failures | **none** |
+| 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **decided** (#127, closed): keep the error; matches DuckDB/Postgres | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error`; DiffSqlite KNOWN DIVERGENCES |
+| 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap** (#254): diverges from all three; no Spider query hits it today | **none** |
+| 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
 
 ### Notes on individual rows
 
@@ -108,10 +108,18 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   a scale rule, or floats). That is the #201 / #202 design decision, not a
   local fix.
 - **Rows 10–12** are related: they are all about comparing values of different
-  types, and should be decided together. Options and measured costs are in the
-  #127 / #235 write-up. In particular, making `1 = 'a'` return FALSE makes the
-  certified rewriter's `x LIKE '' → x = ''` rule unsound for non-string `x`
-  unless it gets a type guard.
+  types. Rows 10 and 12 were decided together: keep the core's type error
+  (matching DuckDB/Postgres), and emulate sqlite's TEXT affinity only in the
+  Spider harness. The measured cost of the alternative for row 10: making
+  `1 = 'a'` return FALSE makes the certified rewriter's `x LIKE '' → x = ''`
+  rule unsound for non-string `x` unless it gets a type guard. Row 11 is open
+  as #254.
+- **Row 12 harness emulation** is conservative: it rewrites only comparisons
+  with a column that, in every table of the database, has TEXT affinity and
+  holds only non-numeric strings in the synthetic data. Each query runs as
+  written first; the rewritten form is used only if the original fails, so the
+  rewrite cannot turn an agreement into a failure. A self-test guards the
+  rewrite on every invocation.
 
 ---
 
@@ -124,7 +132,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   FROM singer` returns **20** (the outer row's `age`) instead of 30.33, and
   `WHERE age > (SELECT min(age) FROM singer)` returns no rows instead of two.
   The DuckDB harness already notes this as a "pre-existing divergence" (around
-  line 234 of `LSpecTests/DiffDuckdb.lean`), but there is no issue. This, not
+  line 234 of `LSpecTests/DiffDuckdb.lean`). Filed as #253. This, not
   AVG truncation, is the likely main cause of the Spider "AVG" failure class,
   whose queries compare against `(SELECT avg(col) FROM same_table)`.
 
@@ -138,8 +146,6 @@ Rows that do not yet meet the testing requirements in §2:
   whether to error (Postgres, standard) or sort (sqlite, DuckDB).
 - **Rows 6, 8, 9**: add unit pins; add a sqlite *disagreement* test for row 8
   (sqlite's LIKE is case-insensitive).
-- **Row 11**: decide (all three engines convert the literal); add a pin either way.
-- **Row 12**: decide via #235; add a pin and, if emulated in the Spider
-  harness, a labelled report category.
+- **Row 11**: decide via #254 (all three engines convert the literal); add a pin either way.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.
