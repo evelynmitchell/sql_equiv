@@ -112,11 +112,14 @@ private def runDuckdbRaw (querySql : String) : IO (Except String String) := do
   if exitCode != 0 then return .error s!"duckdb error: {stderr}"
   return .ok stdout
 
-/-- Parse a duckdb output cell by shape: NULL, integer, decimal (digits.digits,
-    canonicalized through mkDecimal so `2.50` equals our stored `decimal 25 1`),
-    otherwise string. Test data avoids numeric-looking strings. -/
+/-- Parse a duckdb output cell by shape: NULL, boolean (`true`/`false`),
+    integer, decimal (digits.digits, canonicalized through mkDecimal so `2.50`
+    equals our stored `decimal 25 1`), otherwise string. Test data avoids
+    numeric-looking strings and the strings `true`/`false`. -/
 private def parseValue (s : String) : Value :=
   if s == "NULL" then .null none
+  else if s == "true" then .bool true
+  else if s == "false" then .bool false
   else match s.toInt? with
   | some n => .int n
   | none =>
@@ -242,6 +245,11 @@ def runAllTests : IO TestSeq := do
       "SELECT MIN(name) AS lo, MAX(name) AS hi FROM users",
     diffTest "MAX over strings per group"
       "SELECT department, MAX(name) AS m FROM users GROUP BY department",
+    -- MIN/MAX over booleans (registry row 14): duckdb dialect gives a boolean
+    diffTest "MIN/MAX over booleans (duckdb: boolean result)"
+      "SELECT MAX(age > 26) AS hi, MIN(age > 26) AS lo FROM users",
+    diffTest "MAX over booleans per group"
+      "SELECT department, MAX(age > 26) AS m FROM users GROUP BY department",
     -- Subquery name resolution is inner-first (#253): unqualified names bind
     -- to the subquery's own FROM, then fall through to the outer row.
     diffTest "scope: same-table scalar subquery"

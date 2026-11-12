@@ -172,22 +172,45 @@ def extremeValue (wantMax : Bool) (vs : List Value) : Option Value :=
     | some m =>
       if Value.compare m v == some (if wantMax then .lt else .gt) then some v else acc) none
 
-/-- MIN/MAX aggregate result (#256). NULLs and non-numeric, non-string values
-    are skipped. Numerics compare scale-aware, strings by code point. Input
-    mixing numbers and strings is resolved by `mode` (registry row 13):
-    `.error` gives `none` (an error), `.typeClass` orders numbers before
-    strings (sqlite), so MAX is the greatest string and MIN the least number.
-    No eligible input gives NULL. -/
-def minMaxAgg (mode : MixedMinMax) (wantMax : Bool) (vs : List Value) : Option Value :=
-  let nums := vs.filter fun v => (Value.toScaled? v).isSome
-  let strs := vs.filter fun v => match v with | .string _ => true | _ => false
-  let pool : Option (List Value) :=
-    if nums.isEmpty then some strs
-    else if strs.isEmpty then some nums
-    else match mode with
+/-- MIN/MAX aggregate result (#256, #261). NULLs and values of other types
+    are skipped. Numerics compare scale-aware, strings by code point.
+    Booleans follow `mode.bools` (registry row 14): `.error` makes any boolean
+    an error; `.asInt` reads them as 1/0; `.ordered` gives a boolean result
+    (false < true) when the input is only booleans, else reads them as 1/0.
+    Input mixing numbers and strings follows `mode.mixed` (row 13): `.error`
+    is an error, `.typeClass` orders numbers before strings (sqlite), so MAX is
+    the greatest string and MIN the least number. An error is `none`; no
+    eligible input gives NULL. -/
+def minMaxAgg (mode : MinMaxMode) (wantMax : Bool) (vs : List Value) : Option Value :=
+  let bools := vs.filter fun v => match v with | .bool _ => true | _ => false
+  let isNum := fun v => (Value.toScaled? v).isSome
+  let isStr := fun v => match v with | .string _ => true | _ => false
+  let others := vs.filter fun v => isNum v || isStr v
+  let asInts := bools.map fun v => match v with
+    | .bool b => Value.int (if b then 1 else 0)
+    | v => v
+  let resolved : Option (List Value) :=
+    if bools.isEmpty then some others
+    else match mode.bools with
       | .error => none
-      | .typeClass => some (if wantMax then strs else nums)
-  pool.map fun p => (extremeValue wantMax p).getD (.null none)
+      | .asInt => some (others ++ asInts)
+      | .ordered => if others.isEmpty then some bools else some (others ++ asInts)
+  resolved.bind fun vs' =>
+    if vs'.all (fun v => match v with | .bool _ => true | _ => false) && !vs'.isEmpty then
+      -- booleans only (`.ordered`): false < true
+      let anyTrue := vs'.any (· == .bool true)
+      let allTrue := vs'.all (· == .bool true)
+      some (.bool (if wantMax then anyTrue else allTrue))
+    else
+      let nums := vs'.filter isNum
+      let strs := vs'.filter isStr
+      let pool : Option (List Value) :=
+        if nums.isEmpty then some strs
+        else if strs.isEmpty then some nums
+        else match mode.mixed with
+          | .error => none
+          | .typeClass => some (if wantMax then strs else nums)
+      pool.map fun p => (extremeValue wantMax p).getD (.null none)
 
 -- ============================================================================
 -- Expression Evaluation Helper Functions (standalone)

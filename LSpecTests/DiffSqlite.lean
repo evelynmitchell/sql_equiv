@@ -369,6 +369,11 @@ def runAllTests : IO TestSeq := do
       "SELECT MAX(CASE WHEN age > 26 THEN name ELSE age END) AS m FROM users",
     diffTest "MIN over mixed types (sqlite type-class order)"
       "SELECT MIN(CASE WHEN age > 26 THEN name ELSE age END) AS m FROM users",
+    -- MIN/MAX over booleans (registry row 14): sqlite reads them as 1/0
+    diffTest "MIN/MAX over booleans (sqlite: integers)"
+      "SELECT MAX(age > 26) AS hi, MIN(age > 26) AS lo FROM users",
+    diffTest "MAX over booleans and integers (sqlite)"
+      "SELECT MAX(CASE WHEN age > 26 THEN age > 29 ELSE age END) AS m FROM users",
     -- Subquery name resolution is inner-first (#253): unqualified names bind
     -- to the subquery's own FROM, then fall through to the outer row.
     diffTest "scope: same-table scalar subquery"

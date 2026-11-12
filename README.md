@@ -148,10 +148,10 @@ sql_equiv --dialect sqlite --file queries.sql
 In the REPL, `dialect sqlite` switches dialect. The dialect is resolved at parse
 time: the parser records each choice in the AST (e.g. the NULL position of every
 ORDER BY item), so evaluation and every equivalence theorem are
-dialect-independent. Configurable today: NULL ordering and MIN/MAX over mixed
-numbers and strings. `toSql` prints SQL for the default dialect (explicit
-`NULLS FIRST/LAST` where an item differs from it); the MIN/MAX mixed-type mode
-has no SQL spelling, so re-parsing printed SQL uses the parsing dialect's mode. The full registry of implementation-defined behaviour,
+dialect-independent. Configurable today: NULL ordering, and MIN/MAX over mixed
+numbers and strings or over booleans. `toSql` prints SQL for the default dialect (explicit
+`NULLS FIRST/LAST` where an item differs from it); the MIN/MAX mode has no SQL
+spelling, so re-parsing printed SQL uses the parsing dialect's mode. The full registry of implementation-defined behaviour,
 with what each engine does, is `docs/IMPLEMENTATION_DEFINED.md`.
 
 ## Usage Examples

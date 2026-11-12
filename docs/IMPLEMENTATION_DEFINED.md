@@ -29,8 +29,8 @@ In order of preference:
    behaviour, and have the parser write the choice into the AST. Evaluation
    and proofs never see the dialect, so theorems that quantify over statements
    cover every dialect automatically. Examples: NULL ordering (row 1, the
-   `NullsOrder` of each ORDER BY item) and mixed-type MIN/MAX (row 13, the
-   `MixedMinMax` of each MIN/MAX).
+   `NullsOrder` of each ORDER BY item) and MIN/MAX over mixed types and
+   booleans (rows 13–14, the `MinMaxMode` of each MIN/MAX).
 3. **Implementation-defined with no AST node** (e.g. how `=` coerces mixed
    types, rows 10–12) → choose one behaviour and record it here. If per-dialect
    behaviour is wanted later, this is where an *evaluation-time* dialect
@@ -112,7 +112,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap** (#254): diverges from all three; no Spider query hits it today | **none** |
 | 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
 | 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | **Per dialect** (`DialectConfig.mixedMinMax`): standard, duckdb, postgres → error (row dropped / NULL); sqlite → type-class order | decided (dialects #260). Reachable only through untyped data (CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pins `minmax_mixed_*`, `max_mixed_sqlite_type_class`, `min_mixed_sqlite_type_class`, `minmax_mode_recorded_in_ast`; DiffSqlite type-class cases; DuckDB KNOWN DIVERGENCES (its error fails the query, ours is quieter) |
-| 14 | MIN/MAX over booleans (`MAX(s = 'a')`) | Boolean not orderable by MAX in the standard aggregate set | `1` (booleans are integers) | `true` | Error (no `max(boolean)`) | NULL (booleans are skipped) | **gap**: all four differ; found in #256 self-review, unchanged | **none** |
+| 14 | MIN/MAX over booleans (`MAX(age > 26)`) | Boolean not orderable by MAX in the standard aggregate set | Integers: `1` / `0`; with numbers, as 1/0 | Boolean result (false < true); with numbers, as 1/0; with strings, error | Error (no `max(boolean)`) | **Per dialect** (`DialectConfig.boolMinMax`): standard, postgres → error (row dropped / NULL); sqlite → `asInt`; duckdb → `ordered` | decided (#261) | Unit pins `max_bool_*` / `min_bool_*` (every dialect, HAVING, window); DiffSqlite and DiffDuckdb boolean cases |
 
 ### Notes on individual rows
 
@@ -183,6 +183,5 @@ Rows that do not yet meet the testing requirements in §2:
 - **Rows 6, 8, 9**: add unit pins; add a sqlite *disagreement* test for row 8
   (sqlite's LIKE is case-insensitive).
 - **Row 11**: decide via #254 (all three engines convert the literal); add a pin either way.
-- **Row 14**: decide MAX/MIN over booleans (all engines differ); add a pin.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.

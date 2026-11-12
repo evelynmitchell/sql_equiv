@@ -209,13 +209,33 @@ inductive MixedMinMax where
   | typeClass
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- How MIN/MAX treat boolean inputs. Implementation-defined
+    (docs/IMPLEMENTATION_DEFINED.md, row 14); chosen by the dialect at parse
+    time.
+    - `error`: booleans are not orderable by MIN/MAX (standard, Postgres:
+      `max(boolean)` does not exist); any boolean input is an error.
+    - `asInt`: booleans are the integers 1/0 (sqlite).
+    - `ordered`: booleans only → false < true, result is a boolean; with
+      numbers they act as 1/0 (DuckDB). -/
+inductive BoolMinMax where
+  | error
+  | asInt
+  | ordered
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- The dialect choices a MIN/MAX node records. -/
+structure MinMaxMode where
+  mixed : MixedMinMax
+  bools : BoolMinMax
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- Aggregate functions (MIN/MAX carry the dialect's mixed-type mode) -/
 inductive AggFunc where
   | count
   | sum
   | avg
-  | min (mixed : MixedMinMax)
-  | max (mixed : MixedMinMax)
+  | min (mode : MinMaxMode)
+  | max (mode : MinMaxMode)
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Table reference with optional alias -/
@@ -291,16 +311,22 @@ structure DialectConfig where
   nullOrdering : NullOrdering
   /-- MIN/MAX over mixed numbers and strings (row 13) -/
   mixedMinMax : MixedMinMax
+  /-- MIN/MAX over booleans (row 14) -/
+  boolMinMax : BoolMinMax
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
     leaves it to the implementation): it takes NULL-largest, the rule of the
     Postgres standards tiebreaker. -/
 def Dialect.config : Dialect → DialectConfig
-  | .standard => { nullOrdering := .nullsLargest,    mixedMinMax := .error }
-  | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass }
-  | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error }
-  | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error }
+  | .standard => { nullOrdering := .nullsLargest,    mixedMinMax := .error,     boolMinMax := .error }
+  | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass, boolMinMax := .asInt }
+  | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,     boolMinMax := .ordered }
+  | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,     boolMinMax := .error }
+
+/-- The MIN/MAX mode a dialect configuration records on each MIN/MAX node. -/
+def DialectConfig.minMaxMode (c : DialectConfig) : MinMaxMode :=
+  { mixed := c.mixedMinMax, bools := c.boolMinMax }
 
 /-- Parse a dialect name (case-insensitive): standard, sqlite, duckdb, postgres
     (or postgresql). -/
@@ -335,8 +361,8 @@ inductive WindowFunc where
   | denseRank
   | sum
   | avg
-  | min (mixed : MixedMinMax)
-  | max (mixed : MixedMinMax)
+  | min (mode : MinMaxMode)
+  | max (mode : MinMaxMode)
   | count
   deriving Repr, BEq, Inhabited, DecidableEq
 
