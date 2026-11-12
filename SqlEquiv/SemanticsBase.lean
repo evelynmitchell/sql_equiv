@@ -163,24 +163,31 @@ def avgNumeric (vs : List Value) : Option Value :=
     some (Value.mkDecimal ((sumScaled vs).1 / Int.ofNat n) (sumScaled vs).2)
   else some (.int ((sumScaled vs).1 / Int.ofNat n))
 
-/-- MIN over numerics via scale-aware comparison; returns the original value
-    (so canonical form is preserved); none when there are no numeric inputs. -/
-def minNumeric (vs : List Value) : Option Value :=
-  vs.foldl (fun acc v =>
-    if (Value.toScaled? v).isSome then
-      match acc with
-      | none => some v
-      | some m => if Value.compare m v == some .gt then some v else acc
-    else acc) none
+/-- The values MIN/MAX range over: the numeric inputs if there are any,
+    otherwise the string inputs (#256). NULLs and other types are skipped.
+    Mixed numeric/string input keeps the numerics only — implementation-defined
+    (sqlite orders numbers before text, DuckDB/Postgres reject the mix); see
+    `docs/IMPLEMENTATION_DEFINED.md`. -/
+def minMaxPool (vs : List Value) : List Value :=
+  let nums := vs.filter fun v => (Value.toScaled? v).isSome
+  if nums.isEmpty then vs.filter fun v => match v with | .string _ => true | _ => false
+  else nums
 
-/-- MAX over numerics; see `minNumeric`. -/
-def maxNumeric (vs : List Value) : Option Value :=
-  vs.foldl (fun acc v =>
-    if (Value.toScaled? v).isSome then
-      match acc with
-      | none => some v
-      | some m => if Value.compare m v == some .lt then some v else acc
-    else acc) none
+/-- MIN aggregate: least value of `minMaxPool vs` (numerics scale-aware,
+    strings by code point); returns the original value; none when the pool is
+    empty. -/
+def minAgg (vs : List Value) : Option Value :=
+  (minMaxPool vs).foldl (fun acc v =>
+    match acc with
+    | none => some v
+    | some m => if Value.compare m v == some .gt then some v else acc) none
+
+/-- MAX aggregate; see `minAgg`. -/
+def maxAgg (vs : List Value) : Option Value :=
+  (minMaxPool vs).foldl (fun acc v =>
+    match acc with
+    | none => some v
+    | some m => if Value.compare m v == some .lt then some v else acc) none
 
 -- ============================================================================
 -- Expression Evaluation Helper Functions (standalone)

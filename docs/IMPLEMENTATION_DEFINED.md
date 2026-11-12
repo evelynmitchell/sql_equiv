@@ -97,6 +97,8 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **decided** (#127, closed): keep the error; matches DuckDB/Postgres | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error`; DiffSqlite KNOWN DIVERGENCES |
 | 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap** (#254): diverges from all three; no Spider query hits it today | **none** |
 | 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
+| 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | Numerics only: MAX `5`, MIN `5` (strings ignored when any numeric is present) | **gap**: MAX matches no engine; kept from before #256 pending a decision. Reachable only through untyped data (e.g. CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pin `max_mixed_numeric_wins`; no differential |
+| 14 | MIN/MAX over booleans (`MAX(s = 'a')`) | Boolean not orderable by MAX in the standard aggregate set | `1` (booleans are integers) | `true` | Error (no `max(boolean)`) | NULL (booleans are skipped) | **gap**: all four differ; found in #256 self-review, unchanged | **none** |
 
 ### Notes on individual rows
 
@@ -137,10 +139,13 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   truncation, was the main cause of the Spider "AVG" failure class (Spider
   539 → 549). Pinned by the `scope_*` unit tests and DiffSqlite/DiffDuckdb
   `scope:` cases.
-- **MAX/MIN over strings returns NULL.** All three engines order text, so
-  `SELECT max(name) FROM t` is the greatest string; ours returns NULL. Seen in
-  Spider (`dog_kennels`: `WHERE T2.age = (SELECT max(age) FROM Dogs)` over a
-  TEXT `age`). Filed as #256.
+- **MAX/MIN over strings returned NULL** (fixed, #256). All three engines
+  order text, so `SELECT max(name) FROM t` is the greatest string; ours
+  returned NULL because MIN/MAX looked at numerics only. Now MIN/MAX range over
+  the string inputs when there are no numeric ones (code-point order, as row 9).
+  Seen in Spider (`dog_kennels`, and `max` over TEXT columns in the "plain
+  SELECT" class): 549 → 553. Pinned by the `max_string*` / `min_string` unit
+  tests and DiffSqlite/DiffDuckdb `over strings` cases.
 
 ---
 
@@ -153,5 +158,8 @@ Rows that do not yet meet the testing requirements in §2:
 - **Rows 6, 8, 9**: add unit pins; add a sqlite *disagreement* test for row 8
   (sqlite's LIKE is case-insensitive).
 - **Row 11**: decide via #254 (all three engines convert the literal); add a pin either way.
+- **Row 14**: decide MAX/MIN over booleans (all engines differ); add a pin.
+- **Row 13**: decide mixed-type MIN/MAX (error like DuckDB/Postgres, or
+  sqlite's type-class order); a sqlite disagreement test either way.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.
