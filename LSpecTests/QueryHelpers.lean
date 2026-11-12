@@ -95,7 +95,7 @@ def mkUnionAll (v1 v2 : Int) : Query :=
 
 /-- ORDER BY users.age ASC with optional LIMIT/OFFSET. -/
 def mkOrderLimitOffset (limitVal : Option Nat) (offsetVal : Option Nat) : SelectStmt :=
-  let orderBy := [OrderByItem.mk (qcol "users" "age") .asc]
+  let orderBy := [OrderByItem.ofDir (qcol "users" "age") .asc]
   .mk false [.star none] (some (.table ⟨"users", none⟩)) none [] none orderBy limitVal offsetVal
 
 /-- SELECT name, age FROM users WHERE users.age > {ageVal}. -/

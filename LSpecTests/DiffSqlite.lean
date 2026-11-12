@@ -300,12 +300,12 @@ def runAllTests : IO TestSeq := do
     -- covers: limit_upper_bound
     diffCountTest "LIMIT 3"
       (.mk false [.star none] (some (.table ⟨"users", none⟩)) none [] none
-        [OrderByItem.mk (qcol "users" "id") .asc] (some 3) none)
+        [OrderByItem.ofDir (qcol "users" "id") .asc] (some 3) none)
       "SELECT * FROM users ORDER BY id LIMIT 3",
     -- covers: limit_offset_compose
     diffCountTest "LIMIT 2 OFFSET 2"
       (.mk false [.star none] (some (.table ⟨"users", none⟩)) none [] none
-        [OrderByItem.mk (qcol "users" "id") .asc] (some 2) (some 2))
+        [OrderByItem.ofDir (qcol "users" "id") .asc] (some 2) (some 2))
       "SELECT * FROM users ORDER BY id LIMIT 2 OFFSET 2",
     -- More WHERE variants
     diffCountTest "WHERE age >= 25 AND age <= 30"
@@ -328,6 +328,16 @@ def runAllTests : IO TestSeq := do
     -- COUNT(col) skips NULLs (items has one NULL price)
     diffTest "COUNT skips NULLs"
       "SELECT COUNT(price) AS c FROM items",
+    -- NULL ordering under sqlite's rule (NULL smallest: first on ASC, last
+    -- on DESC); LIMIT 1 makes the position of the NULL price observable
+    diffTest "NULL first on ASC (sqlite rule)"
+      "SELECT name FROM items ORDER BY price LIMIT 1",
+    diffTest "NULL last on DESC (sqlite rule)"
+      "SELECT name FROM items ORDER BY price DESC LIMIT 1",
+    diffTest "explicit NULLS LAST"
+      "SELECT name FROM items ORDER BY price NULLS LAST LIMIT 1",
+    diffTest "explicit DESC NULLS FIRST"
+      "SELECT name FROM items ORDER BY price DESC NULLS FIRST LIMIT 1",
     -- Set-operation subquery (#218): UNION inside an IN subquery
     diffTest "IN with UNION subquery"
       "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 150 UNION SELECT user_id FROM orders WHERE amount < 120)",

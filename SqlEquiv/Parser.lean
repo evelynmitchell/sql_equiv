@@ -75,6 +75,8 @@ structure ParseState where
   pos         : Nat
   input       : String              -- original input for context
   parenStack  : List SourcePos      -- track open parentheses positions
+  /-- Where NULL sort keys go when an ORDER BY item has no NULLS FIRST/LAST -/
+  nullOrdering : NullOrdering := defaultNullOrdering
   deriving Repr
 
 /-- Parser error with detailed context -/
@@ -658,6 +660,14 @@ def suggestFix (context : String) (token : Token) : Option String :=
 /-- Check if token is a keyword -/
 def isKeyword (kw : String) : Token → Bool
   | .keyword k => k == kw
+  | _ => false
+
+/-- Contextual word (e.g. NULLS, FIRST, LAST after an ORDER BY key): matches a
+    keyword or an identifier case-insensitively, without reserving the word, so
+    columns named `first`/`last` keep working elsewhere. -/
+def isWord (w : String) : Token → Bool
+  | .keyword k => k.toUpper == w
+  | .ident s => s.toUpper == w
   | _ => false
 
 /-- Parse identifier with better error -/
@@ -1344,7 +1354,23 @@ partial def parseOrderByItem : Parser OrderByItem := do
       Parser.pure OrderDir.desc
     else
       Parser.pure OrderDir.asc  -- default
-  return .mk expr dir
+  -- Optional NULLS FIRST / NULLS LAST; otherwise the configured engine rule.
+  let t ← Parser.peek
+  let nulls ←
+    if isWord "NULLS" t then
+      let _ ← Parser.advance
+      let t2 ← Parser.peek
+      if isWord "FIRST" t2 then
+        let _ ← Parser.advance
+        Parser.pure NullsOrder.first
+      else if isWord "LAST" t2 then
+        let _ ← Parser.advance
+        Parser.pure NullsOrder.last
+      else
+        Parser.fail "Expected FIRST or LAST after NULLS"
+    else
+      fun st => .ok (st.nullOrdering.resolve dir, st)
+  return .mk expr dir nulls
 
 /-- Parse SELECT statement (implementation for mutual recursion) -/
 partial def parseSelectStmt : Parser SelectStmt := do
@@ -1644,9 +1670,11 @@ private def requireConsumed (state : ParseState) : Except String Unit :=
   | pt :: _ =>
     Except.error s!"Parse error at line {pt.pos.line}, column {pt.pos.column}: Unexpected trailing input starting with {pt.token.describe}"
 
-def parse (input : String) : Except String Stmt := do
+def parse (input : String) (nullOrdering : NullOrdering := defaultNullOrdering) :
+    Except String Stmt := do
   let tokens ← (tokenize input).mapError toString
-  let state : ParseState := { tokens := tokens, pos := 0, input := input, parenStack := [] }
+  let state : ParseState :=
+    { tokens := tokens, pos := 0, input := input, parenStack := [], nullOrdering := nullOrdering }
   match parseStmt state with
   | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
   | .ok (stmt, state') => do
@@ -1654,9 +1682,11 @@ def parse (input : String) : Except String Stmt := do
     Except.ok stmt
 
 /-- Parse SELECT statement specifically -/
-def parseSelectStr (input : String) : Except String SelectStmt := do
+def parseSelectStr (input : String) (nullOrdering : NullOrdering := defaultNullOrdering) :
+    Except String SelectStmt := do
   let tokens ← (tokenize input).mapError toString
-  let state : ParseState := { tokens := tokens, pos := 0, input := input, parenStack := [] }
+  let state : ParseState :=
+    { tokens := tokens, pos := 0, input := input, parenStack := [], nullOrdering := nullOrdering }
   match parseSelect state with
   | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
   | .ok (stmt, state') => do

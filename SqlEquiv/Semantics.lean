@@ -118,18 +118,41 @@ def evalSelectItemWithAggParam (exprEval : Database → Row → Expr → Option 
     | some v => [(alias.getD (exprToName e), v)]
     | none => [(alias.getD (exprToName e), .null none)]
 
+/-- Whether an ORDER BY key value sorts as NULL: SQL NULL, or an evaluation
+    error (`none`), which is positioned like NULL so the ordering stays
+    consistent. -/
+def orderKeyIsNull : Option Value → Bool
+  | none => true
+  | some (.null _) => true
+  | some _ => false
+
+/-- Compare one ORDER BY key of two rows. `some true`: the first row sorts
+    first; `some false`: the second does; `none`: tie, so the next key decides.
+    NULLs sort together, placed by the item's `NullsOrder` (`NULLS FIRST` /
+    `NULLS LAST`, absolute regardless of direction); non-NULL values compare by
+    `Value.compare` in the item's direction. -/
+def orderKeyCmp (item : OrderByItem) (v1 v2 : Option Value) : Option Bool :=
+  match orderKeyIsNull v1, orderKeyIsNull v2 with
+  | true, true => none
+  | true, false => some (item.nulls == .first)
+  | false, true => some (item.nulls == .last)
+  | false, false =>
+    match v1, v2 with
+    | some a, some b =>
+      match a.compare b with
+      | some .lt => some (item.dir == .asc)
+      | some .gt => some (item.dir == .desc)
+      | _ => none
+    | _, _ => none
+
 /-- Parameterized ORDER BY comparator -/
 partial def compareByOrderItemsParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (r1 r2 : Row) : List OrderByItem → Bool
   | [] => true
   | item :: rest =>
-    match exprEval db r1 item.expr, exprEval db r2 item.expr with
-    | some a, some b =>
-      match a.compare b with
-      | some .lt => item.dir == .asc
-      | some .gt => item.dir == .desc
-      | _ => compareByOrderItemsParam exprEval db r1 r2 rest
-    | _, _ => compareByOrderItemsParam exprEval db r1 r2 rest
+    match orderKeyCmp item (exprEval db r1 item.expr) (exprEval db r2 item.expr) with
+    | some b => b
+    | none => compareByOrderItemsParam exprEval db r1 r2 rest
 
 /-- Parameterized GROUP BY key -/
 def evalGroupKeyParam (exprEval : Database → Row → Expr → Option Value)
@@ -424,15 +447,9 @@ def evalSelectItemWithAgg (db : Database) (rows : Table) (row : Row) (item : Sel
 partial def compareByOrderItems (db : Database) (r1 r2 : Row) : List OrderByItem → Bool
   | [] => true
   | item :: rest =>
-    let v1 := evalExprWithDb db r1 item.expr
-    let v2 := evalExprWithDb db r2 item.expr
-    match v1, v2 with
-    | some a, some b =>
-      match a.compare b with
-      | some .lt => item.dir == .asc
-      | some .gt => item.dir == .desc
-      | _ => compareByOrderItems db r1 r2 rest
-    | _, _ => compareByOrderItems db r1 r2 rest
+    match orderKeyCmp item (evalExprWithDb db r1 item.expr) (evalExprWithDb db r2 item.expr) with
+    | some b => b
+    | none => compareByOrderItems db r1 r2 rest
 
 /-- Compute GROUP BY key for a row -/
 def evalGroupKey (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=

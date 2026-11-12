@@ -524,7 +524,7 @@ def groupOrderKeyName (k : Nat) : String := s!"__group_orderkey_{k}"
     columns built by `groupOrderKeyRow` (same length and directions). -/
 def groupOrderByItems (orderBy : List OrderByItem) : List OrderByItem :=
   ((List.range orderBy.length).zip orderBy).map fun (k, item) =>
-    OrderByItem.mk (.col ⟨none, groupOrderKeyName k⟩) item.dir
+    OrderByItem.mk (.col ⟨none, groupOrderKeyName k⟩) item.dir item.nulls
 
 /-- Sort-key row for one group (#234). Each ORDER BY expression is evaluated
     in the group's aggregate context (the same one SELECT items and HAVING

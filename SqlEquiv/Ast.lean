@@ -228,6 +228,39 @@ inductive OrderDir where
   | desc
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- Position of NULL sort keys in an ORDER BY item (`NULLS FIRST` / `NULLS LAST`).
+    Absolute: independent of the sort direction. -/
+inductive NullsOrder where
+  | first
+  | last
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- Engine-wide rule for where NULLs sort when a query doesn't say `NULLS
+    FIRST/LAST`. The SQL standard leaves this to the implementation.
+    - `nullsSmallest`: NULL sorts below every value (sqlite, MySQL, SQL Server):
+      ASC → NULLS FIRST, DESC → NULLS LAST.
+    - `nullsLargest`: NULL sorts above every value (PostgreSQL, Oracle):
+      ASC → NULLS LAST, DESC → NULLS FIRST.
+    - `nullsAlwaysLast`: DuckDB's default: NULLS LAST in both directions. -/
+inductive NullOrdering where
+  | nullsSmallest
+  | nullsLargest
+  | nullsAlwaysLast
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- The explicit NULL position a `NullOrdering` assigns to a sort direction. -/
+def NullOrdering.resolve : NullOrdering → OrderDir → NullsOrder
+  | .nullsSmallest, .asc => .first
+  | .nullsSmallest, .desc => .last
+  | .nullsLargest, .asc => .last
+  | .nullsLargest, .desc => .first
+  | .nullsAlwaysLast, _ => .last
+
+/-- Default rule: sqlite's (Spider's reference engine). The parser uses it when
+    no other `NullOrdering` is given; each ORDER BY item then carries an explicit
+    `NullsOrder`, so evaluation and proofs never depend on this choice. -/
+def defaultNullOrdering : NullOrdering := .nullsSmallest
+
 /-- Set operations -/
 inductive SetOp where
   | union
@@ -279,7 +312,7 @@ inductive Expr where
 
 /-- ORDER BY item -/
 inductive OrderByItem where
-  | mk : Expr → OrderDir → OrderByItem
+  | mk : Expr → OrderDir → NullsOrder → OrderByItem
 
 /-- SELECT item: an expression with optional alias, or * -/
 inductive SelectItem where
@@ -344,10 +377,19 @@ def SelectStmt.offsetVal : SelectStmt → Option Nat
 
 -- Accessor functions for OrderByItem
 def OrderByItem.expr : OrderByItem → Expr
-  | .mk e _ => e
+  | .mk e _ _ => e
 
 def OrderByItem.dir : OrderByItem → OrderDir
-  | .mk _ d => d
+  | .mk _ d _ => d
+
+def OrderByItem.nulls : OrderByItem → NullsOrder
+  | .mk _ _ n => n
+
+/-- ORDER BY item with the NULL position chosen by a `NullOrdering`
+    (default: sqlite's rule). -/
+def OrderByItem.ofDir (e : Expr) (d : OrderDir)
+    (ordering : NullOrdering := defaultNullOrdering) : OrderByItem :=
+  .mk e d (ordering.resolve d)
 
 -- Accessor functions for WindowSpec
 def WindowSpec.partitionBy : WindowSpec → List Expr
@@ -455,7 +497,7 @@ mutual
       s!"FromClause.join ({FromClause.toReprStr l}) {repr jt} ({FromClause.toReprStr r}) {on_.map Expr.toReprStr}"
 
   partial def OrderByItem.toReprStr : OrderByItem → String
-    | .mk e d => s!"OrderByItem.mk ({Expr.toReprStr e}) {repr d}"
+    | .mk e d n => s!"OrderByItem.mk ({Expr.toReprStr e}) {repr d} {repr n}"
 
   partial def SelectStmt.toReprStr : SelectStmt → String
     | .mk d items f w g h o l off =>
@@ -576,7 +618,7 @@ mutual
     | _, _ => false
 
   partial def OrderByItem.beq : OrderByItem → OrderByItem → Bool
-    | .mk e1 d1, .mk e2 d2 => Expr.beq e1 e2 && d1 == d2
+    | .mk e1 d1 n1, .mk e2 d2 n2 => Expr.beq e1 e2 && d1 == d2 && n1 == n2
 
   partial def SelectStmt.beq : SelectStmt → SelectStmt → Bool
     | .mk d1 i1 f1 w1 g1 h1 o1 l1 off1, .mk d2 i2 f2 w2 g2 h2 o2 l2 off2 =>
@@ -697,7 +739,7 @@ instance : Inhabited Expr where default := .lit (.null none)
 instance : Inhabited WindowSpec where default := .mk [] []
 instance : Inhabited SelectItem where default := .star none
 instance : Inhabited FromClause where default := .table ⟨"", none⟩
-instance : Inhabited OrderByItem where default := .mk default .asc
+instance : Inhabited OrderByItem where default := .mk default .asc .first
 instance : Inhabited SelectStmt where
   default := .mk false [] none none [] none [] none none
 instance : Inhabited SubQuery where default := .simple default

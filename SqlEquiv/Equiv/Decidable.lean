@@ -373,7 +373,7 @@ partial def decideExprEq (e1 e2 : Expr) : Bool :=
 /-- Decidable equality for OrderByItem -/
 partial def decideOrderByItemEq (o1 o2 : OrderByItem) : Bool :=
   match o1, o2 with
-  | .mk e1 d1, .mk e2 d2 => decideExprEq e1 e2 && d1 == d2
+  | .mk e1 d1 n1, .mk e2 d2 n2 => decideExprEq e1 e2 && d1 == d2 && n1 == n2
 
 /-- Decidable equality for SelectItem -/
 partial def decideSelectItemEq (s1 s2 : SelectItem) : Bool :=
@@ -538,7 +538,7 @@ def SelectStmt.isGround (s : SelectStmt) : Bool :=
     let groupOk := groupBy.foldl (fun acc e => acc && Expr.isGround e) true
     let havingOk := match having with | some e => Expr.isGround e | none => true
     let orderOk := orderBy.foldl (fun acc item => acc && match h : item with
-      | .mk e _ =>
+      | .mk e _ _ =>
         have _hsz : sizeOf e < sizeOf item := by rw [h]; simp_wf; omega
         Expr.isGround e) true
     itemsOk && fromOk && whereOk && groupOk && havingOk && orderOk
