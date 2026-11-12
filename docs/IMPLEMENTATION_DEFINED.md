@@ -103,11 +103,11 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 2 | Order of rows tied on every sort key | Unspecified | Arbitrary | Arbitrary | Arbitrary | Stable: input order | decided | Spider harness **tie-valid** category + self-test (#249) |
 | 3 | Double-quoted text `SELECT "abc"` | Delimited identifier | String literal (fallback) | Identifier → error | Identifier → error | String literal | decided (#215; we have no quoted identifiers) | `Test/ParserTest.lean`; no differential (DuckDB/Postgres reject) |
 | 4 | ON-less JOIN `A JOIN B WHERE …` | Join condition required | Cross product + WHERE | Syntax error | Syntax error | Cross product (sqlite) | decided | `ParserTest`, `DiffSqlite` case; DuckDB KNOWN DIVERGENCES |
-| 5 | `SELECT DISTINCT name … ORDER BY price` (sort key not selected) | Not allowed | Sorts (by some source row) | Sorts | Error | Keys resolve against output columns only; key ties silently, so output stays in input order | **gap**: matches no engine; Postgres errors, the others sort | DuckDB KNOWN DIVERGENCES only; **no unit pin** |
-| 6 | Integer division `7 / 2` | Implementation-defined precision/scale | 3 | 3.5 (`/` is float division; `//` is integer) | 3 | 3 | decided (implicitly) | **no dedicated unit pin** |
+| 5 | `SELECT DISTINCT name … ORDER BY price` (sort key not selected) | Not allowed | Sorts (by some source row) | Sorts | Error | Keys resolve against output columns only; key ties silently, so output stays in input order | **gap**: matches no engine; Postgres errors, the others sort. Decision pending (error per the standard, or sort; could be a dialect setting) | Unit pin `distinct_order_by_unselected_keeps_input_order`; DiffSqlite and DuckDB KNOWN DIVERGENCES |
+| 6 | Integer division `7 / 2`, `-7 / 2`, `-7 % 2` | Implementation-defined precision/scale | 3, -3, -1 (truncate toward zero) | 3.5 (`/` is float division); `//` gives 3, -3; `%` gives -1 | 3, -3, -1 | 3, -3, -1 (truncate toward zero; was Euclidean -4 / 1 before #262) | decided (#262) | Unit pins `int_division_*`, `int_mod_sign_of_dividend`; DiffSqlite agreement; DiffDuckdb `%` agreement + KNOWN DIVERGENCES for `/` |
 | 7 | AVG over integers (`AVG` of 1, 2) | Implementation-defined precision/scale | 1.5 | 1.5 | 1.5 | **1** (truncates; no fractional result type for integer AVG) | **open**: diverges from all three; tied to #201 (decimal division policy) and #202 (floats). *Not* the main cause of the AVG-in-subquery Spider failures (see "Bugs found" below) | Unit pin `avg` (750/4 → 187); DuckDB KNOWN DIVERGENCES (AVG over decimals) |
-| 8 | LIKE case sensitivity `'abc' LIKE 'ABC'` | Collation-dependent | true (ASCII case-insensitive by default) | false | false | false | decided (implicitly; matches DuckDB/Postgres) | **no unit pin; no sqlite disagreement test** |
-| 9 | String ordering `'a' < 'B'` | Collation-dependent | false (binary) | false | false (`C.UTF-8` here; an `en_US` collation gives true) | false (code point) | decided (implicitly) | **no unit pin** |
+| 8 | LIKE case sensitivity `'abc' LIKE 'ABC'` | Collation-dependent | true (ASCII case-insensitive by default) | false | false | **Per dialect** (`DialectConfig.likeCase`): sqlite → ASCII case-insensitive (`BinOp.likeCI`); standard, duckdb, postgres → case-sensitive (`BinOp.like`) | decided (#262) | Unit pins `like_*` (every dialect, non-ASCII, NULL, AST); DiffSqlite and DiffDuckdb cases in each dialect |
+| 9 | String ordering `'a' < 'B'` | Collation-dependent | false (binary) | false | false (`C.UTF-8` here; an `en_US` collation gives true) | false (code point), every dialect | decided (#262) | Unit pins `string_order_code_point*`; DiffSqlite and DiffDuckdb agreement |
 | 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **decided** (#127, closed): keep the error; matches DuckDB/Postgres | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error`; DiffSqlite KNOWN DIVERGENCES |
 | 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap** (#254): diverges from all three; no Spider query hits it today | **none** |
 | 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
@@ -123,6 +123,14 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 - **Row 7**: changing AVG means choosing a fractional result type (DECIMAL with
   a scale rule, or floats). That is the #201 / #202 design decision, not a
   local fix.
+- **Row 8**: the certified rewriter's LIKE rules (`x LIKE '%'`, `x LIKE ''`,
+  `x LIKE x`) are stated for the case-sensitive `BinOp.like` only; the
+  sqlite dialect's `BinOp.likeCI` is not rewritten, so those rules stay sound
+  in every dialect.
+- **Row 6**: integer `/` and `%` used Lean's Euclidean division (`-7 / 2 =
+  -4`, `-7 % 2 = 1`), matching no engine; found while pinning (#262) and fixed
+  to truncate toward zero, as all three engines do. Integer AVG's truncation
+  (row 7) uses the same rounding.
 - **Rows 10–12** are related: they are all about comparing values of different
   types. Rows 10 and 12 were decided together: keep the core's type error
   (matching DuckDB/Postgres), and emulate sqlite's TEXT affinity only in the
@@ -178,10 +186,8 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 
 Rows that do not yet meet the testing requirements in §2:
 
-- **Row 5**: add a unit pin for our DISTINCT + ORDER BY behaviour; decide
-  whether to error (Postgres, standard) or sort (sqlite, DuckDB).
-- **Rows 6, 8, 9**: add unit pins; add a sqlite *disagreement* test for row 8
-  (sqlite's LIKE is case-insensitive).
+- **Row 5**: decide whether to error (Postgres, standard) or sort (sqlite,
+  DuckDB), possibly per dialect; pinned in the meantime.
 - **Row 11**: decide via #254 (all three engines convert the literal); add a pin either way.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.

@@ -54,6 +54,7 @@ def BinOp.toSql : BinOp → String
   | .or     => "OR"
   | .concat => "||"
   | .like   => "LIKE"
+  | .likeCI => "LIKE"
 
 def UnaryOp.toSql : UnaryOp → String
   | .not       => "NOT"

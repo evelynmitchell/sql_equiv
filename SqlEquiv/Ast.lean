@@ -188,6 +188,10 @@ inductive BinOp where
   -- String
   | concat
   | like
+  /-- LIKE that ignores ASCII letter case (sqlite's default LIKE). The parser
+      emits it instead of `like` when the dialect's `likeCase` is
+      `asciiInsensitive` (docs/IMPLEMENTATION_DEFINED.md, row 8). -/
+  | likeCI
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Unary operators -/
@@ -221,6 +225,15 @@ inductive BoolMinMax where
   | error
   | asInt
   | ordered
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- LIKE letter-case rule (registry row 8), chosen by the dialect at parse time.
+    - `sensitive`: `'abc' LIKE 'ABC'` is false (standard, DuckDB, Postgres).
+    - `asciiInsensitive`: ASCII letters match regardless of case; other
+      characters are compared exactly (sqlite). -/
+inductive LikeCase where
+  | sensitive
+  | asciiInsensitive
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- The dialect choices a MIN/MAX node records. -/
@@ -313,16 +326,22 @@ structure DialectConfig where
   mixedMinMax : MixedMinMax
   /-- MIN/MAX over booleans (row 14) -/
   boolMinMax : BoolMinMax
+  /-- LIKE letter case (row 8) -/
+  likeCase : LikeCase
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
     leaves it to the implementation): it takes NULL-largest, the rule of the
     Postgres standards tiebreaker. -/
 def Dialect.config : Dialect → DialectConfig
-  | .standard => { nullOrdering := .nullsLargest,    mixedMinMax := .error,     boolMinMax := .error }
-  | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass, boolMinMax := .asInt }
-  | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,     boolMinMax := .ordered }
-  | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,     boolMinMax := .error }
+  | .standard => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
+                   boolMinMax := .error,   likeCase := .sensitive }
+  | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass,
+                   boolMinMax := .asInt,   likeCase := .asciiInsensitive }
+  | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
+                   boolMinMax := .ordered, likeCase := .sensitive }
+  | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
+                   boolMinMax := .error,   likeCase := .sensitive }
 
 /-- The MIN/MAX mode a dialect configuration records on each MIN/MAX node. -/
 def DialectConfig.minMaxMode (c : DialectConfig) : MinMaxMode :=

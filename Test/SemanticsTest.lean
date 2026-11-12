@@ -439,6 +439,67 @@ def limitOffsetTests : List TestResult := [
 -- Subquery Tests
 -- ============================================================================
 
+/-- Row count of a query parsed for a dialect -/
+def testRowCountIn (name : String) (dialect : Dialect) (sql : String) (expected : Nat) :
+    TestResult :=
+  match evalQueryIn dialect sql with
+  | .error e => .fail name s!"Parse/eval error: {e}"
+  | .ok result =>
+    if result.length == expected then .pass name
+    else .fail name s!"Expected {expected} rows, got {result.length}"
+
+-- Pins for implementation-defined behaviour (docs/IMPLEMENTATION_DEFINED.md,
+-- #262), so none of these can change silently.
+def registryPinTests : List TestResult := [
+  -- Row 8: LIKE letter case is per dialect. standard/duckdb/postgres:
+  -- case-sensitive; sqlite: ASCII case-insensitive.
+  testRowCount "like_case_sensitive_standard"
+    "SELECT name FROM users WHERE name LIKE 'al%'" 0,
+  testRowCountIn "like_case_sensitive_duckdb" .duckdb
+    "SELECT name FROM users WHERE name LIKE 'al%'" 0,
+  testRowCountIn "like_case_sensitive_postgres" .postgres
+    "SELECT name FROM users WHERE name LIKE 'AL%'" 0,
+  testRowCountIn "like_ascii_ci_sqlite" .sqlite
+    "SELECT name FROM users WHERE name LIKE 'al%'" 1,
+  testRowCountIn "like_ascii_ci_sqlite_whole" .sqlite
+    "SELECT name FROM users WHERE name LIKE 'ALICE'" 1,
+  -- sqlite only folds ASCII: 'ÄBC' LIKE 'äbc' is false
+  testRowCountIn "like_ci_non_ascii_exact_sqlite" .sqlite
+    "SELECT name FROM users WHERE 'ÄBC' LIKE 'äbc'" 0,
+  -- NOT LIKE uses the dialect's LIKE
+  testRowCount "not_like_case_sensitive_standard"
+    "SELECT name FROM users WHERE name NOT LIKE 'al%'" 5,
+  testRowCountIn "not_like_ascii_ci_sqlite" .sqlite
+    "SELECT name FROM users WHERE name NOT LIKE 'al%'" 4,
+  testRowCountIn "like_ci_null_pattern_sqlite" .sqlite
+    "SELECT name FROM users WHERE name LIKE NULL" 0,
+  -- the dialect's choice is recorded on the AST (BinOp.likeCI)
+  (match parse "SELECT a FROM t WHERE a LIKE 'x'" (dialect := .sqlite),
+         parse "SELECT a FROM t WHERE a LIKE 'x'" with
+   | .ok a, .ok b =>
+     if ((reprStr a).splitOn "likeCI").length == 2 && ((reprStr b).splitOn "likeCI").length == 1
+     then .pass "like_mode_recorded_in_ast"
+     else .fail "like_mode_recorded_in_ast" s!"{reprStr a} / {reprStr b}"
+   | _, _ => .fail "like_mode_recorded_in_ast" "parse error"),
+  -- Row 5 (gap): DISTINCT with a non-selected sort key. The key resolves
+  -- against output columns only, so it ties and output keeps input order;
+  -- sqlite/DuckDB sort by a source row (Sales, Marketing, Engineering),
+  -- Postgres errors.
+  testColumn "distinct_order_by_unselected_keeps_input_order"
+    "SELECT DISTINCT department FROM users ORDER BY age" "department"
+    [.string "Engineering", .string "Sales", .string "Marketing"],
+  -- Row 6: integer division truncates (sqlite, Postgres; DuckDB's / gives 3.5)
+  testContainsValue "int_division_truncates" "SELECT 7 / 2 FROM users LIMIT 1" (.int 3),
+  -- …toward zero for negatives, as all three engines do (was Euclidean: -4 / 1)
+  testContainsValue "int_division_truncates_negative" "SELECT -7 / 2 FROM users LIMIT 1" (.int (-3)),
+  testContainsValue "int_mod_sign_of_dividend" "SELECT -7 % 2 FROM users LIMIT 1" (.int (-1)),
+  testContainsValue "int_division_negative_divisor" "SELECT 7 / (0 - 2) FROM users LIMIT 1" (.int (-3)),
+  testContainsValue "avg_truncates_toward_zero" "SELECT AVG(0 - age) FROM users WHERE id < 3" (.int (-27)),
+  -- Row 9: strings order by code point ('B' = 66 < 'a' = 97), in every dialect
+  testRowCount "string_order_code_point" "SELECT name FROM users WHERE 'a' < 'B'" 0,
+  testRowCount "string_order_code_point_upper_first" "SELECT name FROM users WHERE 'B' < 'a'" 5
+]
+
 def subqueryTests : List TestResult := [
   -- Users who have orders
   testRowCount "in_subquery" "SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)" 3,
@@ -1099,6 +1160,7 @@ def caseInsensitiveTests : List TestResult := [
 def allSemanticsTests : List TestResult :=
   basicQueryTests ++ whereQueryTests ++ joinQueryTests ++
   projectionTests ++ distinctTests ++ orderByTests ++ groupedOrderByTests ++ nullOrderingTests ++
+  registryPinTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   setOpSubqueryTests ++

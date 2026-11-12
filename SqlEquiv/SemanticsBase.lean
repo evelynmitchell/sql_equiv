@@ -160,8 +160,8 @@ def avgNumeric (vs : List Value) : Option Value :=
   let n := countNumeric vs
   if n == 0 then none
   else if anyDecimal vs then
-    some (Value.mkDecimal ((sumScaled vs).1 / Int.ofNat n) (sumScaled vs).2)
-  else some (.int ((sumScaled vs).1 / Int.ofNat n))
+    some (Value.mkDecimal ((sumScaled vs).1.tdiv (Int.ofNat n)) (sumScaled vs).2)
+  else some (.int ((sumScaled vs).1.tdiv (Int.ofNat n)))
 
 /-- Least (`wantMax = false`) or greatest value of a list under `Value.compare`;
     returns the original value (canonical form preserved). -/
@@ -271,12 +271,14 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   -- result-scale policy is engine-specific and deferred (tracked in #201).
   | .div, some (.null _), some _ => some (.null none)
   | .div, some _, some (.null _) => some (.null none)
+  -- Integer division and modulo truncate toward zero (sqlite, DuckDB `//`,
+  -- Postgres: -7 / 2 = -3, -7 % 2 = -1), not Lean's Euclidean `/` and `%`.
   | .div, some (.int a), some (.int b) =>
-    if b == 0 then none else some (.int (a / b))
+    if b == 0 then none else some (.int (a.tdiv b))
   | .mod, some (.null _), some _ => some (.null none)
   | .mod, some _, some (.null _) => some (.null none)
   | .mod, some (.int a), some (.int b) =>
-    if b == 0 then none else some (.int (a % b))
+    if b == 0 then none else some (.int (a.tmod b))
   -- Comparison: null propagation (NULL = anything → NULL)
   | .eq, some (.null _), some _ => some (.null none)
   | .eq, some _, some (.null _) => some (.null none)
@@ -318,6 +320,11 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   | .like, some _, some (.null _) => some (.null none)
   | .like, some (.string s), some (.string pat) =>
     some (.bool (simpleLike s pat))
+  -- ASCII case-insensitive LIKE (sqlite dialect): Char.toLower only maps A-Z
+  | .likeCI, some (.null _), some _ => some (.null none)
+  | .likeCI, some _, some (.null _) => some (.null none)
+  | .likeCI, some (.string s), some (.string pat) =>
+    some (.bool (simpleLike (s.map Char.toLower) (pat.map Char.toLower)))
   -- Everything else is a genuine error (type mismatch, missing value)
   | _, _, _ => none
 

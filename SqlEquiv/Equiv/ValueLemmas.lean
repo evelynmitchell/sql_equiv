@@ -698,7 +698,7 @@ def Value.isNumeric : Value → Bool
 def BinOp.isStrictTyped : BinOp → Bool
   | .add | .sub | .mul | .div | .mod
   | .eq | .ne | .lt | .le | .gt | .ge
-  | .concat | .like => true
+  | .concat | .like | .likeCI => true
   | .and | .or => false
 
 /-- Cross-type elimination: for strictly-typed operators, operands of
