@@ -65,8 +65,8 @@ def AggFunc.toSql : AggFunc → String
   | .count => "COUNT"
   | .sum   => "SUM"
   | .avg   => "AVG"
-  | .min   => "MIN"
-  | .max   => "MAX"
+  | .min _ => "MIN"
+  | .max _ => "MAX"
 
 def JoinType.toSql : JoinType → String
   | .inner => "INNER JOIN"
@@ -136,8 +136,8 @@ partial def Expr.toSql : Expr → String
       | .denseRank => "DENSE_RANK"
       | .sum => "SUM"
       | .avg => "AVG"
-      | .min => "MIN"
-      | .max => "MAX"
+      | .min _ => "MIN"
+      | .max _ => "MAX"
       | .count => "COUNT"
     let argStr := match arg with
       | some e => e.toSql
@@ -180,8 +180,11 @@ partial def FromClause.toSql : FromClause → String
       | none   => ""
     s!"{left.toSql} {jtype.toSql} {right.toSql}{onStr}"
 
-/-- Prints `NULLS FIRST/LAST` only when it differs from the default rule
-    (`defaultNullOrdering`), so default-parsed queries round-trip unchanged. -/
+/-- Prints `NULLS FIRST/LAST` only when it differs from the default dialect's
+    rule (`defaultNullOrdering`). `toSql` therefore writes SQL for the default
+    (`standard`) dialect: re-parsing it with the default dialect gives back the
+    same NULL positions whatever dialect the AST was parsed in. Re-parsing in
+    another dialect can move an item whose position matched the default rule. -/
 partial def OrderByItem.toSql (o : OrderByItem) : String :=
   let nullsStr :=
     if o.nulls == defaultNullOrdering.resolve o.dir then ""

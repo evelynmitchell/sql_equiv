@@ -91,9 +91,19 @@ def evalQuery (sql : String) : Except String Table :=
     | some t => .ok t
     | none => .error "statement produced no result table"
 
-/-- Parse with a given NULL-ordering rule, then evaluate. -/
+/-- Parse for a dialect, then evaluate. -/
+def evalQueryIn (dialect : Dialect) (sql : String) : Except String Table :=
+  match parse sql (dialect := dialect) with
+  | .error e => .error e
+  | .ok stmt =>
+    match (evalStmt testDb stmt).2 with
+    | some t => .ok t
+    | none => .error "statement produced no result table"
+
+/-- Parse with a given NULL-ordering rule (other choices: default dialect),
+    then evaluate. -/
 def evalQueryWith (ordering : NullOrdering) (sql : String) : Except String Table :=
-  match parse sql (nullOrdering := ordering) with
+  match parse sql (config := { defaultDialect.config with nullOrdering := ordering }) with
   | .error e => .error e
   | .ok stmt =>
     match (evalStmt testDb stmt).2 with
@@ -112,6 +122,18 @@ def testNameOrder (testName : String) (ordering : NullOrdering) (sql : String)
       | _ => "?"
     if actual == expected then .pass testName
     else .fail testName s!"expected {expected}, got {actual}"
+
+/-- First value of the result, parsed for a dialect -/
+def testContainsValueIn (name : String) (dialect : Dialect) (sql : String) (expected : Value) :
+    TestResult :=
+  match evalQueryIn dialect sql with
+  | .error e => .fail name s!"Parse/eval error: {e}"
+  | .ok result =>
+    match result.head?.bind (·.head?) with
+    | some (_, actual) =>
+      if actual == expected then .pass name
+      else .fail name s!"First value: expected {expected.toSql}, got {actual.toSql}"
+    | none => .fail name "Could not get first value"
 
 /-- Check if result has expected number of rows -/
 def testRowCount (name : String) (sql : String) (expected : Nat) : TestResult :=
@@ -360,13 +382,13 @@ def groupedOrderByTests : List TestResult := [
 -- NULLS FIRST/LAST, which defaults per engine rule. staff: m1 9, m2 17,
 -- m3 NULL, m4 25, m5 41, m6 NULL. Ties keep input order (stable sort).
 def nullOrderingTests : List TestResult := [
-  -- sqlite rule (default): NULL smallest
+  -- sqlite rule: NULL smallest
   testNameOrder "nulls_sqlite_asc" .nullsSmallest
     "SELECT name FROM museum ORDER BY staff" ["m3", "m6", "m1", "m2", "m4", "m5"],
   -- the old comparator put 25 first here (NULL "equal to everything")
   testNameOrder "nulls_sqlite_desc" .nullsSmallest
     "SELECT name FROM museum ORDER BY staff DESC" ["m5", "m4", "m2", "m1", "m3", "m6"],
-  -- Postgres rule: NULL largest
+  -- Postgres rule (and the standard dialect's choice): NULL largest
   testNameOrder "nulls_postgres_asc" .nullsLargest
     "SELECT name FROM museum ORDER BY staff" ["m1", "m2", "m4", "m5", "m3", "m6"],
   testNameOrder "nulls_postgres_desc" .nullsLargest
@@ -384,11 +406,12 @@ def nullOrderingTests : List TestResult := [
   -- LIMIT makes the cut observable (the Spider museum shape)
   testNameOrder "nulls_desc_limit" .nullsSmallest
     "SELECT name FROM museum ORDER BY staff DESC LIMIT 1" ["m5"],
-  -- Pretty-printing: the clause is printed only when it differs from the default
-  (match parseSelectStr "SELECT name FROM museum ORDER BY staff DESC NULLS FIRST",
+  -- Pretty-printing: the clause is printed only when it differs from the
+  -- default dialect's rule (standard: NULL largest, so DESC → NULLS FIRST)
+  (match parseSelectStr "SELECT name FROM museum ORDER BY staff DESC NULLS LAST",
          parseSelectStr "SELECT name FROM museum ORDER BY staff DESC" with
    | .ok s1, .ok s2 =>
-     if (s1.toSql.splitOn "NULLS FIRST").length == 2 && (s2.toSql.splitOn "NULLS").length == 1
+     if (s1.toSql.splitOn "NULLS LAST").length == 2 && (s2.toSql.splitOn "NULLS").length == 1
      then .pass "nulls_pretty_print"
      else .fail "nulls_pretty_print" s!"got: {s1.toSql} / {s2.toSql}"
    | _, _ => .fail "nulls_pretty_print" "parse error"),
@@ -514,10 +537,35 @@ def distinctAggTests : List TestResult := [
   testContainsValue "max_string_window"
     "SELECT MAX(name) OVER (PARTITION BY department) AS m FROM users WHERE id = 1"
     (.string "Alice"),
-  -- Mixed numeric/string input: numerics only (implementation-defined, see
-  -- docs/IMPLEMENTATION_DEFINED.md). Strings Alice/Carol/Dave, ints 25, 22 → 25
-  testContainsValue "max_mixed_numeric_wins"
-    "SELECT MAX(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.int 25)
+  -- Mixed numeric/string input (registry row 13) depends on the dialect:
+  -- strings Alice/Carol/Dave, ints 25, 22.
+  -- standard (default) / duckdb / postgres: an error (shown as NULL)
+  testContainsValue "minmax_mixed_standard_is_error"
+    "SELECT MAX(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.null none),
+  testContainsValueIn "minmax_mixed_duckdb_is_error" .duckdb
+    "SELECT MIN(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.null none),
+  -- …and in HAVING the error drops the group (sqlite keeps it)
+  testRowCount "minmax_mixed_error_in_having"
+    "SELECT COUNT(*) FROM users HAVING MAX(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" 0,
+  (match evalQueryIn .sqlite
+      "SELECT COUNT(*) FROM users HAVING MAX(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" with
+   | .ok rows => if rows.length == 1 then .pass "minmax_mixed_sqlite_in_having"
+                 else .fail "minmax_mixed_sqlite_in_having" s!"expected 1 row, got {rows.length}"
+   | .error e => .fail "minmax_mixed_sqlite_in_having" e),
+  -- sqlite: numbers before strings → MAX the greatest string, MIN the least number
+  testContainsValueIn "max_mixed_sqlite_type_class" .sqlite
+    "SELECT MAX(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.string "Dave"),
+  testContainsValueIn "min_mixed_sqlite_type_class" .sqlite
+    "SELECT MIN(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.int 22),
+  -- Unmixed input is the same in every dialect
+  testContainsValueIn "max_string_sqlite" .sqlite "SELECT MAX(name) FROM users" (.string "Eve"),
+  -- The dialect's choice is recorded on the AST node
+  (match parse "SELECT MAX(x) FROM t" (dialect := .sqlite), parse "SELECT MAX(x) FROM t" with
+   | .ok a, .ok b =>
+     if ((reprStr a).splitOn "typeClass").length == 2 && ((reprStr b).splitOn "MixedMinMax.error").length == 2
+     then .pass "minmax_mode_recorded_in_ast"
+     else .fail "minmax_mode_recorded_in_ast" s!"{reprStr a} / {reprStr b}"
+   | _, _ => .fail "minmax_mode_recorded_in_ast" "parse error")
 ]
 
 -- ============================================================================

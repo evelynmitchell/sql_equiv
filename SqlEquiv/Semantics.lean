@@ -87,8 +87,8 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
     if countNumeric distinctValues == 0 then some (.null none)
     else some (sumNumeric distinctValues)
   | .avg => some ((avgNumeric distinctValues).getD (.null none))
-  | .min => some ((minAgg distinctValues).getD (.null none))
-  | .max => some ((maxAgg distinctValues).getD (.null none))
+  | .min m => minMaxAgg m false distinctValues
+  | .max m => minMaxAgg m true distinctValues
 
 /-- Parameterized expression evaluator with aggregate support -/
 def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
@@ -259,18 +259,18 @@ def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
     | some e =>
       let vals := frame.filterMap fun r => exprEval db r e
       some ((avgNumeric vals).getD (.null none))
-  | .min =>
+  | .min m =>
     match arg with
     | none => none
     | some e =>
       let vals := frame.filterMap fun r => exprEval db r e
-      some ((minAgg vals).getD (.null none))
-  | .max =>
+      minMaxAgg m false vals
+  | .max m =>
     match arg with
     | none => none
     | some e =>
       let vals := frame.filterMap fun r => exprEval db r e
-      some ((maxAgg vals).getD (.null none))
+      minMaxAgg m true vals
   | .count =>
     match arg with
     | none => some (.int (Int.ofNat frame.length))
@@ -410,8 +410,8 @@ def evalAggOverTable (db : Database) (fn : AggFunc) (argExpr : Option Expr) (dis
     if countNumeric distinctValues == 0 then some (.null none)
     else some (sumNumeric distinctValues)
   | .avg => some ((avgNumeric distinctValues).getD (.null none))
-  | .min => some ((minAgg distinctValues).getD (.null none))
-  | .max => some ((maxAgg distinctValues).getD (.null none))
+  | .min m => minMaxAgg m false distinctValues
+  | .max m => minMaxAgg m true distinctValues
 
 /-- Evaluate expression with aggregate support over a table -/
 partial def evalExprWithAgg (db : Database) (rows : Table) (row : Row) : Expr → Option Value
@@ -535,18 +535,18 @@ def evalWindowFn (db : Database) (fn : WindowFunc) (arg : Option Expr)
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
       some ((avgNumeric vals).getD (.null none))
-  | .min =>
+  | .min m =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
-      some ((minAgg vals).getD (.null none))
-  | .max =>
+      minMaxAgg m false vals
+  | .max m =>
     match arg with
     | none => none
     | some e =>
       let vals := partition.filterMap fun r => evalExprWithDb db r e
-      some ((maxAgg vals).getD (.null none))
+      minMaxAgg m true vals
   | .count =>
     match arg with
     | none => some (.int (Int.ofNat partition.length))  -- COUNT(*)

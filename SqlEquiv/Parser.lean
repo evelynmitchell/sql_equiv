@@ -75,8 +75,9 @@ structure ParseState where
   pos         : Nat
   input       : String              -- original input for context
   parenStack  : List SourcePos      -- track open parentheses positions
-  /-- Where NULL sort keys go when an ORDER BY item has no NULLS FIRST/LAST -/
-  nullOrdering : NullOrdering := defaultNullOrdering
+  /-- The dialect's implementation-defined choices, written into the AST as
+      it is built (NULL position of ORDER BY items, MIN/MAX mixed-type mode) -/
+  config : DialectConfig := defaultDialect.config
   deriving Repr
 
 /-- Parser error with detailed context -/
@@ -289,14 +290,16 @@ def sqlKeywords : List String := [
   "WITH", "RECURSIVE", "OVER", "PARTITION", "ROW_NUMBER", "RANK", "DENSE_RANK"
 ]
 
-/-- Check if string is an aggregate function name -/
-def isAggFunc (s : String) : Option AggFunc :=
+/-- Check if string is an aggregate function name. MIN/MAX record the
+    dialect's mixed-type mode (`mixed`). -/
+def isAggFunc (s : String) (mixed : MixedMinMax := defaultDialect.config.mixedMinMax) :
+    Option AggFunc :=
   match s.toUpper with
   | "COUNT" => some .count
   | "SUM"   => some .sum
   | "AVG"   => some .avg
-  | "MIN"   => some .min
-  | "MAX"   => some .max
+  | "MIN"   => some (.min mixed)
+  | "MAX"   => some (.max mixed)
   | _       => none
 
 /-- Map an aggregate function to its window-function counterpart
@@ -305,8 +308,8 @@ def aggToWindowFunc : AggFunc → WindowFunc
   | .count => .count
   | .sum   => .sum
   | .avg   => .avg
-  | .min   => .min
-  | .max   => .max
+  | .min m => .min m
+  | .max m => .max m
 
 /-- Check if string is a ranking window function (ROW_NUMBER/RANK/DENSE_RANK).
     These are only valid with an OVER clause. -/
@@ -842,7 +845,8 @@ partial def parsePrimary : Parser Expr := do
     let t' ← Parser.peek
     if t' == .lparen then
       -- Check if it's an aggregate function
-      match isAggFunc first with
+      let mixed ← fun st => .ok (st.config.mixedMinMax, st)
+      match isAggFunc first mixed with
       | some aggFn =>
         let _ ← Parser.advance
         -- Check for COUNT(*)
@@ -1138,7 +1142,8 @@ partial def parseSelectItem : Parser SelectItem := do
         return .exprItem e'' alias
     else if t' == .lparen then
       -- Function call or aggregate — check for aggregate first
-      match isAggFunc name with
+      let mixed ← fun st => .ok (st.config.mixedMinMax, st)
+      match isAggFunc name mixed with
       | some aggFn =>
         let _ ← Parser.advance
         let t'' ← Parser.peek
@@ -1369,7 +1374,7 @@ partial def parseOrderByItem : Parser OrderByItem := do
       else
         Parser.fail "Expected FIRST or LAST after NULLS"
     else
-      fun st => .ok (st.nullOrdering.resolve dir, st)
+      fun st => .ok (st.config.nullOrdering.resolve dir, st)
   return .mk expr dir nulls
 
 /-- Parse SELECT statement (implementation for mutual recursion) -/
@@ -1670,11 +1675,14 @@ private def requireConsumed (state : ParseState) : Except String Unit :=
   | pt :: _ =>
     Except.error s!"Parse error at line {pt.pos.line}, column {pt.pos.column}: Unexpected trailing input starting with {pt.token.describe}"
 
-def parse (input : String) (nullOrdering : NullOrdering := defaultNullOrdering) :
-    Except String Stmt := do
+/-- Parse a statement for a target `dialect` (default: `standard`). `config`
+    overrides individual choices, e.g.
+    `parse sql (config := { Dialect.sqlite.config with nullOrdering := .nullsLargest })`. -/
+def parse (input : String) (dialect : Dialect := defaultDialect)
+    (config : DialectConfig := dialect.config) : Except String Stmt := do
   let tokens ← (tokenize input).mapError toString
   let state : ParseState :=
-    { tokens := tokens, pos := 0, input := input, parenStack := [], nullOrdering := nullOrdering }
+    { tokens := tokens, pos := 0, input := input, parenStack := [], config := config }
   match parseStmt state with
   | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
   | .ok (stmt, state') => do
@@ -1682,11 +1690,11 @@ def parse (input : String) (nullOrdering : NullOrdering := defaultNullOrdering) 
     Except.ok stmt
 
 /-- Parse SELECT statement specifically -/
-def parseSelectStr (input : String) (nullOrdering : NullOrdering := defaultNullOrdering) :
-    Except String SelectStmt := do
+def parseSelectStr (input : String) (dialect : Dialect := defaultDialect)
+    (config : DialectConfig := dialect.config) : Except String SelectStmt := do
   let tokens ← (tokenize input).mapError toString
   let state : ParseState :=
-    { tokens := tokens, pos := 0, input := input, parenStack := [], nullOrdering := nullOrdering }
+    { tokens := tokens, pos := 0, input := input, parenStack := [], config := config }
   match parseSelect state with
   | .error e => Except.error s!"Parse error at line {e.line}, column {e.column}: {e.message}"
   | .ok (stmt, state') => do

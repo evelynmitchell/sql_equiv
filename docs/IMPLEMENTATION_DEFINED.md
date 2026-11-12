@@ -15,17 +15,31 @@ the **registry** of known cases.
 
 ### 1. Choosing a behaviour
 
+Queries are checked against a target **dialect**: `standard` (the default),
+`sqlite`, `duckdb` or `postgres` (`Dialect` in `SqlEquiv/Ast.lean`). Users pick
+it with `parse sql (dialect := .postgres)`, the CLI's `--dialect <name>`, or the
+REPL's `dialect <name>`. A dialect is a profile, `Dialect.config : DialectConfig`,
+with one field per configurable registry row.
+
 In order of preference:
 
-1. **The standard defines it** → follow the standard.
-2. **Implementation-defined, and cheap to make configurable** → make it
-   configurable **at parse time**, so the AST records the explicit choice and
-   evaluation and proofs never depend on configuration. Example: NULL ordering
-   (`NullOrdering`, PR #251). Theorems that quantify over statements then cover
-   every setting automatically.
-3. **Otherwise** → choose one behaviour and record it here. The default
-   preference is **sqlite**, because the north-star metric (Spider) is measured
-   against sqlite.
+1. **The standard defines it** → follow the standard, in every dialect.
+2. **Implementation-defined, and it has an AST node to carry the choice** →
+   add a field to `DialectConfig`, give each dialect its engine's observed
+   behaviour, and have the parser write the choice into the AST. Evaluation
+   and proofs never see the dialect, so theorems that quantify over statements
+   cover every dialect automatically. Examples: NULL ordering (row 1, the
+   `NullsOrder` of each ORDER BY item) and mixed-type MIN/MAX (row 13, the
+   `MixedMinMax` of each MIN/MAX).
+3. **Implementation-defined with no AST node** (e.g. how `=` coerces mixed
+   types, rows 10–12) → choose one behaviour and record it here. If per-dialect
+   behaviour is wanted later, this is where an *evaluation-time* dialect
+   parameter would come in (a larger change: equivalences become per-dialect).
+
+The **`standard` dialect** follows the standard; where the standard itself
+leaves the choice to the implementation, it takes the Postgres behaviour (the
+standards tiebreaker), e.g. NULL largest. The Spider harness runs in the
+`sqlite` dialect because Spider's gold results come from sqlite.
 
 Choosing or changing a behaviour is a **design decision**: per CLAUDE.md, present
 the options with trade-offs and wait for a pick. Record the decision here, with
@@ -36,9 +50,9 @@ the issue or PR.
 - **Pin our choice**: a unit test in `Test/` that asserts our behaviour, so it
   cannot change silently.
 - **Agreeing engines**: a differential case in `LSpecTests/DiffSqlite.lean` /
-  `DiffDuckdb.lean` for each engine that agrees with us, run in that engine's
-  mode when the behaviour is configurable (e.g. the DuckDB harness parses with
-  `nullOrdering := .nullsAlwaysLast`).
+  `DiffDuckdb.lean` for each engine that agrees with us. Each harness parses in
+  its engine's dialect (`parse sql (dialect := .duckdb)`), so configurable rows
+  are checked against the engine's own choice.
 - **Disagreeing engines**: either an explicit *disagreement* test that asserts
   the engine's different answer, or an entry in that harness's KNOWN
   DIVERGENCES header pointing back to this registry. Never just avoid the case.
@@ -85,7 +99,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 
 | # | Behaviour (example) | Standard | sqlite | DuckDB | Postgres | **Ours** | Status | Tests |
 |---|---|---|---|---|---|---|---|---|
-| 1 | NULL position in ORDER BY (`ORDER BY price` with a NULL) | Implementation-defined; `NULLS FIRST/LAST` syntax | NULL smallest (first ASC, last DESC) | NULLs last both ways | NULL largest (last ASC, first DESC) | **Configurable** at parse time (`NullOrdering`), default sqlite; `NULLS FIRST/LAST` supported | decided (#251) | `nulls_*` unit tests (all three rules); DiffSqlite and DiffDuckdb in each engine's mode |
+| 1 | NULL position in ORDER BY (`ORDER BY price` with a NULL) | Implementation-defined; `NULLS FIRST/LAST` syntax | NULL smallest (first ASC, last DESC) | NULLs last both ways | NULL largest (last ASC, first DESC) | **Per dialect** (`DialectConfig.nullOrdering`): standard and postgres NULL largest, sqlite NULL smallest, duckdb always last; `NULLS FIRST/LAST` supported | decided (#251; dialects #260) | `nulls_*` unit tests (all three rules); DiffSqlite and DiffDuckdb in each engine's dialect |
 | 2 | Order of rows tied on every sort key | Unspecified | Arbitrary | Arbitrary | Arbitrary | Stable: input order | decided | Spider harness **tie-valid** category + self-test (#249) |
 | 3 | Double-quoted text `SELECT "abc"` | Delimited identifier | String literal (fallback) | Identifier → error | Identifier → error | String literal | decided (#215; we have no quoted identifiers) | `Test/ParserTest.lean`; no differential (DuckDB/Postgres reject) |
 | 4 | ON-less JOIN `A JOIN B WHERE …` | Join condition required | Cross product + WHERE | Syntax error | Syntax error | Cross product (sqlite) | decided | `ParserTest`, `DiffSqlite` case; DuckDB KNOWN DIVERGENCES |
@@ -97,14 +111,14 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **decided** (#127, closed): keep the error; matches DuckDB/Postgres | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error`; DiffSqlite KNOWN DIVERGENCES |
 | 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap** (#254): diverges from all three; no Spider query hits it today | **none** |
 | 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
-| 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | Numerics only: MAX `5`, MIN `5` (strings ignored when any numeric is present) | **gap**: MAX matches no engine; kept from before #256 pending a decision. Reachable only through untyped data (e.g. CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pin `max_mixed_numeric_wins`; no differential |
+| 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | **Per dialect** (`DialectConfig.mixedMinMax`): standard, duckdb, postgres → error (row dropped / NULL); sqlite → type-class order | decided (dialects #260). Reachable only through untyped data (CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pins `minmax_mixed_*`, `max_mixed_sqlite_type_class`, `min_mixed_sqlite_type_class`, `minmax_mode_recorded_in_ast`; DiffSqlite type-class cases; DuckDB KNOWN DIVERGENCES (its error fails the query, ours is quieter) |
 | 14 | MIN/MAX over booleans (`MAX(s = 'a')`) | Boolean not orderable by MAX in the standard aggregate set | `1` (booleans are integers) | `true` | Error (no `max(boolean)`) | NULL (booleans are skipped) | **gap**: all four differ; found in #256 self-review, unchanged | **none** |
 
 ### Notes on individual rows
 
 - **Row 1** is the model for a configurable behaviour: one enum on the AST
-  item, a parse-time rule, and each differential harness running in its
-  engine's mode. Parsing the DuckDB cases with sqlite's rule makes the ASC case
+  item, a `DialectConfig` field, and each differential harness running in its
+  engine's dialect. Parsing the DuckDB cases with sqlite's rule makes the ASC case
   fail, which shows those tests check the NULL position.
 - **Row 7**: changing AVG means choosing a fractional result type (DECIMAL with
   a scale rule, or floats). That is the #201 / #202 design decision, not a
@@ -159,7 +173,5 @@ Rows that do not yet meet the testing requirements in §2:
   (sqlite's LIKE is case-insensitive).
 - **Row 11**: decide via #254 (all three engines convert the literal); add a pin either way.
 - **Row 14**: decide MAX/MIN over booleans (all engines differ); add a pin.
-- **Row 13**: decide mixed-type MIN/MAX (error like DuckDB/Postgres, or
-  sqlite's type-class order); a sqlite disagreement test either way.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.

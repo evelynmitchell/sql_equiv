@@ -163,31 +163,31 @@ def avgNumeric (vs : List Value) : Option Value :=
     some (Value.mkDecimal ((sumScaled vs).1 / Int.ofNat n) (sumScaled vs).2)
   else some (.int ((sumScaled vs).1 / Int.ofNat n))
 
-/-- The values MIN/MAX range over: the numeric inputs if there are any,
-    otherwise the string inputs (#256). NULLs and other types are skipped.
-    Mixed numeric/string input keeps the numerics only — implementation-defined
-    (sqlite orders numbers before text, DuckDB/Postgres reject the mix); see
-    `docs/IMPLEMENTATION_DEFINED.md`. -/
-def minMaxPool (vs : List Value) : List Value :=
+/-- Least (`wantMax = false`) or greatest value of a list under `Value.compare`;
+    returns the original value (canonical form preserved). -/
+def extremeValue (wantMax : Bool) (vs : List Value) : Option Value :=
+  vs.foldl (fun acc v =>
+    match acc with
+    | none => some v
+    | some m =>
+      if Value.compare m v == some (if wantMax then .lt else .gt) then some v else acc) none
+
+/-- MIN/MAX aggregate result (#256). NULLs and non-numeric, non-string values
+    are skipped. Numerics compare scale-aware, strings by code point. Input
+    mixing numbers and strings is resolved by `mode` (registry row 13):
+    `.error` gives `none` (an error), `.typeClass` orders numbers before
+    strings (sqlite), so MAX is the greatest string and MIN the least number.
+    No eligible input gives NULL. -/
+def minMaxAgg (mode : MixedMinMax) (wantMax : Bool) (vs : List Value) : Option Value :=
   let nums := vs.filter fun v => (Value.toScaled? v).isSome
-  if nums.isEmpty then vs.filter fun v => match v with | .string _ => true | _ => false
-  else nums
-
-/-- MIN aggregate: least value of `minMaxPool vs` (numerics scale-aware,
-    strings by code point); returns the original value; none when the pool is
-    empty. -/
-def minAgg (vs : List Value) : Option Value :=
-  (minMaxPool vs).foldl (fun acc v =>
-    match acc with
-    | none => some v
-    | some m => if Value.compare m v == some .gt then some v else acc) none
-
-/-- MAX aggregate; see `minAgg`. -/
-def maxAgg (vs : List Value) : Option Value :=
-  (minMaxPool vs).foldl (fun acc v =>
-    match acc with
-    | none => some v
-    | some m => if Value.compare m v == some .lt then some v else acc) none
+  let strs := vs.filter fun v => match v with | .string _ => true | _ => false
+  let pool : Option (List Value) :=
+    if nums.isEmpty then some strs
+    else if strs.isEmpty then some nums
+    else match mode with
+      | .error => none
+      | .typeClass => some (if wantMax then strs else nums)
+  pool.map fun p => (extremeValue wantMax p).getD (.null none)
 
 -- ============================================================================
 -- Expression Evaluation Helper Functions (standalone)
@@ -357,8 +357,8 @@ def exprToName : Expr → String
   | .agg .count _ _ => "count"
   | .agg .sum _ _ => "sum"
   | .agg .avg _ _ => "avg"
-  | .agg .min _ _ => "min"
-  | .agg .max _ _ => "max"
+  | .agg (.min _) _ _ => "min"
+  | .agg (.max _) _ _ => "max"
   | .countStar => "count"
   | _ => "expr"
 

@@ -27,7 +27,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries
-- **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET. ORDER BY may use non-projected columns; in GROUP BY queries it may also sort on aggregates (`ORDER BY COUNT(*) DESC`), non-projected grouping columns, and expressions mixing output aliases with aggregates. `NULLS FIRST` / `NULLS LAST` are supported; without them, NULL sort keys follow a configurable engine rule (`NullOrdering`: sqlite's NULL-smallest by default, Postgres's NULL-largest, or DuckDB's always-last), chosen at parse time via `parse sql (nullOrdering := …)`. Known gap: with DISTINCT, sort keys resolve against output columns only.
+- **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET. ORDER BY may use non-projected columns; in GROUP BY queries it may also sort on aggregates (`ORDER BY COUNT(*) DESC`), non-projected grouping columns, and expressions mixing output aliases with aggregates. `NULLS FIRST` / `NULLS LAST` are supported; without them, NULL sort keys follow the target dialect's rule (see **Dialects** below). Known gap: with DISTINCT, sort keys resolve against output columns only.
 - **INSERT statements**: VALUES, INSERT...SELECT
 - **UPDATE statements**: SET with WHERE conditions
 - **DELETE statements**: With WHERE conditions
@@ -130,6 +130,29 @@ python tools/unused_private_checker.py 2>/dev/null
 # Run the demo REPL
 lake exe sql_equiv
 ```
+
+## Dialects
+
+Where engines legitimately differ (behaviour the SQL standard leaves to the
+implementation), queries are checked against a target dialect: `standard`
+(default), `sqlite`, `duckdb` or `postgres`.
+
+```lean
+parse "SELECT name FROM t ORDER BY price" (dialect := .postgres)
+```
+
+```bash
+sql_equiv --dialect sqlite --file queries.sql
+```
+
+In the REPL, `dialect sqlite` switches dialect. The dialect is resolved at parse
+time: the parser records each choice in the AST (e.g. the NULL position of every
+ORDER BY item), so evaluation and every equivalence theorem are
+dialect-independent. Configurable today: NULL ordering and MIN/MAX over mixed
+numbers and strings. `toSql` prints SQL for the default dialect (explicit
+`NULLS FIRST/LAST` where an item differs from it); the MIN/MAX mixed-type mode
+has no SQL spelling, so re-parsing printed SQL uses the parsing dialect's mode. The full registry of implementation-defined behaviour,
+with what each engine does, is `docs/IMPLEMENTATION_DEFINED.md`.
 
 ## Usage Examples
 
