@@ -24,7 +24,7 @@ The project is designed for compatibility with the Spider benchmark and supports
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
 - **Window functions**: ROW_NUMBER, RANK, DENSE_RANK, and aggregate windows (SUM/AVG/MIN/MAX/COUNT) with `OVER ([PARTITION BY ...] [ORDER BY ...])` and the SQL-default frame; explicit ROWS/RANGE frames and DISTINCT inside windows are rejected at parse time
-- **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries
+- **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries (inner-first name resolution), and derived tables (`FROM (SELECT …) AS d`). Known gap (#257): a derived table's alias is not applied to its columns, so reference them unqualified (`name`, not `d.name`; `d.name` evaluates to NULL).
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries
 - **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET. ORDER BY may use non-projected columns; in GROUP BY queries it may also sort on aggregates (`ORDER BY COUNT(*) DESC`), non-projected grouping columns, and expressions mixing output aliases with aggregates. `NULLS FIRST` / `NULLS LAST` are supported; without them, NULL sort keys follow the target dialect's rule (see **Dialects** below). Known gap: with DISTINCT, sort keys resolve against output columns only.

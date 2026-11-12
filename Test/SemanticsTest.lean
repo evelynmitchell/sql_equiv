@@ -476,7 +476,20 @@ def subqueryTests : List TestResult := [
   -- first-match pass, so the inner key still wins (MIN = 22 → 4 rows; an
   -- exact-match-first lookup gave the outer `age` and 0 rows)
   testRowCount "scope_derived_outer_unqualified_keys"
-    "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)" 4
+    "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)" 4,
+  -- Known gap (#257, deferred): a derived table's alias is not applied to its
+  -- columns. Unqualified references work; `d.col` evaluates to NULL (engines
+  -- return the column). Pinned so a fix is noticed: standard scoping would
+  -- make filter_and / filter_commute / filter_idempotent /
+  -- filter_pushdown_table / filter_join_left / filter_join_right false as
+  -- stated, so it needs those theorems restated (see #257).
+  testColumn "derived_unqualified_ref_works"
+    "SELECT name FROM (SELECT name, id FROM users WHERE id < 3) AS x" "name"
+    [.string "Alice", .string "Bob"],
+  testContainsValue "derived_alias_qualified_ref_is_null_gap_257"
+    "SELECT x.name FROM (SELECT name, id FROM users) AS x" (.null none),
+  testRowCount "derived_alias_qualified_where_gap_257"
+    "SELECT name FROM (SELECT name, age FROM users) AS d WHERE d.age > 26" 0
 ]
 
 -- ============================================================================

@@ -161,6 +161,17 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   SELECT" class): 549 → 553. Pinned by the `max_string*` / `min_string` unit
   tests and DiffSqlite/DiffDuckdb `over strings` cases.
 
+- **Derived-table alias is ignored** (open, #257, deferred by decision).
+  `FROM (SELECT name FROM users) AS d` keeps the subquery's own keys, so
+  `d.name` evaluates to NULL (all engines return the column) while `name`
+  works; out-of-scope references such as `users.name` outside the derived table
+  still resolve, where engines reject them. Fixing it with standard scoping
+  makes six proven theorems false as stated (`filter_and`, `filter_commute`,
+  `filter_idempotent`, `filter_pushdown_table`, `filter_join_left`,
+  `filter_join_right`): they wrap a FROM in `(SELECT * …) AS inner` and depend
+  on pass-through keys, and results compare column names. Deferred: Spider has
+  no query that needs it. Pinned by the `derived_*` unit tests.
+
 ---
 
 ## Backlog to meet the policy
