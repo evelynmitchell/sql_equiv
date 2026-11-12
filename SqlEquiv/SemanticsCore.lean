@@ -591,8 +591,11 @@ def evalSelectCore (db : Database) (outerRow : Row)
     | some f => fromEval db f
     | none => [[]]
 
-  -- Merge outer row context into each base row for correlated subqueries
-  let baseRowsWithContext : Table := baseRows.map fun row => outerRow ++ row
+  -- Merge outer row context into each base row for correlated subqueries.
+  -- The inner row comes first, so name lookup (first match wins) resolves
+  -- against the subquery's own FROM before the outer row: innermost scope
+  -- wins, as in standard SQL (#253).
+  let baseRowsWithContext : Table := baseRows.map fun row => row ++ outerRow
 
   -- 2. WHERE clause
   let filteredRows : Table := match sel.whereClause with
@@ -683,7 +686,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
     (if groupedSort then
       evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
         sel.items sel.groupBy sel.having sel.orderBy filteredRows
-     else havingRows.map (List.drop outerRow.length))
+     else havingRows.map (fun r => r.take (r.length - outerRow.length)))
     distinctRows
 
 -- ============================================================================
@@ -968,7 +971,7 @@ def evalSelectAfterFilter (db : Database)
       filteredRows.filter fun row =>
         exprEval db row cond == some (Value.bool true)
     | none => filteredRows
-  -- Sort sources have the correlated outer-row prefix stripped: outer columns
+  -- Sort sources have the correlated outer-row suffix stripped: outer columns
   -- are constant per query instance, so they can never affect sort order, and
   -- stripping them keeps ground SELECTs row-context independent (#206).
   -- Grouped queries without DISTINCT sort on per-group key rows (#234).
@@ -979,7 +982,7 @@ def evalSelectAfterFilter (db : Database)
     (if groupedSort then
       evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
         items groupBy having orderBy filteredRows
-     else havingRows.map (List.drop ctxLen))
+     else havingRows.map (fun r => r.take (r.length - ctxLen)))
     (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
       groupBy having filteredRows)
@@ -1057,7 +1060,7 @@ theorem evalSelectCore_eq_afterFilter (db : Database) (outerRow : Row)
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset) =
     let baseRows := match from_ with | some f => fromEval db f | none => [[]]
-    let baseRowsWithContext := baseRows.map fun row => outerRow ++ row
+    let baseRowsWithContext := baseRows.map fun row => row ++ outerRow
     let filteredRows := match where_ with
       | some cond => baseRowsWithContext.filter fun row =>
           exprEval db row cond == some (Value.bool true)
@@ -1203,7 +1206,7 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
     exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
     distinct items groupBy having orderBy limit offset outerRow.length
     (List.filter (fun row => exprEval db row cond == some (Value.bool true))
-      (List.map (fun row => outerRow ++ row)
+      (List.map (fun row => row ++ outerRow)
         (match from_ with | some f => fromEval db f | none => [[]]))) = []
   -- filteredRows = [] because all rows are rejected
   rw [filter_eq_nil_of_false _ _ hAllFalse]
@@ -1339,7 +1342,7 @@ theorem evalSelectCore_star_where_eq_filter (db : Database) (outerRow : Row)
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false [.star none] from_ (some p) [] none [] none none) =
     let baseRows := match from_ with | some f => fromEval db f | none => [[]]
-    (baseRows.map fun row => outerRow ++ row).filter fun row =>
+    (baseRows.map fun row => row ++ outerRow).filter fun row =>
       exprEval db row p == some (Value.bool true) := by
   simp only [evalSelectCore_eq_afterFilter]
   exact evalSelectAfterFilter_star_identity db exprEval selectItemEval selectItemWithAggEval
@@ -1379,7 +1382,7 @@ theorem evalSelectCore_filter_and (db : Database)
   congr 1
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.nil_append, List.append_nil, List.map_id']
   rw [← list_filter_and_eq]
   congr 1; funext row; exact (h_and row).symm
 
@@ -1418,7 +1421,7 @@ theorem evalSelectCore_filter_commute (db : Database)
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star,
       evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.nil_append, List.append_nil, List.map_id']
   exact list_filter_comm _ _ _
 
 /-- Core filter_idempotent: filtering by p then p again equals filtering by p once. -/
@@ -1453,7 +1456,7 @@ theorem evalSelectCore_filter_idempotent (db : Database)
   congr 1
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.nil_append, List.append_nil, List.map_id']
   -- Goal: (baseRows.filter p).filter p = baseRows.filter p
   induction (match from_ with | some f => fromEval db f | none => [[]]) with
   | nil => rfl
@@ -1494,7 +1497,7 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
   congr 1
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.nil_append, List.append_nil, List.map_id']
 
 -- ============================================================================
 -- Simple SELECT decomposition (for IN/EXISTS subquery proofs)
@@ -1519,7 +1522,7 @@ theorem evalSelectCore_simple_project (db : Database) (outerRow : Row)
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) none [] none [] none none) =
     List.map (fun row => items.flatMap (selectItemEval db row))
-      (List.map (outerRow ++ ·) (fromEval db from_)) := by
+      (List.map (· ++ outerRow) (fromEval db from_)) := by
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
@@ -1545,7 +1548,7 @@ theorem evalSelectCore_simple_project_where (db : Database) (outerRow : Row)
       (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
     List.map (fun row => items.flatMap (selectItemEval db row))
       (List.filter (fun row => exprEval db row cond == some (Value.bool true))
-        (List.map (outerRow ++ ·) (fromEval db from_))) := by
+        (List.map (· ++ outerRow) (fromEval db from_))) := by
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
@@ -1570,7 +1573,7 @@ theorem evalSelectCore_distinct_project (db : Database) (outerRow : Row)
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk true items (some from_) none [] none [] none none) =
     (List.map (fun row => items.flatMap (selectItemEval db row))
-      (List.map (outerRow ++ ·) (fromEval db from_))).eraseDups := by
+      (List.map (· ++ outerRow) (fromEval db from_))).eraseDups := by
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
@@ -1596,7 +1599,7 @@ theorem evalSelectCore_distinct_project_where (db : Database) (outerRow : Row)
       (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
     (List.map (fun row => items.flatMap (selectItemEval db row))
       (List.filter (fun row => exprEval db row cond == some (Value.bool true))
-        (List.map (outerRow ++ ·) (fromEval db from_)))).eraseDups := by
+        (List.map (· ++ outerRow) (fromEval db from_)))).eraseDups := by
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
@@ -2383,6 +2386,11 @@ theorem evalSelectProjectDistinct_grouped_length_le_one
 -- evalSelectCore outer row congruence
 -- ============================================================================
 
+/-- Stripping the correlated outer-row suffix recovers the inner row (#253). -/
+@[simp] theorem take_inner_of_append (row o : Row) :
+    (row ++ o).take ((row ++ o).length - o.length) = row := by
+  simp
+
 /-- When all expression callbacks are row-independent for the expressions used
     in sel, changing outerRow doesn't affect the evalSelectCore result. -/
 theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
@@ -2457,7 +2465,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
   · have hg' : (!d && !gb.isEmpty) = false := by simpa using hg
     simp only [hg', Bool.false_eq_true, ↓reduceIte, Bool.or_false]
     -- The aligned ORDER BY takes (sources, rows); both are row-context
-    -- independent: sources because the outer prefix is stripped, rows by the
+    -- independent: sources because the outer suffix is stripped, rows by the
     -- existing projection congruence.
     have congr2 : ∀ {α β γ : Type} (f : α → β → γ) {a₁ a₂ : α} {b₁ b₂ : β},
         a₁ = a₂ → b₁ = b₂ → f a₁ b₁ = f a₂ b₂ := by
@@ -2471,22 +2479,22 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
           simp [List.map_map, Function.comp_def]
         | some hcond =>
           simp only [List.filter_map, List.map_map, Function.comp_def,
-            List.drop_left, List.map_id']
+            take_inner_of_append, List.map_id']
           exact List.filter_congr (fun row _ => by
-            congr 1; exact h_hv hcond rfl (r1 ++ row) (r2 ++ row))
+            congr 1; exact h_hv hcond rfl (row ++ r1) (row ++ r2))
       | some wcond =>
         cases hv with
         | none =>
           simp only [List.filter_map, List.map_map, Function.comp_def,
-            List.drop_left, List.map_id']
+            take_inner_of_append, List.map_id']
           exact List.filter_congr (fun row _ => by
-            congr 1; exact h_wc wcond rfl (r1 ++ row) (r2 ++ row))
+            congr 1; exact h_wc wcond rfl (row ++ r1) (row ++ r2))
         | some hcond =>
           simp only [List.filter_map, List.map_map, Function.comp_def,
-            List.drop_left, List.map_id', List.filter_filter]
+            take_inner_of_append, List.map_id', List.filter_filter]
           exact List.filter_congr (fun row _ => by
-            rw [h_wc wcond rfl (r1 ++ row) (r2 ++ row),
-                h_hv hcond rfl (r1 ++ row) (r2 ++ row)])
+            rw [h_wc wcond rfl (row ++ r1) (row ++ r2),
+                h_hv hcond rfl (row ++ r1) (row ++ r2)])
     · -- rows: projection congruence (unchanged machinery)
       cases wc with
       | none =>

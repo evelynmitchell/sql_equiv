@@ -356,6 +356,18 @@ def runAllTests : IO TestSeq := do
     -- Set-operation subquery (#218): UNION inside an IN subquery
     diffTest "IN with UNION subquery"
       "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 150 UNION SELECT user_id FROM orders WHERE amount < 120)",
+    -- Subquery name resolution is inner-first (#253): unqualified names bind
+    -- to the subquery's own FROM, then fall through to the outer row.
+    diffTest "scope: same-table scalar subquery"
+      "SELECT name FROM users WHERE age > (SELECT MIN(age) FROM users)",
+    diffTest "scope: same-table scalar in SELECT list"
+      "SELECT name, (SELECT MAX(age) FROM users) AS m FROM users",
+    diffTest "scope: shadowed id in IN subquery"
+      "SELECT name FROM users WHERE id IN (SELECT id FROM orders WHERE amount > 150)",
+    diffTest "scope: outer fall-through"
+      "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE amount > age * 10)",
+    diffTest "scope: derived-table outer row (unqualified keys)"
+      "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)",
     -- ON-less JOIN: SQLite accepts this spelling (cross product); DuckDB
     -- rejects it, so this oracle is the one that covers it
     diffTest "ON-less JOIN (cross product + WHERE)"

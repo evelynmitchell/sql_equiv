@@ -71,13 +71,14 @@ def Row.getQualified (row : Row) (table : Option String) (col : String) : Option
   match table with
   | some t => row.lookupCI s!"{t}.{col}"
   | none =>
-    -- Try unqualified first, then any qualified match
-    match row.lookupCI col with
-    | some v => some v
-    | none =>
-      match row.find? (fun (k, _) => k.toLower.endsWith s!".{col.toLower}") with
-      | some (_, v) => some v
-      | none => none
+    -- First entry, in row order, whose key is `col` or ends in `.col`. A
+    -- single pass, so that row order decides: correlated subquery rows are
+    -- `inner ++ outer`, and an unqualified outer key (from a derived table)
+    -- must not beat a qualified inner key (innermost scope wins, #253).
+    match row.find? (fun (k, _) =>
+        k.toLower == col.toLower || k.toLower.endsWith s!".{col.toLower}") with
+    | some (_, v) => some v
+    | none => none
 
 -- ============================================================================
 -- Value Operations
