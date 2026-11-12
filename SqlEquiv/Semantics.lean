@@ -1374,7 +1374,7 @@ theorem evalSelect_predicate_pushdown (db : Database) (t : String) (p q : Expr) 
   simp only []
   rw [evalSelect_star_where_eq_filter db (some (.table ⟨t, none⟩)) p,
       evalSelect_star_where_eq_filter db (some (.table ⟨t, none⟩)) (.binOp .and p q)]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   rw [← list_filter_and_eq]
   congr 1; funext row
   exact (evalExprWithDb_and_true_iff db row p q).symm
@@ -1402,19 +1402,19 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
   -- Goal: filteredRows equality (both with where_ = none → just mapped baseRows)
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_a")
   -- RHS: evalFrom db (.join (.subquery (SELECT * FROM a WHERE filter) "filtered_a") .inner b (some cond))
   rw [evalFrom_subquery_simple]
   rw [evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: (evalFrom db (.join a .inner b (some cond))).filter P
   rw [evalFrom_inner_join]
   -- LHS: ((evalFrom db a).flatMap F).filter P
   -- RHS: evalFrom db (.join (.subquery ...) .inner b (some cond))
   rw [evalFrom_inner_join (db := db) (left := .subquery _ _)]
   rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- RHS: ((evalFrom db a).filter Q).flatMap F
   -- Now apply list algebra: flatMap/filter commutation
   apply list_flatMap_filter_comm
@@ -1452,15 +1452,15 @@ theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond fi
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_b")
   -- RHS: evalFrom db (.join a .inner (.subquery (SELECT * FROM b WHERE filter) "filtered_b") (some cond))
   rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   rw [evalFrom_inner_join]
   rw [evalFrom_inner_join (db := db) (right := .subquery _ _)]
   rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: ((evalFrom db a).flatMap F_orig).filter P
   -- RHS: (evalFrom db a).flatMap F_filtered
   -- where F_filtered uses (evalFrom db b).filter Q instead of evalFrom db b

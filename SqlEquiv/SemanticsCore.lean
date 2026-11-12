@@ -1382,7 +1382,7 @@ theorem evalSelectCore_filter_and (db : Database)
   congr 1
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   rw [← list_filter_and_eq]
   congr 1; funext row; exact (h_and row).symm
 
@@ -1421,7 +1421,7 @@ theorem evalSelectCore_filter_commute (db : Database)
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star,
       evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   exact list_filter_comm _ _ _
 
 /-- Core filter_idempotent: filtering by p then p again equals filtering by p once. -/
@@ -1456,7 +1456,7 @@ theorem evalSelectCore_filter_idempotent (db : Database)
   congr 1
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- Goal: (baseRows.filter p).filter p = baseRows.filter p
   induction (match from_ with | some f => fromEval db f | none => [[]]) with
   | nil => rfl
@@ -1497,7 +1497,7 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
   congr 1
   simp only [h_subquery]
   rw [evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _ h_hasAgg_star h_hasWindowFn_star h_star]
-  simp only [List.nil_append, List.append_nil, List.map_id']
+  simp only [List.append_nil, List.map_id']
 
 -- ============================================================================
 -- Simple SELECT decomposition (for IN/EXISTS subquery proofs)
