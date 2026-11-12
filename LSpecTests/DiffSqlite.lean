@@ -239,10 +239,11 @@ private def diffFullTest (description : String) (sel : SelectStmt) (sqlQuery : S
       return (description, false)
 
 /-- Parse-based runner (retrofit of the DiffDuckdb design): parse the SQL with
-    our parser, evaluate against the Lean-side `db`, run the same SQL through
+    our parser in the `sqlite` dialect (sqlite's implementation-defined
+    choices), evaluate against the Lean-side `db`, run the same SQL through
     sqlite3, compare normalized result multisets. -/
 private def diffTest (description : String) (sql : String) : IO (String × Bool) := do
-  match parse sql with
+  match parse sql (dialect := .sqlite) with
   | .error e =>
     IO.eprintln s!"  Our parser failed for '{description}': {e}"
     return (description, false)
@@ -362,6 +363,12 @@ def runAllTests : IO TestSeq := do
       "SELECT department, MAX(name) AS m FROM users GROUP BY department",
     diffTest "MAX over strings skips NULL"
       "SELECT MAX(CASE WHEN age > 26 THEN name END) AS m FROM users",
+    -- Mixed numbers and strings (registry row 13): in the sqlite dialect
+    -- numbers order before strings, as in sqlite itself
+    diffTest "MAX over mixed types (sqlite type-class order)"
+      "SELECT MAX(CASE WHEN age > 26 THEN name ELSE age END) AS m FROM users",
+    diffTest "MIN over mixed types (sqlite type-class order)"
+      "SELECT MIN(CASE WHEN age > 26 THEN name ELSE age END) AS m FROM users",
     -- Subquery name resolution is inner-first (#253): unqualified names bind
     -- to the subquery's own FROM, then fall through to the outer row.
     diffTest "scope: same-table scalar subquery"

@@ -32,6 +32,10 @@
     semantics), matching DuckDB. Covered by the duplicate-bearing set-op
     cases below. The ALL variants (INTERSECT ALL/EXCEPT ALL) are still not
     parsed.
+  - MIN/MAX over mixed numbers and strings (registry row 13): DuckDB and our
+    `duckdb` dialect both treat it as an error, but DuckDB fails the query
+    while ours yields NULL in a SELECT list (the cross-cutting "quieter
+    error"), so no differential case; pinned by unit tests instead.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
@@ -157,10 +161,10 @@ private def sortTable (tbl : Table) : Table :=
 -- ============================================================================
 
 /-- Parse the SQL with our parser, evaluate, run the same SQL through duckdb,
-    compare result multisets. Parsed with DuckDB's NULL ordering (NULLS LAST in
-    both directions), the engine rule this oracle implements. -/
+    compare result multisets. Parsed in the `duckdb` dialect, so every
+    implementation-defined choice is DuckDB's (e.g. NULLS LAST both ways). -/
 private def diffTest (description : String) (sql : String) : IO (String × Bool) := do
-  match parse sql (nullOrdering := .nullsAlwaysLast) with
+  match parse sql (dialect := .duckdb) with
   | .error e =>
     IO.eprintln s!"  Our parser failed for '{description}': {e}"
     return (description, false)

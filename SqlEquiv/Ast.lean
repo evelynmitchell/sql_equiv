@@ -198,13 +198,24 @@ inductive UnaryOp where
   | isNotNull
   deriving Repr, BEq, Inhabited, DecidableEq
 
-/-- Aggregate functions -/
+/-- How MIN/MAX treat input that mixes numbers and strings. Implementation-
+    defined (docs/IMPLEMENTATION_DEFINED.md, row 13); chosen by the dialect at
+    parse time and recorded on each MIN/MAX node.
+    - `error`: the aggregate is an error (standard, DuckDB, Postgres).
+    - `typeClass`: numbers order before strings, so MAX is the greatest string
+      and MIN the least number (sqlite). -/
+inductive MixedMinMax where
+  | error
+  | typeClass
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- Aggregate functions (MIN/MAX carry the dialect's mixed-type mode) -/
 inductive AggFunc where
   | count
   | sum
   | avg
-  | min
-  | max
+  | min (mixed : MixedMinMax)
+  | max (mixed : MixedMinMax)
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Table reference with optional alias -/
@@ -256,10 +267,58 @@ def NullOrdering.resolve : NullOrdering → OrderDir → NullsOrder
   | .nullsLargest, .desc => .first
   | .nullsAlwaysLast, _ => .last
 
-/-- Default rule: sqlite's (Spider's reference engine). The parser uses it when
-    no other `NullOrdering` is given; each ORDER BY item then carries an explicit
-    `NullsOrder`, so evaluation and proofs never depend on this choice. -/
-def defaultNullOrdering : NullOrdering := .nullsSmallest
+/-- The database engine whose implementation-defined behaviour a query is
+    checked against (docs/IMPLEMENTATION_DEFINED.md). Resolved at parse time:
+    the parser writes each choice into the AST (e.g. the NULL position of every
+    ORDER BY item, the mixed-type mode of every MIN/MAX), so evaluation and
+    proofs never depend on the dialect, and every equivalence theorem holds for
+    every dialect.
+    - `standard`: the SQL standard; where it says error, we error. Where it
+      leaves a choice to the implementation, see `Dialect.config`.
+    - `sqlite`, `duckdb`, `postgres`: that engine's behaviour, as observed and
+      recorded in the registry. -/
+inductive Dialect where
+  | standard
+  | sqlite
+  | duckdb
+  | postgres
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- The per-behaviour choices of a dialect (one field per configurable row of
+    the implementation-defined registry). -/
+structure DialectConfig where
+  /-- Where NULLs sort when an ORDER BY item has no NULLS FIRST/LAST (row 1) -/
+  nullOrdering : NullOrdering
+  /-- MIN/MAX over mixed numbers and strings (row 13) -/
+  mixedMinMax : MixedMinMax
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- Each dialect's choices. `standard` has to pick a NULL position (the standard
+    leaves it to the implementation): it takes NULL-largest, the rule of the
+    Postgres standards tiebreaker. -/
+def Dialect.config : Dialect → DialectConfig
+  | .standard => { nullOrdering := .nullsLargest,    mixedMinMax := .error }
+  | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass }
+  | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error }
+  | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error }
+
+/-- Parse a dialect name (case-insensitive): standard, sqlite, duckdb, postgres
+    (or postgresql). -/
+def Dialect.ofString? (s : String) : Option Dialect :=
+  match s.toLower with
+  | "standard" => some .standard
+  | "sqlite" => some .sqlite
+  | "duckdb" => some .duckdb
+  | "postgres" | "postgresql" => some .postgres
+  | _ => none
+
+/-- The dialect used when none is given. -/
+def defaultDialect : Dialect := .standard
+
+/-- The default dialect's NULL rule. Each ORDER BY item carries an explicit
+    `NullsOrder`, so evaluation and proofs never depend on this choice; the
+    pretty-printer omits NULLS FIRST/LAST when an item matches it. -/
+def defaultNullOrdering : NullOrdering := defaultDialect.config.nullOrdering
 
 /-- Set operations -/
 inductive SetOp where
@@ -276,8 +335,8 @@ inductive WindowFunc where
   | denseRank
   | sum
   | avg
-  | min
-  | max
+  | min (mixed : MixedMinMax)
+  | max (mixed : MixedMinMax)
   | count
   deriving Repr, BEq, Inhabited, DecidableEq
 
@@ -386,7 +445,7 @@ def OrderByItem.nulls : OrderByItem → NullsOrder
   | .mk _ _ n => n
 
 /-- ORDER BY item with the NULL position chosen by a `NullOrdering`
-    (default: sqlite's rule). -/
+    (default: the default dialect's rule). -/
 def OrderByItem.ofDir (e : Expr) (d : OrderDir)
     (ordering : NullOrdering := defaultNullOrdering) : OrderByItem :=
   .mk e d (ordering.resolve d)

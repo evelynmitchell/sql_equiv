@@ -343,7 +343,7 @@ def main() -> None:
         f.write("\n".join(manifest_lines) + "\n")
         manifest_path = f.name
 
-    out = subprocess.run([str(EXE), "--spider-eval", manifest_path],
+    out = subprocess.run([str(EXE), "--dialect", "sqlite", "--spider-eval", manifest_path],
                          capture_output=True, text=True, check=True).stdout
 
     # Parse our results

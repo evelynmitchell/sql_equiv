@@ -8,6 +8,21 @@ import SqlEquiv
 
 open SqlEquiv
 
+/-- Target dialect for parsing (`--dialect`, or the REPL's `dialect` command):
+    which engine's implementation-defined behaviour queries are checked against.
+    See docs/IMPLEMENTATION_DEFINED.md. -/
+initialize dialectRef : IO.Ref Dialect ← IO.mkRef defaultDialect
+
+/-- Parse with the current target dialect. -/
+def parseD (sql : String) : IO (Except String Stmt) := do
+  return parse sql (dialect := ← dialectRef.get)
+
+def dialectName : Dialect → String
+  | .standard => "standard"
+  | .sqlite => "sqlite"
+  | .duckdb => "duckdb"
+  | .postgres => "postgres"
+
 -- ============================================================================
 -- ANSI Color Support
 -- ============================================================================
@@ -234,7 +249,7 @@ def EquivResult.toString : EquivResult -> String
 /-- Parse SQL and show AST -/
 def cmdParse (sql : String) : IO Unit := do
   IO.println s!"\n{Color.info "Parsing"}: {sql}"
-  match parse sql with
+  match ← parseD sql with
   | .ok stmt =>
     IO.println s!"\n{Color.success "AST"}:"
     IO.println (prettyAst stmt)
@@ -246,7 +261,7 @@ def cmdParse (sql : String) : IO Unit := do
 /-- Evaluate SQL against sample database -/
 def cmdEval (sql : String) : IO Unit := do
   IO.println s!"\n{Color.info "Evaluating"}: {sql}"
-  match parse sql with
+  match ← parseD sql with
   | .ok stmt =>
     let (_, result) := evalStmt sampleDatabase stmt
     match result with
@@ -274,7 +289,7 @@ def cmdEquiv (input : String) : IO Unit := do
   IO.println s!"{Color.info "Query 2"}: {sql2}"
   IO.println ""
 
-  match parse sql1, parse sql2 with
+  match ← parseD sql1, ← parseD sql2 with
   | .ok stmt1, .ok stmt2 =>
     -- Check syntactic equivalence
     let result : EquivResult :=
@@ -331,7 +346,7 @@ def cmdEquiv (input : String) : IO Unit := do
 /-- Show normalized form -/
 def cmdNormalize (sql : String) : IO Unit := do
   IO.println s!"\n{Color.info "Normalizing"}: {sql}"
-  match parse sql with
+  match ← parseD sql with
   | .ok stmt =>
     match stmt with
     | .query (.simple sel) =>
@@ -363,6 +378,7 @@ def cmdHelp : IO Unit := do
   IO.println s!"  {Color.keyword "equiv"} <q1> | <q2>  Check if two queries are equivalent"
   IO.println s!"  {Color.keyword "normalize"} <sql>    Show normalized form of query"
   IO.println s!"  {Color.keyword "schema"}             Show sample database schema"
+  IO.println s!"  {Color.keyword "dialect"} [name]     Show or set the target dialect (standard, sqlite, duckdb, postgres)"
   IO.println s!"  {Color.keyword "help"}               Show this help message"
   IO.println s!"  {Color.keyword "quit"} / {Color.keyword "exit"}       Exit the REPL"
   IO.println ""
@@ -427,7 +443,7 @@ def processBatchFile (filename : String) : IO Unit := do
       let query := currentQuery.trimAscii.toString.dropEnd 1 |>.toString  -- Remove semicolon
       IO.println s!"{Color.dimText "---"} Line {lineNum}: {query.take 50}..."
 
-      match parse query with
+      match ← parseD query with
       | .ok stmt =>
         let (_, result) := evalStmt sampleDatabase stmt
         match result with
@@ -508,6 +524,17 @@ partial def replLoop : IO Unit := do
     | "schema" | "s" =>
       cmdSchema
       replLoop
+    | "dialect" =>
+      if args.isEmpty then
+        IO.println s!"Dialect: {dialectName (← dialectRef.get)}"
+      else
+        match Dialect.ofString? args with
+        | some d =>
+          dialectRef.set d
+          IO.println s!"{Color.success "Dialect"}: {dialectName d}"
+        | none =>
+          IO.println s!"{Color.error "Unknown dialect"}: {args} (standard, sqlite, duckdb, postgres)"
+      replLoop
     | _ =>
       -- Try to parse as SQL directly (default: eval)
       if input.toUpper.startsWith "SELECT" ||
@@ -536,7 +563,26 @@ def printBanner : IO Unit := do
 -- Main Entry Point
 -- ============================================================================
 
-def main (args : List String) : IO Unit := do
+/-- Remove `--dialect <name>` from the arguments. -/
+def extractDialect : List String → Option String × List String
+  | "--dialect" :: name :: rest => (some name, rest)
+  | ["--dialect"] => (some "", [])
+  | a :: rest => let (d, r) := extractDialect rest; (d, a :: r)
+  | [] => (none, [])
+
+def main (args0 : List String) : IO Unit := do
+  let (dialectArg, args) := extractDialect args0
+  match dialectArg with
+  | some name =>
+    match Dialect.ofString? name with
+    | some d => dialectRef.set d
+    | none =>
+      IO.eprintln s!"Unknown dialect: {name} (standard, sqlite, duckdb, postgres)"
+      IO.Process.exit 2
+  | none =>
+    -- The Spider gold results were computed on sqlite, so --spider-eval
+    -- defaults to the sqlite dialect; everything else defaults to standard.
+    if args.head? == some "--spider-eval" then dialectRef.set .sqlite
   -- Check for batch mode
   if args.length >= 2 && args[0]! == "--file" then
     let filename := args[1]!
@@ -556,7 +602,7 @@ def main (args : List String) : IO Unit := do
       n := n + 1
       if line.trimAscii.isEmpty then
         continue
-      match SqlEquiv.parse line with
+      match ← parseD line with
       | .ok _ => IO.println s!"ok\t{n}"
       | .error e =>
         let msg := (e.splitOn "\n").headD e
@@ -638,7 +684,7 @@ def main (args : List String) : IO Unit := do
       let tbls := (dbs.lookup qdb).getD []
       let database : SqlEquiv.Database := fun n =>
         ((tbls.find? (fun (tn, _) => tn.toLower == n.toLower)).map (·.2)).getD []
-      match SqlEquiv.parse sql with
+      match ← parseD sql with
       | .error e =>
         IO.println s!"#RESULT {i} err parse: {(s!"{e}".splitOn "\n").headD ""}"
       | .ok stmt =>
@@ -655,6 +701,9 @@ def main (args : List String) : IO Unit := do
     IO.println "Options:"
     IO.println "  --file <path>   Process SQL file in batch mode"
     IO.println "  --parse-lines <path>  Parse one statement per line, machine-readable output"
+    IO.println "  --dialect <name>  Target engine for implementation-defined behaviour:"
+    IO.println "                    standard (default), sqlite, duckdb, postgres"
+    IO.println "                    (--spider-eval defaults to sqlite)"
     IO.println "  --help, -h      Show this help message"
     IO.println ""
     IO.println "Without options, starts interactive REPL mode."
