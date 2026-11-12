@@ -798,13 +798,16 @@ private theorem List.any_map {α β : Type} (f : α → β) (p : β → Bool) (l
 
 /-- IN subquery is equivalent to EXISTS with equality condition.
     x IN (SELECT tableName.col FROM t) ≡ EXISTS (SELECT 1 FROM t WHERE t.col = x)
-    Requires that e evaluates to a value and is stable under row extension.
+    Requires that e evaluates to a value, and to the same value when the subquery's
+    rows are prepended to the outer row (`hstable`): the subquery's columns are in
+    scope first (#253), so `e` must not be captured by a column of `t`.
     The hNoAgg/hNoWin conditions are needed because hasAggregate/exprHasWindowFn are
     partial functions. For concrete items (.col, .lit), use `native_decide`. -/
 theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
     (tableName : String) (colName : String) (v : Value)
     (heval : evalExprWithDb db row e = some v)
-    (hstable : ∀ extra : Row, evalExprWithDb db (row ++ extra) e = some v)
+    (hstable : ∀ extra ∈ evalFrom db (.table ⟨tableName, none⟩),
+      evalExprWithDb db (extra ++ row) e = some v)
     (hNoAggCol : selectHasAggregate [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoWinCol : selectHasWindowFn [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
@@ -837,17 +840,17 @@ theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
   congr 1  -- strip !
   congr 1  -- strip .isEmpty
   -- goal: filter pred1 ctx = filter pred2 ctx where ctx = map (row ++ ·) baseRows
-  -- Can't use funext because hstable requires r = row ++ extra
+  -- Can't use funext because hstable requires r = extra ++ row
   apply List.filter_congr
   intro r hr
-  -- r ∈ List.map (row ++ ·) baseRows, so r = row ++ extra for some extra
-  obtain ⟨extra, _, rfl⟩ := List.mem_map.mp hr
+  -- r ∈ List.map (· ++ row) baseRows, so r = extra ++ row for some extra
+  obtain ⟨extra, hmem, rfl⟩ := List.mem_map.mp hr
   -- Per-row equivalence: IN match pred = EXISTS WHERE pred
   simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
     evalExprWithDb_binOp]
-  rw [hstable extra]
+  rw [hstable extra hmem]
   -- Case split on column evaluation to reduce nested match + head?
-  cases hcol : evalExprWithDb db (row ++ extra) (.col ⟨some tableName, colName⟩) with
+  cases hcol : evalExprWithDb db (extra ++ row) (.col ⟨some tableName, colName⟩) with
   | none => cases v <;> rfl
   | some colVal =>
     simp only [List.head?_cons]
@@ -855,11 +858,13 @@ theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
     cases colVal <;> cases v <;> rfl
 
 /-- NOT IN subquery is equivalent to NOT EXISTS with equality condition.
-    Requires that e evaluates to a value and is stable under row extension. -/
+    Requires that e evaluates to a value and is not captured by the subquery's
+    columns (`hstable`, see `in_subquery_as_exists`). -/
 theorem not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
     (tableName : String) (colName : String) (v : Value)
     (heval : evalExprWithDb db row e = some v)
-    (hstable : ∀ extra : Row, evalExprWithDb db (row ++ extra) e = some v)
+    (hstable : ∀ extra ∈ evalFrom db (.table ⟨tableName, none⟩),
+      evalExprWithDb db (extra ++ row) e = some v)
     (hNoAggCol : selectHasAggregate [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoWinCol : selectHasWindowFn [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
@@ -891,11 +896,11 @@ theorem not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
   -- Goal: filter pred1 ctx = filter pred2 ctx
   apply List.filter_congr
   intro r hr
-  obtain ⟨extra, _, rfl⟩ := List.mem_map.mp hr
+  obtain ⟨extra, hmem, rfl⟩ := List.mem_map.mp hr
   simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
     evalExprWithDb_binOp]
-  rw [hstable extra]
-  cases hcol : evalExprWithDb db (row ++ extra) (.col ⟨some tableName, colName⟩) with
+  rw [hstable extra hmem]
+  cases hcol : evalExprWithDb db (extra ++ row) (.col ⟨some tableName, colName⟩) with
   | none => cases v <;> rfl
   | some colVal =>
     simp only [List.head?_cons]
@@ -1028,6 +1033,26 @@ private theorem lookupCI_append_none_left :
       rw [if_neg hne]
       exact lookupCI_append_none_left rest l₂ key h
 
+/-- lookupCI on l₁ ++ l₂: if l₂.lookupCI = none, the result is l₁'s lookup -/
+private theorem lookupCI_append_none_right :
+    ∀ (l₁ l₂ : List (String × Value)) (key : String),
+    Row.lookupCI l₂ key = none → Row.lookupCI (l₁ ++ l₂) key = Row.lookupCI l₁ key
+  | [], _, _, h => h
+  | (_k, _v) :: rest, l₂, key, h => by
+    simp only [List.cons_append, Row.lookupCI]
+    split
+    · rfl
+    · exact lookupCI_append_none_right rest l₂ key h
+
+/-- A qualified column absent from the outer row `a` evaluates the same on the
+    subquery context row `b ++ a` (inner-first, #253) as on the join row `a ++ b`. -/
+theorem evalExprWithDb_qcol_append_comm (db : Database) (a b : Row) (t c : String)
+    (h : a.getQualified (some t) c = none) :
+    evalExprWithDb db (b ++ a) (.col ⟨some t, c⟩) =
+    evalExprWithDb db (a ++ b) (.col ⟨some t, c⟩) := by
+  simp only [evalExprWithDb_col, Row.getQualified] at h ⊢
+  rw [lookupCI_append_none_left _ _ _ h, lookupCI_append_none_right _ _ _ h]
+
 /-- isNullValue of any lookupCI on a null-padded list is true -/
 private theorem isNullValue_lookupCI_nullPad :
     ∀ (l : List (String × Value)) (key : String),
@@ -1066,11 +1091,14 @@ private theorem filter_null_pad_empty (lr : List (String × Value))
   exact hRrEmpty ⟨k', v'⟩ hk'Mem
 
 /-- If a join match exists with a qualified row from s,
-    then the IN subquery returns true. -/
+    then the IN subquery returns true. `hNoCapture`: the outer row has no
+    `sName.yCol` column, so the subquery context row `sRow ++ row` (inner
+    first, #253) and the join row `row ++ sRow` agree on it. -/
 theorem join_match_implies_in_subquery (db : Database) (row : Row)
     (x : Expr) (sName yCol : String) (sRow : Row)
     (hMem : sRow ∈ evalFrom db (.table ⟨sName, some sName⟩))
     (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
+    (hNoCapture : row.getQualified (some sName) yCol = none)
     (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hMatch : evalExprWithDb db (row ++ sRow)
@@ -1098,8 +1126,8 @@ theorem join_match_implies_in_subquery (db : Database) (row : Row)
       congr 1; congr 1
       rw [List.any_eq_true]
       refine ⟨sRow, hMem, ?_⟩
-      simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem, hw,
-        List.head?_cons]
+      simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
+        evalExprWithDb_qcol_append_comm db row sRow sName yCol hNoCapture, hw, List.head?_cons]
       rw [Option.beq_some_true_iff]
       exact heq
 
@@ -1237,7 +1265,8 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
       | true =>
         exfalso
         obtain ⟨sRow, hsMem, hTrue⟩ := List.any_eq_true.mp hAny
-        simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem] at hTrue
+        simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
+          evalExprWithDb_qcol_append_comm db lr sRow sName yCol (hNotInLeft lr hlr)] at hTrue
         generalize hcol : evalExprWithDb db (lr ++ sRow) (.col ⟨some sName, yCol⟩) = colResult at hTrue
         cases colResult with
         | none => simp [List.head?] at hTrue; cases v <;> simp [Value.eq] at hTrue
@@ -1329,7 +1358,7 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
     -- Use join_match_implies_in_subquery for IN = true
     have hINTrue := join_match_implies_in_subquery db lr
       (.col ⟨some tName, xCol⟩) sName yCol sRow hsMem
-      (hStable lr hlr) hNoAgg hNoWin hEqTrue
+      (hStable lr hlr) (hNotInLeft lr hlr) hNoAgg hNoWin hEqTrue
     -- NOT IN = !(IN) = false
     have hNotInFalse : evalExprWithDb db lr
         (.inSubquery (.col ⟨some tName, xCol⟩) true
@@ -1426,6 +1455,7 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
 theorem in_subquery_implies_join_match (db : Database) (row : Row)
     (x : Expr) (sName yCol : String)
     (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
+    (hNoCapture : row.getQualified (some sName) yCol = none)
     (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (h : evalExprWithDb db row (Expr.inSubquery x false
@@ -1454,7 +1484,7 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
     -- Extract the boolean equality
     have hAny : (evalFrom db (.table ⟨sName, some sName⟩)).any
       (fun qRow => match (([.exprItem (.col ⟨some sName, yCol⟩) none].flatMap
-        (evalSelectItem db (row ++ qRow))).head?) with
+        (evalSelectItem db (qRow ++ row))).head?) with
         | some (_, subVal) => v.eq subVal == some true
         | none => false) = true := by
       have hinj := Option.some.inj h
@@ -1465,7 +1495,8 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
     -- Need to show evalExprWithDb db (row ++ qRow) (.binOp .eq x (.col ...)) = some (.bool true)
     rw [evalExprWithDb_binOp, ← hStable qRow, hv]
     -- From hqMatch, we know the evalSelectItem produced a row whose head matches
-    simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem] at hqMatch
+    simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
+      evalExprWithDb_qcol_append_comm db row qRow sName yCol hNoCapture] at hqMatch
     generalize hcol : evalExprWithDb db (row ++ qRow) (.col ⟨some sName, yCol⟩) = colResult at hqMatch
     cases colResult with
     | none =>
@@ -1495,7 +1526,10 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
     Preconditions:
     - hStable: t.xCol eval is stable when extra columns are appended
     - hNoAgg/hNoWin: subquery items have no aggregates/window functions
-    - hProjT: .star (some tName) projection on tRow ++ sRow = projection on tRow alone -/
+    - hProjT: .star (some tName) projection on tRow ++ sRow = projection on tRow alone
+    - hNotInLeft: s.yCol is not present in left table rows (inside the subquery
+      the inner row is in scope first, #253, so s.yCol must not also be an outer
+      column for the subquery and the join to read the same value) -/
 theorem in_subquery_unnest_to_join (db : Database)
     (tName sName : String) (xCol yCol : String)
     (hStable : ∀ row ∈ evalFrom db (.table ⟨tName, some tName⟩), ∀ extra : Row,
@@ -1506,7 +1540,9 @@ theorem in_subquery_unnest_to_join (db : Database)
     (hProjT : ∀ tRow ∈ evalFrom db (.table ⟨tName, some tName⟩),
       ∀ sRow ∈ evalFrom db (.table ⟨sName, some sName⟩),
       (tRow ++ sRow).filter (fun (k, _) => k.startsWith s!"{tName}.") =
-      tRow.filter (fun (k, _) => k.startsWith s!"{tName}.")) :
+      tRow.filter (fun (k, _) => k.startsWith s!"{tName}."))
+    (hNotInLeft : ∀ lr ∈ evalFrom db (.table ⟨tName, some tName⟩),
+      lr.getQualified (some sName) yCol = none) :
     let inSubqueryForm := SelectStmt.mk true  -- DISTINCT
         [.star (some tName)]  -- SELECT DISTINCT t.*
         (some (.table ⟨tName, some tName⟩))  -- FROM t
@@ -1564,7 +1600,7 @@ theorem in_subquery_unnest_to_join (db : Database)
     -- Use in_subquery_implies_join_match to get matching sRow
     have hStableRow := hStable tRow htMem
     obtain ⟨sRow, hsMem, hMatch⟩ := in_subquery_implies_join_match db tRow
-      (.col ⟨some tName, xCol⟩) sName yCol hStableRow hNoAgg hNoWin hIN
+      (.col ⟨some tName, xCol⟩) sName yCol hStableRow (hNotInLeft tRow htMem) hNoAgg hNoWin hIN
     -- tRow ++ sRow ∈ join result
     refine ⟨tRow ++ sRow, ?_, ?_⟩
     · -- Membership in join
@@ -1587,7 +1623,7 @@ theorem in_subquery_unnest_to_join (db : Database)
       -- Use join_match_implies_in_subquery to get IN = true
       have hStableRow := hStable tRow htMem
       have hIN := join_match_implies_in_subquery db tRow
-        (.col ⟨some tName, xCol⟩) sName yCol sRow hsMem hStableRow hNoAgg hNoWin hMatch
+        (.col ⟨some tName, xCol⟩) sName yCol sRow hsMem hStableRow (hNotInLeft tRow htMem) hNoAgg hNoWin hMatch
       refine ⟨tRow, ?_, ?_⟩
       · -- tRow ∈ filtered
         rw [List.mem_filter]

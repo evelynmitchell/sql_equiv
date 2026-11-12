@@ -431,7 +431,29 @@ def subqueryTests : List TestResult := [
   testContainsValue "scalar_subquery_correlated" "SELECT (SELECT amount FROM orders WHERE orders.user_id = users.id LIMIT 1) FROM users WHERE id = 1" (.int 100),
   -- Correlated scalar subquery with MAX aggregate - get max order amount for Alice
   -- Alice has orders 100 and 200, so max is 200
-  testContainsValue "scalar_subquery_max" "SELECT (SELECT MAX(amount) FROM orders WHERE orders.user_id = users.id) FROM users WHERE id = 1" (.int 200)
+  testContainsValue "scalar_subquery_max" "SELECT (SELECT MAX(amount) FROM orders WHERE orders.user_id = users.id) FROM users WHERE id = 1" (.int 200),
+  -- Name resolution is inner-first (#253): an unqualified column inside a
+  -- subquery binds to the subquery's own FROM before the outer row.
+  -- singer ages 52, 25, 18. Outer-first resolution gave 52 / 0 rows / 3 rows.
+  testContainsValue "scope_scalar_same_table"
+    "SELECT (SELECT MIN(age) FROM singer) FROM singer" (.int 18),
+  testRowCount "scope_where_min_same_table"
+    "SELECT name FROM singer WHERE age > (SELECT MIN(age) FROM singer)" 2,
+  testRowCount "scope_where_max_minus_same_table"
+    "SELECT name FROM singer WHERE age > (SELECT MAX(age) - 11 FROM singer)" 1,
+  -- `id` is products.id (1..3), not the outer users.id (outer-first gave 5)
+  testRowCount "scope_in_shadowed_column"
+    "SELECT name FROM users WHERE id IN (SELECT id FROM products)" 3,
+  -- Columns the subquery lacks still fall through to the outer row:
+  -- amount > age * 10 holds for Bob (250), Dave (280), Eve (220)
+  testRowCount "scope_outer_fallthrough"
+    "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE amount > age * 10)" 3,
+  -- Outer row from a derived table has *unqualified* keys (`age`); the inner
+  -- table's keys are qualified (`users.age`). Unqualified lookup is a single
+  -- first-match pass, so the inner key still wins (MIN = 22 → 4 rows; an
+  -- exact-match-first lookup gave the outer `age` and 0 rows)
+  testRowCount "scope_derived_outer_unqualified_keys"
+    "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)" 4
 ]
 
 -- ============================================================================
@@ -524,8 +546,6 @@ def setOpSubqueryTests : List TestResult := [
     "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 250 UNION SELECT user_id FROM orders WHERE amount < 120)" 2,
   -- NOT IN with UNION subquery (Airports/Flights shape): user_ids with
   -- amount<250 {1,2} ∪ amount>250 {3} = {1,2,3} → Dave, Eve remain.
-  -- (Columns are chosen to avoid unqualified-name capture by the outer row:
-  -- `id` would resolve to the correlated users.id, not products.id.)
   testRowCount "not_in_union_subquery"
     "SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE amount < 250 UNION SELECT user_id FROM orders WHERE amount > 250)" 2,
   -- FROM with INTERSECT subquery: departments of (age>25) ∩ (age<30) = {Marketing}
@@ -541,8 +561,7 @@ def setOpSubqueryTests : List TestResult := [
   testContainsValue "scalar_union_subquery"
     "SELECT (SELECT MAX(amount) FROM orders UNION SELECT MIN(amount) FROM orders) FROM users WHERE id = 1" (.int 300),
   -- EXISTS with EXCEPT subquery: all order products appear in products (shared
-  -- alias p so the row keys match; qualified columns avoid capture of `name`
-  -- by the correlated users row) → EXCEPT is empty → NOT EXISTS for every user
+  -- alias p so the row keys match) → EXCEPT is empty → NOT EXISTS for every user
   testRowCount "not_exists_except_subquery"
     "SELECT name FROM users WHERE NOT EXISTS (SELECT orders.product AS p FROM orders EXCEPT SELECT products.name AS p FROM products)" 5
 ]

@@ -4313,3 +4313,54 @@ WHERE clause. Compile-time examples are in `Test/EquivTest.lean`.
 
 - 4 theorems; axiom count 0 → 0; `#print axioms` is the standard
   `[propext, sorryAx, Classical.choice, Quot.sound]`.
+
+## Batch 51: inner-first name resolution in correlated subqueries (#253)
+
+**Issue**: #253
+
+Subquery context rows were built as `outerRow ++ row`. Row lookup returns the
+first match, so an unqualified (or same-qualifier) column inside a subquery
+bound to the *outer* row: `(SELECT MIN(age) FROM singer)` read the outer
+`singer.age`. They are now `row ++ outerRow` (innermost scope wins), in
+`evalSelectCore` and its mirror `evalSelectAfterFilter`. ORDER BY sort sources
+keep the inner prefix, `r.take (r.length - ctxLen)`, instead of dropping an
+outer prefix.
+
+Unqualified lookup (`Row.getQualified row none col`) was two passes: an exact
+key match over the whole row, then a `.col` suffix match. With an outer row
+from a derived table (unqualified keys) and an inner base table (qualified
+keys), the exact pass found the outer key first, so outer-first survived. It
+is now a single first-match pass (exact or suffix), letting row order decide.
+Found by the critical self-review; no proof referenced the `none` branch.
+
+### Statement changes (sanctioned)
+
+| Theorem | Change |
+|---------|--------|
+| `evalSelectCore_{simple,distinct}_project{,_where}`, `evalSelectWithContext_simple_project{,_where}` | `List.map (outerRow ++ ·)` → `List.map (· ++ outerRow)` |
+| `evalSelect_star_where_eq_filter` | `[] ++ row` → `row ++ []` |
+| `in_subquery_as_exists`, `not_in_subquery_as_not_exists` | `hstable` was "`e` is stable when columns are *appended*" (always true for a column); now "`e` evaluates to `v` on `extra ++ row` for every row `extra` of the subquery's table" — `e` must not be captured by the subquery's columns |
+| `join_match_implies_in_subquery`, `in_subquery_implies_join_match` | new `hNoCapture : row.getQualified (some sName) yCol = none` |
+| `in_subquery_unnest_to_join` | new `hNotInLeft` (already a hypothesis of `not_in_subquery_unnest_to_antijoin`) |
+
+The new hypotheses are real preconditions under correct scoping: in a
+self-referencing query (outer and inner both read `s`), `s.y` inside the
+subquery is the inner column while the join row resolves it to the left side,
+so the IN and JOIN forms genuinely differ.
+
+### Proof technique
+
+- `take_inner_of_append` (simp): `(row ++ o).take ((row ++ o).length - o.length) = row`,
+  replacing `List.drop_left` in `evalSelectCore_outerRow_congr`.
+- `lookupCI_append_none_right` and `evalExprWithDb_qcol_append_comm`: a
+  qualified column absent from the outer row reads the same on `sRow ++ row`
+  (subquery context) and `row ++ sRow` (join row). This bridges the subquery
+  and join forms in the unnesting proofs.
+- Elsewhere `List.append_nil` joins `List.nil_append` in the simp sets.
+
+### Net change
+
+- Axiom count unchanged; `#print axioms` is the standard
+  `[propext, sorryAx, Classical.choice, Quot.sound]` (and `evalSelectCore_outerRow_congr`
+  stays sorry-free).
+- Spider evaluate-agreement 539 → 549 / 564; ratchet updated.

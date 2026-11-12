@@ -125,16 +125,22 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 
 ## Bugs found while compiling this registry (standard-defined, not implementation-defined)
 
-- **Correlated-subquery name resolution is outer-first.** Inside a subquery, an
-  unqualified column is resolved against the *outer* query's row before the
-  subquery's own tables. SQL scoping is the reverse: the innermost scope wins.
-  Observed: over `singer(age) = 20, 30, 41`, `SELECT (SELECT avg(age) FROM singer)
-  FROM singer` returns **20** (the outer row's `age`) instead of 30.33, and
-  `WHERE age > (SELECT min(age) FROM singer)` returns no rows instead of two.
-  The DuckDB harness already notes this as a "pre-existing divergence" (around
-  line 234 of `LSpecTests/DiffDuckdb.lean`). Filed as #253. This, not
-  AVG truncation, is the likely main cause of the Spider "AVG" failure class,
-  whose queries compare against `(SELECT avg(col) FROM same_table)`.
+- **Correlated-subquery name resolution was outer-first** (fixed, #253).
+  Inside a subquery, an unqualified column was resolved against the *outer*
+  query's row before the subquery's own tables; SQL scoping is the reverse.
+  Over `singer(age) = 20, 30, 41`, `SELECT (SELECT avg(age) FROM singer) FROM
+  singer` returned **20** (the outer row's `age`), and `WHERE age > (SELECT
+  min(age) FROM singer)` returned no rows instead of two. Fixed by building
+  subquery context rows inner-first (`row ++ outerRow`) and making unqualified
+  lookup a single first-match pass, so an unqualified outer key (from a derived
+  table) cannot beat a qualified inner one. This, not AVG
+  truncation, was the main cause of the Spider "AVG" failure class (Spider
+  539 → 549). Pinned by the `scope_*` unit tests and DiffSqlite/DiffDuckdb
+  `scope:` cases.
+- **MAX/MIN over strings returns NULL.** All three engines order text, so
+  `SELECT max(name) FROM t` is the greatest string; ours returns NULL. Seen in
+  Spider (`dog_kennels`: `WHERE T2.age = (SELECT max(age) FROM Dogs)` over a
+  TEXT `age`). Filed as #256.
 
 ---
 

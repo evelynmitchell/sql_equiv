@@ -1149,7 +1149,7 @@ theorem evalSelectWithContext_simple_project (db : Database) (outerRow : Row)
     evalSelectWithContext db outerRow
       (SelectStmt.mk false items (some from_) none [] none [] none none) =
     List.map (fun row => items.flatMap (evalSelectItem db row))
-      (List.map (outerRow ++ ·) (evalFrom db from_)) := by
+      (List.map (· ++ outerRow) (evalFrom db from_)) := by
   rw [evalSelectWithContext_eq_evalSelectCore]
   exact evalSelectCore_simple_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
 
@@ -1162,7 +1162,7 @@ theorem evalSelectWithContext_simple_project_where (db : Database) (outerRow : R
       (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
     List.map (fun row => items.flatMap (evalSelectItem db row))
       (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
-        (List.map (outerRow ++ ·) (evalFrom db from_))) := by
+        (List.map (· ++ outerRow) (evalFrom db from_))) := by
   rw [evalSelectWithContext_eq_evalSelectCore]
   exact evalSelectCore_simple_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
 
@@ -1195,11 +1195,11 @@ theorem evalSelectItem_qualified_star (db : Database) (row : Row) (t : String) :
     row.filter fun (k, _) => k.startsWith s!"{t}." := by
   simp [evalSelectItem]
 
-/-- Helper: List.map ([] ++ ·) l = l (avoids simp/map_id matching issues). -/
-private theorem list_map_nil_append_eq (l : Table) : l.map ([] ++ ·) = l := by
+/-- Helper: List.map (· ++ []) l = l (avoids simp/map_id matching issues). -/
+private theorem list_map_nil_append_eq (l : Table) : l.map (· ++ []) = l := by
   induction l with
   | nil => rfl
-  | cons h t ih => simp only [List.map_cons, List.nil_append]; exact congrArg _ ih
+  | cons h t ih => simp only [List.map_cons, List.append_nil] at ih ⊢; exact congrArg _ ih
 
 /-- SELECT DISTINCT items FROM from_ = (project base rows).eraseDups -/
 theorem evalSelect_distinct_project (db : Database)
@@ -1210,7 +1210,7 @@ theorem evalSelect_distinct_project (db : Database)
     ((evalFrom db from_).map (fun row => items.flatMap (evalSelectItem db row))).eraseDups := by
   have raw : evalSelect db (SelectStmt.mk true items (some from_) none [] none [] none none) =
     (List.map (fun row => items.flatMap (evalSelectItem db row))
-      (List.map ([] ++ ·) (evalFrom db from_))).eraseDups := by
+      (List.map (· ++ []) (evalFrom db from_))).eraseDups := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_distinct_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
@@ -1226,7 +1226,7 @@ theorem evalSelect_distinct_project_where (db : Database)
   have raw : evalSelect db (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
     (List.map (fun row => items.flatMap (evalSelectItem db row))
       (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
-        (List.map ([] ++ ·) (evalFrom db from_)))).eraseDups := by
+        (List.map (· ++ []) (evalFrom db from_)))).eraseDups := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_distinct_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
@@ -1240,7 +1240,7 @@ theorem evalSelect_nondistinct_project (db : Database)
     (evalFrom db from_).map (fun row => items.flatMap (evalSelectItem db row)) := by
   have raw : evalSelect db (SelectStmt.mk false items (some from_) none [] none [] none none) =
     List.map (fun row => items.flatMap (evalSelectItem db row))
-      (List.map ([] ++ ·) (evalFrom db from_)) := by
+      (List.map (· ++ []) (evalFrom db from_)) := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_simple_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
@@ -1256,7 +1256,7 @@ theorem evalSelect_nondistinct_project_where (db : Database)
   have raw : evalSelect db (SelectStmt.mk false items (some from_) (some cond) [] none [] none none) =
     List.map (fun row => items.flatMap (evalSelectItem db row))
       (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
-        (List.map ([] ++ ·) (evalFrom db from_))) := by
+        (List.map (· ++ []) (evalFrom db from_))) := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_simple_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
@@ -1359,7 +1359,7 @@ theorem evalSelect_filter_pushdown_table (db : Database) (items : List SelectIte
 theorem evalSelect_star_where_eq_filter (db : Database) (from_ : Option FromClause) (p : Expr) :
     evalSelect db (.mk false [.star none] from_ (some p) [] none [] none none) =
     let baseRows := match from_ with | some f => evalFrom db f | none => [[]]
-    (baseRows.map fun row => ([] : Row) ++ row).filter fun row =>
+    (baseRows.map fun row => row ++ ([] : Row)).filter fun row =>
       evalExprWithDb db row p == some (Value.bool true) := by
   rw [evalSelect_eq_evalSelectCore]
   exact evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _
@@ -1374,7 +1374,7 @@ theorem evalSelect_predicate_pushdown (db : Database) (t : String) (p q : Expr) 
   simp only []
   rw [evalSelect_star_where_eq_filter db (some (.table ⟨t, none⟩)) p,
       evalSelect_star_where_eq_filter db (some (.table ⟨t, none⟩)) (.binOp .and p q)]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   rw [← list_filter_and_eq]
   congr 1; funext row
   exact (evalExprWithDb_and_true_iff db row p q).symm
@@ -1402,19 +1402,19 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
   -- Goal: filteredRows equality (both with where_ = none → just mapped baseRows)
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_a")
   -- RHS: evalFrom db (.join (.subquery (SELECT * FROM a WHERE filter) "filtered_a") .inner b (some cond))
   rw [evalFrom_subquery_simple]
   rw [evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: (evalFrom db (.join a .inner b (some cond))).filter P
   rw [evalFrom_inner_join]
   -- LHS: ((evalFrom db a).flatMap F).filter P
   -- RHS: evalFrom db (.join (.subquery ...) .inner b (some cond))
   rw [evalFrom_inner_join (db := db) (left := .subquery _ _)]
   rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- RHS: ((evalFrom db a).filter Q).flatMap F
   -- Now apply list algebra: flatMap/filter commutation
   apply list_flatMap_filter_comm
@@ -1452,15 +1452,15 @@ theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond fi
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_b")
   -- RHS: evalFrom db (.join a .inner (.subquery (SELECT * FROM b WHERE filter) "filtered_b") (some cond))
   rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   rw [evalFrom_inner_join]
   rw [evalFrom_inner_join (db := db) (right := .subquery _ _)]
   rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.nil_append, List.map_id']
+  simp only [List.append_nil, List.map_id']
   -- LHS: ((evalFrom db a).flatMap F_orig).filter P
   -- RHS: (evalFrom db a).flatMap F_filtered
   -- where F_filtered uses (evalFrom db b).filter Q instead of evalFrom db b

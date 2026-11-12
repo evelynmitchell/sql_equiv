@@ -232,12 +232,16 @@ def runAllTests : IO TestSeq := do
     diffTest "CROSS JOIN product"
       "SELECT users.name, items.name FROM users CROSS JOIN items WHERE items.price > 2",
     -- Set-operation subquery (#218): UNION inside a NOT IN subquery.
-    -- Inner columns are qualified and the outer table differs from the inner
-    -- ones: our correlated-row resolution is outer-first for unqualified and
-    -- same-qualifier names, which would diverge from DuckDB's inner-first
-    -- scoping (pre-existing divergence, not a set-op one).
     diffTest "NOT IN with UNION subquery"
       "SELECT name FROM items WHERE name NOT IN (SELECT users.department FROM users UNION SELECT users.name FROM users)",
+    -- Subquery name resolution is inner-first (#253): unqualified names bind
+    -- to the subquery's own FROM, then fall through to the outer row.
+    diffTest "scope: same-table scalar subquery"
+      "SELECT name FROM users WHERE age > (SELECT MIN(age) FROM users)",
+    diffTest "scope: shadowed id in IN subquery"
+      "SELECT name FROM users WHERE id IN (SELECT id FROM items WHERE price > 2)",
+    diffTest "scope: outer fall-through"
+      "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM items WHERE id = age - 27)",
     -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
     -- sides; both engines (and now our semantics) return set results
     diffTest "INTERSECT dedups duplicate-bearing inputs"

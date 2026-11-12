@@ -277,13 +277,18 @@ Has GROUP BY?
 
 ### 6.3 Correlated Subqueries
 
-For correlated subqueries, the outer row context is merged with each base row:
+For correlated subqueries, the outer row context is appended to each base row:
 
 ```lean
-let baseRowsWithContext : Table := baseRows.map fun row => outerRow ++ row
+let baseRowsWithContext : Table := baseRows.map fun row => row ++ outerRow
 ```
 
-This allows subqueries to reference columns from outer queries.
+This allows subqueries to reference columns from outer queries. Because row
+lookup returns the first match, the subquery's own columns shadow outer ones:
+an unqualified `age` inside `(SELECT MIN(age) FROM singer)` is the inner
+`singer.age` even when the outer query also reads `singer` (innermost scope
+wins, #253). ORDER BY inside the subquery sorts on the inner prefix only
+(`r.take (r.length - outerRow.length)`).
 
 ---
 
