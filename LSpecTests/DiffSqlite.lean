@@ -22,6 +22,17 @@
   defined behaviour), see docs/IMPLEMENTATION_DEFINED.md for what we chose
   and how each case is tested.
 
+  KNOWN DIVERGENCES from sqlite (registry rows; do not add cases that hit
+  them, the registry records the decision and the pinning unit test):
+  - Row 10, cross-type comparison (`1 = 'a'`): sqlite returns false; we
+    treat it as a type error (#127, decided: matches DuckDB/Postgres).
+  - Row 12, TEXT column vs number (`year >= 2014`): sqlite compares as text
+    via column affinity; we treat it as a type error (#235, decided). The
+    Spider harness emulates sqlite here by quoting the literal, reported as
+    its own category.
+  - Row 8, LIKE case sensitivity: sqlite's LIKE is case-insensitive for
+    ASCII; ours (like DuckDB/Postgres) is case-sensitive.
+
   Uses IO-based tests since each test shells out to sqlite3.
 -/
 import LSpec

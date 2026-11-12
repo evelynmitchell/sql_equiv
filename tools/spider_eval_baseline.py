@@ -10,7 +10,7 @@ oracle per the role split on #225), and compares result multisets.
 
 Failure classes become issues; the agree-count is ratcheted in
 tools/spider_eval_minimum.txt. The count is exact multiset matches plus
-"tie-valid" answers: `ORDER BY … LIMIT n` where the cutoff falls inside a
+"TEXT-affinity emulated" matches (#235) plus "tie-valid" answers: `ORDER BY … LIMIT n` where the cutoff falls inside a
 tie and our rows are a valid tie-break (see `tie_valid`, guarded by a
 self-test that runs on every invocation).
 
@@ -213,6 +213,81 @@ def _self_test_tie_valid() -> None:
             sys.exit(f"FAIL: tie_valid self-test '{desc}': expected {expected}, got {got}")
 
 
+# --------------------------------------------------------------------------
+# TEXT-affinity emulation (#235, option A)
+# --------------------------------------------------------------------------
+# sqlite compares a TEXT-affinity column with a numeric literal by converting
+# the literal to text (`year >= 2014` compares `year` with '2014' as strings).
+# Our engine keeps strict typing (string vs number is a type error, see
+# docs/IMPLEMENTATION_DEFINED.md rows 10 and 12), so for OUR engine only the
+# harness rewrites such comparisons to `year >= '2014'`, which is exactly the
+# comparison sqlite performs. sqlite still runs the original query. Matches
+# that depend on the rewrite are reported as their own category.
+
+_CMP = r"(=|!=|<>|>=|<=|>|<)"
+_NUM = r"-?\d+(?:\.\d+)?"
+_COL_NUM = re.compile(r"(?<![\w'\".])((?:\w+\.)?(\w+))\s*" + _CMP + r"\s*(" + _NUM + r")(?![\w.])")
+_NUM_COL = re.compile(r"(?<![\w'\".])(" + _NUM + r")\s*" + _CMP + r"\s*((?:\w+\.)?(\w+))(?![\w.(])")
+
+
+def text_affinity_columns(schema: dict, tables, rows) -> set[str]:
+    """Lower-cased column names whose comparisons with a number can be
+    emulated: in EVERY table of the database that has a column of that name,
+    it has TEXT affinity (declared TEXT by sqlite_for) and all its non-NULL
+    synthetic values are non-numeric strings (our manifest shape-parses
+    numeric-looking cells as numbers, so those columns are left alone)."""
+    ok: dict[str, bool] = {}
+    for tname, colnames in tables:
+        for ci, cname in enumerate(colnames):
+            vals = [r[ci] for r in rows[tname] if r[ci] is not None]
+            good = bool(vals) and all(
+                isinstance(v, str) and not re.fullmatch(_NUM, v) for v in vals)
+            key = cname.lower()
+            ok[key] = ok.get(key, True) and good
+    return {k for k, v in ok.items() if v}
+
+
+def _string_spans(sql: str) -> list[tuple[int, int]]:
+    return [m.span() for m in re.finditer(r"'(?:[^']|'')*'|\"[^\"]*\"", sql)]
+
+
+def emulate_text_affinity(sql: str, text_cols: set[str]) -> str:
+    """Quote numeric literals compared with a TEXT-affinity column."""
+    spans = _string_spans(sql)
+    inside = lambda i: any(a <= i < b for a, b in spans)
+
+    def col_num(m: re.Match) -> str:
+        if inside(m.start()) or m.group(2).lower() not in text_cols:
+            return m.group(0)
+        return f"{m.group(1)} {m.group(3)} '{m.group(4)}'"
+
+    def num_col(m: re.Match) -> str:
+        if inside(m.start()) or m.group(4).lower() not in text_cols:
+            return m.group(0)
+        return f"'{m.group(1)}' {m.group(2)} {m.group(3)}"
+
+    return _NUM_COL.sub(num_col, _COL_NUM.sub(col_num, sql))
+
+
+def _self_test_text_affinity() -> None:
+    """Guards the rewrite: it must touch only TEXT-affinity column vs number
+    comparisons, and never numbers inside string literals or other columns."""
+    cols = {"year", "name"}
+    cases = [
+        ("SELECT * FROM c WHERE year >= 2014", "SELECT * FROM c WHERE year >= '2014'"),
+        ("SELECT * FROM c WHERE T1.year = 2014", "SELECT * FROM c WHERE T1.year = '2014'"),
+        ("SELECT * FROM c WHERE 2014 < year", "SELECT * FROM c WHERE '2014' < year"),
+        ("SELECT * FROM c WHERE age > 30", "SELECT * FROM c WHERE age > 30"),
+        ("SELECT * FROM c WHERE name = 'year = 5'", "SELECT * FROM c WHERE name = 'year = 5'"),
+        ("SELECT * FROM c WHERE year = 2014.5", "SELECT * FROM c WHERE year = '2014.5'"),
+        ("SELECT count(*) > 3 FROM c", "SELECT count(*) > 3 FROM c"),
+    ]
+    for src, want in cases:
+        got = emulate_text_affinity(src, cols)
+        if got != want:
+            sys.exit(f"FAIL: text-affinity self-test: {src!r} -> {got!r}, expected {want!r}")
+
+
 def classify_query(sql: str) -> str:
     """Feature signature for failure grouping."""
     u = sql.upper()
@@ -226,6 +301,7 @@ def main() -> None:
     check_only = "--check" in sys.argv
     update = "--update-ratchet" in sys.argv
     _self_test_tie_valid()
+    _self_test_text_affinity()
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
 
@@ -235,18 +311,33 @@ def main() -> None:
     # Build manifest for our engine + sqlite connections
     manifest_lines = []
     conns: dict[str, sqlite3.Connection] = {}
+    text_cols: dict[str, set[str]] = {}
     for db_id, schema in schemas.items():
         tables, rows = build_db(schema)
         conns[db_id] = sqlite_for(schema, tables, rows)
+        text_cols[db_id] = text_affinity_columns(schema, tables, rows)
         manifest_lines.append(f"#DB {db_id}")
         for tname, colnames in tables:
             manifest_lines.append(f"#TABLE {tname}")
             manifest_lines.append("|".join(colnames))
             for row in rows[tname]:
                 manifest_lines.append("|".join(cell_str(c) for c in row))
-    for p in pairs:
+    # Every query runs as written; queries the affinity rewrite changes also
+    # run rewritten, as extra manifest entries after the corpus. The original
+    # is always preferred, so the rewrite can only turn a failure into an
+    # (labelled) agreement, never the reverse.
+    rewritten: dict[int, int] = {}   # corpus index -> manifest index of rewrite
+    extra: list[tuple[str, str]] = []
+    for i, p in enumerate(pairs, start=1):
         manifest_lines.append(f"#QUERY {p['db']}")
         manifest_lines.append(p["query"])
+        ours_sql = emulate_text_affinity(p["query"], text_cols.get(p["db"], set()))
+        if ours_sql != p["query"]:
+            extra.append((p["db"], ours_sql))
+            rewritten[i] = len(pairs) + len(extra)
+    for db_id, sql in extra:
+        manifest_lines.append(f"#QUERY {db_id}")
+        manifest_lines.append(sql)
 
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write("\n".join(manifest_lines) + "\n")
@@ -278,6 +369,7 @@ def main() -> None:
 
     agree = 0
     tie_ok: list[str] = []
+    affinity_ok: list[str] = []
     failures: dict[str, list[tuple[str, str]]] = defaultdict(list)
     oracle_err = 0
     for i, p in enumerate(pairs, start=1):
@@ -294,6 +386,11 @@ def main() -> None:
             continue
         if normalize(payload) == normalize(sq_rows):
             agree += 1
+        elif (i in rewritten
+              and ours.get(rewritten[i], ("err", ""))[0] == "ok"
+              and (normalize(ours[rewritten[i]][1]) == normalize(sq_rows)
+                   or tie_valid(conns[p["db"]], p["query"], ours[rewritten[i]][1], sq_rows))):
+            affinity_ok.append(p["query"])
         elif tie_valid(conns[p["db"]], p["query"], payload, sq_rows):
             tie_ok.append(p["query"])
         else:
@@ -301,7 +398,7 @@ def main() -> None:
                 (p["query"], f"ours {len(payload)} rows vs sqlite {len(sq_rows)} rows"))
 
     total = len(pairs) - oracle_err
-    accepted = agree + len(tie_ok)
+    accepted = agree + len(tie_ok) + len(affinity_ok)
     rate = 100.0 * accepted / total if total else 0.0
     strict_rate = 100.0 * agree / total if total else 0.0
     if not check_only:
@@ -319,6 +416,12 @@ def main() -> None:
             "  a tie and our rows are a valid tie-break (every row sorting strictly before",
             "  the cutoff, plus tied rows). Not counted as failures. A NULL key at the",
             "  cutoff is not accepted as a tie.",
+            f"- TEXT-affinity emulated: {len(affinity_ok)}: queries comparing a TEXT column",
+            "  with a number, which sqlite compares as text. For our engine only, the",
+            "  harness quotes the number (`year >= 2014` → `year >= '2014'`), the",
+            "  comparison sqlite performs; our core semantics keep it a type error (#235,",
+            "  docs/IMPLEMENTATION_DEFINED.md row 12). Includes rewritten answers that are",
+            "  tie-valid. The original query is always tried first.",
             "",
             "Deterministic synthetic data (5 rows/table, FK-aware) over the dev",
             "schemas; multiset comparison of result rows.",
@@ -334,7 +437,8 @@ def main() -> None:
             lines.append(f"| {len(items)} | {cls} | `{q}` | {d[:60]} |")
         REPORT.write_text("\n".join(lines) + "\n")
         print(f"Evaluate-agreement: {accepted}/{total} ({rate:.1f}%) "
-              f"[exact {agree}, tie-valid {len(tie_ok)}] — report: {REPORT}")
+              f"[exact {agree}, tie-valid {len(tie_ok)}, affinity-emulated {len(affinity_ok)}] "
+              f"— report: {REPORT}")
 
     minimum = int(RATCHET.read_text().strip()) if RATCHET.exists() else 0
     # The ratchet counts exact matches plus tie-valid answers.
