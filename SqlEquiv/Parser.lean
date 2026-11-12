@@ -291,8 +291,8 @@ def sqlKeywords : List String := [
 ]
 
 /-- Check if string is an aggregate function name. MIN/MAX record the
-    dialect's mixed-type mode (`mixed`). -/
-def isAggFunc (s : String) (mixed : MixedMinMax := defaultDialect.config.mixedMinMax) :
+    dialect's MIN/MAX mode (`mixed`). -/
+def isAggFunc (s : String) (mixed : MinMaxMode := defaultDialect.config.minMaxMode) :
     Option AggFunc :=
   match s.toUpper with
   | "COUNT" => some .count
@@ -845,7 +845,7 @@ partial def parsePrimary : Parser Expr := do
     let t' ← Parser.peek
     if t' == .lparen then
       -- Check if it's an aggregate function
-      let mixed ← fun st => .ok (st.config.mixedMinMax, st)
+      let mixed ← fun st => .ok (st.config.minMaxMode, st)
       match isAggFunc first mixed with
       | some aggFn =>
         let _ ← Parser.advance
@@ -1142,7 +1142,7 @@ partial def parseSelectItem : Parser SelectItem := do
         return .exprItem e'' alias
     else if t' == .lparen then
       -- Function call or aggregate — check for aggregate first
-      let mixed ← fun st => .ok (st.config.mixedMinMax, st)
+      let mixed ← fun st => .ok (st.config.minMaxMode, st)
       match isAggFunc name mixed with
       | some aggFn =>
         let _ ← Parser.advance

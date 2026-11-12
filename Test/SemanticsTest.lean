@@ -572,10 +572,37 @@ def distinctAggTests : List TestResult := [
     "SELECT MIN(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.int 22),
   -- Unmixed input is the same in every dialect
   testContainsValueIn "max_string_sqlite" .sqlite "SELECT MAX(name) FROM users" (.string "Eve"),
+  -- Booleans (registry row 14). age > 26: Alice, Carol, Dave true; Bob, Eve false
+  -- standard / postgres: not orderable → error (NULL in SELECT, dropped in HAVING)
+  testContainsValue "max_bool_standard_is_error" "SELECT MAX(age > 26) FROM users" (.null none),
+  testContainsValueIn "max_bool_postgres_is_error" .postgres "SELECT MAX(age > 26) FROM users" (.null none),
+  testRowCount "max_bool_error_in_having"
+    "SELECT COUNT(*) FROM users HAVING MAX(age > 26) IS NOT NULL" 0,
+  -- sqlite: booleans are 1/0
+  testContainsValueIn "max_bool_sqlite_int" .sqlite "SELECT MAX(age > 26) FROM users" (.int 1),
+  testContainsValueIn "min_bool_sqlite_int" .sqlite "SELECT MIN(age > 26) FROM users" (.int 0),
+  -- duckdb: booleans only → boolean result (false < true)
+  testContainsValueIn "max_bool_duckdb_bool" .duckdb "SELECT MAX(age > 26) FROM users" (.bool true),
+  testContainsValueIn "min_bool_duckdb_bool" .duckdb "SELECT MIN(age > 26) FROM users" (.bool false),
+  testContainsValueIn "max_bool_duckdb_where_all_true" .duckdb
+    "SELECT MIN(age > 26) FROM users WHERE age > 26" (.bool true),
+  -- with integers, booleans act as 1/0 (sqlite and duckdb): Alice/Carol true,
+  -- Dave false (28 > 29 is false), Bob 25, Eve 22 → MAX 25, MIN 0
+  testContainsValueIn "max_bool_and_int_sqlite" .sqlite
+    "SELECT MAX(CASE WHEN age > 26 THEN age > 29 ELSE age END) FROM users" (.int 25),
+  testContainsValueIn "min_bool_and_int_duckdb" .duckdb
+    "SELECT MIN(CASE WHEN age > 26 THEN age > 29 ELSE age END) FROM users" (.int 0),
+  -- duckdb: booleans with strings → error (DuckDB: cannot convert to BOOL)
+  testContainsValueIn "max_bool_and_string_duckdb_error" .duckdb
+    "SELECT MAX(CASE WHEN age > 26 THEN age > 29 ELSE name END) FROM users" (.null none),
+  -- windowed path
+  testContainsValueIn "max_bool_window_sqlite" .sqlite
+    "SELECT MAX(age > 26) OVER (PARTITION BY department) AS m FROM users WHERE id = 2" (.int 0),
   -- The dialect's choice is recorded on the AST node
   (match parse "SELECT MAX(x) FROM t" (dialect := .sqlite), parse "SELECT MAX(x) FROM t" with
    | .ok a, .ok b =>
-     if ((reprStr a).splitOn "typeClass").length == 2 && ((reprStr b).splitOn "MixedMinMax.error").length == 2
+     if ((reprStr a).splitOn "typeClass").length == 2 && ((reprStr a).splitOn "asInt").length == 2 &&
+        ((reprStr b).splitOn "MixedMinMax.error").length == 2 && ((reprStr b).splitOn "BoolMinMax.error").length == 2
      then .pass "minmax_mode_recorded_in_ast"
      else .fail "minmax_mode_recorded_in_ast" s!"{reprStr a} / {reprStr b}"
    | _, _ => .fail "minmax_mode_recorded_in_ast" "parse error")
