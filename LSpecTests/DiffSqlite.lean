@@ -18,6 +18,10 @@
   is accepted by SQLite (cross product) but rejected by DuckDB, so this is
   the oracle that covers it.
 
+  Where sqlite legitimately differs from DuckDB/Postgres (implementation-
+  defined behaviour), see docs/IMPLEMENTATION_DEFINED.md for what we chose
+  and how each case is tested.
+
   Uses IO-based tests since each test shells out to sqlite3.
 -/
 import LSpec

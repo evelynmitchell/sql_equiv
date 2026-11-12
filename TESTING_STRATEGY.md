@@ -36,6 +36,11 @@ and the redundancy means a gap in one layer is covered by another.
 - **Watch for:** Known divergences are documented at the top of
   `LSpecTests/DiffDuckdb.lean` — don't add cases that hit them without
   deciding which behavior to adopt. Both CLIs are version-pinned.
+- **Implementation-defined behaviour** (NULL ordering, collation, cross-type
+  comparison, …): policy and registry in `docs/IMPLEMENTATION_DEFINED.md`.
+  Every row needs a unit test pinning our choice, plus differential cases
+  for agreeing engines and an explicit disagreement test or ledger entry for
+  the others.
 
 ### Per-test result artifacts (#209)
 Every CI run uploads `test-results/*.jsonl` (one JSON object per test:

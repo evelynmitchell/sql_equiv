@@ -10,7 +10,9 @@
   same data, and compares normalized result tables. This exercises the
   parser, evaluator, and pretty-printing of values in one pass.
 
-  KNOWN DIVERGENCES (do not add cases that hit these without resolving them):
+  KNOWN DIVERGENCES (do not add cases that hit these without resolving them;
+  the full registry of implementation-defined behaviour, with sqlite and
+  Postgres results and our decisions, is docs/IMPLEMENTATION_DEFINED.md):
   - AVG over decimals: we truncate at the sum's scale; DuckDB returns a
     DOUBLE. Test data below is curated so the average is exact. Blocked on
     the decimal division/scale policy (#201).
