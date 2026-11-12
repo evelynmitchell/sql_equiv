@@ -36,6 +36,9 @@
     `duckdb` dialect both treat it as an error, but DuckDB fails the query
     while ours yields NULL in a SELECT list (the cross-cutting "quieter
     error"), so no differential case; pinned by unit tests instead.
+  - Integer `/` (registry row 6): DuckDB's `/` is float division (7 / 2 =
+    3.5); ours truncates like sqlite and Postgres. DuckDB's `//` matches ours,
+    but we do not parse `//`. Pinned by `int_division_*`.
   - Pipe characters or numeric-looking strings in data would break the
     `-list` output parsing (same limitation as the sqlite harness).
 -/
@@ -245,6 +248,19 @@ def runAllTests : IO TestSeq := do
       "SELECT MIN(name) AS lo, MAX(name) AS hi FROM users",
     diffTest "MAX over strings per group"
       "SELECT department, MAX(name) AS m FROM users GROUP BY department",
+    -- LIKE letter case (registry row 8): case-sensitive in the duckdb dialect
+    diffTest "LIKE is case-sensitive (duckdb dialect)"
+      "SELECT name FROM users WHERE name LIKE 'al%'",
+    diffTest "LIKE matching case"
+      "SELECT name FROM users WHERE name LIKE 'Al%'",
+    diffTest "NOT LIKE"
+      "SELECT name FROM users WHERE name NOT LIKE 'Al%'",
+    -- Modulo truncates toward zero (row 6; `/` differs, see KNOWN DIVERGENCES)
+    diffTest "modulo of negatives"
+      "SELECT (0 - age) % 7 AS r FROM users",
+    -- String order is by code point (row 9)
+    diffTest "string order: uppercase before lowercase"
+      "SELECT name FROM users WHERE name < 'a'",
     -- MIN/MAX over booleans (registry row 14): duckdb dialect gives a boolean
     diffTest "MIN/MAX over booleans (duckdb: boolean result)"
       "SELECT MAX(age > 26) AS hi, MIN(age > 26) AS lo FROM users",

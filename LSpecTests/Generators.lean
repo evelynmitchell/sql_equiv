@@ -27,7 +27,7 @@ instance : Shrinkable BinOp where shrink _ := []
 
 instance : SampleableExt BinOp :=
   SampleableExt.mkSelfContained $
-    Gen.elements #[.add, .sub, .mul, .div, .mod, .eq, .ne, .lt, .le, .gt, .ge, .and, .or, .concat, .like]
+    Gen.elements #[.add, .sub, .mul, .div, .mod, .eq, .ne, .lt, .le, .gt, .ge, .and, .or, .concat, .like, .likeCI]
 
 instance : Shrinkable UnaryOp where shrink _ := []
 

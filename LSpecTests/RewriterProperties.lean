@@ -317,7 +317,7 @@ private def sweepSmall : List Expr := [
   sweepCol "i", sweepCol "b", .«exists» false subqNonEmpty ]
 
 private def sweepBinOps : List BinOp :=
-  [.add, .sub, .mul, .div, .mod, .eq, .ne, .lt, .le, .gt, .ge, .and, .or, .concat, .like]
+  [.add, .sub, .mul, .div, .mod, .eq, .ne, .lt, .le, .gt, .ge, .and, .or, .concat, .like, .likeCI]
 private def sweepUnOps : List UnaryOp := [.not, .neg, .isNull, .isNotNull]
 
 /-- Every shape a rewriter arm matches, over the operand sets above. -/

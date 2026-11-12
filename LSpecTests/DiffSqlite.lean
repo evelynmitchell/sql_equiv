@@ -30,8 +30,11 @@
     via column affinity; we treat it as a type error (#235, decided). The
     Spider harness emulates sqlite here by quoting the literal, reported as
     its own category.
-  - Row 8, LIKE case sensitivity: sqlite's LIKE is case-insensitive for
-    ASCII; ours (like DuckDB/Postgres) is case-sensitive.
+  - Row 5, DISTINCT + ORDER BY on a non-selected column: sqlite sorts by a
+    source row; ours ties the key (output keeps input order). Gap, pinned by
+    `distinct_order_by_unselected_keeps_input_order`.
+  (Row 8, LIKE letter case, is per dialect: this harness parses in the
+  sqlite dialect, so LIKE is ASCII case-insensitive here and has cases below.)
 
   Uses IO-based tests since each test shells out to sqlite3.
 -/
@@ -386,6 +389,21 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE amount > age * 10)",
     diffTest "scope: derived-table outer row (unqualified keys)"
       "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)",
+    -- LIKE letter case (registry row 8): ASCII case-insensitive in sqlite
+    diffTest "LIKE ignores ASCII case (sqlite dialect)"
+      "SELECT name FROM users WHERE name LIKE 'al%'",
+    diffTest "LIKE whole-string case-insensitive"
+      "SELECT name FROM users WHERE department LIKE 'SALES'",
+    diffTest "LIKE suffix case-insensitive"
+      "SELECT name FROM users WHERE name LIKE '%E'",
+    diffTest "NOT LIKE case-insensitive"
+      "SELECT name FROM users WHERE name NOT LIKE 'al%'",
+    -- Integer division/modulo truncate toward zero (row 6)
+    diffTest "integer division and modulo, negatives"
+      "SELECT (0 - age) / 7 AS q, (0 - age) % 7 AS r FROM users",
+    -- String order is by code point (row 9)
+    diffTest "string order: uppercase before lowercase"
+      "SELECT name FROM users WHERE name < 'a'",
     -- ON-less JOIN: SQLite accepts this spelling (cross product); DuckDB
     -- rejects it, so this oracle is the one that covers it
     diffTest "ON-less JOIN (cross product + WHERE)"

@@ -153,6 +153,10 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
         have : normalizeExpr (.binOp .like a b) = .binOp .like (normalizeExpr a) (normalizeExpr b) := by
           simp [normalizeExpr]
         rw [this]; exact binOp_congr ha hb
+      | likeCI =>
+        have : normalizeExpr (.binOp .likeCI a b) = .binOp .likeCI (normalizeExpr a) (normalizeExpr b) := by
+          simp [normalizeExpr]
+        rw [this]; exact binOp_congr ha hb
       | concat =>
         have : normalizeExpr (.binOp .concat a b) = .binOp .concat (normalizeExpr a) (normalizeExpr b) := by
           simp [normalizeExpr]

@@ -956,8 +956,17 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
         let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
         Parser.expect .rparen "Expected )"
         parsePostfix (.inList e true vals)  -- negated
+    else if isKeyword "LIKE" t2 then
+      -- x NOT LIKE p  ≡  NOT (x LIKE p), with the dialect's LIKE operator
+      let _ ← Parser.advance
+      let pattern ← parsePrimary
+      let likeCase ← fun st => .ok (st.config.likeCase, st)
+      let op : BinOp := match likeCase with
+        | .sensitive => .like
+        | .asciiInsensitive => .likeCI
+      parsePostfix (.unaryOp .not (.binOp op e pattern))
     else
-      Parser.fail "Expected IN after NOT"
+      Parser.fail "Expected IN or LIKE after NOT"
   else if isKeyword "IN" t then
     let _ ← Parser.advance
     Parser.expect .lparen "Expected ("
@@ -980,7 +989,11 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
   else if isKeyword "LIKE" t then
     let _ ← Parser.advance
     let pattern ← parsePrimary
-    parsePostfix (.binOp .like e pattern)
+    let likeCase ← fun st => .ok (st.config.likeCase, st)
+    let op : BinOp := match likeCase with
+      | .sensitive => .like
+      | .asciiInsensitive => .likeCI
+    parsePostfix (.binOp op e pattern)
   else if isKeyword "OVER" t then
     -- A window-eligible call consumes its OVER before postfix parsing, so an
     -- OVER reaching here is attached to a non-window expression. Error loudly
