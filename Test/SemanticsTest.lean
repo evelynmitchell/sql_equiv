@@ -47,6 +47,18 @@ def itemsTable : Table := [
   [("id", .int 4), ("name", .string "Shim"), ("price", .null (some .decimal))]
 ]
 
+/-- NULL-ordering fixture: staff counts 9, 17, NULL, 25, 41, NULL (two NULLs,
+    one in the middle, as in the Spider `museum` query that exposed the old
+    "NULL equals everything" comparator). -/
+def museumTable : Table := [
+  [("name", .string "m1"), ("staff", .int 9)],
+  [("name", .string "m2"), ("staff", .int 17)],
+  [("name", .string "m3"), ("staff", .null none)],
+  [("name", .string "m4"), ("staff", .int 25)],
+  [("name", .string "m5"), ("staff", .int 41)],
+  [("name", .string "m6"), ("staff", .null (some .int))]
+]
+
 /-- Spider-style table: original-case column names (queries lowercase them) -/
 def singerTable : Table := [
   [("Singer_ID", .int 1), ("Name", .string "Joe"), ("Country", .string "France"), ("Age", .int 52)],
@@ -61,6 +73,7 @@ def testDb : Database := fun name =>
   | "products" => productsTable
   | "items" => itemsTable
   | "singer" => singerTable
+  | "museum" => museumTable
   | _ => []
 
 -- ============================================================================
@@ -77,6 +90,28 @@ def evalQuery (sql : String) : Except String Table :=
     match (evalStmt testDb stmt).2 with
     | some t => .ok t
     | none => .error "statement produced no result table"
+
+/-- Parse with a given NULL-ordering rule, then evaluate. -/
+def evalQueryWith (ordering : NullOrdering) (sql : String) : Except String Table :=
+  match parse sql (nullOrdering := ordering) with
+  | .error e => .error e
+  | .ok stmt =>
+    match (evalStmt testDb stmt).2 with
+    | some t => .ok t
+    | none => .error "statement produced no result table"
+
+/-- Exact `name` column order under a NULL-ordering rule. -/
+def testNameOrder (testName : String) (ordering : NullOrdering) (sql : String)
+    (expected : List String) : TestResult :=
+  match evalQueryWith ordering sql with
+  | .error e => .fail testName s!"Parse/eval error: {e}"
+  | .ok result =>
+    let actual := result.map fun row =>
+      match row.find? (fun (k, _) => k == "name") with
+      | some (_, .string n) => n
+      | _ => "?"
+    if actual == expected then .pass testName
+    else .fail testName s!"expected {expected}, got {actual}"
 
 /-- Check if result has expected number of rows -/
 def testRowCount (name : String) (sql : String) (expected : Nat) : TestResult :=
@@ -319,6 +354,48 @@ def groupedOrderByTests : List TestResult := [
   testColumn "group_order_having_avg"
     "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 ORDER BY AVG(age) ASC"
     "department" [.string "Sales", .string "Engineering"]
+]
+
+-- NULL ordering (configurable): NULLs sort together, placed by the item's
+-- NULLS FIRST/LAST, which defaults per engine rule. staff: m1 9, m2 17,
+-- m3 NULL, m4 25, m5 41, m6 NULL. Ties keep input order (stable sort).
+def nullOrderingTests : List TestResult := [
+  -- sqlite rule (default): NULL smallest
+  testNameOrder "nulls_sqlite_asc" .nullsSmallest
+    "SELECT name FROM museum ORDER BY staff" ["m3", "m6", "m1", "m2", "m4", "m5"],
+  -- the old comparator put 25 first here (NULL "equal to everything")
+  testNameOrder "nulls_sqlite_desc" .nullsSmallest
+    "SELECT name FROM museum ORDER BY staff DESC" ["m5", "m4", "m2", "m1", "m3", "m6"],
+  -- Postgres rule: NULL largest
+  testNameOrder "nulls_postgres_asc" .nullsLargest
+    "SELECT name FROM museum ORDER BY staff" ["m1", "m2", "m4", "m5", "m3", "m6"],
+  testNameOrder "nulls_postgres_desc" .nullsLargest
+    "SELECT name FROM museum ORDER BY staff DESC" ["m3", "m6", "m5", "m4", "m2", "m1"],
+  -- DuckDB rule: NULLs last both ways
+  testNameOrder "nulls_duckdb_asc" .nullsAlwaysLast
+    "SELECT name FROM museum ORDER BY staff" ["m1", "m2", "m4", "m5", "m3", "m6"],
+  testNameOrder "nulls_duckdb_desc" .nullsAlwaysLast
+    "SELECT name FROM museum ORDER BY staff DESC" ["m5", "m4", "m2", "m1", "m3", "m6"],
+  -- Explicit NULLS FIRST/LAST overrides the rule
+  testNameOrder "nulls_explicit_overrides_rule" .nullsSmallest
+    "SELECT name FROM museum ORDER BY staff DESC NULLS FIRST" ["m3", "m6", "m5", "m4", "m2", "m1"],
+  testNameOrder "nulls_explicit_last_asc" .nullsSmallest
+    "SELECT name FROM museum ORDER BY staff ASC NULLS LAST" ["m1", "m2", "m4", "m5", "m3", "m6"],
+  -- LIMIT makes the cut observable (the Spider museum shape)
+  testNameOrder "nulls_desc_limit" .nullsSmallest
+    "SELECT name FROM museum ORDER BY staff DESC LIMIT 1" ["m5"],
+  -- Pretty-printing: the clause is printed only when it differs from the default
+  (match parseSelectStr "SELECT name FROM museum ORDER BY staff DESC NULLS FIRST",
+         parseSelectStr "SELECT name FROM museum ORDER BY staff DESC" with
+   | .ok s1, .ok s2 =>
+     if (s1.toSql.splitOn "NULLS FIRST").length == 2 && (s2.toSql.splitOn "NULLS").length == 1
+     then .pass "nulls_pretty_print"
+     else .fail "nulls_pretty_print" s!"got: {s1.toSql} / {s2.toSql}"
+   | _, _ => .fail "nulls_pretty_print" "parse error"),
+  -- Columns named first/last are still ordinary identifiers
+  (match parseSelectStr "SELECT first, last FROM t ORDER BY last" with
+   | .ok _ => .pass "nulls_words_not_reserved"
+   | .error e => .fail "nulls_words_not_reserved" e)
 ]
 
 def limitOffsetTests : List TestResult := [
@@ -890,7 +967,7 @@ def caseInsensitiveTests : List TestResult := [
 
 def allSemanticsTests : List TestResult :=
   basicQueryTests ++ whereQueryTests ++ joinQueryTests ++
-  projectionTests ++ distinctTests ++ orderByTests ++ groupedOrderByTests ++
+  projectionTests ++ distinctTests ++ orderByTests ++ groupedOrderByTests ++ nullOrderingTests ++
   limitOffsetTests ++ subqueryTests ++ aggregateTests ++
   distinctAggTests ++ groupByTests ++ setOpQueryTests ++
   setOpSubqueryTests ++

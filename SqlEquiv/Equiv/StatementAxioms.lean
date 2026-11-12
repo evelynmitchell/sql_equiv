@@ -1616,15 +1616,16 @@ theorem order_by_preserves_count (db : Database)
 theorem order_by_length_invariant (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (limit offset : Option Nat) (col : Expr) :
+    (limit offset : Option Nat) (col : Expr) (n1 n2 n3 : NullsOrder) :
     let selAscDesc := SelectStmt.mk distinct items from_ where_ groupBy having
-      [OrderByItem.mk col .asc, OrderByItem.mk col .desc] limit offset
+      [OrderByItem.mk col .asc n1, OrderByItem.mk col .desc n2] limit offset
     let selDesc := SelectStmt.mk distinct items from_ where_ groupBy having
-      [OrderByItem.mk col .desc] limit offset
+      [OrderByItem.mk col .desc n3] limit offset
     (evalSelect db selAscDesc).length = (evalSelect db selDesc).length := by
   simp only []
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having
-    [OrderByItem.mk col .asc, OrderByItem.mk col .desc] [OrderByItem.mk col .desc] limit offset
+    [OrderByItem.mk col .asc n1, OrderByItem.mk col .desc n2] [OrderByItem.mk col .desc n3]
+    limit offset
 
 
 -- ============================================================================

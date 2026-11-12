@@ -155,9 +155,10 @@ private def sortTable (tbl : Table) : Table :=
 -- ============================================================================
 
 /-- Parse the SQL with our parser, evaluate, run the same SQL through duckdb,
-    compare result multisets. -/
+    compare result multisets. Parsed with DuckDB's NULL ordering (NULLS LAST in
+    both directions), the engine rule this oracle implements. -/
 private def diffTest (description : String) (sql : String) : IO (String × Bool) := do
-  match parse sql with
+  match parse sql (nullOrdering := .nullsAlwaysLast) with
   | .error e =>
     IO.eprintln s!"  Our parser failed for '{description}': {e}"
     return (description, false)
@@ -209,6 +210,16 @@ def runAllTests : IO TestSeq := do
     diffTest "WHERE with AND" "SELECT * FROM users WHERE age > 25 AND department = 'Engineering'",
     diffTest "WHERE with OR" "SELECT * FROM users WHERE age < 25 OR age > 30",
     diffTest "DISTINCT" "SELECT DISTINCT department FROM users",
+    -- NULL ordering under DuckDB's rule (NULLS LAST both ways); LIMIT 1
+    -- makes the position of the NULL price observable
+    diffTest "NULLs last on ASC (duckdb rule)"
+      "SELECT name FROM items ORDER BY price LIMIT 1",
+    diffTest "NULLs last on DESC (duckdb rule)"
+      "SELECT name FROM items ORDER BY price DESC LIMIT 1",
+    diffTest "explicit NULLS FIRST"
+      "SELECT name FROM items ORDER BY price NULLS FIRST LIMIT 1",
+    diffTest "explicit DESC NULLS FIRST"
+      "SELECT name FROM items ORDER BY price DESC NULLS FIRST LIMIT 1",
     -- ORDER BY on a non-projected column (#206 fix); LIMIT makes order observable
     diffTest "ORDER BY non-projected column"
       "SELECT name FROM items WHERE price IS NOT NULL ORDER BY price LIMIT 1",

@@ -180,8 +180,15 @@ partial def FromClause.toSql : FromClause → String
       | none   => ""
     s!"{left.toSql} {jtype.toSql} {right.toSql}{onStr}"
 
+/-- Prints `NULLS FIRST/LAST` only when it differs from the default rule
+    (`defaultNullOrdering`), so default-parsed queries round-trip unchanged. -/
 partial def OrderByItem.toSql (o : OrderByItem) : String :=
-  s!"{o.expr.toSql} {o.dir.toSql}"
+  let nullsStr :=
+    if o.nulls == defaultNullOrdering.resolve o.dir then ""
+    else match o.nulls with
+      | .first => " NULLS FIRST"
+      | .last => " NULLS LAST"
+  s!"{o.expr.toSql} {o.dir.toSql}{nullsStr}"
 
 -- ============================================================================
 -- Statement Pretty Printing

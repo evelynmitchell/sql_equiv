@@ -745,8 +745,8 @@ def paginationTests : List TestResult :=
 -- ============================================================================
 
 def orderByTests : List TestResult :=
-  let orderAsc := [OrderByItem.mk (col "age") .asc]
-  let orderDesc := [OrderByItem.mk (col "age") .desc]
+  let orderAsc := [OrderByItem.ofDir (col "age") .asc]
+  let orderDesc := [OrderByItem.ofDir (col "age") .desc]
   let selNoOrder := mkSelectFull false "users" none [] none none
   let selAsc := mkSelectFull false "users" none orderAsc none none
   let selDesc := mkSelectFull false "users" none orderDesc none none
@@ -760,7 +760,7 @@ def orderByTests : List TestResult :=
     -- order_by_length_invariant: different ORDER BY clauses produce same row count
     testLengthEq "order_by_length_invariant"
       (evalSelect testDb (mkSelectFull false "users" none
-        [OrderByItem.mk (col "age") .asc, OrderByItem.mk (col "age") .desc] none none)).length
+        [OrderByItem.ofDir (col "age") .asc, OrderByItem.ofDir (col "age") .desc] none none)).length
       (evalSelect testDb selDesc).length,
 
 
@@ -1692,8 +1692,8 @@ def equivAdditionalTests : List TestResult :=
 def infrastructureAxiomTests : List TestResult :=
   let selAll := mkSelectWithLimitOffset "users" none none
   let allRows := evalSelect testDb selAll
-  let orderAsc := [OrderByItem.mk (col "age") .asc]
-  let orderDesc := [OrderByItem.mk (col "age") .desc]
+  let orderAsc := [OrderByItem.ofDir (col "age") .asc]
+  let orderDesc := [OrderByItem.ofDir (col "age") .desc]
   [
     -- evalSelect_limit_offset: LIMIT n OFFSET m = (all.drop m).take n
     let sel := mkSelectWithLimitOffset "users" (some 2) (some 1)
