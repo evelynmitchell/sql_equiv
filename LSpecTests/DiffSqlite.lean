@@ -356,6 +356,12 @@ def runAllTests : IO TestSeq := do
     -- Set-operation subquery (#218): UNION inside an IN subquery
     diffTest "IN with UNION subquery"
       "SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > 150 UNION SELECT user_id FROM orders WHERE amount < 120)",
+    diffTest "MIN/MAX over strings"
+      "SELECT MIN(name) AS lo, MAX(name) AS hi FROM users",
+    diffTest "MAX over strings per group"
+      "SELECT department, MAX(name) AS m FROM users GROUP BY department",
+    diffTest "MAX over strings skips NULL"
+      "SELECT MAX(CASE WHEN age > 26 THEN name END) AS m FROM users",
     -- Subquery name resolution is inner-first (#253): unqualified names bind
     -- to the subquery's own FROM, then fall through to the outer row.
     diffTest "scope: same-table scalar subquery"

@@ -500,7 +500,24 @@ def distinctAggTests : List TestResult := [
   testContainsValue "avg_distinct_user" "SELECT AVG(DISTINCT user_id) FROM orders" (.int 2),
   -- MIN/MAX with DISTINCT (should be same as without)
   testContainsValue "min_distinct" "SELECT MIN(DISTINCT amount) FROM orders" (.int 100),
-  testContainsValue "max_distinct" "SELECT MAX(DISTINCT amount) FROM orders" (.int 300)
+  testContainsValue "max_distinct" "SELECT MAX(DISTINCT amount) FROM orders" (.int 300),
+  -- MIN/MAX over strings order by code point (#256; was NULL)
+  testContainsValue "max_string" "SELECT MAX(name) FROM users" (.string "Eve"),
+  testContainsValue "min_string" "SELECT MIN(name) FROM users" (.string "Alice"),
+  -- NULLs are skipped: names of users over 26 are Alice, Carol, Dave
+  testContainsValue "max_string_skips_null"
+    "SELECT MAX(CASE WHEN age > 26 THEN name END) FROM users" (.string "Dave"),
+  -- Grouped and windowed paths: Engineering = {Alice, Carol}
+  testContainsValue "max_string_grouped"
+    "SELECT MAX(name) FROM users GROUP BY department HAVING department = 'Engineering'"
+    (.string "Carol"),
+  testContainsValue "max_string_window"
+    "SELECT MAX(name) OVER (PARTITION BY department) AS m FROM users WHERE id = 1"
+    (.string "Alice"),
+  -- Mixed numeric/string input: numerics only (implementation-defined, see
+  -- docs/IMPLEMENTATION_DEFINED.md). Strings Alice/Carol/Dave, ints 25, 22 → 25
+  testContainsValue "max_mixed_numeric_wins"
+    "SELECT MAX(CASE WHEN age > 26 THEN name ELSE age END) FROM users" (.int 25)
 ]
 
 -- ============================================================================

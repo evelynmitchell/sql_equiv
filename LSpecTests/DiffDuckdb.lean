@@ -234,6 +234,10 @@ def runAllTests : IO TestSeq := do
     -- Set-operation subquery (#218): UNION inside a NOT IN subquery.
     diffTest "NOT IN with UNION subquery"
       "SELECT name FROM items WHERE name NOT IN (SELECT users.department FROM users UNION SELECT users.name FROM users)",
+    diffTest "MIN/MAX over strings"
+      "SELECT MIN(name) AS lo, MAX(name) AS hi FROM users",
+    diffTest "MAX over strings per group"
+      "SELECT department, MAX(name) AS m FROM users GROUP BY department",
     -- Subquery name resolution is inner-first (#253): unqualified names bind
     -- to the subquery's own FROM, then fall through to the outer row.
     diffTest "scope: same-table scalar subquery"
