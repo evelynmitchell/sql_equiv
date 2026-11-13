@@ -81,6 +81,7 @@ Ask the user to name the rewriter and evaluator entry points.
   "relation": {
     "name": "Equiv",
     "quantifiesOver": ["row", "database"],
+    "equality": "kind-strict (type and value)",
     "weakerVariantsToReject": []
   },
   "guards": [
@@ -98,7 +99,14 @@ Ask the user to name the rewriter and evaluator entry points.
 
 Fields:
 - **`proof`, `guards`, `trustGuard`:** optional. Use them for proof-assistant
-  projects.
+  projects. In other projects a guard's `bridge` names a test showing the
+  guard implies the rule's precondition. **`"bridge": null` means there is no
+  such evidence; report it in the guard check.**
+- **`relation.equality`:** how two evaluation results are compared. For
+  dynamically typed hosts this should be kind-strict (see `probe-design.md`).
+- **Where the relation comes from:** a proof's conclusion; otherwise the
+  tests' assertions; otherwise the README or docstrings. Say which source
+  was used.
 - **`relation.weakerVariantsToReject`:** names relations that look like the
   real one but quantify over less. Any proof concluding one of them is a
   finding.
