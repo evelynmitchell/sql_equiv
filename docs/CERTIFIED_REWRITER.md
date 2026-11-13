@@ -13,10 +13,10 @@ The return type `{ e' : Expr // e ≃ₑ e' }` is a subtype: a pair of a simplif
 **No new axioms, no `sorry`, no `native_decide` in the rewriter or the lemmas it uses.** `#print axioms certifiedRewriteAux_equiv` reports:
 
 ```
-[propext, sorryAx, Classical.choice, Quot.sound]
+[propext, Classical.choice, Quot.sound]
 ```
 
-`propext`, `Classical.choice`, and `Quot.sound` are Lean's standard axioms. `sorryAx` is inherited from the semantics rather than the rewriter: the mutual evaluator in `SqlEquiv/Semantics.lean` (`evalExprWithDb` and friends) discharges its termination goals with `decreasing_by all_goals sorry`, and `≃ₑ` is defined via that evaluator. Closing those termination proofs would remove `sorryAx` from every `≃ₑ` theorem, this one included.
+These are Lean's standard axioms. Until #212 this list also contained `sorryAx`, inherited from the evaluator: the mutual evaluator in `SqlEquiv/Semantics.lean` (`evalExprWithDb` and friends) discharged its termination goals with `decreasing_by all_goals sorry`. Its recursive callbacks are now guarded by a computable size check (`SqlEquiv/AstSize.lean`), so termination is kernel-checked, and every `≃ₑ` theorem is free of `sorryAx`. `Test/RewriterTest.lean` pins this.
 
 **Scope of `≃ₑ`.** `ExprEquiv` quantifies over every database and every row (`∀ db row, evalExprWithDb db row e1 = evalExprWithDb db row e2`), so the rewriter's proof covers subquery-bearing expressions (`EXISTS`, `IN (subquery)`, scalar subqueries) on real tables. The type preconditions (`isBoolValued`, `isIntValued`, …) are quantified the same way. Before #242, `≃ₑ` only covered the empty database; that weaker relation remains available as `≃ₑ₀` (`ExprEquivEmptyDb`, with `ExprEquiv.toEmptyDb : e1 ≃ₑ e2 → e1 ≃ₑ₀ e2`). The LSpec context sweep additionally checks the compiled rewriter against the evaluator on a non-empty database.
 

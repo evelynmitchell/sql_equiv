@@ -11,6 +11,7 @@
   another module (not within the same file).
 -/
 import SqlEquiv.SemanticsBase
+import SqlEquiv.AstSize
 
 namespace SqlEquiv
 
@@ -2509,5 +2510,107 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
               · intro row; congr 1; exact h_wc wcond rfl row r1
               · simp [List.length_map])
           h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+
+-- ============================================================================
+-- Callback congruence by computable size (#212)
+-- ============================================================================
+
+/-- `evalExprCore` only calls its subquery callback on subqueries inside `e`,
+    all of which have smaller `size`: callbacks that agree there give the same
+    result. Used to remove the termination guards of `evalExprWithDb`. -/
+theorem evalExprCore_congr_subq (db : Database) (row : Row) :
+    ∀ (n : Nat) (e : Expr), e.size ≤ n → ∀ (f g : Database → Row → SubQuery → Table),
+    (∀ sq, sq.size < e.size → f db row sq = g db row sq) →
+    evalExprCore db row f e = evalExprCore db row g e := by
+  intro n
+  induction n with
+  | zero => intro e he; have := Expr.size_pos e; omega
+  | succ n ih =>
+    intro e he f g hfg
+    have sub : ∀ x : Expr, x.size < e.size →
+        evalExprCore db row f x = evalExprCore db row g x :=
+      fun x hx => ih x (by omega) f g (fun sq hsq => hfg sq (by omega))
+    cases e with
+    | lit v => rw [evalExprCore, evalExprCore]
+    | col c => rw [evalExprCore, evalExprCore]
+    | binOp op l r =>
+      simp only [evalExprCore]
+      rw [sub l (by simp [Expr.size]; omega), sub r (by simp [Expr.size]; omega)]
+    | unaryOp op a =>
+      simp only [evalExprCore]
+      rw [sub a (by simp [Expr.size])]
+    | func name args =>
+      simp only [evalExprCore]
+      congr 1
+      apply List.map_congr_left
+      intro x hx
+      exact sub x (by have := Expr.size_le_sizeList_of_mem hx; simp [Expr.size]; omega)
+    | agg fn a d => rw [evalExprCore, evalExprCore]
+    | countStar => rw [evalExprCore, evalExprCore]
+    | «case» ws el =>
+      rw [evalExprCore_case, evalExprCore_case]
+      apply evalCaseHelper_congr
+      · cases el with
+        | none => rfl
+        | some x => exact sub x (by simp [Expr.size, Expr.sizeOpt]; omega)
+      · intro p hp
+        obtain ⟨a, b⟩ := p
+        have hs := Expr.size_le_sizePairs_of_mem hp
+        exact ⟨sub a (by simp [Expr.size]; omega), sub b (by simp [Expr.size]; omega)⟩
+    | inList a neg vals =>
+      have h_ev := sub a (by simp [Expr.size]; omega)
+      have h_vals : ∀ vi, vi ∈ vals → evalExprCore db row f vi = evalExprCore db row g vi :=
+        fun vi hvi => sub vi (by have := Expr.size_le_sizeList_of_mem hvi; simp [Expr.size]; omega)
+      rw [evalExprCore_inList, evalExprCore_inList]
+      dsimp only []
+      rw [inList_foldl_eval_independent (evalExprCore db row f) (evalExprCore db row g) _ _ h_ev vals h_vals]
+    | inSubquery a neg sq =>
+      simp only [evalExprCore]
+      rw [sub a (by simp [Expr.size]; omega), hfg sq (by simp [Expr.size]; omega)]
+    | «exists» neg sq =>
+      simp only [evalExprCore]
+      rw [hfg sq (by simp [Expr.size])]
+    | subquery sq =>
+      simp only [evalExprCore]
+      rw [hfg sq (by simp [Expr.size])]
+    | between a lo hi =>
+      simp only [evalExprCore]
+      rw [sub a (by simp [Expr.size]; omega), sub lo (by simp [Expr.size]; omega),
+        sub hi (by simp [Expr.size]; omega)]
+    | windowFn fn a spec => rw [evalExprCore, evalExprCore]
+
+/-- `evalFromCore` only calls its callbacks on parts of `fc` (join conditions,
+    FROM subqueries), all of which have smaller `size`. -/
+theorem evalFromCore_congr (db : Database) :
+    ∀ (n : Nat) (fc : FromClause), fc.size ≤ n →
+    ∀ (f1 f2 : Database → Row → Expr → Option Value) (s1 s2 : Database → SubQuery → Table),
+    (∀ e, e.size < fc.size → ∀ r, f1 db r e = f2 db r e) →
+    (∀ sq, sq.size < fc.size → s1 db sq = s2 db sq) →
+    evalFromCore db f1 s1 fc = evalFromCore db f2 s2 fc := by
+  intro n
+  induction n with
+  | zero => intro fc h; have := FromClause.size_pos fc; omega
+  | succ n ih =>
+    intro fc hfc f1 f2 s1 s2 hf hs
+    cases fc with
+    | table t => simp only [evalFromCore]
+    | subquery sq a =>
+      simp only [evalFromCore]
+      exact hs sq (by simp [FromClause.size])
+    | join l jt r on_ =>
+      have hl := ih l (by simp [FromClause.size] at hfc; omega) f1 f2 s1 s2
+        (fun e he r => hf e (by simp [FromClause.size]; omega) r)
+        (fun sq hsq => hs sq (by simp [FromClause.size]; omega))
+      have hr := ih r (by simp [FromClause.size] at hfc; omega) f1 f2 s1 s2
+        (fun e he r => hf e (by simp [FromClause.size]; omega) r)
+        (fun sq hsq => hs sq (by simp [FromClause.size]; omega))
+      simp only [evalFromCore]
+      rw [hl, hr]
+      cases on_ with
+      | none => rfl
+      | some cond =>
+        have hc : ∀ r, f1 db r cond = f2 db r cond :=
+          hf cond (by simp [FromClause.size, Expr.sizeOpt]; omega)
+        simp only [hc]
 
 end SqlEquiv

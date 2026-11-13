@@ -6,6 +6,7 @@
 -/
 import SqlEquiv.SemanticsBase
 import SqlEquiv.SemanticsCore
+import SqlEquiv.AstSize
 
 namespace SqlEquiv
 
@@ -321,23 +322,29 @@ decreasing_by all_goals simp_wf; omega
 
 mutual
 
-/-- Evaluate expression against a row (with database for subqueries) -/
+/-- Evaluate expression against a row (with database for subqueries).
+    Termination (#212): each recursive callback is guarded by a size check, so
+    the well-founded recursion checker sees the decrease. The `*Core`
+    evaluators only call a callback on parts of their input, which always
+    pass the guard; expressions that the SELECT pipeline builds itself (e.g.
+    the #234 grouped sort keys) contain no subqueries, and for those the
+    fallback (subqueries disabled) gives the same result. -/
 def evalExprWithDb (db : Database) (row : Row) (e : Expr) : Option Value :=
-  evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) e
-termination_by sizeOf e
-decreasing_by all_goals sorry
--- NOTE: Lambda callbacks make these goals unprovable by Lean 4.27.0's termination
--- checker. The Core functions call callbacks only on structural subterms, but Lean
--- can't see through the lambda to verify this. Functions are still `def` (not
--- `partial`) and equational theorems work correctly.
+  evalExprCore db row (fun db' row' sq =>
+    if _h : sq.size < e.size then evalSubQueryWithContext db' row' sq else []) e
+termination_by e.size
+decreasing_by all_goals (simp_wf; first | omega | (simp only [SubQuery.size]; omega))
 
 /-- Evaluate FROM clause to get source rows -/
 def evalFrom (db : Database) (fc : FromClause) : Table :=
   evalFromCore db
-    (fun db' r expr => evalExprWithDb db' r expr)
-    (fun db' sq => evalSubQueryWithContext db' [] sq) fc
-termination_by sizeOf fc
-decreasing_by all_goals sorry
+    (fun db' r expr =>
+      if _h : expr.size < fc.size then evalExprWithDb db' r expr
+      else evalExprCore db' r (fun _ _ _ => []) expr)
+    (fun db' sq =>
+      if _h : sq.size < fc.size then evalSubQueryWithContext db' [] sq else []) fc
+termination_by fc.size
+decreasing_by all_goals (simp_wf; first | omega | (simp only [SubQuery.size]; omega))
 
 /-- Evaluate a subquery body (#218): a SELECT or a set operation over
     subqueries. Set-op semantics shared with top-level Query via applySetOp. -/
@@ -347,14 +354,16 @@ def evalSubQueryWithContext (db : Database) (outerRow : Row) (sq : SubQuery) : T
   | .compound l op r =>
     applySetOp op (evalSubQueryWithContext db outerRow l)
                   (evalSubQueryWithContext db outerRow r)
-termination_by sizeOf sq
-decreasing_by all_goals sorry
+termination_by sq.size
+decreasing_by all_goals (simp_wf; first | omega | (simp only [SubQuery.size]; omega))
 
 /-- Evaluate SELECT statement with outer row context (for correlated subqueries) -/
 def evalSelectWithContext (db : Database) (outerRow : Row) (sel : SelectStmt) : Table :=
-  let ee := fun db' r e => evalExprWithDb db' r e
+  let ee := fun db' r e =>
+    if _h : e.size < sel.size then evalExprWithDb db' r e
+    else evalExprCore db' r (fun _ _ _ => []) e
   evalSelectCore db outerRow
-    (fun db' fc => evalFrom db' fc)
+    (fun db' fc => if _h : fc.size < sel.size then evalFrom db' fc else [])
     ee
     (evalSelectItemParam ee)
     (evalSelectItemWithAggParam ee)
@@ -364,8 +373,8 @@ def evalSelectWithContext (db : Database) (outerRow : Row) (sel : SelectStmt) : 
     selectHasWindowFn
     selectHasAggregate
     sel
-termination_by sizeOf sel
-decreasing_by all_goals sorry
+termination_by sel.size
+decreasing_by all_goals (simp_wf; first | omega | (simp only [SubQuery.size]; omega))
 
 end
 
@@ -600,7 +609,10 @@ theorem evalSubQuery_compound (db : Database) (r : Row) (l : SubQuery) (op : Set
 /-- Bridge: evalExprWithDb equals evalExprCore instantiated with evalSubQueryWithContext -/
 theorem evalExprWithDb_eq_evalExprCore (db : Database) (row : Row) (e : Expr) :
   evalExprWithDb db row e = evalExprCore db row (fun db' row' sq => evalSubQueryWithContext db' row' sq) e := by
-  simp [evalExprWithDb]
+  -- the size guard holds for every subquery evalExprCore can reach (#212)
+  rw [evalExprWithDb]
+  exact evalExprCore_congr_subq db row e.size e (Nat.le_refl _) _ _
+    (fun sq hsq => by simp only [dif_pos hsq])
 
 /-- Bridge: evalCase equals evalCaseHelper instantiated with evalExprCore/evalSubQueryWithContext -/
 theorem evalCase_eq_evalCaseHelper (db : Database) (row : Row) (branches : List (Expr × Expr)) (else_ : Option Expr) :
@@ -617,7 +629,11 @@ theorem evalCase_eq_evalCaseHelper (db : Database) (row : Row) (branches : List 
 /-- Bridge: evalFrom equals evalFromCore instantiated with evalExprWithDb and evalSubQueryWithContext -/
 theorem evalFrom_eq_evalFromCore (db : Database) (fc : FromClause) :
   evalFrom db fc = evalFromCore db evalExprWithDb (fun db' sq => evalSubQueryWithContext db' [] sq) fc := by
-  simp only [evalFrom]
+  -- the size guards hold for every part of fc evalFromCore can reach (#212)
+  rw [evalFrom]
+  exact evalFromCore_congr db fc.size fc (Nat.le_refl _) _ _ _ _
+    (fun e he r => by simp only [dif_pos he])
+    (fun sq hsq => by simp only [dif_pos hsq])
 
 -- ============================================================================
 -- Theorems: expression evaluation unfolding (proved via bridge axioms)
@@ -1003,7 +1019,10 @@ theorem evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
     selectHasWindowFn
     selectHasAggregate
     sel := by
-  simp only [evalSelect, evalSelectWithContext]
+  -- #212 phase 2: needs callback congruence through evalSelectCore and its
+  -- *Param helpers (compareByOrderItemsParam is still `partial`). Until then
+  -- SELECT-level theorems depend on sorryAx (pinned in Test/RewriterTest.lean).
+  sorry
 
 /-- Bridge: evalSelectWithContext equals evalSelectCore instantiated with all eval callbacks -/
 theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row) (sel : SelectStmt) :
@@ -1018,7 +1037,10 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
     selectHasWindowFn
     selectHasAggregate
     sel := by
-  simp only [evalSelectWithContext]
+  -- #212 phase 2: needs callback congruence through evalSelectCore and its
+  -- *Param helpers (compareByOrderItemsParam is still `partial`). Until then
+  -- SELECT-level theorems depend on sorryAx (pinned in Test/RewriterTest.lean).
+  sorry
 
 -- ============================================================================
 -- Infrastructure theorems for evalSelect (proved via evalSelectCore bridge)
