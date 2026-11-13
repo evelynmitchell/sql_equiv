@@ -40,8 +40,10 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 
 ### Expected State
 
-- **3 sorry** in `SqlEquiv/Semantics.lean` — Block 1 `decreasing_by` (lambda callbacks in mutual WFR, Lean 4.27.0 limitation)
-- **1 sorry** in `SqlEquiv/Equiv/Decidable.lean` — proof gap in `checkEquivFull` notEquiv branch (requires `LawfulBEq Value`)
+- **2 sorry** in `SqlEquiv/Semantics.lean` — the SELECT bridge lemmas
+  `evalSelect_eq_evalSelectCore` and `evalSelectWithContext_eq_evalSelectCore`
+  (#212 phase 2). The evaluator's termination itself is kernel-checked since
+  #212 (size-guarded callbacks; no `decreasing_by sorry` remains)
 - **0 sorry** elsewhere
 
 ### Output Format
@@ -49,15 +51,11 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 ```
 Sorry Audit
 ===========
-Found: 4 active sorry across 2 files
+Found: 2 active sorry across 1 file
 
 SqlEquiv/Semantics.lean:
-  line 288: decreasing_by all_goals sorry  [Termination] [HAS COMMENT]
-  line 300: decreasing_by all_goals sorry  [Termination] [HAS COMMENT]
-  line 317: decreasing_by all_goals sorry  [Termination] [HAS COMMENT]
-
-SqlEquiv/Equiv/Decidable.lean:
-  line 1103: sorry  [Proof gap] [HAS COMMENT: "This requires BEq to be lawful"]
+  line 1025: sorry  [Proof gap] [HAS COMMENT: "#212 phase 2: needs callback congruence"]
+  line 1043: sorry  [Proof gap] [HAS COMMENT: "#212 phase 2: needs callback congruence"]
 
 Documentation cross-check:
   MEMORY.md says 3+1 sorry  ✓ matches

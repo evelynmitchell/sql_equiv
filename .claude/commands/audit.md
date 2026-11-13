@@ -31,8 +31,9 @@ per-type hand-trace below largely re-derives what the kernel already checked.
 The audit's job shifts to the things the kernel does *not* check:
 
 1. **The trust base** — `#print axioms` on the top-level theorem. Expected:
-   `[propext, sorryAx, Classical.choice, Quot.sound]` (`sorryAx` comes from
-   the evaluator's `decreasing_by sorry` in `Semantics.lean`). Anything else
+   `[propext, Classical.choice, Quot.sound]` for expression-level (`≃ₑ`)
+   theorems, plus `sorryAx` for SELECT-level ones until the two SELECT bridge
+   lemmas in `Semantics.lean` are closed (#212 phase 2). Anything else
    (`Lean.ofReduceBool` / `Lean.trustCompiler` from `native_decide`, or a
    project `axiom`) is a finding. `Test/RewriterTest.lean` pins this with a
    `#guard_msgs` guard.
@@ -226,7 +227,7 @@ Structure the report as follows:
 ## Audit Report: [function name or "Full Scan"]
 
 ### Trust base
-- #print axioms <theorem>: [...]   (expected: propext, sorryAx, Classical.choice, Quot.sound)
+- #print axioms <theorem>: [...]   (expected: propext, Classical.choice, Quot.sound; SELECT-level also sorryAx until #212 phase 2)
 - Runtime overrides on path: none / [list]
 
 ### [function_name] (file:line)

@@ -4364,3 +4364,59 @@ so the IN and JOIN forms genuinely differ.
   `[propext, sorryAx, Classical.choice, Quot.sound]` (and `evalSelectCore_outerRow_congr`
   stays sorry-free).
 - Spider evaluate-agreement 539 → 549 / 564; ratchet updated.
+
+## Batch 52: kernel-checked termination for the evaluator (#212, phase 1)
+
+**Issue**: #212 (the review in #240 ranks it first)
+
+The four mutually recursive evaluator functions (`evalExprWithDb`,
+`evalFrom`, `evalSubQueryWithContext`, `evalSelectWithContext`) discharged
+their termination goals with `decreasing_by all_goals sorry`. They pass
+lambda callbacks into the `*Core` evaluators, and Lean cannot see that a
+callback is only called on parts of its input. So every theorem about the
+evaluator depended on `sorryAx`.
+
+### Change
+
+- **Guarded callbacks.** Each recursive callback checks that its argument is
+  smaller than the caller's input, e.g. inside `evalSelectWithContext sel`:
+  `fun db' r e => if e.size < sel.size then evalExprWithDb db' r e else
+  evalExprCore db' r (fun _ _ _ => []) e`. The termination goals then follow
+  from the guard (`decreasing_by all_goals (simp_wf; …omega)`).
+- **Computable size** (`SqlEquiv/AstSize.lean`). The auto-generated `sizeOf`
+  has no executable code, and the guards must run, so the guards and the
+  `termination_by` measures use a hand-written structural `size` (leaves
+  count 1).
+- **Fallback, not `none`.** `evalSelectCore` also evaluates expressions it
+  builds itself: the #234 grouped sort keys `.col ⟨none, groupOrderKeyName
+  k⟩`. Those may fail the size guard. The fallback evaluates with subqueries
+  disabled, which is exactly the same result for subquery-free expressions.
+- **Empirical check.** The unit suite, LSpec (391 checks incl. sqlite/DuckDB
+  differentials) and Spider (553 evaluate / 514 exact / 563 parse) are
+  identical before and after.
+
+### Bridge lemmas (statements unchanged)
+
+Downstream proofs reach the evaluator only through bridge lemmas.
+
+| Lemma | Status | How |
+|---|---|---|
+| `evalExprWithDb_eq_evalExprCore` | proved | `evalExprCore_congr_subq`: callbacks agreeing on subqueries of smaller `size` give equal results |
+| `evalFrom_eq_evalFromCore` | proved | `evalFromCore_congr`: same, for join conditions and FROM subqueries |
+| `evalSelect_eq_evalSelectCore` | **sorry** | phase 2 |
+| `evalSelectWithContext_eq_evalSelectCore` | **sorry** | phase 2 |
+
+The SELECT bridges need a congruence lemma through `evalSelectCore` and its
+`*Param` helpers. `compareByOrderItemsParam` is still `partial def`, so it
+has to become total first.
+
+### Net change
+
+- `sorry` count 4 → 2. No theorem statement changes.
+- `#print axioms` is now `[propext, Classical.choice, Quot.sound]` for the
+  evaluator definitions, every `≃ₑ` theorem, and `certifiedRewriteAux_equiv`.
+  SELECT-level theorems (`select_where_congr`, the filter and unnesting
+  theorems) still show `sorryAx`.
+- `Test/RewriterTest.lean` pins three axiom lists: the rewriter and
+  `evalSelect` sorry-free, and `select_where_congr` still with `sorryAx`
+  (to be flipped in phase 2).
