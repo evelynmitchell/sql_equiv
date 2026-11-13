@@ -1,6 +1,17 @@
 # Plan: extract `/audit` as a standalone tool
 
-Status: **proposal**. The open decisions in §8 need answers before work starts.
+Status: **phases 1–4 done** (`tools/rewrite-audit/`, thin `/audit` adapter);
+phases 5–6 and the §7 seeded-regression validation remain.
+
+Decisions (13 Nov 2026):
+- **Scope:** any expression rewriter, with the Lean layer loaded only for Lean
+  projects.
+- **Home:** `tools/rewrite-audit/` in this repository.
+- **Name:** `rewrite-audit`.
+- **Licence:** n/a while the tool lives in this repository.
+- **Cached config:** the tool proposes `.claude/rewrite-audit.json` and writes
+  it only with the user's agreement. This is the default; the user did not
+  decide it.
 
 ## 1. Background
 
@@ -203,8 +214,23 @@ It moves into `output-format.md` so reports stay comparable across projects.
 | 5. Portability | One non-Lean trial: a small Python or TypeScript expression simplifier with a seeded `x * 1 → x` bug that ignores strings | The tool finds the seeded bug with a concrete counterexample |
 | 6. Package | Plugin or user-level install, README, version tag | Fresh install in an empty project; `/rewrite-audit` loads and asks the discovery question |
 
-Phases 1–4 can land as one PR in this repo, with the skill under
-`tools/rewrite-audit/` until a home is chosen. Phases 5–6 depend on §8.
+Phases 1–4 landed together:
+- the skill is in `tools/rewrite-audit/`;
+- this repo's map is in `.claude/rewrite-audit.json`;
+- `/audit` is now the adapter.
+
+Results against the done-criteria:
+- **Phase 1:** no repo identifier outside `examples/`.
+- **Phase 2:** discovery finds `certifiedRewrite` and `normalizeExpr` by
+  signature, and `checkEquivFull` by the proof-carrying-result heuristic.
+  `Expr.beq` is dropped as a false positive.
+- **Phase 3:** `check_trust_base.sh SqlEquiv SqlEquiv` reports 1258 theorems
+  OK, and `--vacuity` detects a planted `sorry`.
+- **Phase 4:** an adapter run reproduces the baseline: the same axioms,
+  54,876 expressions with 7,850 rewritten and 0 mismatches, and the oracle
+  self-check passes.
+
+Phases 5–6 (non-Lean trial, packaging) are open.
 
 ## 7. Validation (beyond the acceptance checks)
 

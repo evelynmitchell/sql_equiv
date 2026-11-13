@@ -1,0 +1,38 @@
+{
+  "rewriters": [
+    { "name": "certifiedRewrite", "file": "SqlEquiv/Rewriter.lean", "proof": "certifiedRewriteAux_equiv" },
+    { "name": "normalizeExpr", "file": "SqlEquiv/Equiv/ExprAxioms.lean", "proof": "normalizeExpr_equiv" },
+    { "name": "checkEquivFull", "file": "SqlEquiv/Equiv/Decidable.lean", "proof": "checkEquivFull" }
+  ],
+  "evaluator": {
+    "entry": "evalExprWithDb",
+    "dispatch": ["evalBinOp", "evalUnaryOp", "evalFunc"],
+    "file": "SqlEquiv/SemanticsBase.lean"
+  },
+  "valueDomain": {
+    "type": "Value",
+    "file": "SqlEquiv/Ast.lean",
+    "null": "Value.null (typed: some t, untyped: none)",
+    "error": "Option.none"
+  },
+  "relation": {
+    "name": "ExprEquiv (≃ₑ)",
+    "quantifiesOver": ["database", "row"],
+    "weakerVariantsToReject": ["ExprEquivEmptyDb (≃ₑ₀): empty database only"]
+  },
+  "guards": [
+    { "name": "Expr.isDefinitelyBool", "bridge": "isDefinitelyBool_implies_isBoolValued" },
+    { "name": "Expr.isDefinitelyInt", "bridge": "isDefinitelyInt_implies_isIntValued" }
+  ],
+  "probe": {
+    "command": "lake exe sql_equiv_lspec",
+    "group": "Context Sweep (rows, real db, subqueries)",
+    "mutantSelfCheck": true
+  },
+  "trustGuard": "Test/TrustBaseTest.lean",
+  "projectSpecificChecks": [
+    "checkEquivFull may conclude ≃ₑ from ground evaluation only when both sides are Expr.isClosed; Expr.isGround admits database-dependent EXISTS (SELECT 1 FROM t)",
+    "Dialect operators (BinOp.likeCI, MIN/MAX modes) must not be matched by rewrite arms whose proofs cover only the default operator",
+    "When a Value constructor is added, the LSpec generators and tools/definition_coverage_matrix.py must learn it in the same PR (CLAUDE.md)"
+  ]
+}
