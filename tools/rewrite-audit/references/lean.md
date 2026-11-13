@@ -15,10 +15,21 @@ kernel does **not** check.
   - a project `axiom`.
 - **Whole-library guard.** `scripts/lean/TrustBase.lean` defines
   `#assert_trust_base <Namespace>`. In one shared traversal it collects the
-  axioms of every theorem in the namespace, and fails if any falls outside
-  the allow-list. Recommend adding it to the project's test build (a module
-  the CI target imports). `scripts/lean/check_trust_base.sh` runs it ad hoc,
-  including the vacuity check (a planted `sorry` must make it fail).
+  axioms of every **theorem, definition and opaque constant** in the
+  namespace, and fails if any falls outside the allow-list, naming the
+  offenders. It covers private declarations, auxiliary proofs and
+  proof-carrying definitions; only `unsafe` constants are skipped.
+  - A guard limited to public theorems misses a `sorry` inside a
+    proof-carrying function, such as a rewriter returning
+    `{ e' // R e e' }` or a checker returning a proof-carrying result, or
+    inside a private lemma.
+  - Recommend adding the guard to the project's test build (a module the CI
+    target imports). Check which target that is: a guard in the test target
+    does not run on a plain default build.
+  - `scripts/lean/check_trust_base.sh` runs it ad hoc. Its vacuity check
+    plants a public `sorry` theorem, a private `native_decide` theorem and a
+    proof-carrying definition with `sorry`, and requires all three to be
+    named.
 
 ## 2. Runtime/proof divergence
 
@@ -31,8 +42,10 @@ rewriter's or the evaluator's path:
 - `native_decide` in a proof: trusts the compiler (also caught by §1).
 
 Search `grep -rn "implemented_by\|@\[extern\|unsafe\|partial def"`. Then
-**check the path**: is the item reachable from the rewriter or evaluator the
-theorems talk about?
+**check the path, per rewriter and decision procedure**: which of them can
+reach the item at runtime? An override can be off-path for one (e.g. a
+rewriter that never compares expressions) and on-path for another (e.g. a
+checker deciding syntactic equality through it).
 - **Off-path:** dead code, a pretty-printer, a parser. Report it as cleanup,
   not risk.
 - **On-path:** say what the theorems cannot cover.

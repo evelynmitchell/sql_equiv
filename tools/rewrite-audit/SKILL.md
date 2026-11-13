@@ -24,7 +24,9 @@ but the rewrite returns `42`.
 ### 0. Load or build the project map
 
 Read `.claude/rewrite-audit.json` if it exists (schema in
-`references/discovery.md`). It names:
+`references/discovery.md`). On a **full scan**, also re-run the discovery
+searches and report anything not in the config: new rewriters and decision
+procedures appear without anyone updating it. The config names:
 - the rewriters;
 - the evaluator entry points;
 - the value type, including its NULL and error representations;

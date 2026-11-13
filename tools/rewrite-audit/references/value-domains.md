@@ -13,7 +13,10 @@ the table from the project's value type, not from memory.
    - `None` inside a value vs an absent value.
 
    Add one row per kind that can behave differently. For example, an arm may
-   propagate a typed NULL but not an untyped one.
+   propagate a typed NULL but not an untyped one. If NULLs carry a type,
+   add **one row per type** (NULL of int, NULL of bool, …). A rewrite can
+   preserve one type's NULL and not another's, e.g. a typed boolean NULL
+   passing through where the original produced an untyped NULL.
 3. **Find the error representation.** Examples:
    - `Option.none` or `Except.error`;
    - an exception;

@@ -4,6 +4,16 @@ A full-scan report on master `2a67c43` (after PR #273), produced with this
 repository's config (`.claude/rewrite-audit.json`). This is the acceptance
 baseline for the adapter: a full scan on an unchanged tree must reproduce it.
 
+To tell whether a tree matches the baseline without git history, compare:
+- the whole-library guard counts (2582 theorems, 2105 definitions and 71
+  opaque constants after the stronger guard; the earlier guard reported 1258
+  public theorems);
+- the probe counts (54,876 expressions, 7,850 rewritten).
+
+**Corrected after the seeded-regression run.** The original report called the
+`unsafe` `DecidableEq Expr` "off-path". That is true for `certifiedRewrite`
+only; see Runtime overrides below.
+
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
 
 ### Trust base
@@ -12,11 +22,18 @@ baseline for the adapter: a full scan on an unchanged tree must reproduce it.
   - `normalizeExpr_equiv`;
   - `checkEquivFull`;
   - `evalSelect_eq_evalSelectCore`, `select_where_congr`.
-- Whole-library guard (`Test/TrustBaseTest.lean`): OK, 1258 theorems.
+- Whole-library guard (`Test/TrustBaseTest.lean`): OK. Run then over 1258
+  public theorems; the stronger guard now passes over 2582 theorems, 2105
+  definitions and 71 opaque constants, private ones included.
 - Runtime overrides:
   - `DecidableEq Expr` is `@[implemented_by]` an `unsafe` BEq
-    (`Ast.lean:833`). This is **off-path**: rewriter arms branch on
-    `isDefinitelyBool`/`isDefinitelyInt`, not on `Expr` equality.
+    (`Ast.lean:833`).
+    - **Off-path for `certifiedRewrite`:** its arms branch on
+      `isDefinitelyBool`/`isDefinitelyInt`, not on `Expr` equality.
+    - **On-path for `checkEquivFull`'s syntactic branch** (`decideExprEquiv` →
+      `syntacticEquiv` → `decide (normalizeExpr e1 = normalizeExpr e2)`) and
+      for the `sql_equiv!` tactic. There, a runtime `.equiv` answer rests on
+      `Expr.beq` being lawful, the assumption documented in `Ast.lean`.
   - `partial def hasAggregate` / `exprHasWindowFn` are **on-path** but opaque.
     SELECT theorems take "no aggregate / no window function" as hypotheses.
 
@@ -46,8 +63,11 @@ baseline for the adapter: a full scan on an unchanged tree must reproduce it.
 ### Empirical probe
 - Context Sweep: 54,876 expressions, of which 7,850 were rewritten. Contexts
   were rows × {empty, non-empty} database × subqueries. Mismatches: 0.
-- Vacuity: the built-in oracle self-check catches the unguarded mutant
-  `a AND TRUE → a`.
+- Vacuity: at the time, the built-in "oracle self-check" only showed that the
+  evaluator distinguishes `42 AND TRUE` from `42`; it was not a mutant check.
+  It has since been replaced by a real one: an unguarded `a AND TRUE → a`
+  rewriter is run through the same mismatch function and caught on 45
+  cases.
 
 ### Summary
 - Rewriters audited: 3.
@@ -57,4 +77,5 @@ baseline for the adapter: a full scan on an unchanged tree must reproduce it.
   - the legacy non-`Param` partial evaluators (`evalExprWithAgg`,
     `compareByOrderItems`, `computeRanks`, `computeDenseRanks`,
     `evalExprWithWindow`) look unused;
-  - the off-path `unsafe` `DecidableEq Expr` is documented in `Ast.lean`.
+  - the `unsafe` `DecidableEq Expr` is documented in `Ast.lean`. It is off-path
+    for `certifiedRewrite` but on-path for `checkEquivFull`'s syntactic branch.

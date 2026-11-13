@@ -382,15 +382,31 @@ def sweepEmptyDb : Database := fun _ => []
 def sweepRealDb : Database := fun n =>
   if n == "t" then [[("a", .int 1)], [("a", .int 4)], [("a", .null none)]] else []
 
-/-- Does rewriting `e` change its value in any sweep row, under either database? -/
-def rewriteMismatch (e : Expr) : Bool :=
-  let e' := (certifiedRewrite e).val
+/-- Does rewriting `e` with `rw` change its value in any sweep row, under
+    either database? -/
+def rewriteMismatchWith (rw : Expr → Expr) (e : Expr) : Bool :=
+  let e' := rw e
   [sweepEmptyDb, sweepRealDb].any fun db =>
     sweepRows.any fun r => evalExprWithDb db r e != evalExprWithDb db r e'
+
+/-- Does the certified rewriter change `e`'s value anywhere in the sweep? -/
+def rewriteMismatch (e : Expr) : Bool :=
+  rewriteMismatchWith (fun e => (certifiedRewrite e).val) e
+
+/-- A known-unsound mutant of the rewriter: `a AND TRUE → a` with the
+    `isDefinitelyBool` guard removed, otherwise the real rewriter. Used to
+    show the sweep can fail (its mismatch check is not vacuous). -/
+def mutantRewrite (e : Expr) : Expr :=
+  match e with
+  | .binOp .and l (.lit (.bool true)) => l
+  | _ => (certifiedRewrite e).val
 
 def contextSweepTests : TestSeq :=
   let mismatches := sweepCases.filter rewriteMismatch
   let rewritten := (sweepCases.filter fun e => !((certifiedRewrite e).val == e)).length
+  let mutantCaught := (sweepCases.filter fun e =>
+    (match e with | .binOp .and _ (.lit (.bool true)) => true | _ => false) &&
+    rewriteMismatchWith mutantRewrite e).length
   let firstBad := match mismatches.head? with
     | some e => s!" first: {e.toSql} ⇒ {(certifiedRewrite e).val.toSql}"
     | none => ""
@@ -402,9 +418,10 @@ def contextSweepTests : TestSeq :=
       evalExprWithDb sweepRealDb [] (.«exists» false subqNonEmpty) &&
     evalExprWithDb sweepEmptyDb [] (.inSubquery (.lit (.int 4)) false subqNonEmpty) !=
       evalExprWithDb sweepRealDb [] (.inSubquery (.lit (.int 4)) false subqNonEmpty)) $
-  test "sweep detects an unguarded `a AND TRUE → a` (oracle self-check)" (
-    let e : Expr := .binOp .and (.lit (.int 42)) (.lit (.bool true))
-    evalExprWithDb sweepEmptyDb [] e != evalExprWithDb sweepEmptyDb [] (.lit (.int 42))) $
+  -- Mutant check: the same cases, rows, databases and mismatch function must
+  -- reject a rewriter with the `isDefinitelyBool` guard removed.
+  test s!"sweep rejects an unguarded `a AND TRUE → a` mutant ({mutantCaught} cases caught)"
+    (mutantCaught > 0) $
   test s!"rewrite preserves evaluation across rows and empty/real db ({mismatches.length} mismatches){firstBad}"
     mismatches.isEmpty
 
