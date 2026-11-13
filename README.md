@@ -13,6 +13,8 @@ SQL Equiv is a comprehensive toolkit for:
 
 The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations.
 
+**Trust base.** Every theorem in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` enforces this at build time. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are `partial def` and have no theorems.
+
 ## Features
 
 ### Full SQL DML Support
@@ -720,8 +722,8 @@ All distributivity theorems require `isBoolValued` on all operands.
 ```lean
 theorem my_new_theorem (a b : Expr) :
     Expr.binOp .someOp a b ≃ₑ Expr.binOp .someOp b a := by
-  intro row
-  -- Your proof here
+  intro db row
+  -- Your proof here (a `sorry` fails the build: see Test/TrustBaseTest.lean)
   sorry
 ```
 

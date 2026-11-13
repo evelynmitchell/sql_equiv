@@ -31,12 +31,11 @@ per-type hand-trace below largely re-derives what the kernel already checked.
 The audit's job shifts to the things the kernel does *not* check:
 
 1. **The trust base** — `#print axioms` on the top-level theorem. Expected:
-   `[propext, Classical.choice, Quot.sound]` for expression-level (`≃ₑ`)
-   theorems, plus `sorryAx` for SELECT-level ones until the two SELECT bridge
-   lemmas in `Semantics.lean` are closed (#212 phase 2). Anything else
-   (`Lean.ofReduceBool` / `Lean.trustCompiler` from `native_decide`, or a
-   project `axiom`) is a finding. `Test/RewriterTest.lean` pins this with a
-   `#guard_msgs` guard.
+   `[propext, Classical.choice, Quot.sound]` for every theorem (no `sorryAx`
+   since #212). Anything else (`sorryAx`, `Lean.ofReduceBool` /
+   `Lean.trustCompiler` from `native_decide`, or a project `axiom`) is a
+   finding. `Test/TrustBaseTest.lean` enforces this for the whole `SqlEquiv`
+   namespace at build time; `Test/RewriterTest.lean` pins a few key theorems.
 2. **Runtime/proof divergence** — `@[implemented_by]`, `@[extern]`, `unsafe`,
    or `partial def` on the rewriter's or evaluator's path mean the compiled
    code is not the code that was proved.
@@ -227,7 +226,7 @@ Structure the report as follows:
 ## Audit Report: [function name or "Full Scan"]
 
 ### Trust base
-- #print axioms <theorem>: [...]   (expected: propext, Classical.choice, Quot.sound; SELECT-level also sorryAx until #212 phase 2)
+- #print axioms <theorem>: [...]   (expected: propext, Classical.choice, Quot.sound)
 - Runtime overrides on path: none / [list]
 
 ### [function_name] (file:line)

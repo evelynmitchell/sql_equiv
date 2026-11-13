@@ -106,4 +106,25 @@ theorem Expr.size_le_sizePairs_of_mem {a b : Expr} :
 theorem FromClause.size_pos (fc : FromClause) : 0 < fc.size := by
   cases fc <;> simp [FromClause.size] <;> omega
 
+
+theorem SelectItem.size_le_sizeList_of_mem {x : SelectItem} :
+    ∀ {l : List SelectItem}, x ∈ l → x.size ≤ SelectItem.sizeList l
+  | _ :: _, .head _ => by simp [SelectItem.sizeList]
+  | _ :: _, .tail _ h => by
+    have := SelectItem.size_le_sizeList_of_mem h
+    simp [SelectItem.sizeList]; omega
+
+theorem OrderByItem.size_le_sizeList_of_mem {x : OrderByItem} :
+    ∀ {l : List OrderByItem}, x ∈ l → x.size ≤ OrderByItem.sizeList l
+  | _ :: _, .head _ => by simp [OrderByItem.sizeList]
+  | _ :: _, .tail _ h => by
+    have := OrderByItem.size_le_sizeList_of_mem h
+    simp [OrderByItem.sizeList]; omega
+
+theorem OrderByItem.expr_size_lt (o : OrderByItem) : o.expr.size < o.size := by
+  cases o; simp [OrderByItem.size, OrderByItem.expr]
+
+theorem OrderByItem.size_pos (o : OrderByItem) : 0 < o.size := by
+  cases o; simp [OrderByItem.size]; omega
+
 end SqlEquiv

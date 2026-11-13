@@ -5,9 +5,8 @@
   producing both the simplified expression AND a proof of equivalence.
   The rewriter itself adds no `axiom` declarations, `sorry`, or
   `native_decide`. `#print axioms certifiedRewriteAux_equiv` reports
-  `[propext, sorryAx, Classical.choice, Quot.sound]`: the `sorryAx` is
-  inherited from the semantics (`decreasing_by sorry` in the mutual
-  evaluator in `Semantics.lean`, through `≃ₑ`), not from this file.
+  `[propext, Classical.choice, Quot.sound]`, Lean's standard axioms (since
+  #212 the evaluator's termination is kernel-checked).
 
   Phase 1: Unconditional rules (no type preconditions).
   Phase 2a: Conditional rules guarded by static type checks.

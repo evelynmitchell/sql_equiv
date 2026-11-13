@@ -572,6 +572,40 @@ def evalSelectGroupOrderKeys (db : Database)
       else
         none
 
+/-- Project the SELECT items of one row in the window-function path: `*` and
+    `t.*` pass the row through, expression items go through the window-aware
+    evaluator. A named helper (rather than an inline lambda) so congruence
+    lemmas can rewrite it (#212). -/
+def projectWindowItems
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (db : Database) (row : Row) (partition sortedPartition : Table) (idx : Nat)
+    (items : List SelectItem) : List (String × Value) :=
+  items.flatMap fun item =>
+    match item with
+    | .star none => row
+    | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
+    | .exprItem e alias =>
+      match exprWithWindowEval db row partition sortedPartition idx e with
+      | some v => [(alias.getD (exprToName e), v)]
+      | none => [(alias.getD (exprToName e), .null none)]
+
+/-- `projectWindowItems` only uses the evaluator on the items' expressions. -/
+theorem projectWindowItems_congr
+    (wA wB : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (db : Database) (row : Row) (p sp : Table) (i : Nat) (items : List SelectItem)
+    (h : ∀ e a, SelectItem.exprItem e a ∈ items → wA db row p sp i e = wB db row p sp i e) :
+    projectWindowItems wA db row p sp i items = projectWindowItems wB db row p sp i items := by
+  unfold projectWindowItems
+  induction items with
+  | nil => rfl
+  | cons it rest ih =>
+    simp only [List.flatMap_cons]
+    rw [ih (fun e a ha => h e a (List.mem_cons_of_mem it ha))]
+    congr 1
+    cases it with
+    | star t => cases t <;> rfl
+    | exprItem e a => simp only [h e a List.mem_cons_self]
+
 /-- Non-partial SELECT evaluator, parameterized by evaluation callbacks.
     Mirrors evalSelectWithContext (Semantics.lean) exactly, with partial def
     calls replaced by parameters. Not recursive — delegates to parameters
@@ -653,14 +687,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
       let partition := havingRows
       let sortedPartition := havingRows
       ((List.range havingRows.length).zip havingRows).map fun (idx, row) =>
-        sel.items.flatMap fun item =>
-          match item with
-          | .star none => row
-          | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
-          | .exprItem e alias =>
-            match exprWithWindowEval db row partition sortedPartition idx e with
-            | some v => [(alias.getD (exprToName e), v)]
-            | none => [(alias.getD (exprToName e), .null none)]
+        projectWindowItems exprWithWindowEval db row partition sortedPartition idx sel.items
     else
       havingRows.map fun row => sel.items.flatMap (selectItemEval db row)
 
@@ -857,14 +884,7 @@ def evalSelectProjectDistinct (db : Database)
       let partition := havingRows
       let sortedPartition := havingRows
       ((List.range havingRows.length).zip havingRows).map fun (idx, row) =>
-        items.flatMap fun item =>
-          match item with
-          | .star none => row
-          | .star (some t) => row.filter fun (k, _) => k.startsWith s!"{t}."
-          | .exprItem e alias =>
-            match exprWithWindowEval db row partition sortedPartition idx e with
-            | some v => [(alias.getD (exprToName e), v)]
-            | none => [(alias.getD (exprToName e), .null none)]
+        projectWindowItems exprWithWindowEval db row partition sortedPartition idx items
     else
       let havingRows := match having with
         | some cond =>
@@ -2612,5 +2632,115 @@ theorem evalFromCore_congr (db : Database) :
         have hc : ∀ r, f1 db r cond = f2 db r cond :=
           hf cond (by simp [FromClause.size, Expr.sizeOpt]; omega)
         simp only [hc]
+
+-- ============================================================================
+-- evalSelectCore callback congruence (#212 phase 2)
+-- ============================================================================
+
+
+theorem filterMap_congr_mem {α β : Type} {f g : α → Option β} :
+    ∀ {l : List α}, (∀ x ∈ l, f x = g x) → l.filterMap f = l.filterMap g
+  | [], _ => rfl
+  | a :: t, h => by
+    simp only [List.filterMap_cons, h a List.mem_cons_self,
+      filterMap_congr_mem (fun x hx => h x (List.mem_cons_of_mem a hx))]
+
+theorem applyOrderByLimitOffsetAligned_congr
+    (cA cB : Database → Row → Row → List OrderByItem → Bool)
+    (db : Database) (ob : List OrderByItem) (lim off : Option Nat) (us : Bool) (src rows : Table)
+    (h : ∀ r1 r2, cA db r1 r2 ob = cB db r1 r2 ob) :
+    applyOrderByLimitOffsetAligned cA db ob lim off us src rows =
+    applyOrderByLimitOffsetAligned cB db ob lim off us src rows := by
+  simp only [applyOrderByLimitOffsetAligned, h]
+
+theorem groupOrderKeyRow_congr (db : Database)
+    (aA aB : Database → Table → Row → Expr → Option Value) (ob : List OrderByItem)
+    (h : ∀ o ∈ ob, ∀ rows r, aA db rows r o.expr = aB db rows r o.expr)
+    (groupRows : Table) (sampleRow projected : Row) :
+    groupOrderKeyRow db aA ob groupRows sampleRow projected =
+    groupOrderKeyRow db aB ob groupRows sampleRow projected := by
+  simp only [groupOrderKeyRow]
+  apply filterMap_congr_mem
+  intro x hx
+  rw [h x.2 (List.of_mem_zip hx).2]
+
+theorem evalSelectGroupOrderKeys_congr (db : Database)
+    (eA eB : Database → Row → Expr → Option Value)
+    (siaA siaB : Database → Table → Row → SelectItem → List (String × Value))
+    (aA aB : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (gb : List Expr) (hv : Option Expr) (ob : List OrderByItem)
+    (rows : Table)
+    (hG : ∀ r, gb.map (eA db r) = gb.map (eB db r))
+    (hSIA : ∀ rs r, items.flatMap (siaA db rs r) = items.flatMap (siaB db rs r))
+    (hHa : ∀ c, hv = some c → ∀ rs r, aA db rs r c = aB db rs r c)
+    (hOK : ∀ o ∈ ob, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr) :
+    evalSelectGroupOrderKeys db eA siaA aA items gb hv ob rows =
+    evalSelectGroupOrderKeys db eB siaB aB items gb hv ob rows := by
+  have hK := groupOrderKeyRow_congr db aA aB ob hOK
+  cases hv with
+  | none => simp only [evalSelectGroupOrderKeys, hG, hSIA, hK]
+  | some c =>
+    have hc := hHa c rfl
+    simp only [evalSelectGroupOrderKeys, hG, hSIA, hK, hc]
+
+
+/-- `evalSelectCore` congruence over its callbacks: two callback tuples that
+    agree wherever `evalSelectCore` uses them on `sel` give the same result. -/
+theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
+    (fA fB : Database → FromClause → Table)
+    (eA eB : Database → Row → Expr → Option Value)
+    (siA siB : Database → Row → SelectItem → List (String × Value))
+    (siaA siaB : Database → Table → Row → SelectItem → List (String × Value))
+    (aA aB : Database → Table → Row → Expr → Option Value)
+    (cA cB : Database → Row → Row → List OrderByItem → Bool)
+    (wA wB : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn hasAgg : List SelectItem → Bool) (sel : SelectStmt)
+    (hF : ∀ f, sel.fromClause = some f → fA db f = fB db f)
+    (hW : ∀ c, sel.whereClause = some c → ∀ r, eA db r c = eB db r c)
+    (hHe : ∀ c, sel.having = some c → ∀ r, eA db r c = eB db r c)
+    (hHa : ∀ c, sel.having = some c → ∀ rs r, aA db rs r c = aB db rs r c)
+    (hG : ∀ r, sel.groupBy.map (eA db r) = sel.groupBy.map (eB db r))
+    (hSI : ∀ r, sel.items.flatMap (siA db r) = sel.items.flatMap (siB db r))
+    (hSIA : ∀ rs r, sel.items.flatMap (siaA db rs r) = sel.items.flatMap (siaB db rs r))
+    (hEW : ∀ e a, SelectItem.exprItem e a ∈ sel.items →
+      ∀ r p sp i, wA db r p sp i e = wB db r p sp i e)
+    (hC1 : ∀ r1 r2, cA db r1 r2 sel.orderBy = cB db r1 r2 sel.orderBy)
+    (hC2 : ∀ r1 r2, cA db r1 r2 (groupOrderByItems sel.orderBy) =
+      cB db r1 r2 (groupOrderByItems sel.orderBy))
+    (hOK : ∀ o ∈ sel.orderBy, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr) :
+    evalSelectCore db outerRow fA eA siA siaA aA cA wA hasWindowFn hasAgg sel =
+    evalSelectCore db outerRow fB eB siB siaB aB cB wB hasWindowFn hasAgg sel := by
+  obtain ⟨d, items, from_, w, gb, hv, ob, lim, off⟩ := sel
+  simp only [SelectStmt.fromClause, SelectStmt.whereClause, SelectStmt.having,
+    SelectStmt.groupBy, SelectStmt.items, SelectStmt.orderBy] at *
+  have hGK : ∀ rows, evalSelectGroupOrderKeys db eA siaA aA items gb hv ob rows =
+      evalSelectGroupOrderKeys db eB siaB aB items gb hv ob rows :=
+    fun rows => evalSelectGroupOrderKeys_congr db eA eB siaA siaB aA aB items gb hv ob rows
+      hG hSIA hHa hOK
+  have hWin : ∀ r p sp i, projectWindowItems wA db r p sp i items =
+      projectWindowItems wB db r p sp i items :=
+    fun r p sp i => projectWindowItems_congr wA wB db r p sp i items
+      (fun e a ha => hEW e a ha r p sp i)
+  have hOrd : ∀ (us : Bool) (src rows : Table),
+      applyOrderByLimitOffsetAligned cA db
+        (if (!d && !gb.isEmpty) = true then groupOrderByItems ob else ob) lim off us src rows =
+      applyOrderByLimitOffsetAligned cB db
+        (if (!d && !gb.isEmpty) = true then groupOrderByItems ob else ob) lim off us src rows := by
+    intro us src rows
+    split
+    · exact applyOrderByLimitOffsetAligned_congr cA cB db _ lim off us src rows hC2
+    · exact applyOrderByLimitOffsetAligned_congr cA cB db _ lim off us src rows hC1
+  have hFrom : (match from_ with | some f => fA db f | none => [[]]) =
+      (match from_ with | some f => fB db f | none => [[]]) := by
+    cases from_ with
+    | none => rfl
+    | some f => exact hF f rfl
+  simp only [evalSelectCore, SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
+    SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having, SelectStmt.orderBy,
+    SelectStmt.limitVal, SelectStmt.offsetVal, hG, hSI, hSIA, hWin, hGK]
+  rw [hOrd]
+  cases from_ <;> cases w <;> cases hv <;>
+    (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>
+    (try simp only [hHe _ rfl, hHa _ rfl]) <;> rfl
 
 end SqlEquiv
