@@ -40,22 +40,18 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 
 ### Expected State
 
-- **2 sorry** in `SqlEquiv/Semantics.lean` — the SELECT bridge lemmas
-  `evalSelect_eq_evalSelectCore` and `evalSelectWithContext_eq_evalSelectCore`
-  (#212 phase 2). The evaluator's termination itself is kernel-checked since
-  #212 (size-guarded callbacks; no `decreasing_by sorry` remains)
-- **0 sorry** elsewhere
+- **0 sorry** in `SqlEquiv/` (since #212: kernel-checked evaluator
+  termination via size-guarded callbacks, and callback-congruence proofs of
+  the bridge lemmas). `Test/TrustBaseTest.lean` fails the build if any
+  theorem in the `SqlEquiv` namespace depends on `sorryAx` (or any
+  non-standard axiom), so a regression cannot land silently.
 
 ### Output Format
 
 ```
 Sorry Audit
 ===========
-Found: 2 active sorry across 1 file
-
-SqlEquiv/Semantics.lean:
-  line 1025: sorry  [Proof gap] [HAS COMMENT: "#212 phase 2: needs callback congruence"]
-  line 1043: sorry  [Proof gap] [HAS COMMENT: "#212 phase 2: needs callback congruence"]
+Found: 0 active sorry
 
 Documentation cross-check:
   MEMORY.md says 3+1 sorry  ✓ matches

@@ -147,7 +147,7 @@ def orderKeyCmp (item : OrderByItem) (v1 v2 : Option Value) : Option Bool :=
     | _, _ => none
 
 /-- Parameterized ORDER BY comparator -/
-partial def compareByOrderItemsParam (exprEval : Database → Row → Expr → Option Value)
+def compareByOrderItemsParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (r1 r2 : Row) : List OrderByItem → Bool
   | [] => true
   | item :: rest =>
@@ -181,7 +181,7 @@ def computeRowNumbers (rows : Table) : List (Row × Nat) :=
   (List.range rows.length).zip rows |>.map fun (i, row) => (row, i + 1)
 
 /-- Parameterized RANK computation -/
-partial def computeRanksParam (exprEval : Database → Row → Expr → Option Value)
+def computeRanksParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
   let rec go (remaining : List Row) (currentRank : Nat) (nextRank : Nat)
       (prevKey : Option (List (Option Value))) : List (Row × Nat) :=
@@ -196,7 +196,7 @@ partial def computeRanksParam (exprEval : Database → Row → Expr → Option V
   go rows 1 2 none
 
 /-- Parameterized DENSE_RANK computation -/
-partial def computeDenseRanksParam (exprEval : Database → Row → Expr → Option Value)
+def computeDenseRanksParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (rows : Table) (orderBy : List OrderByItem) : List (Row × Nat) :=
   let rec go (remaining : List Row) (currentRank : Nat)
       (prevKey : Option (List (Option Value))) : List (Row × Nat) :=
@@ -1005,24 +1005,167 @@ theorem evalQuery_eq_evalQueryCore_compound (db : Database) (left right : Query)
     evalQueryCore db evalSelect evalQuery evalRecursiveCTE (.compound left op right) := by
   unfold evalQuery evalQueryCore; rfl
 
-private abbrev ee := fun db' (r : Row) e => @evalExprWithDb db' r e
+-- ============================================================================
+-- Helper congruence (#212 phase 2): the *Param helpers only call their
+-- expression callback on parts of their input, so callbacks that agree on all
+-- expressions below a size bound give equal results on inputs below it.
+-- ============================================================================
+section HelperCongr
+variable (e1 e2 : Database → Row → Expr → Option Value) (N : Nat)
+  (hE : ∀ e, e.size < N → ∀ db r, e1 db r e = e2 db r e)
 
-theorem evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
-  evalSelect db sel = evalSelectCore db []
-    (fun db' fc => evalFrom db' fc)
-    ee
-    (evalSelectItemParam ee)
-    (evalSelectItemWithAggParam ee)
-    (evalExprWithAggParam ee)
-    (compareByOrderItemsParam ee)
-    (evalExprWithWindowParam ee)
-    selectHasWindowFn
-    selectHasAggregate
-    sel := by
-  -- #212 phase 2: needs callback congruence through evalSelectCore and its
-  -- *Param helpers (compareByOrderItemsParam is still `partial`). Until then
-  -- SELECT-level theorems depend on sorryAx (pinned in Test/RewriterTest.lean).
-  sorry
+include hE in
+theorem evalAggOverTableParam_congr (db : Database) (fn : AggFunc) (a : Option Expr)
+    (dist : Bool) (rows : Table) (ha : Expr.sizeOpt a < N) :
+    evalAggOverTableParam e1 db fn a dist rows = evalAggOverTableParam e2 db fn a dist rows := by
+  cases a with
+  | none => rfl
+  | some x =>
+    have hx := hE x (by simpa [Expr.sizeOpt] using ha)
+    simp only [evalAggOverTableParam, hx]
+
+include hE in
+theorem evalExprWithAggParam_congr (db : Database) (rows : Table) (r : Row) :
+    ∀ (n : Nat) (e : Expr), e.size ≤ n → e.size < N →
+    evalExprWithAggParam e1 db rows r e = evalExprWithAggParam e2 db rows r e := by
+  intro n
+  induction n with
+  | zero => intro e h; have := Expr.size_pos e; omega
+  | succ n ih =>
+    intro e hn hN
+    cases e with
+    | agg fn a d =>
+      simp only [evalExprWithAggParam]
+      exact evalAggOverTableParam_congr e1 e2 N hE db fn a d rows
+        (by simp [Expr.size] at hN; omega)
+    | countStar => simp only [evalExprWithAggParam]
+    | binOp op l rr =>
+      simp only [evalExprWithAggParam]
+      simp only [Expr.size] at hn hN
+      rw [ih l (by omega) (by omega), ih rr (by omega) (by omega)]
+    | unaryOp op x =>
+      simp only [evalExprWithAggParam]
+      simp only [Expr.size] at hn hN
+      rw [ih x (by omega) (by omega)]
+    | _ => simp only [evalExprWithAggParam]; exact hE _ hN db r
+
+include hE in
+theorem compareByOrderItemsParam_congr (db : Database) (r1 r2 : Row) :
+    ∀ (ob : List OrderByItem), (∀ o ∈ ob, o.expr.size < N) →
+    compareByOrderItemsParam e1 db r1 r2 ob = compareByOrderItemsParam e2 db r1 r2 ob
+  | [], _ => by simp only [compareByOrderItemsParam]
+  | o :: rest, h => by
+    simp only [compareByOrderItemsParam]
+    rw [hE o.expr (h o List.mem_cons_self) db r1, hE o.expr (h o List.mem_cons_self) db r2,
+      compareByOrderItemsParam_congr db r1 r2 rest (fun x hx => h x (List.mem_cons_of_mem o hx))]
+
+include hE in
+theorem computeRanksParam_congr (db : Database) (rows : Table) (ob : List OrderByItem)
+    (h : ∀ o ∈ ob, o.expr.size < N) :
+    computeRanksParam e1 db rows ob = computeRanksParam e2 db rows ob := by
+  have hk : ∀ r, ob.map (fun item => e1 db r item.expr) = ob.map (fun item => e2 db r item.expr) :=
+    fun r => List.map_congr_left (fun o ho => hE o.expr (h o ho) db r)
+  simp only [computeRanksParam]
+  suffices ∀ rem c nx pk, computeRanksParam.go e1 db ob rem c nx pk =
+      computeRanksParam.go e2 db ob rem c nx pk from this _ _ _ _
+  intro rem
+  induction rem with
+  | nil => intro c nx pk; simp only [computeRanksParam.go]
+  | cons row rest ih => intro c nx pk; simp only [computeRanksParam.go, hk, ih]
+
+include hE in
+theorem computeDenseRanksParam_congr (db : Database) (rows : Table) (ob : List OrderByItem)
+    (h : ∀ o ∈ ob, o.expr.size < N) :
+    computeDenseRanksParam e1 db rows ob = computeDenseRanksParam e2 db rows ob := by
+  have hk : ∀ r, ob.map (fun item => e1 db r item.expr) = ob.map (fun item => e2 db r item.expr) :=
+    fun r => List.map_congr_left (fun o ho => hE o.expr (h o ho) db r)
+  simp only [computeDenseRanksParam]
+  suffices ∀ rem c pk, computeDenseRanksParam.go e1 db ob rem c pk =
+      computeDenseRanksParam.go e2 db ob rem c pk from this _ _ _
+  intro rem
+  induction rem with
+  | nil => intro c pk; simp only [computeDenseRanksParam.go]
+  | cons row rest ih => intro c pk; simp only [computeDenseRanksParam.go, hk, ih]
+
+include hE in
+theorem sortPartitionParam_congr (db : Database) (rows : Table) (ob : List OrderByItem)
+    (h : ∀ o ∈ ob, o.expr.size < N) :
+    sortPartitionParam e1 db rows ob = sortPartitionParam e2 db rows ob := by
+  simp only [sortPartitionParam, compareByOrderItemsParam_congr e1 e2 N hE db _ _ ob h]
+
+include hE in
+theorem windowFrameRowsParam_congr (db : Database) (ob : List OrderByItem)
+    (sp : Table) (r : Row) (i : Nat) (h : ∀ o ∈ ob, o.expr.size < N) :
+    windowFrameRowsParam e1 db ob sp r i = windowFrameRowsParam e2 db ob sp r i := by
+  have hk : ∀ r, ob.map (fun item => e1 db r item.expr) = ob.map (fun item => e2 db r item.expr) :=
+    fun r => List.map_congr_left (fun o ho => hE o.expr (h o ho) db r)
+  simp only [windowFrameRowsParam, hk]
+
+include hE in
+theorem evalWindowFnParam_congr (db : Database) (fn : WindowFunc) (a : Option Expr)
+    (ob : List OrderByItem) (sp : Table) (r : Row) (i : Nat)
+    (ha : Expr.sizeOpt a < N) (h : ∀ o ∈ ob, o.expr.size < N) :
+    evalWindowFnParam e1 db fn a ob sp r i = evalWindowFnParam e2 db fn a ob sp r i := by
+  have hf := windowFrameRowsParam_congr e1 e2 N hE db ob sp r i h
+  have hr := computeRanksParam_congr e1 e2 N hE db sp ob h
+  have hd := computeDenseRanksParam_congr e1 e2 N hE db sp ob h
+  cases a with
+  | none => cases fn <;> simp only [evalWindowFnParam, hf, hr, hd]
+  | some x =>
+    have hx := hE x (by simpa [Expr.sizeOpt] using ha)
+    cases fn <;> simp only [evalWindowFnParam, hf, hr, hd, hx]
+
+theorem WindowSpec.partitionBy_size_lt {spec : WindowSpec} {x : Expr}
+    (hx : x ∈ spec.partitionBy) : x.size < spec.size := by
+  cases spec with
+  | mk ps os =>
+    simp only [WindowSpec.partitionBy] at hx
+    have := Expr.size_le_sizeList_of_mem hx
+    simp [WindowSpec.size]; omega
+
+theorem WindowSpec.orderBy_size_lt {spec : WindowSpec} {o : OrderByItem}
+    (ho : o ∈ spec.orderBy) : o.expr.size < spec.size := by
+  cases spec with
+  | mk ps os =>
+    simp only [WindowSpec.orderBy] at ho
+    have := OrderByItem.size_le_sizeList_of_mem ho
+    have := OrderByItem.expr_size_lt o
+    simp [WindowSpec.size]; omega
+
+include hE in
+theorem evalExprWithWindowParam_congr (db : Database) (r : Row) (p sp : Table) (i : Nat) :
+    ∀ (n : Nat) (e : Expr), e.size ≤ n → e.size < N →
+    evalExprWithWindowParam e1 db r p sp i e = evalExprWithWindowParam e2 db r p sp i e := by
+  intro n
+  induction n with
+  | zero => intro e h; have := Expr.size_pos e; omega
+  | succ n ih =>
+    intro e hn hN
+    cases e with
+    | windowFn fn a spec =>
+      simp only [Expr.size] at hN
+      have hpb : ∀ x ∈ spec.partitionBy, x.size < N := fun x hx => by
+        have := WindowSpec.partitionBy_size_lt hx; omega
+      have hob : ∀ o ∈ spec.orderBy, o.expr.size < N := fun o ho => by
+        have := WindowSpec.orderBy_size_lt ho; omega
+      have hkey : ∀ r, spec.partitionBy.map (e1 db r) = spec.partitionBy.map (e2 db r) :=
+        fun r => List.map_congr_left (fun x hx => hE x (hpb x hx) db r)
+      simp only [evalExprWithWindowParam, hkey,
+        sortPartitionParam_congr e1 e2 N hE db _ spec.orderBy hob,
+        evalWindowFnParam_congr e1 e2 N hE db fn a spec.orderBy _ r _ (by omega) hob]
+    | binOp op l rr =>
+      simp only [evalExprWithWindowParam]
+      simp only [Expr.size] at hn hN
+      rw [ih l (by omega) (by omega), ih rr (by omega) (by omega)]
+    | unaryOp op x =>
+      simp only [evalExprWithWindowParam]
+      simp only [Expr.size] at hn hN
+      rw [ih x (by omega) (by omega)]
+    | _ => simp only [evalExprWithWindowParam]; exact hE _ hN db r
+
+end HelperCongr
+
+private abbrev ee := fun db' (r : Row) e => @evalExprWithDb db' r e
 
 /-- Bridge: evalSelectWithContext equals evalSelectCore instantiated with all eval callbacks -/
 theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row) (sel : SelectStmt) :
@@ -1037,10 +1180,113 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
     selectHasWindowFn
     selectHasAggregate
     sel := by
-  -- #212 phase 2: needs callback congruence through evalSelectCore and its
-  -- *Param helpers (compareByOrderItemsParam is still `partial`). Until then
-  -- SELECT-level theorems depend on sorryAx (pinned in Test/RewriterTest.lean).
-  sorry
+  -- The guarded callbacks of the definition agree with the unguarded ones on
+  -- every expression smaller than `sel`, and evalSelectCore and its helpers
+  -- only use them on parts of `sel` (or on the size-1 grouped sort keys) (#212).
+  rw [evalSelectWithContext]
+  obtain ⟨d, items, from_, w, gb, hv, ob, lim, off⟩ := sel
+  have hsz : (SelectStmt.mk d items from_ w gb hv ob lim off).size =
+      1 + SelectItem.sizeList items + FromClause.sizeOpt from_ + Expr.sizeOpt w +
+        Expr.sizeList gb + Expr.sizeOpt hv + OrderByItem.sizeList ob := by
+    simp [SelectStmt.size]
+  generalize hN : (SelectStmt.mk d items from_ w gb hv ob lim off).size = N at hsz ⊢
+  have hE : ∀ e, e.size < N → ∀ db' r,
+      (fun db' r e => if _h : e.size < N then evalExprWithDb db' r e
+        else evalExprCore db' r (fun _ _ _ => []) e) db' r e = ee db' r e := by
+    intro e he db' r; simp only [dif_pos he]
+  have hItem : ∀ e a, SelectItem.exprItem e a ∈ items → e.size < N := by
+    intro e a hm
+    have := SelectItem.size_le_sizeList_of_mem hm
+    simp [SelectItem.size] at this; omega
+  have hOb : ∀ o ∈ ob, o.expr.size < N := by
+    intro o ho
+    have := OrderByItem.size_le_sizeList_of_mem ho
+    have := OrderByItem.expr_size_lt o
+    omega
+  apply evalSelectCore_callbacks_congr
+  case hF =>
+    intro f hf
+    simp only [SelectStmt.fromClause] at hf
+    subst hf
+    simp only [dif_pos (show f.size < N by simp [FromClause.sizeOpt] at hsz; omega)]
+  case hW =>
+    intro c hc
+    simp only [SelectStmt.whereClause] at hc
+    subst hc
+    exact hE c (by simp [Expr.sizeOpt] at hsz; omega) db
+  case hHe =>
+    intro c hc
+    simp only [SelectStmt.having] at hc
+    subst hc
+    exact hE c (by simp [Expr.sizeOpt] at hsz; omega) db
+  case hHa =>
+    intro c hc rs r
+    simp only [SelectStmt.having] at hc
+    subst hc
+    exact evalExprWithAggParam_congr _ ee N hE db rs r c.size c (Nat.le_refl _)
+      (by simp [Expr.sizeOpt] at hsz; omega)
+  case hG =>
+    intro r
+    simp only [SelectStmt.groupBy]
+    exact List.map_congr_left (fun x hx => hE x
+      (by have := Expr.size_le_sizeList_of_mem hx; omega) db r)
+  case hSI =>
+    intro r
+    simp only [SelectStmt.items]
+    apply flatMap_congr_mem
+    intro item hm
+    cases item with
+    | star t => cases t <;> rfl
+    | exprItem e a =>
+      simp only [evalSelectItemParam, hE e (hItem e a hm) db r]
+  case hSIA =>
+    intro rs r
+    simp only [SelectStmt.items]
+    apply flatMap_congr_mem
+    intro item hm
+    cases item with
+    | star t => cases t <;> rfl
+    | exprItem e a =>
+      simp only [evalSelectItemWithAggParam,
+        evalExprWithAggParam_congr _ ee N hE db rs r e.size e (Nat.le_refl _) (hItem e a hm)]
+  case hEW =>
+    intro e a hm r p sp i
+    simp only [SelectStmt.items] at hm
+    exact evalExprWithWindowParam_congr _ ee N hE db r p sp i e.size e (Nat.le_refl _)
+      (hItem e a hm)
+  case hC1 =>
+    intro r1 r2
+    exact compareByOrderItemsParam_congr _ ee N hE db r1 r2 ob hOb
+  case hC2 =>
+    intro r1 r2
+    apply compareByOrderItemsParam_congr _ ee N hE db r1 r2
+    intro o ho
+    simp only [SelectStmt.orderBy, groupOrderByItems, List.mem_map] at ho
+    obtain ⟨⟨k, item⟩, hk, rfl⟩ := ho
+    have hitem := (List.of_mem_zip hk).2
+    have := OrderByItem.size_le_sizeList_of_mem hitem
+    have := OrderByItem.size_pos item
+    simp [OrderByItem.expr, Expr.size]; omega
+  case hOK =>
+    intro o ho rs r
+    simp only [SelectStmt.orderBy] at ho
+    exact evalExprWithAggParam_congr _ ee N hE db rs r o.expr.size o.expr (Nat.le_refl _)
+      (hOb o ho)
+
+theorem evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
+  evalSelect db sel = evalSelectCore db []
+    (fun db' fc => evalFrom db' fc)
+    ee
+    (evalSelectItemParam ee)
+    (evalSelectItemWithAggParam ee)
+    (evalExprWithAggParam ee)
+    (compareByOrderItemsParam ee)
+    (evalExprWithWindowParam ee)
+    selectHasWindowFn
+    selectHasAggregate
+    sel := by
+  rw [evalSelect]
+  exact evalSelectWithContext_eq_evalSelectCore db [] sel
 
 -- ============================================================================
 -- Infrastructure theorems for evalSelect (proved via evalSelectCore bridge)

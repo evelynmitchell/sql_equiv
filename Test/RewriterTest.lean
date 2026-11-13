@@ -17,7 +17,7 @@ open Test
 -- The rewriter's correctness proof must not depend on compiler trust
 -- (`Lean.ofReduceBool` / `Lean.trustCompiler`, i.e. `native_decide`) or on
 -- `sorryAx`. Since #212 the evaluator's termination is kernel-checked (size-
--- guarded callbacks), so expression-level theorems are sorry-free.
+-- guarded callbacks), and no theorem depends on `sorryAx`.
 /--
 info: 'SqlEquiv.certifiedRewriteAux_equiv' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
@@ -30,11 +30,11 @@ info: 'SqlEquiv.evalSelect' depends on axioms: [propext, Classical.choice, Quot.
 #guard_msgs in
 #print axioms evalSelect
 
--- SELECT-level theorems still inherit `sorryAx` from the two SELECT bridge
--- lemmas (`evalSelect_eq_evalSelectCore`, `evalSelectWithContext_eq_
--- evalSelectCore`), pending #212 phase 2. Remove `sorryAx` here when they close.
+-- SELECT-level theorems are sorry-free since #212 phase 2 (callback
+-- congruence through evalSelectCore). Test/TrustBaseTest.lean checks every
+-- theorem in the namespace.
 /--
-info: 'SqlEquiv.select_where_congr' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+info: 'SqlEquiv.select_where_congr' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in
 #print axioms select_where_congr

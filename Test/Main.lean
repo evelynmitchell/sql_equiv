@@ -6,6 +6,7 @@ import Test.SemanticsTest
 import Test.EquivTest
 import Test.PropertyTest
 import Test.AxiomCoverageTest
+import Test.TrustBaseTest
 import Test.RewriterTest
 
 def main : IO UInt32 := do

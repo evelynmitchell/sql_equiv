@@ -12,10 +12,8 @@
    - Cross-type elimination lemma (`mismatched_types_null`) mitigates proof explosion
 
 3. **Remaining proof debt** (small, tracked)
-   - The evaluator's termination is kernel-checked since #212 (size-guarded
-     callbacks), so expression-level theorems are `sorryAx`-free. Two bridge
-     lemmas (`evalSelect_eq_evalSelectCore`, `evalSelectWithContext_eq_evalSelectCore`)
-     are still `sorry`, so SELECT-level theorems show `sorryAx` (#212 phase 2)
+   - (done, #212) The evaluator's termination is kernel-checked and no
+     theorem depends on `sorryAx`; `Test/TrustBaseTest.lean` enforces it
    - Statement-level certified checkers need `decideSelectStmtEq`/`decideQueryEq`
      converted from `partial def` to structural recursion before soundness
      lemmas are possible (see `SqlEquiv/Equiv/Decidable.lean`)

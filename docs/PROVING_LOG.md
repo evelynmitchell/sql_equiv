@@ -4420,3 +4420,65 @@ has to become total first.
 - `Test/RewriterTest.lean` pins three axiom lists: the rewriter and
   `evalSelect` sorry-free, and `select_where_congr` still with `sorryAx`
   (to be flipped in phase 2).
+
+## Batch 53: SELECT bridge lemmas, zero `sorryAx` (#212 phase 2, #237)
+
+**Issues**: #212 (phase 2), #237
+
+Batch 52 left two `sorry`s: the SELECT bridge lemmas
+`evalSelect_eq_evalSelectCore` and `evalSelectWithContext_eq_evalSelectCore`.
+They state that the evaluator equals `evalSelectCore` instantiated with the
+*unguarded* callbacks, while the definition passes size-guarded ones. Both are
+now proved with their statements unchanged.
+
+### Approach: callback congruence
+
+1. **Generic congruence for `evalSelectCore`**
+   (`evalSelectCore_callbacks_congr`, SemanticsCore). Two callback tuples give
+   the same result if they agree wherever `evalSelectCore` uses them on `sel`.
+   That means on the FROM clause, the WHERE/HAVING/GROUP BY expressions, the
+   items, the ORDER BY comparator on `sel.orderBy` and on
+   `groupOrderByItems sel.orderBy`, and the grouped sort keys. Supporting
+   lemmas: `applyOrderByLimitOffsetAligned_congr`, `groupOrderKeyRow_congr`,
+   `evalSelectGroupOrderKeys_congr`, `filterMap_congr_mem`.
+2. **Helper congruence** (Semantics.lean). If two expression callbacks agree
+   on every expression with `size < N`, each `*Param` helper agrees on inputs
+   below that size. This covers `evalAggOverTableParam`,
+   `evalExprWithAggParam`, `compareByOrderItemsParam`, `sortPartitionParam`,
+   `computeRanksParam`, `computeDenseRanksParam`, `windowFrameRowsParam`,
+   `evalWindowFnParam` and `evalExprWithWindowParam`.
+3. **Bridge.** Take `N = sel.size`. The guarded and unguarded callbacks agree
+   below `N` (`dif_pos`). Every input `evalSelectCore` passes is a part of
+   `sel`, or a built grouped sort key `.col …` of size 1. Those keys only
+   exist when ORDER BY is non-empty, which makes `sel.size ≥ 2`.
+
+### Enabling changes (no semantic change)
+
+- `compareByOrderItemsParam`, `computeRanksParam` and
+  `computeDenseRanksParam` were `partial def` (opaque to proofs). They recurse
+  structurally on lists and are now plain `def`.
+- The window path's inline per-row projection is now a named helper,
+  `projectWindowItems`, with `projectWindowItems_congr`. Its compiler-generated
+  `match` could not be matched by a hand-written congruence statement. It
+  changed identically in `evalSelectCore` and `evalSelectAfterFilter`, which
+  stay rfl-linked; no downstream proof changed.
+- New size lemmas: `SelectItem.size_le_sizeList_of_mem`,
+  `OrderByItem.size_le_sizeList_of_mem`, `OrderByItem.expr_size_lt` and
+  `OrderByItem.size_pos`.
+
+### Trust-base guard (#237)
+
+`Test/TrustBaseTest.lean` collects the axioms of every theorem in the
+`SqlEquiv` namespace in one shared traversal (about 2 s). The build fails if
+anything other than `propext`, `Classical.choice` and `Quot.sound` appears.
+It is imported by `Test/Main.lean`, so CI's `lake build sql_equiv_test`
+enforces it. A planted `theorem SqlEquiv.vacuityProbe : 1 = 1 := by sorry`
+makes it fail, so the check is not vacuous.
+
+### Net change
+
+- `sorry` count 2 → **0**. No theorem statement changes.
+- **1258 / 1258** theorems in `SqlEquiv` depend only on
+  `[propext, Classical.choice, Quot.sound]`.
+- Unit tests, LSpec (391 checks) and Spider (553 / 514 exact / 563 parse)
+  are identical.
