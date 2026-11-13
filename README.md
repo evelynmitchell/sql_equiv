@@ -13,7 +13,7 @@ SQL Equiv is a comprehensive toolkit for:
 
 The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations.
 
-**Trust base.** Every theorem in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` enforces this at build time. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are `partial def` and have no theorems.
+**Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are `partial def` and have no theorems. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
 
 ## Features
 
@@ -723,7 +723,7 @@ All distributivity theorems require `isBoolValued` on all operands.
 theorem my_new_theorem (a b : Expr) :
     Expr.binOp .someOp a b ≃ₑ Expr.binOp .someOp b a := by
   intro db row
-  -- Your proof here (a `sorry` fails the build: see Test/TrustBaseTest.lean)
+  -- Your proof here (a `sorry` fails `lake build sql_equiv_test`: see Test/TrustBaseTest.lean)
   sorry
 ```
 
@@ -819,24 +819,7 @@ sql_equiv/
 
 ## License
 
-MIT License
+Copyright (c) 2026 evelynmitchell and contributors.
 
-Copyright (c) 2026
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Licensed under the [Apache License, Version 2.0](LICENSE). Versions before
+13 Nov 2026 were released under the MIT License.

@@ -14,8 +14,12 @@ compare.
 
    A probe where few expressions are rewritten is weak. Report the ratio.
 3. **Vacuity check, always.** Confirm the probe can fail:
-   - If the project has a built-in self-check (a mutant oracle run inside the
-     suite), confirm it passes.
+   - If the project has a built-in self-check, confirm it passes, **and check
+     that it is a real mutant check**. It must run a deliberately unsound
+     rewriter through the *same* mismatch function, cases and contexts as the
+     real probe, and require it to be caught. An assertion that merely shows
+     the evaluator distinguishes two expressions (e.g. `eval(42 AND TRUE) ≠
+     eval(42)`) tests the evaluator, not the probe, and does not count.
    - Otherwise, make a temporary mutant on a scratch branch or copy, so the
      working tree is never left modified. Remove one guard from an identity
      rule (the `a AND TRUE → a` shape) and confirm the probe reports a

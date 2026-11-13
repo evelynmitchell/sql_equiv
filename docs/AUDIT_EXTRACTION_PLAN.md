@@ -1,10 +1,11 @@
 # Plan: extract `/audit` as a standalone tool
 
-Status: **phases 1–5 done**:
+Status: **phases 1–5 and the §7 validation done**:
 - `tools/rewrite-audit/` and the thin `/audit` adapter;
-- the blind Python trial (`tools/rewrite-audit/trials/README.md`).
+- the blind Python trial and the seeded-regression run
+  (`tools/rewrite-audit/trials/README.md`).
 
-Phase 6 and the §7 seeded-regression validation remain.
+Phase 6 (packaging) remains.
 
 Decisions (13 Nov 2026):
 - **Scope:** any expression rewriter, with the Lean layer loaded only for Lean

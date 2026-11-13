@@ -42,7 +42,7 @@ Audit all `sorry` usage across the codebase and verify documentation is accurate
 
 - **0 sorry** in `SqlEquiv/` (since #212: kernel-checked evaluator
   termination via size-guarded callbacks, and callback-congruence proofs of
-  the bridge lemmas). `Test/TrustBaseTest.lean` fails the build if any
+  the bridge lemmas). `Test/TrustBaseTest.lean` fails `lake build sql_equiv_test` (CI) if any
   theorem in the `SqlEquiv` namespace depends on `sorryAx` (or any
   non-standard axiom), so a regression cannot land silently.
 

@@ -78,3 +78,60 @@ The subagent's "Skill feedback" led to these changes:
    - a fallback when there's no commit;
    - flexible analysis tables;
    - a reachability line.
+
+## Seeded regressions in this repository (§7, 13 Nov 2026)
+
+Four bugs were planted on a local throwaway branch, which was never pushed
+and was deleted afterwards. A fresh subagent then ran `/audit` as a full scan,
+blind: no git history, no plan doc, no trial records.
+
+### Seeds and results
+
+| # | Seed | Caught? | How |
+|---|---|---|---|
+| 1 | `a AND TRUE → a` with its `isDefinitelyBool` guard removed and the proof replaced by `sorry` | **yes** | Concrete counterexamples (`42 AND TRUE` → `42`, typed NULLs); `sorryAx` traced to `simplifyBinOp`; the Context Sweep showed 168 mismatches |
+| 2 | `foldGround`: a public rewriter returning `{ e' // e ≃ₑ₀ e' }`. It folds `isGround` expressions by evaluating them on the empty database | **yes** | Found by re-running discovery (it was not in the config). It concludes the rejected weaker relation. Executed counterexample: `EXISTS (SELECT 1 FROM t)` → `FALSE` |
+| 3 | `theorem … := by native_decide` in `Comparison.lean` | **yes** | `Lean.ofReduceBool` / `trustCompiler` traced to the theorem |
+| 4 | `minMaxAgg` made a `partial def` (on the aggregate evaluation path) | **yes** | Reported as a new on-path `partial`, absent from the baseline. Rightly classed as an observation: it hides code from proofs but is not unsound |
+
+### Real weaknesses found, beyond the seeds (all fixed)
+
+These are present on master, not only on the seeded branch.
+
+- **The trust guard checked only public theorems.** It skipped:
+  - private theorems: 755 of them were invisible;
+  - proof-carrying definitions, e.g. a `sorry` inside `checkEquivFull` or
+    inside a rewriter returning `{ e' // … }`;
+  - instances.
+
+  Both `Test/TrustBaseTest.lean` and the skill's `TrustBase.lean` now check
+  every theorem, definition and opaque constant, private ones included, and
+  skip only `unsafe` constants. On failure they name the offending
+  constants, using a memoised dependency walk that takes seconds. Clean
+  master passes: 2582 theorems, 2105 definitions, 71 opaque constants. The
+  only `lcProof` use is the documented `unsafe` `Expr.decEqUnsafe`. The
+  vacuity check now plants a public `sorry`, a private `native_decide` and a
+  proof-carrying `sorry` definition, and requires all three to be named.
+- **The trust guard does not run on plain `lake build`.** It runs only in
+  `sql_equiv_test`, which is what CI builds. The README, `/audit` and the docs
+  said "at build time". The wording is corrected, and `/audit` now always
+  runs the script.
+- **The probe's "oracle self-check" was not a mutant check.** It only showed
+  that the evaluator distinguishes `42 AND TRUE` from `42`. It is replaced by
+  a real mutant check: an unguarded `a AND TRUE → a` rewriter runs through the
+  same `rewriteMismatchWith` function, cases, rows and databases, and is
+  caught on 45 cases. `probe-design.md` now requires this.
+- **The baseline was wrong about the `unsafe` `DecidableEq Expr`.** It called
+  it "off-path", which is true only for `certifiedRewrite`. It is on-path for
+  `checkEquivFull`'s syntactic branch and `sql_equiv!`. The example is
+  corrected, and `lean.md` now asks "on-path for which rewriter or decision
+  procedure?".
+- **`/audit` told the auditor not to re-run discovery**, which would have hidden
+  seed 2. Full scans now re-run discovery and report anything not in the
+  config (`SKILL.md`, `/audit`).
+- Smaller:
+  - `value-domains.md` asks for one row per typed NULL;
+  - the baseline records the guard and probe counts, so a tree can be
+    compared without git history;
+  - the README states that `≃ₑ` says nothing about aggregates or window
+    functions, which evaluate to an error at expression level.
