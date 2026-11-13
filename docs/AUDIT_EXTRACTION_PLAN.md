@@ -1,7 +1,10 @@
 # Plan: extract `/audit` as a standalone tool
 
-Status: **phases 1–4 done** (`tools/rewrite-audit/`, thin `/audit` adapter);
-phases 5–6 and the §7 seeded-regression validation remain.
+Status: **phases 1–5 done**:
+- `tools/rewrite-audit/` and the thin `/audit` adapter;
+- the blind Python trial (`tools/rewrite-audit/trials/README.md`).
+
+Phase 6 and the §7 seeded-regression validation remain.
 
 Decisions (13 Nov 2026):
 - **Scope:** any expression rewriter, with the Lean layer loaded only for Lean
@@ -230,7 +233,17 @@ Results against the done-criteria:
   54,876 expressions with 7,850 rewritten and 0 mismatches, and the oracle
   self-check passes.
 
-Phases 5–6 (non-Lean trial, packaging) are open.
+Phase 5 is done: a blind trial on a Python simplifier
+(`tools/rewrite-audit/trials/`).
+- It found the planted `x * 1 → x` with counterexamples, and had 0 false
+  positives.
+- It also found 3 real bugs the answer key had missed: patterns compared with
+  Python equality, where `False == 0` and `True == 1`.
+- The trial's feedback is folded into the skill: a new risk pattern,
+  kind-strict probe comparison, vacuity check on a failing baseline, the
+  driver vs root rules, and output-format gaps.
+
+Phase 6 (packaging) is open.
 
 ## 7. Validation (beyond the acceptance checks)
 

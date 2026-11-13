@@ -52,6 +52,15 @@ load `references/lean.md` and run its checks first:
 For each rewriter, take each pattern arm that returns a structurally
 different expression and apply the protocol below.
 
+Audit both levels:
+- the **root rules**, the per-node step;
+- the **driver**: the traversal or fixed-point loop that applies them. Its own
+  equality checks ("did anything change?") can share a pattern-matching bug.
+
+Through the driver, some arms may be unreachable on the inputs their guards
+accept, for instance when constant folding fires first. Report that
+reachability; an arm whose only reachable effect is a bug matters more.
+
 - **Arms with a machine-checked proof:** confirm the proof concludes the
   *full* relation (§1 relation scope) and that every guard has bridge
   evidence. A full hand-trace is not needed.
@@ -77,6 +86,10 @@ Use `references/output-format.md`.
    (`references/value-domains.md`): one row per constructor, plus each NULL
    kind and the error result. For binary operators take the cross product;
    for single-variable rules take every row.
+
+   Also enumerate the kinds of every **constant the pattern matches**. A
+   pattern compared with host-language equality may match constants of
+   other kinds (Python `Lit(1) == Lit(True)`).
 4. **Trace BEFORE.** For each combination, follow the evaluator's dispatch for
    the original expression. Note which arm fires, especially catch-alls that
    return an error.

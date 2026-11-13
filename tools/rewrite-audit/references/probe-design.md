@@ -23,6 +23,26 @@ compare.
 
    Revert, and confirm the working tree is clean.
 
+## Comparing results
+
+- **Kind-strict equality.** Compare results so that values of different kinds
+  never compare equal, even if the host language says so: Python
+  `1 == True`, JS `1 == "1"`, `1 == 1.0`. Compare the kind (type) as well as
+  the value, and treat NaN as equal to itself only if the evaluator does.
+- **Change detection.** "Was this expression rewritten?" must not use the same
+  loose equality, or rewrites like `Lit(1) → Lit(True)` go unseen. Compare a
+  structural, kind-preserving representation (e.g. `repr`).
+
+## Vacuity check details
+
+- **Baseline already failing.** If the probe already reports mismatches on the
+  unmodified code, the mutant cannot "turn it red". Compare the *set* of
+  distinct failing expressions instead: the mutant must add failures, and the
+  mutant's own target expression must fail.
+- **Choose a disjoint mutant.** Prefer a guard whose removal changes
+  expressions that do not already fail for another reason. Otherwise the
+  check cannot tell the mutant's effect from the known bugs.
+
 ## If it has none
 
 Propose a probe; do not add it to the test suite without the user's

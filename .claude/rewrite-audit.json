@@ -1,12 +1,28 @@
 {
   "rewriters": [
-    { "name": "certifiedRewrite", "file": "SqlEquiv/Rewriter.lean", "proof": "certifiedRewriteAux_equiv" },
-    { "name": "normalizeExpr", "file": "SqlEquiv/Equiv/ExprAxioms.lean", "proof": "normalizeExpr_equiv" },
-    { "name": "checkEquivFull", "file": "SqlEquiv/Equiv/Decidable.lean", "proof": "checkEquivFull" }
+    {
+      "name": "certifiedRewrite",
+      "file": "SqlEquiv/Rewriter.lean",
+      "proof": "certifiedRewriteAux_equiv"
+    },
+    {
+      "name": "normalizeExpr",
+      "file": "SqlEquiv/Equiv/ExprAxioms.lean",
+      "proof": "normalizeExpr_equiv"
+    },
+    {
+      "name": "checkEquivFull",
+      "file": "SqlEquiv/Equiv/Decidable.lean",
+      "proof": "checkEquivFull"
+    }
   ],
   "evaluator": {
     "entry": "evalExprWithDb",
-    "dispatch": ["evalBinOp", "evalUnaryOp", "evalFunc"],
+    "dispatch": [
+      "evalBinOp",
+      "evalUnaryOp",
+      "evalFunc"
+    ],
     "file": "SqlEquiv/SemanticsBase.lean"
   },
   "valueDomain": {
@@ -17,12 +33,24 @@
   },
   "relation": {
     "name": "ExprEquiv (≃ₑ)",
-    "quantifiesOver": ["database", "row"],
-    "weakerVariantsToReject": ["ExprEquivEmptyDb (≃ₑ₀): empty database only"]
+    "quantifiesOver": [
+      "database",
+      "row"
+    ],
+    "equality": "Lean propositional equality on Option Value: kind-strict (distinct Value constructors never coincide); rewrite patterns match constructors, so host-language equality confusion cannot arise",
+    "weakerVariantsToReject": [
+      "ExprEquivEmptyDb (≃ₑ₀): empty database only"
+    ]
   },
   "guards": [
-    { "name": "Expr.isDefinitelyBool", "bridge": "isDefinitelyBool_implies_isBoolValued" },
-    { "name": "Expr.isDefinitelyInt", "bridge": "isDefinitelyInt_implies_isIntValued" }
+    {
+      "name": "Expr.isDefinitelyBool",
+      "bridge": "isDefinitelyBool_implies_isBoolValued"
+    },
+    {
+      "name": "Expr.isDefinitelyInt",
+      "bridge": "isDefinitelyInt_implies_isIntValued"
+    }
   ],
   "probe": {
     "command": "lake exe sql_equiv_lspec",
