@@ -15,6 +15,44 @@ The project is designed for compatibility with the Spider benchmark and supports
 
 **Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are `partial def` and have no theorems. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
 
+### For Lean / CSLib readers
+
+This repository could become a basis for SQL support in
+[CSLib](https://github.com/leanprover/cslib). In brief:
+
+- **Semantics.** An executable evaluator (`SqlEquiv/Semantics*.lean`) over
+  three representations:
+  - `Row := List (String × Value)`;
+  - `Table := List Row`;
+  - `Database := String → Table`.
+
+  Values are untyped (int, decimal, string, bool and typed NULLs), and errors
+  are `none`. It covers three-valued logic, correlated subqueries,
+  aggregates, window functions and set operations.
+- **Equivalences** (`SqlEquiv/Equiv/Defs.lean`). Each quantifies over **every
+  database**. For queries there are three strengths:
+  - `≃ᵩ`: equal result lists;
+  - `≃ᵇ`: bag equality (`List.Perm`);
+  - `≃ˢ`: set equality.
+
+  Expressions use `≃ₑ` (every database and row) and statements use `≃`.
+- **Validated against real engines.** sqlite3 and DuckDB serve as
+  differential oracles. Where engines legitimately differ (NULL ordering,
+  LIKE case sensitivity, MIN/MAX over mixed types), the behaviour is a named
+  dialect setting recorded in [`docs/IMPLEMENTATION_DEFINED.md`](docs/IMPLEMENTATION_DEFINED.md).
+- **Trust.** The trust base is the one described above. The certified rewriter
+  and the decision procedure come with proofs (`docs/CERTIFIED_REWRITER.md`).
+- **Known gaps before a library port:**
+  - [#278](https://github.com/evelynmitchell/sql_equiv/issues/278): 29 `partial def`s on the proof path, plus an `unsafe`
+    `DecidableEq Expr` and `native_decide` in the `sql_equiv!` tactic;
+  - the representation choices above were made for a checker, not a library.
+    Schemas and typed relations, `Multiset` for bag semantics, and a small
+    core calculus with SQL translated into it are all open design questions.
+- **A likely split.** A core semantics module (bag relations, three-valued
+  logic, the equivalences, dialects as parameters) would go upstream.
+  The parser, rewriter, oracles and Spider harness would stay here,
+  depending on it.
+
 ## Features
 
 ### Full SQL DML Support
