@@ -361,7 +361,7 @@ row merging is commutative/associative (modulo column ordering).
 - ~~`isGround_eq_isGroundCore` -- bridge axiom for isGround~~ **PROVED** (PR #151, Batch 37) via converting `isGround` mutual block from `partial` to WFR
 - `decideGroundExprEquiv_sound` -- ground equivalence decision procedure is sound (already a theorem, uses `ground_expr_eval_independent`)
 
-**Approach:** `syntacticEquiv_implies_equiv` was proved by providing `DecidableEq Expr` via `opaque + @[implemented_by unsafe]` (manual WFR and `deriving` both fail for mutual inductives; `Classical.decEq` is noncomputable, breaking `native_decide`). Changed `syntacticEquiv` to use `decide` instead of `BEq.beq`. Soundness assumption: BEq is lawful.
+**Approach:** `syntacticEquiv_implies_equiv` was proved by providing `DecidableEq Expr` via `opaque + @[implemented_by unsafe]` (manual WFR and `deriving` both fail for mutual inductives; `Classical.decEq` is noncomputable, breaking `native_decide`). Changed `syntacticEquiv` to use `decide` instead of `BEq.beq`. Soundness assumption: BEq is lawful. *(Superseded by #278 step 1: `DecidableEq Expr` is now a total generated decider, `tools/gen_ast_deceq.py`; the assumption and the `unsafe` code are gone.)*
 
 **Estimated complexity:** Medium-High.
 
