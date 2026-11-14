@@ -950,11 +950,12 @@ def filterTests : List TestResult :=
   let pAge30 := Expr.binOp .gt (col "age") (.lit (.int 25))
   [
     -- filter_and: (WHERE p) WHERE q = WHERE (p AND q)
-    -- Note: subquery wrapping may change column names; compare row counts
+    -- Shape of the restated theorem (#269): the derived table is named after
+    -- the table it wraps, so no column is renamed. Row counts compared.
     let innerSel := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     let outerWithQ := SelectStmt.mk false [.star none]
-      (some (.subquery (.simple innerSel) "inner")) (some pTrue) [] none [] none none
+      (some (.subquery (.simple innerSel) tUsers)) (some pTrue) [] none [] none none
     let combined := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some (.binOp .and pAge30 pTrue)) [] none [] none none
     testLengthEq "filter_and"
@@ -965,21 +966,22 @@ def filterTests : List TestResult :=
     let innerP := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     let outerQ := SelectStmt.mk false [.star none]
-      (some (.subquery (.simple innerP) "inner")) (some pTrue) [] none [] none none
+      (some (.subquery (.simple innerP) tUsers)) (some pTrue) [] none [] none none
     let innerQ := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pTrue) [] none [] none none
     let outerP := SelectStmt.mk false [.star none]
-      (some (.subquery (.simple innerQ) "inner")) (some pAge30) [] none [] none none
+      (some (.subquery (.simple innerQ) tUsers)) (some pAge30) [] none [] none none
     testLengthEq "filter_commute"
       (evalSelect testDb outerQ).length
       (evalSelect testDb outerP).length,
 
     -- filter_idempotent: (WHERE p) WHERE p = WHERE p
-    -- Note: subquery wrapping may change column names; compare row counts
+    -- Shape of the restated theorem (#269): the derived table is named after
+    -- the table it wraps, so no column is renamed. Row counts compared.
     let innerIdent := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     let outerIdent := SelectStmt.mk false [.star none]
-      (some (.subquery (.simple innerIdent) "inner")) (some pAge30) [] none [] none none
+      (some (.subquery (.simple innerIdent) tUsers)) (some pAge30) [] none [] none none
     let singleFilter := SelectStmt.mk false [.star none]
       (some (.table ⟨tUsers, none⟩)) (some pAge30) [] none [] none none
     testLengthEq "filter_idempotent"

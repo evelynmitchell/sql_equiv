@@ -1399,11 +1399,11 @@ private theorem evalExprWithDb_and_true_iff (db : Database) (row : Row) (p q : E
 /-- Infrastructure: filter_and at the evalSelect level.
     SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE q ...
     = SELECT items FROM from_ WHERE (p AND q) ... -/
-theorem evalSelect_filter_and (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+theorem evalSelect_filter_and (db : Database) (alias_ : String) (items : List SelectItem) (from_ : Option FromClause)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
@@ -1417,14 +1417,14 @@ theorem evalSelect_filter_and (db : Database) (items : List SelectItem) (from_ :
 /-- Infrastructure: filter_commute at the evalSelect level.
     SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE q ...
     = SELECT items FROM (SELECT * FROM from_ WHERE q) AS inner WHERE p ... -/
-theorem evalSelect_filter_commute (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+theorem evalSelect_filter_commute (db : Database) (alias_ : String) (items : List SelectItem) (from_ : Option FromClause)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
       (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) alias_))
       (some p) groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   apply evalSelectCore_filter_commute
@@ -1436,11 +1436,11 @@ theorem evalSelect_filter_commute (db : Database) (items : List SelectItem) (fro
 /-- Infrastructure: filter_idempotent at the evalSelect level.
     SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE p ...
     = SELECT items FROM from_ WHERE p ... -/
-theorem evalSelect_filter_idempotent (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+theorem evalSelect_filter_idempotent (db : Database) (alias_ : String) (items : List SelectItem) (from_ : Option FromClause)
     (p : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
+      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
       (some p) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
@@ -1494,7 +1494,7 @@ theorem evalSelect_predicate_pushdown (db : Database) (t : String) (p q : Expr) 
 /-- Infrastructure: filter pushdown through an inner join to the left side.
     When a filter evaluates the same on `lr ++ rr` as on just `lr`, we can
     push the filter into a subquery wrapping the left side of the join. -/
-theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
+theorem evalSelect_filter_join_left (db : Database) (alias_ : String) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
     (h_filter_left : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
@@ -1502,7 +1502,7 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
       groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.join (.subquery (.simple (.mk false [.star none] (some a)
-      (some filter) [] none [] none none)) "filtered_a") .inner b (some cond)))
+      (some filter) [] none [] none none)) alias_) .inner b (some cond)))
       none groupBy having orderBy limit offset) := by
   -- Step 1: Push filter into subquery around whole join (filter_pushdown_table)
   rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
@@ -1547,7 +1547,7 @@ theorem evalSelect_filter_join_left (db : Database) (a b : FromClause) (cond fil
 /-- Infrastructure: filter pushdown through an inner join to the right side.
     When a filter evaluates the same on `lr ++ rr` as on just `rr`, we can
     push the filter into a subquery wrapping the right side of the join. -/
-theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
+theorem evalSelect_filter_join_right (db : Database) (alias_ : String) (a b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
     (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
@@ -1555,7 +1555,7 @@ theorem evalSelect_filter_join_right (db : Database) (a b : FromClause) (cond fi
     evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
       groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.join a .inner (.subquery (.simple (.mk false [.star none] (some b)
-      (some filter) [] none [] none none)) "filtered_b") (some cond)))
+      (some filter) [] none [] none none)) alias_) (some cond)))
       none groupBy having orderBy limit offset) := by
   -- Step 1: Push filter into subquery around whole join
   rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))

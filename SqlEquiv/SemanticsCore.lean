@@ -1370,7 +1370,7 @@ theorem evalSelectCore_star_where_eq_filter (db : Database) (outerRow : Row)
     exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg _ h_hasAgg h_hasWindowFn h_star _
 
 /-- Core filter_and: filtering a subquery result is the same as combining WHERE clauses. -/
-theorem evalSelectCore_filter_and (db : Database)
+theorem evalSelectCore_filter_and (db : Database) (alias_ : String)
     (fromEval : Database → FromClause → Table)
     (exprEval : Database → Row → Expr → Option Value)
     (selectItemEval : Database → Row → SelectItem → List (String × Value))
@@ -1394,7 +1394,7 @@ theorem evalSelectCore_filter_and (db : Database)
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
         (some q) groupBy having orderBy limit offset) =
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
@@ -1408,7 +1408,7 @@ theorem evalSelectCore_filter_and (db : Database)
   congr 1; funext row; exact (h_and row).symm
 
 /-- Core filter_commute: filtering by p then q equals filtering by q then p. -/
-theorem evalSelectCore_filter_commute (db : Database)
+theorem evalSelectCore_filter_commute (db : Database) (alias_ : String)
     (fromEval : Database → FromClause → Table)
     (exprEval : Database → Row → Expr → Option Value)
     (selectItemEval : Database → Row → SelectItem → List (String × Value))
@@ -1430,12 +1430,12 @@ theorem evalSelectCore_filter_commute (db : Database)
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
         (some q) groupBy having orderBy limit offset) =
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) alias_))
         (some p) groupBy having orderBy limit offset) := by
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
@@ -1446,7 +1446,7 @@ theorem evalSelectCore_filter_commute (db : Database)
   exact list_filter_comm _ _ _
 
 /-- Core filter_idempotent: filtering by p then p again equals filtering by p once. -/
-theorem evalSelectCore_filter_idempotent (db : Database)
+theorem evalSelectCore_filter_idempotent (db : Database) (alias_ : String)
     (fromEval : Database → FromClause → Table)
     (exprEval : Database → Row → Expr → Option Value)
     (selectItemEval : Database → Row → SelectItem → List (String × Value))
@@ -1468,7 +1468,7 @@ theorem evalSelectCore_filter_idempotent (db : Database)
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
-        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
+        (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
         (some p) groupBy having orderBy limit offset) =
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg

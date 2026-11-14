@@ -550,12 +550,12 @@ def subqueryTests : List TestResult := [
   -- exact-match-first lookup gave the outer `age` and 0 rows)
   testRowCount "scope_derived_outer_unqualified_keys"
     "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)" 4,
-  -- Known gap (#257, deferred): a derived table's alias is not applied to its
-  -- columns. Unqualified references work; `d.col` evaluates to NULL (engines
-  -- return the column). Pinned so a fix is noticed: standard scoping would
-  -- make filter_and / filter_commute / filter_idempotent /
-  -- filter_pushdown_table / filter_join_left / filter_join_right false as
-  -- stated, so it needs those theorems restated (see #257).
+  -- Known gap (#257): a derived table's alias is not applied to its columns.
+  -- Unqualified references work; `d.col` evaluates to NULL (engines return the
+  -- column). Pinned so a fix is noticed. The six filter theorems were restated
+  -- in #269 (single table, derived table named after its qualifier), so fixing
+  -- #257 needs only the evaluator change and re-proofs, provided the fix
+  -- *replaces* an existing qualifier (`t.col` → `alias.col`).
   testColumn "derived_unqualified_ref_works"
     "SELECT name FROM (SELECT name, id FROM users WHERE id < 3) AS x" "name"
     [.string "Alice", .string "Bob"],

@@ -174,12 +174,15 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   `FROM (SELECT name FROM users) AS d` keeps the subquery's own keys, so
   `d.name` evaluates to NULL (all engines return the column) while `name`
   works; out-of-scope references such as `users.name` outside the derived table
-  still resolve, where engines reject them. Fixing it with standard scoping
-  makes six proven theorems false as stated (`filter_and`, `filter_commute`,
+  still resolve, where engines reject them. The six filter theorems that
+  depended on the pass-through (`filter_and`, `filter_commute`,
   `filter_idempotent`, `filter_pushdown_table`, `filter_join_left`,
-  `filter_join_right`): they wrap a FROM in `(SELECT * …) AS inner` and depend
-  on pass-through keys, and results compare column names. Deferred: Spider has
-  no query that needs it. Pinned by the `derived_*` unit tests.
+  `filter_join_right`) were restated in #269 for a single table wrapped as a
+  derived table named after its own qualifier (`filtered t p` in
+  `Equiv/Comparison.lean`), a shape where standard scoping renames nothing. The
+  fix is therefore unblocked; it must *replace* an existing qualifier
+  (`t.col` → `alias.col`). Spider has no query that needs it. Pinned by the
+  `derived_*` unit tests.
 
 ---
 

@@ -12,34 +12,46 @@ namespace SqlEquiv
 -- Predicate Pushdown Theorems
 -- ============================================================================
 
-/-- Predicate pushdown: push filter into the left side of an inner join.
-    The semantic precondition `h_filter_left` requires that the filter evaluates
-    the same on `lr ++ rr` as on just `lr` — i.e., the filter doesn't depend
-    on the right side's columns. The `_h_ref` parameter documents the syntactic
-    condition but is not needed for the proof (blocked by `partial def`). -/
-theorem filter_join_left (db : Database) (a b : FromClause) (cond filter : Expr)
-    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (_h_ref : exprReferencesOnlyFrom a filter = true)
-    (h_filter_left : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
-        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join (.subquery (.simple (.mk false [.star none] (some a) (some filter) [] none [] none none)) "filtered_a") .inner b (some cond))) none groupBy having orderBy limit offset) :=
-  evalSelect_filter_join_left db a b cond filter items groupBy having orderBy limit offset h_filter_left
+/-- `(SELECT * FROM t WHERE p) AS q`, where `q` is `t`'s own qualifier (its
+    alias, else its name). Base-table rows are keyed `q.col` and `SELECT *`
+    keeps those keys, so naming the derived table `q` renames nothing: the
+    filter theorems below are stated for this shape so they stay true under
+    standard derived-table scoping (#269, #257). -/
+abbrev filtered (t : TableRef) (p : Expr) : FromClause :=
+  .subquery (.simple (.mk false [.star none] (some (.table t)) (some p) [] none [] none none))
+    (t.alias.getD t.name)
 
-/-- Predicate pushdown: push filter into the right side of an inner join.
-    The semantic precondition `h_filter_right` requires that the filter evaluates
-    the same on `lr ++ rr` as on just `rr` — i.e., the filter doesn't depend
-    on the left side's columns. -/
-theorem filter_join_right (db : Database) (a b : FromClause) (cond filter : Expr)
+/-- Predicate pushdown: push a filter into the left side of an inner join.
+    The left side is a table `ta`, wrapped as `filtered ta filter` so the
+    derived table keeps `ta`'s qualifier (#269). The semantic precondition
+    `h_filter_left` requires that the filter evaluates the same on `lr ++ rr`
+    as on `lr` alone, i.e. it does not depend on the right side's columns.
+    `_h_ref` documents the syntactic condition; the proof does not need it. -/
+theorem filter_join_left (db : Database) (ta : TableRef) (b : FromClause) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (_h_ref : exprReferencesOnlyFrom b filter = true)
-    (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+    (_h_ref : exprReferencesOnlyFrom (.table ta) filter = true)
+    (h_filter_left : ∀ lr ∈ evalFrom db (.table ta), ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
+    evalSelect db (.mk false items (some (.join (.table ta) .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.join (filtered ta filter) .inner b (some cond))) none groupBy having orderBy limit offset) :=
+  evalSelect_filter_join_left db (ta.alias.getD ta.name) (.table ta) b cond filter items groupBy having
+    orderBy limit offset h_filter_left
+
+/-- Predicate pushdown: push a filter into the right side of an inner join.
+    The right side is a table `tb`, wrapped as `filtered tb filter` (#269).
+    `h_filter_right` requires that the filter evaluates the same on `lr ++ rr`
+    as on `rr` alone, i.e. it does not depend on the left side's columns. -/
+theorem filter_join_right (db : Database) (a : FromClause) (tb : TableRef) (cond filter : Expr)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (_h_ref : exprReferencesOnlyFrom (.table tb) filter = true)
+    (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db (.table tb),
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner (.subquery (.simple (.mk false [.star none] (some b) (some filter) [] none [] none none)) "filtered_b") (some cond))) none groupBy having orderBy limit offset) :=
-  evalSelect_filter_join_right db a b cond filter items groupBy having orderBy limit offset h_filter_right
+    evalSelect db (.mk false items (some (.join a .inner (.table tb) (some cond))) (some filter) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.join a .inner (filtered tb filter) (some cond))) none groupBy having orderBy limit offset) :=
+  evalSelect_filter_join_right db (tb.alias.getD tb.name) a (.table tb) cond filter items groupBy having
+    orderBy limit offset h_filter_right
 
 /-- Filter pushdown for basic FROM clause with table.
     Proved: filter in WHERE is equivalent to filter in subquery. -/
@@ -206,38 +218,30 @@ theorem project_star_identity (db : Database) (from_ : FromClause)
 -- Filter Combination Theorems
 -- ============================================================================
 
-/-- Filter combination: consecutive WHERE clauses can be combined with AND.
-    Proved: evalFrom .subquery pass-through fix eliminates double-qualification. -/
-theorem filter_and (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- Filter combination: a filter over `filtered t p` equals one WHERE `p AND q`.
+    Stated for a single table whose derived table keeps its qualifier (#269). -/
+theorem filter_and (db : Database) (items : List SelectItem) (t : TableRef)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
-      (some q) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) :=
-  evalSelect_filter_and db items from_ p q groupBy having orderBy limit offset
+    evalSelect db (.mk false items (some (filtered t p)) (some q) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.table t)) (some (.binOp .and p q)) groupBy having orderBy limit offset) :=
+  evalSelect_filter_and db (t.alias.getD t.name) items (some (.table t)) p q groupBy having orderBy limit offset
 
-/-- Filter order doesn't matter: (WHERE p) WHERE q ≃ (WHERE q) WHERE p. -/
-theorem filter_commute (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- Filter order doesn't matter: (WHERE p) WHERE q ≃ (WHERE q) WHERE p (#269 shape). -/
+theorem filter_commute (db : Database) (items : List SelectItem) (t : TableRef)
     (p q : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
-      (some q) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) "inner"))
-      (some p) groupBy having orderBy limit offset) :=
-  evalSelect_filter_commute db items from_ p q groupBy having orderBy limit offset
+    evalSelect db (.mk false items (some (filtered t p)) (some q) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (filtered t q)) (some p) groupBy having orderBy limit offset) :=
+  evalSelect_filter_commute db (t.alias.getD t.name) items (some (.table t)) p q groupBy having orderBy limit offset
 
-/-- Idempotence of filter: WHERE p WHERE p ≃ WHERE p. -/
-theorem filter_idempotent (db : Database) (items : List SelectItem) (from_ : Option FromClause)
+/-- Idempotence of filter: WHERE p WHERE p ≃ WHERE p (#269 shape). -/
+theorem filter_idempotent (db : Database) (items : List SelectItem) (t : TableRef)
     (p : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) "inner"))
-      (some p) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) :=
-  evalSelect_filter_idempotent db items from_ p groupBy having orderBy limit offset
+    evalSelect db (.mk false items (some (filtered t p)) (some p) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.table t)) (some p) groupBy having orderBy limit offset) :=
+  evalSelect_filter_idempotent db (t.alias.getD t.name) items (some (.table t)) p groupBy having orderBy limit offset
 
 /-- TRUE filter elimination: WHERE TRUE ≃ no WHERE.
     Theorem: follows from where_true_elim. -/
