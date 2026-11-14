@@ -321,177 +321,91 @@ theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = 
   rw [← normalizeExpr_equiv e1 db row, ← normalizeExpr_equiv e2 db row, heq]
 
 -- ============================================================================
--- DecidableEq instances for AST types (mutual types need manual instances)
+-- Boolean syntactic equality on AST types
 -- ============================================================================
+--
+-- These used to be hand-written mutual `partial def`s (opaque to proofs, #213).
+-- The AST now has a total, generated `DecidableEq` (Ast.lean, #278), so each is
+-- `decide (a = b)`: total, kernel-reducible, and sound by
+-- `decide<T>Eq_eq_true_iff`.
 
-mutual
+/-- Syntactic equality on `Expr` (`decide`-based, total). -/
+def decideExprEq (e1 e2 : Expr) : Bool := decide (e1 = e2)
 
-/-- Decidable equality for Expr -/
-partial def decideExprEq (e1 e2 : Expr) : Bool :=
-  match e1, e2 with
-  | .lit v1, .lit v2 => v1 == v2
-  | .col c1, .col c2 => c1 == c2
-  | .binOp op1 l1 r1, .binOp op2 l2 r2 =>
-    op1 == op2 && decideExprEq l1 l2 && decideExprEq r1 r2
-  | .unaryOp op1 e1, .unaryOp op2 e2 =>
-    op1 == op2 && decideExprEq e1 e2
-  | .func n1 a1, .func n2 a2 =>
-    n1 == n2 && a1.length == a2.length &&
-    (a1.zip a2).all (fun (x, y) => decideExprEq x y)
-  | .agg f1 e1 d1, .agg f2 e2 d2 =>
-    f1 == f2 && d1 == d2 &&
-    match e1, e2 with
-    | none, none => true
-    | some x, some y => decideExprEq x y
-    | _, _ => false
-  | .countStar, .countStar => true
-  | .case b1 e1, .case b2 e2 =>
-    b1.length == b2.length &&
-    (b1.zip b2).all (fun ((c1, r1), (c2, r2)) =>
-      decideExprEq c1 c2 && decideExprEq r1 r2) &&
-    match e1, e2 with
-    | none, none => true
-    | some x, some y => decideExprEq x y
-    | _, _ => false
-  | .inList e1 n1 v1, .inList e2 n2 v2 =>
-    decideExprEq e1 e2 && n1 == n2 &&
-    v1.length == v2.length &&
-    (v1.zip v2).all (fun (x, y) => decideExprEq x y)
-  | .inSubquery e1 n1 s1, .inSubquery e2 n2 s2 =>
-    decideExprEq e1 e2 && n1 == n2 && decideSubQueryEq s1 s2
-  | .exists n1 s1, .exists n2 s2 =>
-    n1 == n2 && decideSubQueryEq s1 s2
-  | .subquery s1, .subquery s2 => decideSubQueryEq s1 s2
-  | .between e1 l1 h1, .between e2 l2 h2 =>
-    decideExprEq e1 e2 && decideExprEq l1 l2 && decideExprEq h1 h2
-  | .windowFn f1 e1 s1, .windowFn f2 e2 s2 =>
-    f1 == f2 &&
-    (match e1, e2 with
-     | none, none => true
-     | some x, some y => decideExprEq x y
-     | _, _ => false) &&
-    s1 == s2
-  | _, _ => false
+@[simp] theorem decideExprEq_eq_true_iff (e1 e2 : Expr) :
+    decideExprEq e1 e2 = true ↔ e1 = e2 := decide_eq_true_iff
 
-/-- Decidable equality for OrderByItem -/
-partial def decideOrderByItemEq (o1 o2 : OrderByItem) : Bool :=
-  match o1, o2 with
-  | .mk e1 d1 n1, .mk e2 d2 n2 => decideExprEq e1 e2 && d1 == d2 && n1 == n2
+/-- Syntactic equality on `OrderByItem` (`decide`-based, total). -/
+def decideOrderByItemEq (o1 o2 : OrderByItem) : Bool := decide (o1 = o2)
 
-/-- Decidable equality for SelectItem -/
-partial def decideSelectItemEq (s1 s2 : SelectItem) : Bool :=
-  match s1, s2 with
-  | .star t1, .star t2 => t1 == t2
-  | .exprItem e1 a1, .exprItem e2 a2 => decideExprEq e1 e2 && a1 == a2
-  | _, _ => false
+@[simp] theorem decideOrderByItemEq_eq_true_iff (o1 o2 : OrderByItem) :
+    decideOrderByItemEq o1 o2 = true ↔ o1 = o2 := decide_eq_true_iff
 
-/-- Decidable equality for SubQuery (#218) -/
-partial def decideSubQueryEq (s1 s2 : SubQuery) : Bool :=
-  match s1, s2 with
-  | .simple a, .simple b => decideSelectStmtEq a b
-  | .compound l1 op1 r1, .compound l2 op2 r2 =>
-    decideSubQueryEq l1 l2 && op1 == op2 && decideSubQueryEq r1 r2
-  | _, _ => false
+/-- Syntactic equality on `SelectItem` (`decide`-based, total). -/
+def decideSelectItemEq (s1 s2 : SelectItem) : Bool := decide (s1 = s2)
 
-/-- Decidable equality for FromClause -/
-partial def decideFromClauseEq (f1 f2 : FromClause) : Bool :=
-  match f1, f2 with
-  | .table t1, .table t2 => t1 == t2
-  | .subquery s1 a1, .subquery s2 a2 =>
-    decideSubQueryEq s1 s2 && a1 == a2
-  | .join l1 jt1 r1 on1, .join l2 jt2 r2 on2 =>
-    decideFromClauseEq l1 l2 && jt1 == jt2 && decideFromClauseEq r1 r2 &&
-    match on1, on2 with
-    | none, none => true
-    | some x, some y => decideExprEq x y
-    | _, _ => false
-  | _, _ => false
+@[simp] theorem decideSelectItemEq_eq_true_iff (s1 s2 : SelectItem) :
+    decideSelectItemEq s1 s2 = true ↔ s1 = s2 := decide_eq_true_iff
 
-/-- Decidable equality for SelectStmt -/
-partial def decideSelectStmtEq (s1 s2 : SelectStmt) : Bool :=
-  match s1, s2 with
-  | .mk d1 i1 f1 w1 g1 h1 o1 l1 off1, .mk d2 i2 f2 w2 g2 h2 o2 l2 off2 =>
-    d1 == d2 &&
-    i1.length == i2.length &&
-    (i1.zip i2).all (fun (x, y) => decideSelectItemEq x y) &&
-    (match f1, f2 with
-     | none, none => true
-     | some x, some y => decideFromClauseEq x y
-     | _, _ => false) &&
-    (match w1, w2 with
-     | none, none => true
-     | some x, some y => decideExprEq x y
-     | _, _ => false) &&
-    g1.length == g2.length &&
-    (g1.zip g2).all (fun (x, y) => decideExprEq x y) &&
-    (match h1, h2 with
-     | none, none => true
-     | some x, some y => decideExprEq x y
-     | _, _ => false) &&
-    o1.length == o2.length &&
-    (o1.zip o2).all (fun (x, y) => decideOrderByItemEq x y) &&
-    l1 == l2 && off1 == off2
+/-- Syntactic equality on `SubQuery` (`decide`-based, total). -/
+def decideSubQueryEq (s1 s2 : SubQuery) : Bool := decide (s1 = s2)
 
-end
+@[simp] theorem decideSubQueryEq_eq_true_iff (s1 s2 : SubQuery) :
+    decideSubQueryEq s1 s2 = true ↔ s1 = s2 := decide_eq_true_iff
 
-/-- Decidable equality for Query -/
-partial def decideQueryEq (q1 q2 : Query) : Bool :=
-  match q1, q2 with
-  | .simple s1, .simple s2 => decideSelectStmtEq s1 s2
-  | .compound l1 op1 r1, .compound l2 op2 r2 =>
-    decideQueryEq l1 l2 && op1 == op2 && decideQueryEq r1 r2
-  | .withCTE ctes1 q1, .withCTE ctes2 q2 =>
-    ctes1.length == ctes2.length &&
-    (ctes1.zip ctes2).all (fun (c1, c2) => c1.name == c2.name && decideQueryEq c1.query c2.query && c1.isRecursive == c2.isRecursive) &&
-    decideQueryEq q1 q2
-  | _, _ => false
+/-- Syntactic equality on `FromClause` (`decide`-based, total). -/
+def decideFromClauseEq (f1 f2 : FromClause) : Bool := decide (f1 = f2)
 
-/-- Decidable equality for InsertSource -/
-partial def decideInsertSourceEq (s1 s2 : InsertSource) : Bool :=
-  match s1, s2 with
-  | .values r1, .values r2 =>
-    r1.length == r2.length &&
-    (r1.zip r2).all (fun (row1, row2) =>
-      row1.length == row2.length &&
-      (row1.zip row2).all (fun (x, y) => decideExprEq x y))
-  | .selectStmt s1, .selectStmt s2 => decideSelectStmtEq s1 s2
-  | _, _ => false
+@[simp] theorem decideFromClauseEq_eq_true_iff (f1 f2 : FromClause) :
+    decideFromClauseEq f1 f2 = true ↔ f1 = f2 := decide_eq_true_iff
 
-/-- Decidable equality for Assignment -/
-def decideAssignmentEq (a1 a2 : Assignment) : Bool :=
-  a1.column == a2.column && decideExprEq a1.value a2.value
+/-- Syntactic equality on `SelectStmt` (`decide`-based, total). -/
+def decideSelectStmtEq (s1 s2 : SelectStmt) : Bool := decide (s1 = s2)
 
-/-- Decidable equality for InsertStmt -/
-def decideInsertStmtEq (i1 i2 : InsertStmt) : Bool :=
-  i1.table == i2.table && i1.columns == i2.columns &&
-  decideInsertSourceEq i1.source i2.source
+@[simp] theorem decideSelectStmtEq_eq_true_iff (s1 s2 : SelectStmt) :
+    decideSelectStmtEq s1 s2 = true ↔ s1 = s2 := decide_eq_true_iff
 
-/-- Decidable equality for UpdateStmt -/
-def decideUpdateStmtEq (u1 u2 : UpdateStmt) : Bool :=
-  u1.table == u2.table &&
-  u1.assignments.length == u2.assignments.length &&
-  (u1.assignments.zip u2.assignments).all (fun (x, y) => decideAssignmentEq x y) &&
-  match u1.whereClause, u2.whereClause with
-  | none, none => true
-  | some x, some y => decideExprEq x y
-  | _, _ => false
+/-- Syntactic equality on `Query` (`decide`-based, total). -/
+def decideQueryEq (q1 q2 : Query) : Bool := decide (q1 = q2)
 
-/-- Decidable equality for DeleteStmt -/
-def decideDeleteStmtEq (d1 d2 : DeleteStmt) : Bool :=
-  d1.table == d2.table &&
-  match d1.whereClause, d2.whereClause with
-  | none, none => true
-  | some x, some y => decideExprEq x y
-  | _, _ => false
+@[simp] theorem decideQueryEq_eq_true_iff (q1 q2 : Query) :
+    decideQueryEq q1 q2 = true ↔ q1 = q2 := decide_eq_true_iff
 
-/-- Decidable equality for Stmt -/
-def decideStmtEq (s1 s2 : Stmt) : Bool :=
-  match s1, s2 with
-  | .query q1, .query q2 => decideQueryEq q1 q2
-  | .insert i1, .insert i2 => decideInsertStmtEq i1 i2
-  | .update u1, .update u2 => decideUpdateStmtEq u1 u2
-  | .delete d1, .delete d2 => decideDeleteStmtEq d1 d2
-  | _, _ => false
+/-- Syntactic equality on `InsertSource` (`decide`-based, total). -/
+def decideInsertSourceEq (s1 s2 : InsertSource) : Bool := decide (s1 = s2)
+
+@[simp] theorem decideInsertSourceEq_eq_true_iff (s1 s2 : InsertSource) :
+    decideInsertSourceEq s1 s2 = true ↔ s1 = s2 := decide_eq_true_iff
+
+/-- Syntactic equality on `Assignment` (`decide`-based, total). -/
+def decideAssignmentEq (a1 a2 : Assignment) : Bool := decide (a1 = a2)
+
+@[simp] theorem decideAssignmentEq_eq_true_iff (a1 a2 : Assignment) :
+    decideAssignmentEq a1 a2 = true ↔ a1 = a2 := decide_eq_true_iff
+
+/-- Syntactic equality on `InsertStmt` (`decide`-based, total). -/
+def decideInsertStmtEq (i1 i2 : InsertStmt) : Bool := decide (i1 = i2)
+
+@[simp] theorem decideInsertStmtEq_eq_true_iff (i1 i2 : InsertStmt) :
+    decideInsertStmtEq i1 i2 = true ↔ i1 = i2 := decide_eq_true_iff
+
+/-- Syntactic equality on `UpdateStmt` (`decide`-based, total). -/
+def decideUpdateStmtEq (u1 u2 : UpdateStmt) : Bool := decide (u1 = u2)
+
+@[simp] theorem decideUpdateStmtEq_eq_true_iff (u1 u2 : UpdateStmt) :
+    decideUpdateStmtEq u1 u2 = true ↔ u1 = u2 := decide_eq_true_iff
+
+/-- Syntactic equality on `DeleteStmt` (`decide`-based, total). -/
+def decideDeleteStmtEq (d1 d2 : DeleteStmt) : Bool := decide (d1 = d2)
+
+@[simp] theorem decideDeleteStmtEq_eq_true_iff (d1 d2 : DeleteStmt) :
+    decideDeleteStmtEq d1 d2 = true ↔ d1 = d2 := decide_eq_true_iff
+
+/-- Syntactic equality on `Stmt` (`decide`-based, total). -/
+def decideStmtEq (s1 s2 : Stmt) : Bool := decide (s1 = s2)
+
+@[simp] theorem decideStmtEq_eq_true_iff (s1 s2 : Stmt) :
+    decideStmtEq s1 s2 = true ↔ s1 = s2 := decide_eq_true_iff
 
 -- ============================================================================
 -- Ground Expression Detection (no free variables)
@@ -1220,9 +1134,8 @@ example : (checkEquivFull (.col ⟨none, "x"⟩) (.col ⟨none, "y"⟩)).isUnkno
 
 -- NOTE: An `Option (e1 ≃ₑ e2)`-returning variant is not expressible (`Option`
 -- expects a `Type`, not a `Prop`); use `checkEquivFull` and match on the result.
--- Statement-level checkers (`checkSelectEquiv`, `checkQueryEquiv`) would need
--- soundness lemmas for `decideSelectStmtEq`/`decideQueryEq`, which are `partial
--- def`s and currently unprovable without refactoring them to structural recursion.
+-- Statement-level checkers (`checkSelectEquiv`, `checkQueryEquiv`) are in
+-- `Equiv/StatementChecker.lean` (#213).
 
 -- ============================================================================
 -- Decidable Instance for Expression Equivalence (general case via normalization)

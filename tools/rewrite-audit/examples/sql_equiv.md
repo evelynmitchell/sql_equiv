@@ -30,9 +30,12 @@ or test code. Step 3 left no `partial def` in the semantics: the unreferenced
 legacy evaluators (`evalExprWithAgg`, `compareByOrderItems`, `computeRanks`,
 `computeDenseRanks`, `evalExprWithWindow` and their helpers) were deleted,
 `hasAggregate`/`exprHasWindowFn` are structural, and `evalInsert`/`evalUpdate`
-never recursed. A fresh audit should count 64 `partial def`s (8 on-path, in
-`Equiv/Decidable.lean`) and guard counts of 2779 theorems, 2274 definitions,
-55 opaque constants. The report below is kept as recorded.
+never recursed. Step 4 replaced the 8 partial statement deciders in
+`Equiv/Decidable.lean` with `decide (a = b)` wrappers and added
+`Equiv/StatementChecker.lean` (`checkSelectEquiv`, `checkQueryEquiv`). A fresh
+audit should count 56 `partial def`s, none on-path (parser 38, `Pretty.lean`
+8, `toReprStr` 10), and guard counts of 2812 theorems, 2261 definitions and
+48 opaque constants. The report below is kept as recorded.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
 

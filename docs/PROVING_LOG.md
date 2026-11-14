@@ -4587,3 +4587,25 @@ The nine `partial def`s in `Semantics.lean` were all removable:
 deciders in `Equiv/Decidable.lean` remain (#213, #278 step 4). No theorem
 statement changed. The `hNoAgg`/`hNoWin` hypotheses of the statement theorems
 can now be discharged with `decide`; see `Test/TacticTest.lean`.
+
+## #278 step 4 / #213: statement deciders and statement-level checkers (Nov 2026)
+
+- **The 8 `partial def` statement deciders** (`decideExprEq` …
+  `decideInsertSourceEq`), plus their non-partial wrappers, were used only by
+  each other. Each is now `decide (a = b)` over the generated `DecidableEq`,
+  with `@[simp] decide<T>Eq_eq_true_iff : decide<T>Eq a b = true ↔ a = b`.
+  These are exactly the soundness lemmas #213 asked for.
+- **`Equiv/StatementChecker.lean`** adds `StmtCheckResult P`
+  (`proved : P → _ | unknown`), with two checkers:
+  - `checkSelectEquiv` (`≃ₛ`) proves syntactic equality, or SELECTs that
+    differ only in WHERE when `checkEquivFull` proves the predicates `≃ₑ`
+    (`select_where_congr`, #238);
+  - `checkQueryEquiv` (`≃ᵩ`) proves syntactic equality, lifts `.simple` through
+    `checkSelectEquiv`, and gives congruence through `.compound` with the
+    same set operation.
+
+  Sound by construction and deliberately incomplete. Kernel-checked smoke
+  tests (`decide +kernel`) cover each branch; a false claim fails.
+- `partial def` count: 64 → **56**, **none on a proof or checker path**:
+  parser 38, `Pretty.lean` 8, `toReprStr` 10. Nothing in the semantics,
+  equivalence or rewriter modules calls `repr`, `toReprStr` or `toSql`.
