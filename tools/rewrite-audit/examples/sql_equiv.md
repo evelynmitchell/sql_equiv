@@ -21,7 +21,12 @@ partial `Expr.beq` family, `Expr.decEqUnsafe`, `Expr.decEqOpaque` and the
 fresh audit should report no `unsafe`/`implemented_by` in `SqlEquiv/`, 73
 `partial def`s (was 83), and guard counts of 2779 theorems, 2145 definitions
 and 62 opaque constants. `Test/TrustBaseTest.lean` also runs
-`#assert_no_runtime_overrides SqlEquiv`. The report below is kept as recorded.
+`#assert_no_runtime_overrides SqlEquiv`. Step 2 then made `sql_equiv!`
+kernel-checked: `normalizeExpr` orders commutative operands with the generated
+structural `Expr.cmp` instead of `toString (repr …)` (which went through the
+partial `toReprStr`), and the tactic uses `decide +kernel`; the `checkEquivFull`
+smoke tests in `Decidable.lean` do too. No `native_decide` remains in library
+or test code. The report below is kept as recorded.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
 

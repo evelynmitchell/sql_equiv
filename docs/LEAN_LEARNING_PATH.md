@@ -139,7 +139,7 @@ These are defined in `Tactics.lean` and save you from writing boilerplate:
 | Tactic | What it does | When to use |
 |--------|-------------|-------------|
 | `sql_equiv` | Tries reflexivity, commutativity, associativity, De Morgan, distributivity, absorption, identity, complement, arithmetic, comparison rules | First thing to try |
-| `sql_equiv!` | All of the above plus normalization and `native_decide` | When `sql_equiv` fails |
+| `sql_equiv!` | All of the above plus normalization (commutative operands put in a canonical order), checked by the kernel with `decide +kernel` | When `sql_equiv` fails |
 | `sql_simp` | Unfolds `ExprEquiv`, `SelectEquiv`, etc. | When you need to see inside equivalence definitions |
 | `sql_refl` | Proves `a ≃ₑ a` | Obvious |
 | `sql_symm` | Flips `a ≃ₑ b` to `b ≃ₑ a` | When your goal is backwards |

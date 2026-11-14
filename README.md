@@ -44,8 +44,9 @@ This repository could become a basis for SQL support in
   and the decision procedure come with proofs (`docs/CERTIFIED_REWRITER.md`).
 - **Known gaps before a library port:**
   - [#278](https://github.com/evelynmitchell/sql_equiv/issues/278): 17 `partial def`s on the proof path (semantics and
-    statement deciders) and `native_decide` in the `sql_equiv!` tactic.
-    `DecidableEq` on the AST is now total and kernel-reducible (no `unsafe`);
+    statement deciders). Done so far: `DecidableEq` on the AST is total and
+    kernel-reducible (no `unsafe`), and `sql_equiv!` is kernel-checked
+    (`decide +kernel`, no `native_decide`);
   - the representation choices above were made for a checker, not a library.
     Schemas and typed relations, `Multiset` for bag semantics, and a small
     core calculus with SQL translated into it are all open design questions.

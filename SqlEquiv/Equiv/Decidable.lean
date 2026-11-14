@@ -1203,19 +1203,20 @@ def EquivCheckResult.isUnknown {e1 e2 : Expr} : EquivCheckResult e1 e2 → Bool
   | _ => false
 
 -- Compile-time smoke tests: one per reachable checkEquivFull branch.
--- (`native_decide` because `evalExpr`'s WF recursion blocks kernel reduction.)
+-- Kernel-checked with `decide +kernel` (#278): the kernel unfolds the WF
+-- recursion of `evalExpr`/`normalizeExpr`; plain `decide` (elaborator) does not.
 -- Syntactic branch: identical expressions normalize equal
 example : (checkEquivFull (.col ⟨none, "x"⟩) (.col ⟨none, "x"⟩)).isEquiv = true := by
-  native_decide
+  decide +kernel
 -- Ground semantic branch: 1 + 1 ≃ 2
 example : (checkEquivFull (.binOp .add (.lit (.int 1)) (.lit (.int 1)))
-    (.lit (.int 2))).isEquiv = true := by native_decide
+    (.lit (.int 2))).isEquiv = true := by decide +kernel
 -- notEquiv branch: 1 ≄ 2, with a real proof of non-equivalence
 example : (checkEquivFull (.lit (.int 1)) (.lit (.int 2))).isNotEquiv = true := by
-  native_decide
+  decide +kernel
 -- unknown branch: non-ground expressions that don't normalize equal
 example : (checkEquivFull (.col ⟨none, "x"⟩) (.col ⟨none, "y"⟩)).isUnknown = true := by
-  native_decide
+  decide +kernel
 
 -- NOTE: An `Option (e1 ≃ₑ e2)`-returning variant is not expressible (`Option`
 -- expects a `Type`, not a `Prop`); use `checkEquivFull` and match on the result.

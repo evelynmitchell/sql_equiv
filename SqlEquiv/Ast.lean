@@ -671,6 +671,23 @@ instance : Repr CTEDef where
 -- This replaces the earlier partial `Expr.beq` + `unsafe`/`implemented_by`
 -- `DecidableEq` (which assumed `Expr.beq` was lawful).
 
+-- Structural orders on the AST's leaf types, used only by the generated
+-- `*.cmp` below (canonical operand order in `normalizeExpr`). `Value` gets no
+-- `Ord` instance on purpose: SQL ordering is `Value.compare`, and a structural
+-- `compare` on values would be easy to pick up by mistake.
+deriving instance Ord for SqlType, ColumnRef, BinOp, UnaryOp, MixedMinMax, BoolMinMax,
+  MinMaxMode, AggFunc, TableRef, JoinType, OrderDir, NullsOrder, SetOp, WindowFunc
+
+/-- Structural total order on values (by constructor, then fields). Not SQL
+    order (that is `Value.compare`): `1` and `1.0` differ here. -/
+def Value.structCmp : Value → Value → Ordering
+  | .int a, .int b => compare a b
+  | .string a, .string b => compare a b
+  | .bool a, .bool b => compare a b
+  | .decimal u s, .decimal u' s' => (compare u u').then (compare s s')
+  | .null t, .null t' => compare t t'
+  | a, b => compare a.ctorIdx b.ctorIdx
+
 -- BEGIN GENERATED (tools/gen_ast_deceq.py)
 mutual
 def WindowSpec.decEq (a b : WindowSpec) : Decidable (a = b) :=
@@ -997,6 +1014,174 @@ end
 
 instance : DecidableEq CTEDef := CTEDef.decEq
 instance : DecidableEq Query := Query.decEq
+
+/-! Structural total order on expressions (not SQL order): used by
+`normalizeExpr` to put commutative operands in a canonical order. -/
+mutual
+def WindowSpec.cmp (a b : WindowSpec) : Ordering :=
+  match a, b with
+  | @WindowSpec.mk a0 a1, @WindowSpec.mk b0 b1 => (Expr.cmpList a0 b0).then (OrderByItem.cmpList a1 b1)
+termination_by structural a
+
+def Expr.cmp (a b : Expr) : Ordering :=
+  match a with
+  | @Expr.lit a0 =>
+    match b with
+    | @Expr.lit b0 => Value.structCmp a0 b0
+    | b => compare 0 b.ctorIdx
+  | @Expr.col a0 =>
+    match b with
+    | @Expr.col b0 => compare a0 b0
+    | b => compare 1 b.ctorIdx
+  | @Expr.binOp a0 a1 a2 =>
+    match b with
+    | @Expr.binOp b0 b1 b2 => (compare a0 b0).then ((Expr.cmp a1 b1).then (Expr.cmp a2 b2))
+    | b => compare 2 b.ctorIdx
+  | @Expr.unaryOp a0 a1 =>
+    match b with
+    | @Expr.unaryOp b0 b1 => (compare a0 b0).then (Expr.cmp a1 b1)
+    | b => compare 3 b.ctorIdx
+  | @Expr.func a0 a1 =>
+    match b with
+    | @Expr.func b0 b1 => (compare a0 b0).then (Expr.cmpList a1 b1)
+    | b => compare 4 b.ctorIdx
+  | @Expr.agg a0 a1 a2 =>
+    match b with
+    | @Expr.agg b0 b1 b2 => (compare a0 b0).then ((Expr.cmpOpt a1 b1).then (compare a2 b2))
+    | b => compare 5 b.ctorIdx
+  | @Expr.countStar =>
+    match b with
+    | @Expr.countStar => .eq
+    | b => compare 6 b.ctorIdx
+  | @Expr.«case» a0 a1 =>
+    match b with
+    | @Expr.«case» b0 b1 => (Expr.cmpPairs a0 b0).then (Expr.cmpOpt a1 b1)
+    | b => compare 7 b.ctorIdx
+  | @Expr.inList a0 a1 a2 =>
+    match b with
+    | @Expr.inList b0 b1 b2 => (Expr.cmp a0 b0).then ((compare a1 b1).then (Expr.cmpList a2 b2))
+    | b => compare 8 b.ctorIdx
+  | @Expr.inSubquery a0 a1 a2 =>
+    match b with
+    | @Expr.inSubquery b0 b1 b2 => (Expr.cmp a0 b0).then ((compare a1 b1).then (SubQuery.cmp a2 b2))
+    | b => compare 9 b.ctorIdx
+  | @Expr.exists a0 a1 =>
+    match b with
+    | @Expr.exists b0 b1 => (compare a0 b0).then (SubQuery.cmp a1 b1)
+    | b => compare 10 b.ctorIdx
+  | @Expr.subquery a0 =>
+    match b with
+    | @Expr.subquery b0 => SubQuery.cmp a0 b0
+    | b => compare 11 b.ctorIdx
+  | @Expr.between a0 a1 a2 =>
+    match b with
+    | @Expr.between b0 b1 b2 => (Expr.cmp a0 b0).then ((Expr.cmp a1 b1).then (Expr.cmp a2 b2))
+    | b => compare 12 b.ctorIdx
+  | @Expr.windowFn a0 a1 a2 =>
+    match b with
+    | @Expr.windowFn b0 b1 b2 => (compare a0 b0).then ((Expr.cmpOpt a1 b1).then (WindowSpec.cmp a2 b2))
+    | b => compare 13 b.ctorIdx
+termination_by structural a
+
+def OrderByItem.cmp (a b : OrderByItem) : Ordering :=
+  match a, b with
+  | @OrderByItem.mk a0 a1 a2, @OrderByItem.mk b0 b1 b2 => (Expr.cmp a0 b0).then ((compare a1 b1).then (compare a2 b2))
+termination_by structural a
+
+def SelectItem.cmp (a b : SelectItem) : Ordering :=
+  match a with
+  | @SelectItem.star a0 =>
+    match b with
+    | @SelectItem.star b0 => compare a0 b0
+    | b => compare 0 b.ctorIdx
+  | @SelectItem.exprItem a0 a1 =>
+    match b with
+    | @SelectItem.exprItem b0 b1 => (Expr.cmp a0 b0).then (compare a1 b1)
+    | b => compare 1 b.ctorIdx
+termination_by structural a
+
+def FromClause.cmp (a b : FromClause) : Ordering :=
+  match a with
+  | @FromClause.table a0 =>
+    match b with
+    | @FromClause.table b0 => compare a0 b0
+    | b => compare 0 b.ctorIdx
+  | @FromClause.subquery a0 a1 =>
+    match b with
+    | @FromClause.subquery b0 b1 => (SubQuery.cmp a0 b0).then (compare a1 b1)
+    | b => compare 1 b.ctorIdx
+  | @FromClause.join a0 a1 a2 a3 =>
+    match b with
+    | @FromClause.join b0 b1 b2 b3 => (FromClause.cmp a0 b0).then ((compare a1 b1).then ((FromClause.cmp a2 b2).then (Expr.cmpOpt a3 b3)))
+    | b => compare 2 b.ctorIdx
+termination_by structural a
+
+def SubQuery.cmp (a b : SubQuery) : Ordering :=
+  match a with
+  | @SubQuery.simple a0 =>
+    match b with
+    | @SubQuery.simple b0 => SelectStmt.cmp a0 b0
+    | b => compare 0 b.ctorIdx
+  | @SubQuery.compound a0 a1 a2 =>
+    match b with
+    | @SubQuery.compound b0 b1 b2 => (SubQuery.cmp a0 b0).then ((compare a1 b1).then (SubQuery.cmp a2 b2))
+    | b => compare 1 b.ctorIdx
+termination_by structural a
+
+def SelectStmt.cmp (a b : SelectStmt) : Ordering :=
+  match a, b with
+  | @SelectStmt.mk a0 a1 a2 a3 a4 a5 a6 a7 a8, @SelectStmt.mk b0 b1 b2 b3 b4 b5 b6 b7 b8 => (compare a0 b0).then ((SelectItem.cmpList a1 b1).then ((FromClause.cmpOpt a2 b2).then ((Expr.cmpOpt a3 b3).then ((Expr.cmpList a4 b4).then ((Expr.cmpOpt a5 b5).then ((OrderByItem.cmpList a6 b6).then ((compare a7 b7).then (compare a8 b8))))))))
+termination_by structural a
+
+def Expr.cmpList (a b : List Expr) : Ordering :=
+  match a, b with
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | x :: xs, y :: ys => (Expr.cmp x y).then (Expr.cmpList xs ys)
+termination_by structural a
+
+def Expr.cmpOpt (a b : Option Expr) : Ordering :=
+  match a, b with
+  | none, none => .eq
+  | none, some _ => .lt
+  | some _, none => .gt
+  | some x, some y => Expr.cmp x y
+termination_by structural a
+
+def Expr.cmpPairs (a b : List (Expr × Expr)) : Ordering :=
+  match a, b with
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | (x1, x2) :: xs, (y1, y2) :: ys =>
+    (Expr.cmp x1 y1).then ((Expr.cmp x2 y2).then (Expr.cmpPairs xs ys))
+termination_by structural a
+
+def OrderByItem.cmpList (a b : List OrderByItem) : Ordering :=
+  match a, b with
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | x :: xs, y :: ys => (OrderByItem.cmp x y).then (OrderByItem.cmpList xs ys)
+termination_by structural a
+
+def SelectItem.cmpList (a b : List SelectItem) : Ordering :=
+  match a, b with
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | x :: xs, y :: ys => (SelectItem.cmp x y).then (SelectItem.cmpList xs ys)
+termination_by structural a
+
+def FromClause.cmpOpt (a b : Option FromClause) : Ordering :=
+  match a, b with
+  | none, none => .eq
+  | none, some _ => .lt
+  | some _, none => .gt
+  | some x, some y => FromClause.cmp x y
+termination_by structural a
+end
 -- END GENERATED
 
 deriving instance DecidableEq for InsertSource, Assignment, InsertStmt, UpdateStmt, DeleteStmt, Stmt

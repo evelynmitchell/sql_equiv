@@ -9,6 +9,7 @@ import Test.AxiomCoverageTest
 import Test.TrustBaseTest
 import Test.RewriterTest
 import Test.AstDecEqTest
+import Test.TacticTest
 
 def main : IO UInt32 := do
   IO.println "╔═══════════════════════════════════╗"

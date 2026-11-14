@@ -4519,3 +4519,45 @@ construction. `Query`/`CTEDef` get their own mutual decider; `InsertSource`,
 
 Removed: 10 partial `*.beq` functions, `Expr.decEqUnsafe`, `Expr.decEqOpaque`,
 the `@[implemented_by]` and the only `lcProof` use. `partial def` count 83 → 73.
+
+## #278 step 2: `sql_equiv!` kernel-checked (Nov 2026)
+
+### Findings
+
+- **The normalization branch of `sql_equiv!` never fired.** It was
+  `have h : syntacticEquiv _ _ = true := by native_decide; exact
+  syntacticEquiv_implies_equiv h`. The `have` elaborates its type before
+  `exact` unifies, so the placeholders cannot be synthesized and the branch
+  always fails ("don't know how to synthesize placeholder"). `sql_equiv!`
+  therefore never proved anything by normalization. Fixed with
+  `refine syntacticEquiv_implies_equiv ?_` before deciding.
+- **The kernel can unfold `normalizeExpr`'s WF recursion** (`decide +kernel`).
+  Plain `decide` cannot, because the elaborator does not unfold
+  well-founded definitions. The blocker was the ordering key
+  `toString (repr na) ≤ toString (repr nb)`: `repr` on the AST goes through the
+  partial `toReprStr` functions (opaque to the kernel) and `Format` rendering.
+- The final fallback's `native_decide` could never apply: after
+  `intro`, the goal mentions the introduced database. It is now plain `rfl`.
+
+### Change
+
+- A generated structural total order `Expr.cmp` (and helpers for every
+  type in the mutual block) in Ast.lean, from `tools/gen_ast_deceq.py`.
+  Leaf types derive `Ord`. `Value` gets a hand-written `Value.structCmp` and
+  deliberately **no** `Ord` instance, since SQL order is `Value.compare`.
+- `normalizeExpr` uses `(Expr.cmp na nb).isLE` as its key. Its four
+  commutative equation lemmas changed accordingly. No other proof changed.
+- `sql_equiv!`'s normalization branch is
+  `refine syntacticEquiv_implies_equiv ?_; decide +kernel`. The
+  `checkEquivFull` smoke tests in `Decidable.lean` and the
+  `decideGroundExprEquiv` test also use `decide +kernel`.
+
+### Evidence
+
+- `syntacticEquiv` with the old key against the new one, over the LSpec sweep: 2,249,916
+  pairs (each expression with its operands swapped, and against 40 others),
+  23,274 equivalent, **0 disagreements**.
+- Kernel cost: about 20–30 ms of type checking for the smoke tests.
+- `Test/TacticTest.lean` proves two goals that only the normalization branch
+  reaches, and pins their axioms with `#guard_msgs`. A `native_decide` proof
+  makes that pin fail: it shows `Lean.ofReduceBool` and `Lean.trustCompiler`.
