@@ -53,6 +53,9 @@ jobs:
       - name: Check definition coverage matrix
         run: python3 tools/definition_coverage_matrix.py --check
 
+      - name: Check generated AST DecidableEq block is current
+        run: python3 tools/gen_ast_deceq.py --check
+
       - name: Build library
         run: lake build SqlEquiv
 

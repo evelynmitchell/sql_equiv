@@ -6,8 +6,12 @@
   (`propext`, `Classical.choice`, `Quot.sound`). A `sorry` (`sorryAx`),
   `native_decide` (`Lean.ofReduceBool`) or project `axiom` fails the build of
   `sql_equiv_test`, which is what CI builds. Plain `lake build` (default
-  target `sql_equiv`) does not import this file. `unsafe` constants (the
-  documented runtime-only `DecidableEq Expr`) are skipped.
+  target `sql_equiv`) does not import this file. `unsafe` constants are
+  skipped by the axiom walk; `#assert_no_runtime_overrides` (below) instead
+  fails if any hand-written `unsafe`, `@[implemented_by]` or `@[extern]`
+  declaration appears in the namespace (#278). The compiler's own
+  `partial def` implementation (`f` implemented by `f._unsafe_rec`) is allowed:
+  partial definitions are tracked separately in #278.
 
   Same implementation as `tools/rewrite-audit/scripts/lean/TrustBase.lean`.
 -/
@@ -81,3 +85,26 @@ elab "#assert_trust_base " ns:ident : command => do
     throwError m!"constants under {root} depend on non-standard axioms {extra.toList}; offenders ({offenders.size}): {(offenders.toList.take 25)}"
 
 #assert_trust_base SqlEquiv
+
+/-- Fails if namespace `ns` contains a hand-written runtime override: an
+    `unsafe` declaration, an `@[implemented_by]` or an `@[extern]`. Each makes
+    the compiled code differ from the code the kernel checked. Allowed: the
+    compiler-generated pair for a `partial def f` (`f` implemented by the
+    `unsafe` `f._unsafe_rec`). -/
+elab "#assert_no_runtime_overrides " ns:ident : command => do
+  let root := ns.getId
+  let env ← getEnv
+  let mut bad : Array Name := #[]
+  for (n, ci) in env.constants.toList do
+    if !inTrustScope root n then continue
+    let isPartialAux := n.isStr && n.getString! == "_unsafe_rec"
+    if ci.isUnsafe && !isPartialAux then bad := bad.push n
+    if let some impl := Compiler.implementedByAttr.getParam? env n then
+      if impl != n ++ `_unsafe_rec then bad := bad.push n
+    if isExtern env n then bad := bad.push n
+  if bad.isEmpty then
+    logInfo m!"no runtime overrides under {root}"
+  else
+    throwError m!"runtime overrides under {root} ({bad.size}): {bad.toList.take 25}"
+
+#assert_no_runtime_overrides SqlEquiv

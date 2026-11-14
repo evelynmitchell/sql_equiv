@@ -310,11 +310,10 @@ theorem normalizeExpr_equiv (e : Expr) : normalizeExpr e ≃ₑ e := by
     so `of_decide_eq_true` extracts `normalizeExpr e1 = normalizeExpr e2`. Then
     `normalizeExpr_equiv` (a fully verified theorem) provides the semantic equivalence.
 
-    Note: The `DecidableEq Expr` instance uses `opaque` + `@[implemented_by]` with an
-    `unsafe` BEq wrapper (see Ast.lean). This means the proof assumes BEq correctness
-    for Expr — a structural property of the BEq implementation, not a semantic claim.
-    See Ast.lean for details on why standard approaches (deriving, Classical.decEq,
-    manual WFR) are not viable. -/
+    The `DecidableEq Expr` instance is the total, structurally recursive
+    decider generated into Ast.lean (#278), so the runtime answer of
+    `syntacticEquiv` is the code the kernel checked; there is no lawful-BEq
+    assumption. -/
 theorem syntacticEquiv_implies_equiv {e1 e2 : Expr} (h : syntacticEquiv e1 e2 = true) :
     e1 ≃ₑ e2 := by
   have heq : normalizeExpr e1 = normalizeExpr e2 := by simpa [syntacticEquiv] using h
