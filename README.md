@@ -13,7 +13,7 @@ SQL Equiv is a comprehensive toolkit for:
 
 The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations.
 
-**Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are `partial def` and have no theorems. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
+**Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are total functions (no `partial def` remains in the semantics, #278) but have no equivalence theorems yet. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
 
 ### For Lean / CSLib readers
 
@@ -43,10 +43,11 @@ This repository could become a basis for SQL support in
 - **Trust.** The trust base is the one described above. The certified rewriter
   and the decision procedure come with proofs (`docs/CERTIFIED_REWRITER.md`).
 - **Known gaps before a library port:**
-  - [#278](https://github.com/evelynmitchell/sql_equiv/issues/278): 17 `partial def`s on the proof path (semantics and
-    statement deciders). Done so far: `DecidableEq` on the AST is total and
-    kernel-reducible (no `unsafe`), and `sql_equiv!` is kernel-checked
-    (`decide +kernel`, no `native_decide`);
+  - [#278](https://github.com/evelynmitchell/sql_equiv/issues/278): 8 `partial def`s on the proof path, all statement-level
+    deciders in `Equiv/Decidable.lean` (#213). Done so far: `DecidableEq` on
+    the AST is total and kernel-reducible (no `unsafe`), `sql_equiv!` is
+    kernel-checked (`decide +kernel`, no `native_decide`), and the semantics
+    has no `partial def` left;
   - the representation choices above were made for a checker, not a library.
     Schemas and typed relations, `Multiset` for bag semantics, and a small
     core calculus with SQL translated into it are all open design questions.

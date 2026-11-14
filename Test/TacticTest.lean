@@ -40,4 +40,12 @@ example : syntacticEquiv (.binOp .or a b) (.binOp .or b a) = true := by decide +
 example : syntacticEquiv (.binOp .or a b) (.binOp .and b a) = false := by decide +kernel
 example : syntacticEquiv (.binOp .sub a b) (.binOp .sub b a) = false := by decide +kernel
 
+-- #278 step 3: the aggregate / window detectors are total, so the
+-- `hNoAgg`-style hypotheses of statement theorems are decided directly.
+example : selectHasAggregate [.exprItem (.col ⟨some "t", "c"⟩) none] = false := by decide
+example : selectHasAggregate [.exprItem (.func "f" [.countStar]) none] = true := by decide
+example : selectHasWindowFn [.exprItem (.lit (.int 1)) none] = false := by decide
+example : selectHasWindowFn
+    [.exprItem (.case [(a, .windowFn .rank none (.mk [] []))] none) none] = true := by decide
+
 end TacticTest

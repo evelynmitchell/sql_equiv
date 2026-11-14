@@ -26,7 +26,13 @@ kernel-checked: `normalizeExpr` orders commutative operands with the generated
 structural `Expr.cmp` instead of `toString (repr …)` (which went through the
 partial `toReprStr`), and the tactic uses `decide +kernel`; the `checkEquivFull`
 smoke tests in `Decidable.lean` do too. No `native_decide` remains in library
-or test code. The report below is kept as recorded.
+or test code. Step 3 left no `partial def` in the semantics: the unreferenced
+legacy evaluators (`evalExprWithAgg`, `compareByOrderItems`, `computeRanks`,
+`computeDenseRanks`, `evalExprWithWindow` and their helpers) were deleted,
+`hasAggregate`/`exprHasWindowFn` are structural, and `evalInsert`/`evalUpdate`
+never recursed. A fresh audit should count 64 `partial def`s (8 on-path, in
+`Equiv/Decidable.lean`) and guard counts of 2779 theorems, 2274 definitions,
+55 opaque constants. The report below is kept as recorded.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
 

@@ -45,8 +45,8 @@ This is a thin adapter over the general **rewrite-audit** skill in
 
    When judging runtime/proof divergence, say which rewriter or decision
    procedure an override is on the path of. For example, the remaining
-   `partial def`s in `Semantics.lean` are on-path for statement-level
-   reasoning but off-path for `certifiedRewrite`. Since #278 there are no
+   `partial def`s in `Equiv/Decidable.lean` (statement deciders, #213) are
+   on-path for statement-level checkers but off-path for `certifiedRewrite`. Since #278 there are no
    overrides left in `SqlEquiv/`: the AST's `DecidableEq` is a total generated
    decider (`tools/gen_ast_deceq.py`), and `sql_equiv!` uses `decide +kernel`
    instead of `native_decide`. `Test/TrustBaseTest.lean` enforces both

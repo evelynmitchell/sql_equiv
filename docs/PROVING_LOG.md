@@ -4561,3 +4561,29 @@ the `@[implemented_by]` and the only `lcProof` use. `partial def` count 83 → 7
 - `Test/TacticTest.lean` proves two goals that only the normalization branch
   reaches, and pins their axioms with `#guard_msgs`. A `native_decide` proof
   makes that pin fail: it shows `Lean.ofReduceBool` and `Lean.trustCompiler`.
+
+## #278 step 3: no `partial def` left in the semantics (Nov 2026)
+
+The nine `partial def`s in `Semantics.lean` were all removable:
+
+- **Five were dead code.** The legacy non-`Param` evaluators were referenced
+  only by each other: `evalExprWithAgg`, `compareByOrderItems`,
+  `computeRanks`, `computeDenseRanks` and `evalExprWithWindow`, together with
+  their non-partial helpers `evalAggOverTable`, `evalSelectItemWithAgg`,
+  `evalGroupKey`, `groupRowsByKey`, `partitionRows`, `sortPartition` and
+  `evalWindowFn`. The live pipeline uses the `*Param` versions. All 12 are
+  deleted.
+- **`evalInsert` / `evalUpdate` never recursed.** `partial` was unnecessary,
+  and dropping it was enough.
+- **`hasAggregate` / `exprHasWindowFn` are now structural.** They use `where`
+  helpers for `List Expr`, `List (Expr × Expr)` and `Option Expr`, and keep
+  exactly the same coverage: neither looks into subqueries, and the window
+  detector does not look into IN lists or BETWEEN. `decide` evaluates them.
+  - Old against new over the LSpec sweep, each expression also wrapped in
+    aggregate/window contexts: 439,008 expressions, 219,504 with an aggregate,
+    109,752 with a window function, **0 disagreements**.
+
+`partial def` count: 73 → 64. On the proof path, only the 8 statement
+deciders in `Equiv/Decidable.lean` remain (#213, #278 step 4). No theorem
+statement changed. The `hNoAgg`/`hNoWin` hypotheses of the statement theorems
+can now be discharged with `decide`; see `Test/TacticTest.lean`.
