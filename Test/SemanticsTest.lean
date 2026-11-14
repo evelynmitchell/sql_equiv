@@ -550,19 +550,35 @@ def subqueryTests : List TestResult := [
   -- exact-match-first lookup gave the outer `age` and 0 rows)
   testRowCount "scope_derived_outer_unqualified_keys"
     "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)" 4,
-  -- Known gap (#257): a derived table's alias is not applied to its columns.
-  -- Unqualified references work; `d.col` evaluates to NULL (engines return the
-  -- column). Pinned so a fix is noticed. The six filter theorems were restated
-  -- in #269 (single table, derived table named after its qualifier), so fixing
-  -- #257 needs only the evaluator change and re-proofs, provided the fix
-  -- *replaces* an existing qualifier (`t.col` → `alias.col`).
+  -- #257 (fixed): a derived table's alias qualifies its columns, as in
+  -- sqlite and DuckDB (each query checked against both on users 1–4; the
+  -- fixture here also has Eve, 5th row). Unqualified
+  -- references keep working.
   testColumn "derived_unqualified_ref_works"
     "SELECT name FROM (SELECT name, id FROM users WHERE id < 3) AS x" "name"
     [.string "Alice", .string "Bob"],
-  testContainsValue "derived_alias_qualified_ref_is_null_gap_257"
-    "SELECT x.name FROM (SELECT name, id FROM users) AS x" (.null none),
-  testRowCount "derived_alias_qualified_where_gap_257"
-    "SELECT name FROM (SELECT name, age FROM users) AS d WHERE d.age > 26" 0
+  testColumn "derived_alias_qualified_ref"
+    "SELECT x.name FROM (SELECT name, id FROM users) AS x" "name"
+    [.string "Alice", .string "Bob", .string "Carol", .string "Dave", .string "Eve"],
+  testColumn "derived_alias_qualified_where"
+    "SELECT d.name FROM (SELECT name, age FROM users) AS d WHERE d.age > 26" "name"
+    [.string "Alice", .string "Carol", .string "Dave"],
+  -- SELECT * inside: `users.name` is re-qualified as `x.name`
+  testColumn "derived_star_requalified"
+    "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3" "name"
+    [.string "Alice", .string "Bob"],
+  -- nested derived tables: the outer alias wins
+  testColumn "derived_nested_alias"
+    "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y" "name"
+    [.string "Alice", .string "Bob", .string "Carol", .string "Dave", .string "Eve"],
+  -- derived table over a join
+  testColumn "derived_over_join"
+    "SELECT d.name FROM (SELECT u.name, v.age FROM users u JOIN users v ON u.id = v.id) AS d WHERE d.age > 29" "name"
+    [.string "Alice", .string "Carol"],
+  -- the inner table's qualifier is out of scope outside the derived table
+  -- (engines reject `users.name` here; ours finds no such column: NULL)
+  testContainsValue "derived_inner_qualifier_out_of_scope"
+    "SELECT users.name FROM (SELECT * FROM users) AS x" (.null none)
 ]
 
 -- ============================================================================

@@ -643,16 +643,31 @@ theorem evalFrom_table (db : Database) (t : TableRef) :
   simp only [evalFrom_eq_evalFromCore]
   exact evalFromCore_table ..
 
-/-- evalFrom for subquery just returns the inner subquery result (pass-through). -/
+/-- evalFrom for a derived table: the inner result with every key re-qualified
+    by the alias (standard derived-table scoping, #257). -/
 theorem evalFrom_subquery (db : Database) (sq : SubQuery) (alias : String) :
-    evalFrom db (.subquery sq alias) = evalSubQueryWithContext db [] sq := by
+    evalFrom db (.subquery sq alias) =
+      (evalSubQueryWithContext db [] sq).map (requalifyRow alias) := by
   simp only [evalFrom_eq_evalFromCore]
   exact evalFromCore_subquery ..
 
-/-- evalFrom for a simple SELECT subquery returns the inner SELECT result. -/
+/-- evalFrom for a simple SELECT subquery: the inner SELECT result, re-qualified. -/
 theorem evalFrom_subquery_simple (db : Database) (sel : SelectStmt) (alias : String) :
-    evalFrom db (.subquery (.simple sel) alias) = evalSelect db sel := by
+    evalFrom db (.subquery (.simple sel) alias) = (evalSelect db sel).map (requalifyRow alias) := by
   rw [evalFrom_subquery, evalSubQuery_simple]; rfl
+
+/-- Rows of a base table are keyed by its qualifier, so re-qualifying them by
+    that same qualifier changes nothing (#257, #269). -/
+theorem requalifyRow_table_row (db : Database) (t : TableRef) :
+    ∀ row ∈ evalFrom db (.table t), requalifyRow (t.alias.getD t.name) row = row := by
+  intro row hrow
+  rw [evalFrom_table] at hrow
+  simp only [List.mem_map] at hrow
+  obtain ⟨r, _, rfl⟩ := hrow
+  simp only [requalifyRow, List.map_map]
+  apply List.map_congr_left
+  intro ⟨c, v⟩ _
+  simp [requalifyKey_mk]
 
 /-- evalFrom decomposes CROSS JOIN into flatMap/map on left/right rows. -/
 theorem evalFrom_cross_join (db : Database) (left right : FromClause) :
@@ -1373,99 +1388,12 @@ theorem evalSelect_nondistinct_project_where (db : Database)
     exact evalSelectCore_simple_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
 
-/-- Bridge: evalFrom_subquery connects to evalSelectCore for simple subqueries. -/
-private theorem evalFrom_subquery_core (db : Database) (sel : SelectStmt) (alias : String) :
-    evalFrom db (.subquery (.simple sel) alias) =
-    evalSelectCore db []
-      (fun db' fc => evalFrom db' fc)
-      ee
-      (evalSelectItemParam ee)
-      (evalSelectItemWithAggParam ee)
-      (evalExprWithAggParam ee)
-      (compareByOrderItemsParam ee)
-      (evalExprWithWindowParam ee)
-      selectHasWindowFn
-      selectHasAggregate
-      sel := by
-  rw [evalFrom_subquery_simple, evalSelect_eq_evalSelectCore]
-
 /-- AND distributes over == some true for evalExprWithDb. -/
 private theorem evalExprWithDb_and_true_iff (db : Database) (row : Row) (p q : Expr) :
     (evalExprWithDb db row (.binOp .and p q) == some (.bool true)) =
     ((evalExprWithDb db row p == some (.bool true)) && (evalExprWithDb db row q == some (.bool true))) := by
   rw [evalExprWithDb_binOp]
   exact evalBinOp_and_true_iff _ _
-
-/-- Infrastructure: filter_and at the evalSelect level.
-    SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE q ...
-    = SELECT items FROM from_ WHERE (p AND q) ... -/
-theorem evalSelect_filter_and (db : Database) (alias_ : String) (items : List SelectItem) (from_ : Option FromClause)
-    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
-      (some q) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some (.binOp .and p q)) groupBy having orderBy limit offset) := by
-  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  apply evalSelectCore_filter_and
-  · exact selectHasAggregate_star
-  · exact selectHasWindowFn_star
-  · intro db' row; exact evalSelectItem_star db' row
-  · intro sel alias; exact evalFrom_subquery_core db sel alias
-  · intro row; exact evalExprWithDb_and_true_iff db row p q
-
-/-- Infrastructure: filter_commute at the evalSelect level.
-    SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE q ...
-    = SELECT items FROM (SELECT * FROM from_ WHERE q) AS inner WHERE p ... -/
-theorem evalSelect_filter_commute (db : Database) (alias_ : String) (items : List SelectItem) (from_ : Option FromClause)
-    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
-      (some q) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some q) [] none [] none none)) alias_))
-      (some p) groupBy having orderBy limit offset) := by
-  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  apply evalSelectCore_filter_commute
-  · exact selectHasAggregate_star
-  · exact selectHasWindowFn_star
-  · intro db' row; exact evalSelectItem_star db' row
-  · intro sel alias; exact evalFrom_subquery_core db sel alias
-
-/-- Infrastructure: filter_idempotent at the evalSelect level.
-    SELECT items FROM (SELECT * FROM from_ WHERE p) AS inner WHERE p ...
-    = SELECT items FROM from_ WHERE p ... -/
-theorem evalSelect_filter_idempotent (db : Database) (alias_ : String) (items : List SelectItem) (from_ : Option FromClause)
-    (p : Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some p) [] none [] none none)) alias_))
-      (some p) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some p) groupBy having orderBy limit offset) := by
-  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  apply evalSelectCore_filter_idempotent
-  · exact selectHasAggregate_star
-  · exact selectHasWindowFn_star
-  · intro db' row; exact evalSelectItem_star db' row
-  · intro sel alias; exact evalFrom_subquery_core db sel alias
-
-/-- Infrastructure: filter_pushdown_table at the evalSelect level.
-    SELECT items FROM from_ WHERE filter ... = SELECT items FROM (SELECT * FROM from_ WHERE filter) AS alias ... -/
-theorem evalSelect_filter_pushdown_table (db : Database) (items : List SelectItem)
-    (from_ : Option FromClause) (alias_ : String) (filter : Expr)
-    (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items from_ (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items
-      (some (.subquery (.simple (.mk false [.star none] from_ (some filter) [] none [] none none)) alias_))
-      none groupBy having orderBy limit offset) := by
-  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  apply evalSelectCore_filter_pushdown_table
-  · exact selectHasAggregate_star
-  · exact selectHasWindowFn_star
-  · intro db' row; exact evalSelectItem_star db' row
-  · intro sel alias; exact evalFrom_subquery_core db sel alias
 
 /-- Infrastructure: SELECT * FROM from_ WHERE p (all trivial options) = filter of base rows. -/
 theorem evalSelect_star_where_eq_filter (db : Database) (from_ : Option FromClause) (p : Expr) :
@@ -1476,6 +1404,109 @@ theorem evalSelect_star_where_eq_filter (db : Database) (from_ : Option FromClau
   rw [evalSelect_eq_evalSelectCore]
   exact evalSelectCore_star_where_eq_filter _ _ _ _ _ _ _ _ _ _ _ _ _
     selectHasAggregate_star selectHasWindowFn_star (fun db' row => evalSelectItem_star db' row)
+
+/-- The derived table `(SELECT * FROM t WHERE r) AS q`, with `q` the table's
+    own qualifier, evaluates to its inner SELECT: base rows are keyed `q.col`,
+    so re-qualifying them by `q` renames nothing (#257, #269). -/
+theorem evalFrom_filtered_table (db : Database) (t : TableRef) (r : Expr) :
+    evalFrom db (.subquery (.simple (.mk false [.star none] (some (.table t)) (some r) [] none [] none none))
+      (t.alias.getD t.name)) =
+    evalSelect db (.mk false [.star none] (some (.table t)) (some r) [] none [] none none) := by
+  rw [evalFrom_subquery_simple]
+  refine (List.map_congr_left (g := id) ?_).trans (List.map_id _)
+  intro row hrow
+  rw [evalSelect_star_where_eq_filter] at hrow
+  simp only [List.mem_filter, List.mem_map, List.append_nil] at hrow
+  obtain ⟨⟨r', hr', rfl⟩, _⟩ := hrow
+  exact requalifyRow_table_row db t r' hr'
+
+/-- Bridge from `evalFrom_filtered_table` to `evalSelectCore`. -/
+private theorem evalFrom_filtered_core (db : Database) (t : TableRef) (r : Expr) :
+    evalFrom db (.subquery (.simple (.mk false [.star none] (some (.table t)) (some r) [] none [] none none))
+      (t.alias.getD t.name)) =
+    evalSelectCore db []
+      (fun db' fc => evalFrom db' fc)
+      ee
+      (evalSelectItemParam ee)
+      (evalSelectItemWithAggParam ee)
+      (evalExprWithAggParam ee)
+      (compareByOrderItemsParam ee)
+      (evalExprWithWindowParam ee)
+      selectHasWindowFn
+      selectHasAggregate
+      (.mk false [.star none] (some (.table t)) (some r) [] none [] none none) := by
+  rw [evalFrom_filtered_table, evalSelect_eq_evalSelectCore]
+
+/-- Infrastructure: filter_and at the evalSelect level.
+    SELECT items FROM (SELECT * FROM t WHERE p) AS t WHERE q ...
+    = SELECT items FROM t WHERE (p AND q) ... -/
+theorem evalSelect_filter_and (db : Database) (items : List SelectItem) (t : TableRef)
+    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items
+      (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some p) [] none [] none none)) (t.alias.getD t.name)))
+      (some q) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.table t)) (some (.binOp .and p q)) groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_and
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro r; exact evalFrom_filtered_core db t r
+  · intro row; exact evalExprWithDb_and_true_iff db row p q
+
+/-- Infrastructure: filter_commute at the evalSelect level.
+    SELECT items FROM (SELECT * FROM t WHERE p) AS t WHERE q ...
+    = SELECT items FROM (SELECT * FROM t WHERE q) AS t WHERE p ... -/
+theorem evalSelect_filter_commute (db : Database) (items : List SelectItem) (t : TableRef)
+    (p q : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items
+      (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some p) [] none [] none none)) (t.alias.getD t.name)))
+      (some q) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items
+      (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some q) [] none [] none none)) (t.alias.getD t.name)))
+      (some p) groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_commute
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro r; exact evalFrom_filtered_core db t r
+
+/-- Infrastructure: filter_idempotent at the evalSelect level.
+    SELECT items FROM (SELECT * FROM t WHERE p) AS t WHERE p ...
+    = SELECT items FROM t WHERE p ... -/
+theorem evalSelect_filter_idempotent (db : Database) (items : List SelectItem) (t : TableRef)
+    (p : Expr) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items
+      (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some p) [] none [] none none)) (t.alias.getD t.name)))
+      (some p) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.table t)) (some p) groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_idempotent
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro r; exact evalFrom_filtered_core db t r
+
+/-- Infrastructure: filter_pushdown_table at the evalSelect level.
+    SELECT items FROM t WHERE filter ... = SELECT items FROM (SELECT * FROM t WHERE filter) AS t ... -/
+theorem evalSelect_filter_pushdown_table (db : Database) (items : List SelectItem)
+    (t : TableRef) (filter : Expr)
+    (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat) :
+    evalSelect db (.mk false items (some (.table t)) (some filter) groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items
+      (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some filter) [] none [] none none)) (t.alias.getD t.name)))
+      none groupBy having orderBy limit offset) := by
+  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
+  apply evalSelectCore_filter_pushdown_table
+  · exact selectHasAggregate_star
+  · exact selectHasWindowFn_star
+  · intro db' row; exact evalSelectItem_star db' row
+  · intro r; exact evalFrom_filtered_core db t r
 
 /-- Infrastructure: predicate_pushdown at the evalSelect level.
     (evalSelect db (SELECT * FROM t WHERE p)).filter q = evalSelect db (SELECT * FROM t WHERE (p AND q)) -/
@@ -1491,106 +1522,79 @@ theorem evalSelect_predicate_pushdown (db : Database) (t : String) (p q : Expr) 
   congr 1; funext row
   exact (evalExprWithDb_and_true_iff db row p q).symm
 
-/-- Infrastructure: filter pushdown through an inner join to the left side.
-    When a filter evaluates the same on `lr ++ rr` as on just `lr`, we can
-    push the filter into a subquery wrapping the left side of the join. -/
-theorem evalSelect_filter_join_left (db : Database) (alias_ : String) (a b : FromClause) (cond filter : Expr)
-    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+/-- A WHERE over FROM `f1` equals no WHERE over FROM `f2` when `f2`'s rows are
+    exactly `f1`'s rows that pass the filter. -/
+theorem evalSelect_where_to_from (db : Database) (items : List SelectItem)
+    (f1 f2 : FromClause) (filter : Expr)
+    (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_filter_left : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
-        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
-      groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join (.subquery (.simple (.mk false [.star none] (some a)
-      (some filter) [] none [] none none)) alias_) .inner b (some cond)))
-      none groupBy having orderBy limit offset) := by
-  -- Step 1: Push filter into subquery around whole join (filter_pushdown_table)
-  rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
-      "filtered_a" filter groupBy having orderBy limit offset]
-  -- Now: SELECT items FROM (SELECT * FROM (a JOIN b ON cond) WHERE filter) AS filtered_a
-  --    = SELECT items FROM (filtered_a JOIN b ON cond)
-  -- Both have where_ = none, so reduce to FROM clause equality
+    (h : evalFrom db f2 =
+      (evalFrom db f1).filter (fun row => evalExprWithDb db row filter == some (Value.bool true))) :
+    evalSelect db (.mk false items (some f1) (some filter) groupBy having orderBy limit offset) =
+      evalSelect db (.mk false items (some f2) none groupBy having orderBy limit offset) := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   simp only [evalSelectCore_eq_afterFilter]
   congr 1
-  -- Goal: filteredRows equality (both with where_ = none → just mapped baseRows)
   simp only [List.append_nil, List.map_id']
-  -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_a")
-  -- RHS: evalFrom db (.join (.subquery (SELECT * FROM a WHERE filter) "filtered_a") .inner b (some cond))
-  rw [evalFrom_subquery_simple]
-  rw [evalSelect_star_where_eq_filter]
+  rw [h]
+
+/-- Infrastructure: filter pushdown through an inner join to the left side,
+    for a left table `ta` wrapped as a derived table named after its own
+    qualifier (#269). When the filter evaluates the same on `lr ++ rr` as on
+    `lr` alone, filtering the join equals joining the filtered table. -/
+theorem evalSelect_filter_join_left (db : Database) (ta : TableRef) (b : FromClause) (cond filter : Expr)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (limit offset : Option Nat)
+    (h_filter_left : ∀ lr ∈ evalFrom db (.table ta), ∀ rr ∈ evalFrom db b,
+        evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
+    evalSelect db (.mk false items (some (.join (.table ta) .inner b (some cond))) (some filter)
+      groupBy having orderBy limit offset) =
+    evalSelect db (.mk false items (some (.join (.subquery (.simple (.mk false [.star none] (some (.table ta))
+      (some filter) [] none [] none none)) (ta.alias.getD ta.name)) .inner b (some cond)))
+      none groupBy having orderBy limit offset) := by
+  apply evalSelect_where_to_from
+  symm
+  rw [evalFrom_inner_join, evalFrom_inner_join (db := db) (left := .subquery _ _),
+    evalFrom_filtered_table, evalSelect_star_where_eq_filter]
   simp only [List.append_nil, List.map_id']
-  -- LHS: (evalFrom db (.join a .inner b (some cond))).filter P
-  rw [evalFrom_inner_join]
-  -- LHS: ((evalFrom db a).flatMap F).filter P
-  -- RHS: evalFrom db (.join (.subquery ...) .inner b (some cond))
-  rw [evalFrom_inner_join (db := db) (left := .subquery _ _)]
-  rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.append_nil, List.map_id']
-  -- RHS: ((evalFrom db a).filter Q).flatMap F
-  -- Now apply list algebra: flatMap/filter commutation
   apply list_flatMap_filter_comm
-  -- Discharge: ∀ lr ∈ evalFrom db a, ∀ combined ∈ F lr, P combined = Q lr
   intro lr hlr combined hcombined
-  -- combined ∈ filterMap, so combined = lr ++ rr for some rr
   simp only [List.mem_filterMap] at hcombined
   obtain ⟨rr, hrr, hfm⟩ := hcombined
-  -- Case split on the match in the filterMap body
   split at hfm
-  · -- evalExprWithDb db (lr ++ rr) cond = some (.bool true) → combined = lr ++ rr
-    simp only [Option.some.injEq] at hfm; subst hfm
+  · simp only [Option.some.injEq] at hfm; subst hfm
     congr 1
     exact h_filter_left lr hlr rr hrr
-  · -- other cases: none = some combined → contradiction
-    simp at hfm
+  · simp at hfm
 
-/-- Infrastructure: filter pushdown through an inner join to the right side.
-    When a filter evaluates the same on `lr ++ rr` as on just `rr`, we can
-    push the filter into a subquery wrapping the right side of the join. -/
-theorem evalSelect_filter_join_right (db : Database) (alias_ : String) (a b : FromClause) (cond filter : Expr)
+/-- Infrastructure: filter pushdown through an inner join to the right side,
+    for a right table `tb` wrapped as a derived table named after its own
+    qualifier (#269). -/
+theorem evalSelect_filter_join_right (db : Database) (a : FromClause) (tb : TableRef) (cond filter : Expr)
     (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db b,
+    (h_filter_right : ∀ lr ∈ evalFrom db a, ∀ rr ∈ evalFrom db (.table tb),
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter)
+    evalSelect db (.mk false items (some (.join a .inner (.table tb) (some cond))) (some filter)
       groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner (.subquery (.simple (.mk false [.star none] (some b)
-      (some filter) [] none [] none none)) alias_) (some cond)))
+    evalSelect db (.mk false items (some (.join a .inner (.subquery (.simple (.mk false [.star none] (some (.table tb))
+      (some filter) [] none [] none none)) (tb.alias.getD tb.name)) (some cond)))
       none groupBy having orderBy limit offset) := by
-  -- Step 1: Push filter into subquery around whole join
-  rw [evalSelect_filter_pushdown_table db items (some (.join a .inner b (some cond)))
-      "filtered_b" filter groupBy having orderBy limit offset]
-  -- Reduce to FROM clause equality
-  rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  simp only [evalSelectCore_eq_afterFilter]
-  congr 1
+  apply evalSelect_where_to_from
+  symm
+  rw [evalFrom_inner_join, evalFrom_inner_join (db := db) (right := .subquery _ _),
+    evalFrom_filtered_table, evalSelect_star_where_eq_filter]
   simp only [List.append_nil, List.map_id']
-  -- LHS: evalFrom db (.subquery (SELECT * FROM (a JOIN b ON cond) WHERE filter) "filtered_b")
-  -- RHS: evalFrom db (.join a .inner (.subquery (SELECT * FROM b WHERE filter) "filtered_b") (some cond))
-  rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.append_nil, List.map_id']
-  rw [evalFrom_inner_join]
-  rw [evalFrom_inner_join (db := db) (right := .subquery _ _)]
-  rw [evalFrom_subquery_simple, evalSelect_star_where_eq_filter]
-  simp only [List.append_nil, List.map_id']
-  -- LHS: ((evalFrom db a).flatMap F_orig).filter P
-  -- RHS: (evalFrom db a).flatMap F_filtered
-  -- where F_filtered uses (evalFrom db b).filter Q instead of evalFrom db b
-  -- Distribute filter inside flatMap, then commute filter with filterMap per-element
   rw [List.filter_flatMap]
   apply flatMap_congr_mem
   intro lr hlr
   apply list_filter_filterMap_comm
-  -- Discharge: ∀ rr ∈ evalFrom db b, ∀ combined, filterMap_body rr = some combined → P combined = Q rr
   intro rr hrr combined hfm
-  -- Case split on the match in the filterMap body
   split at hfm
-  · -- evalExprWithDb db (lr ++ rr) cond = some (.bool true) → combined = lr ++ rr
-    simp only [Option.some.injEq] at hfm; subst hfm
+  · simp only [Option.some.injEq] at hfm; subst hfm
     congr 1
     exact h_filter_right lr hlr rr hrr
-  · -- other cases: none = some combined → contradiction
-    simp at hfm
+  · simp at hfm
 
 /-- Evaluate any statement -/
 def evalStmt (db : Database) : Stmt → Database × Option Table

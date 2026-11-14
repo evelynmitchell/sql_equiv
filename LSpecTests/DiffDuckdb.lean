@@ -277,6 +277,15 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE id IN (SELECT id FROM items WHERE price > 2)",
     diffTest "scope: outer fall-through"
       "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM items WHERE id = age - 27)",
+    -- Derived-table alias qualifies its columns (#257)
+    diffTest "derived: alias-qualified column"
+      "SELECT x.name FROM (SELECT name, id FROM users) AS x",
+    diffTest "derived: alias-qualified WHERE"
+      "SELECT d.name FROM (SELECT name, age FROM users) AS d WHERE d.age > 26",
+    diffTest "derived: SELECT * re-qualified"
+      "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
+    diffTest "derived: nested aliases"
+      "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
     -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
     -- sides; both engines (and now our semantics) return set results
     diffTest "INTERSECT dedups duplicate-bearing inputs"

@@ -392,6 +392,15 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE amount > age * 10)",
     diffTest "scope: derived-table outer row (unqualified keys)"
       "SELECT name FROM (SELECT name, age FROM users) AS d WHERE age > (SELECT MIN(age) FROM users)",
+    -- Derived-table alias qualifies its columns (#257)
+    diffTest "derived: alias-qualified column"
+      "SELECT x.name FROM (SELECT name, id FROM users) AS x",
+    diffTest "derived: alias-qualified WHERE"
+      "SELECT d.name FROM (SELECT name, age FROM users) AS d WHERE d.age > 26",
+    diffTest "derived: SELECT * re-qualified"
+      "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
+    diffTest "derived: nested aliases"
+      "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
     -- LIKE letter case (registry row 8): ASCII case-insensitive in sqlite
     diffTest "LIKE ignores ASCII case (sqlite dialect)"
       "SELECT name FROM users WHERE name LIKE 'al%'",
