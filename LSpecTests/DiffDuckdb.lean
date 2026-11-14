@@ -24,6 +24,9 @@
     (sort keys must come from the output columns; the key silently ties), but
     DuckDB is permissive and sorts by the pre-dedup source. Do not add such a
     case without deciding which behavior to adopt.
+  - Number vs numeric-looking string (`age = '30'`, registry row 11): DuckDB
+    converts the string; we treat it as a type error and drop the row (#254,
+    decided: keep).
   - ON-less JOIN (`A JOIN B WHERE ...`): we follow Spider/SQLite (cross
     product); DuckDB rejects the spelling outright (requires CROSS JOIN).
     The CROSS JOIN case below covers the shared semantics.

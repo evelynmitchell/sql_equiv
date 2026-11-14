@@ -488,6 +488,18 @@ def registryPinTests : List TestResult := [
   testColumn "distinct_order_by_unselected_keeps_input_order"
     "SELECT DISTINCT department FROM users ORDER BY age" "department"
     [.string "Engineering", .string "Sales", .string "Marketing"],
+  -- Row 11 (decided, #254: keep): a number compared with a numeric-looking
+  -- string is a type error, so the row is dropped. sqlite, DuckDB and
+  -- Postgres all convert the string and return Alice (age 30). Kept as a
+  -- documented divergence; see docs/IMPLEMENTATION_DEFINED.md row 11.
+  testRowCount "int_vs_numeric_string_literal_drops_row"
+    "SELECT name FROM users WHERE age = '30'" 0,
+  testRowCount "numeric_string_literal_vs_int_drops_row"
+    "SELECT name FROM users WHERE '30' = age" 0,
+  testRowCount "int_in_numeric_string_list_drops_row"
+    "SELECT name FROM users WHERE age IN ('30', '25')" 0,
+  testRowCount "int_between_numeric_strings_drops_row"
+    "SELECT name FROM users WHERE age BETWEEN '20' AND '40'" 0,
   -- Row 6: integer division truncates (sqlite, Postgres; DuckDB's / gives 3.5)
   testContainsValue "int_division_truncates" "SELECT 7 / 2 FROM users LIMIT 1" (.int 3),
   -- …toward zero for negatives, as all three engines do (was Euclidean: -4 / 1)

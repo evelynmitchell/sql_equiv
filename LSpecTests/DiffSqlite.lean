@@ -30,6 +30,9 @@
     via column affinity; we treat it as a type error (#235, decided). The
     Spider harness emulates sqlite here by quoting the literal, reported as
     its own category.
+  - Row 11, number vs numeric-looking string (`age = '30'`): sqlite converts
+    the string; we treat it as a type error (#254, decided: keep). Pinned by
+    `int_vs_numeric_string_literal_drops_row` and siblings.
   - Row 5, DISTINCT + ORDER BY on a non-selected column: sqlite sorts by a
     source row; ours ties the key (output keeps input order). Gap, pinned by
     `distinct_order_by_unselected_keeps_input_order`.
