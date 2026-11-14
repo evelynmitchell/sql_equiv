@@ -35,7 +35,20 @@ never recursed. Step 4 replaced the 8 partial statement deciders in
 `Equiv/StatementChecker.lean` (`checkSelectEquiv`, `checkQueryEquiv`). A fresh
 audit should count 56 `partial def`s, none on-path (parser 38, `Pretty.lean`
 8, `toReprStr` 10), and guard counts of 2812 theorems, 2261 definitions and
-48 opaque constants. The report below is kept as recorded.
+48 opaque constants.
+
+**Re-audited 14 Nov 2026 (master `37dc717`, after #282): 0 issues.** The trust
+base is standard for all seven entry points (`certifiedRewrite`,
+`certifiedRewriteAux_equiv`, `normalizeExpr_equiv`,
+`syntacticEquiv_implies_equiv`, `checkEquivFull`, `checkSelectEquiv`,
+`checkQueryEquiv`); guard counts 2812 / 2261 / 48; vacuity OK; no runtime
+overrides; 56 `partial def`s, none on-path; probe 54,876 / 7,850 / 0
+mismatches, mutant caught on 45 cases. Discovery found the statement checkers
+and the closed/ground `Decidable` instances missing from the config; they are
+now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
+(`decideGroundExprEquivInst`) is correctly labelled and unused for `≃ₑ`.
+
+The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
 
