@@ -14,6 +14,24 @@
       "name": "checkEquivFull",
       "file": "SqlEquiv/Equiv/Decidable.lean",
       "proof": "checkEquivFull"
+    },
+    {
+      "name": "checkSelectEquiv",
+      "file": "SqlEquiv/Equiv/StatementChecker.lean",
+      "proof": "checkSelectEquiv",
+      "note": "decision procedure; proved results carry SelectEquiv (≃ₛ, every database); WHERE case lifted from checkEquivFull via select_where_congr"
+    },
+    {
+      "name": "checkQueryEquiv",
+      "file": "SqlEquiv/Equiv/StatementChecker.lean",
+      "proof": "checkQueryEquiv",
+      "note": "decision procedure; proved results carry QueryEquiv (≃ᵩ, every database); .simple via checkSelectEquiv, .compound congruence"
+    },
+    {
+      "name": "decideClosedExprEquivInst",
+      "file": "SqlEquiv/Equiv/Decidable.lean",
+      "proof": "decideClosedExprEquivInst",
+      "note": "Decidable (≃ₑ) for closed expressions only (isClosed); see also decideGroundExprEquiv_sound_closed"
     }
   ],
   "evaluator": {
@@ -39,7 +57,13 @@
     ],
     "equality": "Lean propositional equality on Option Value: kind-strict (distinct Value constructors never coincide); rewrite patterns match constructors, so host-language equality confusion cannot arise",
     "weakerVariantsToReject": [
-      "ExprEquivEmptyDb (≃ₑ₀): empty database only"
+      "ExprEquivEmptyDb (≃ₑ₀): empty database only. Known, correctly labelled users: decideGroundExprEquivInst and decideGroundExprEquiv_sound decide ≃ₑ₀ for ground expressions and must not be used to conclude ≃ₑ"
+    ],
+    "statementRelations": [
+      "SelectEquiv (≃ₛ)",
+      "QueryEquiv (≃ᵩ)",
+      "StmtEquiv (≃)",
+      "each quantifies over every database"
     ]
   },
   "guards": [
@@ -61,6 +85,8 @@
   "projectSpecificChecks": [
     "checkEquivFull may conclude ≃ₑ from ground evaluation only when both sides are Expr.isClosed; Expr.isGround admits database-dependent EXISTS (SELECT 1 FROM t)",
     "Dialect operators (BinOp.likeCI, MIN/MAX modes) must not be matched by rewrite arms whose proofs cover only the default operator",
-    "When a Value constructor is added, the LSpec generators and tools/definition_coverage_matrix.py must learn it in the same PR (CLAUDE.md)"
+    "When a Value constructor is added, the LSpec generators and tools/definition_coverage_matrix.py must learn it in the same PR (CLAUDE.md)",
+    "No partial def, unsafe, implemented_by, extern or native_decide may be reachable from the evaluator, a rewriter, a tactic or a checker (#278); the 56 remaining partial defs are Parser.lean, Pretty.lean and toReprStr. Test/TrustBaseTest.lean (#assert_no_runtime_overrides) and Test/TacticTest.lean (#guard_msgs on axioms) enforce this",
+    "The LSpec probe exercises only expression rewriters; statement checkers (checkSelectEquiv, checkQueryEquiv) rely on their kernel-checked proofs and the smoke tests in StatementChecker.lean"
   ]
 }
