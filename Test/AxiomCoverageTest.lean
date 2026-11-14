@@ -1172,7 +1172,7 @@ def normalizationDecisionTests : List TestResult :=
     let h1 := e1.isGround
     let h2 := e2.isGround
     if h1 && h2 then
-      let decided := decideGroundExprEquiv e1 e2 (by native_decide) (by native_decide)
+      let decided := decideGroundExprEquiv e1 e2 (by decide +kernel) (by decide +kernel)
       let evalsEqual := evalExpr [] e1 == evalExpr [] e2
       if decided == evalsEqual then .pass "decideGroundExprEquiv_sound"
       else .fail "decideGroundExprEquiv_sound"

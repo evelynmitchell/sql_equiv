@@ -228,11 +228,15 @@ theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Opt
   simp [h]
 
 
+/-- Canonical form for syntactic comparison: recursively normalise, and put the
+    operands of commutative operators (AND, OR, +, *) in the structural order
+    `Expr.cmp` (generated in Ast.lean). The order only needs to be total and
+    kernel-reducible, so `syntacticEquiv` can be decided by `decide` (#278). -/
 def normalizeExpr : Expr → Expr
-  | .binOp .and a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .and na nb else .binOp .and nb na
-  | .binOp .or a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .or na nb else .binOp .or nb na
-  | .binOp .add a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .add na nb else .binOp .add nb na
-  | .binOp .mul a b => let na := normalizeExpr a; let nb := normalizeExpr b; if toString (repr na) ≤ toString (repr nb) then .binOp .mul na nb else .binOp .mul nb na
+  | .binOp .and a b => let na := normalizeExpr a; let nb := normalizeExpr b; if (Expr.cmp na nb).isLE then .binOp .and na nb else .binOp .and nb na
+  | .binOp .or a b => let na := normalizeExpr a; let nb := normalizeExpr b; if (Expr.cmp na nb).isLE then .binOp .or na nb else .binOp .or nb na
+  | .binOp .add a b => let na := normalizeExpr a; let nb := normalizeExpr b; if (Expr.cmp na nb).isLE then .binOp .add na nb else .binOp .add nb na
+  | .binOp .mul a b => let na := normalizeExpr a; let nb := normalizeExpr b; if (Expr.cmp na nb).isLE then .binOp .mul na nb else .binOp .mul nb na
   | .binOp op a b => .binOp op (normalizeExpr a) (normalizeExpr b)
   | .unaryOp op e => .unaryOp op (normalizeExpr e)
   | .func name args => .func name (args.foldl (fun acc e => acc ++ [normalizeExpr e]) [])
@@ -299,28 +303,28 @@ theorem normalizeExpr_binOp_other (op : BinOp) (a b : Expr)
 -- Commutative binOps
 theorem normalizeExpr_binOp_and (a b : Expr) :
     normalizeExpr (.binOp .and a b) =
-    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+    (if (Expr.cmp (normalizeExpr a) (normalizeExpr b)).isLE
      then .binOp .and (normalizeExpr a) (normalizeExpr b)
      else .binOp .and (normalizeExpr b) (normalizeExpr a)) := by
   simp only [normalizeExpr]
 
 theorem normalizeExpr_binOp_or (a b : Expr) :
     normalizeExpr (.binOp .or a b) =
-    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+    (if (Expr.cmp (normalizeExpr a) (normalizeExpr b)).isLE
      then .binOp .or (normalizeExpr a) (normalizeExpr b)
      else .binOp .or (normalizeExpr b) (normalizeExpr a)) := by
   simp only [normalizeExpr]
 
 theorem normalizeExpr_binOp_add (a b : Expr) :
     normalizeExpr (.binOp .add a b) =
-    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+    (if (Expr.cmp (normalizeExpr a) (normalizeExpr b)).isLE
      then .binOp .add (normalizeExpr a) (normalizeExpr b)
      else .binOp .add (normalizeExpr b) (normalizeExpr a)) := by
   simp only [normalizeExpr]
 
 theorem normalizeExpr_binOp_mul (a b : Expr) :
     normalizeExpr (.binOp .mul a b) =
-    (if toString (repr (normalizeExpr a)) ≤ toString (repr (normalizeExpr b))
+    (if (Expr.cmp (normalizeExpr a) (normalizeExpr b)).isLE
      then .binOp .mul (normalizeExpr a) (normalizeExpr b)
      else .binOp .mul (normalizeExpr b) (normalizeExpr a)) := by
   simp only [normalizeExpr]

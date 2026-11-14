@@ -217,9 +217,14 @@ macro_rules
       first
         -- Try basic sql_equiv first
         | sql_equiv
-        -- Try normalization-based proof
-        | (have h : syntacticEquiv _ _ = true := by native_decide
-           exact syntacticEquiv_implies_equiv h)
+        -- Normalization-based proof, kernel-checked (#278): `normalizeExpr`
+        -- and the AST deciders are total and reduce in the kernel, so
+        -- `decide +kernel` replaces `native_decide` (no `Lean.ofReduceBool`).
+        -- `refine … ?_` first, so the goal's expressions are known before
+        -- deciding; the earlier `have h : syntacticEquiv _ _ = true` form could
+        -- not fill its placeholders, and this branch never fired.
+        | (refine syntacticEquiv_implies_equiv ?_
+           decide +kernel)
         -- Try repeated rewriting with all rules
         | (repeat (first
             | exact expr_equiv_refl _
@@ -260,10 +265,12 @@ macro_rules
             | apply binOp_congr <;> sql_equiv
             | apply unaryOp_congr <;> sql_equiv
             | rfl))
-        -- Final fallback: unfold and try decidability
+        -- Final fallback: unfold and try reflexivity. (This used to try
+        -- `native_decide`, which cannot apply here: after `intro` the goal
+        -- mentions the introduced database, so it is not a closed decision.)
         | (unfold ExprEquiv SelectEquiv QueryEquiv StmtEquiv
            intro _
-           first | rfl | native_decide))
+           rfl))
 
 -- ============================================================================
 -- sql_rw Tactic - Apply specific rewrite rules

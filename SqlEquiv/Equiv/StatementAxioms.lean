@@ -801,8 +801,9 @@ private theorem List.any_map {α β : Type} (f : α → β) (p : β → Bool) (l
     Requires that e evaluates to a value, and to the same value when the subquery's
     rows are prepended to the outer row (`hstable`): the subquery's columns are in
     scope first (#253), so `e` must not be captured by a column of `t`.
-    The hNoAgg/hNoWin conditions are needed because hasAggregate/exprHasWindowFn are
-    partial functions. For concrete items (.col, .lit), use `native_decide`. -/
+    The hNoAgg/hNoWin conditions were needed while hasAggregate/exprHasWindowFn
+    were partial functions; they are total now (#278 step 3), so for concrete
+    items (.col, .lit) they are discharged by `decide`. -/
 theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
     (tableName : String) (colName : String) (v : Value)
     (heval : evalExprWithDb db row e = some v)
@@ -1449,9 +1450,9 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
     extra columns appended (holds for ground expressions or expressions
     referencing only outer-table columns).
 
-    The hNoAgg/hNoWin preconditions are needed because selectHasAggregate/selectHasWindowFn
-    depend on partial functions (hasAggregate/exprHasWindowFn respectively), so the kernel
-    cannot reduce them. For concrete items (.col), use `native_decide`. -/
+    The hNoAgg/hNoWin preconditions date from when selectHasAggregate/selectHasWindowFn
+    depended on partial functions. hasAggregate/exprHasWindowFn are total now (#278
+    step 3), so for concrete items (.col) the preconditions are discharged by `decide`. -/
 theorem in_subquery_implies_join_match (db : Database) (row : Row)
     (x : Expr) (sName yCol : String)
     (hStable : ∀ extra : Row, evalExprWithDb db row x = evalExprWithDb db (row ++ extra) x)
