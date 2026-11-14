@@ -14,9 +14,11 @@
 3. **Remaining proof debt** (small, tracked)
    - (done, #212) The evaluator's termination is kernel-checked and no
      theorem depends on `sorryAx`; `Test/TrustBaseTest.lean` enforces it
-   - Statement-level certified checkers need `decideSelectStmtEq`/`decideQueryEq`
-     converted from `partial def` to structural recursion before soundness
-     lemmas are possible (see `SqlEquiv/Equiv/Decidable.lean`)
+   - (done, #213 / #278) Statement-level certified checkers exist:
+     `checkSelectEquiv` / `checkQueryEquiv` in
+     `SqlEquiv/Equiv/StatementChecker.lean` (syntactic equality, WHERE
+     congruence via `checkEquivFull`, set-operation congruence). Extending
+     them (projection, GROUP BY, join reordering) is open.
 
 ## Next Project: Datalog Equivalence
 

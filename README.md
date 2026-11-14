@@ -43,11 +43,14 @@ This repository could become a basis for SQL support in
 - **Trust.** The trust base is the one described above. The certified rewriter
   and the decision procedure come with proofs (`docs/CERTIFIED_REWRITER.md`).
 - **Known gaps before a library port:**
-  - [#278](https://github.com/evelynmitchell/sql_equiv/issues/278): 8 `partial def`s on the proof path, all statement-level
-    deciders in `Equiv/Decidable.lean` (#213). Done so far: `DecidableEq` on
-    the AST is total and kernel-reducible (no `unsafe`), `sql_equiv!` is
-    kernel-checked (`decide +kernel`, no `native_decide`), and the semantics
-    has no `partial def` left;
+  - [#278](https://github.com/evelynmitchell/sql_equiv/issues/278) is done: no `partial def`, `unsafe`,
+    `implemented_by` or `native_decide` on the proof path. `DecidableEq` on
+    the AST is total and kernel-reducible, `sql_equiv!` is kernel-checked
+    (`decide +kernel`), and statement-level certified checkers exist
+    (`checkSelectEquiv`, `checkQueryEquiv` in `Equiv/StatementChecker.lean`).
+    The 56 remaining `partial def`s are the parser (38), the SQL
+    pretty-printer (8) and the debug `Repr` printer `toReprStr` (10); no
+    semantics, proof or checker code calls them;
   - the representation choices above were made for a checker, not a library.
     Schemas and typed relations, `Multiset` for bag semantics, and a small
     core calculus with SQL translated into it are all open design questions.
@@ -347,6 +350,7 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
 | `SqlEquiv.Equiv.ExprAxioms` | Expression equivalence theorems (commutativity, identity, etc.) |
 | `SqlEquiv.Equiv.Comparison` | Comparison, NULL, aggregate, join, and filter theorems |
 | `SqlEquiv.Equiv.StatementAxioms` | Statement-level theorems (joins, set ops, subqueries, LIMIT/OFFSET) |
+| `SqlEquiv.Equiv.StatementChecker` | Certified statement checkers `checkSelectEquiv` / `checkQueryEquiv` (proof or unknown) |
 | `SqlEquiv.Equiv.SetBagLemmas` | Set/bag algebra helper lemmas |
 | `SqlEquiv.Equiv.Decidable` | Decidable equality for AST types |
 | `SqlEquiv.Tactics` | Custom Lean 4 tactics for SQL proofs |

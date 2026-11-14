@@ -70,6 +70,11 @@ deriving mechanisms (Haskell's `deriving Eq, Show`) these would be auto-generate
 | `Pretty.lean` | 81–206 | 7 | `partial def` | `toSql` pretty printer |
 | `Equiv/Decidable.lean` | 28–128 | 5 | `partial def` | `decideExprEq` and friends |
 
+> **Update (Nov 2026, #278):** the `BEq` block and `decideExprEq` and friends
+> are gone, replaced by a total generated `DecidableEq`
+> (`tools/gen_ast_deceq.py`); see `docs/PROVING_LOG.md`. Only `toReprStr` and
+> `toSql` remain partial, and both are off the proof path.
+
 **Verdict:** Structurally forced by the mutual inductive types. Low priority for
 refactoring because:
 - We are unlikely to prove theorems about `toReprStr` or `toSql`
