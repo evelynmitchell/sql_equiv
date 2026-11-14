@@ -109,7 +109,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 8 | LIKE case sensitivity `'abc' LIKE 'ABC'` | Collation-dependent | true (ASCII case-insensitive by default) | false | false | **Per dialect** (`DialectConfig.likeCase`): sqlite → ASCII case-insensitive (`BinOp.likeCI`); standard, duckdb, postgres → case-sensitive (`BinOp.like`) | decided (#262) | Unit pins `like_*` (every dialect, non-ASCII, NULL, AST); DiffSqlite and DiffDuckdb cases in each dialect |
 | 9 | String ordering `'a' < 'B'` | Collation-dependent | false (binary) | false | false (`C.UTF-8` here; an `en_US` collation gives true) | false (code point), every dialect | decided (#262) | Unit pins `string_order_code_point*`; DiffSqlite and DiffDuckdb agreement |
 | 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **decided** (#127, closed): keep the error; matches DuckDB/Postgres | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error`; DiffSqlite KNOWN DIVERGENCES |
-| 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)** | **gap** (#254): diverges from all three; no Spider query hits it today | **none** |
+| 11 | Numeric column vs string literal `price = '10'` | Error without CAST | Converts literal: matches | Converts: matches | Converts: matches | **Error (row dropped)**, in every dialect | **decided (#254): keep, documented divergence.** All three engines convert; we don't. No Spider query hits it. Options considered: convert numeric-looking strings in comparisons; convert string literals only (Postgres's untyped-literal model); per-dialect evaluation-time rule. Engine detail (14 Nov 2026): `'10.0'`, `'1e1'` convert in sqlite/DuckDB but error in Postgres; `'abc'` is 0 rows in sqlite, an error in DuckDB/Postgres; IN and BETWEEN with numeric strings convert in all three | Unit pins `int_vs_numeric_string_literal_drops_row`, `numeric_string_literal_vs_int_drops_row`, `int_in_numeric_string_list_drops_row`, `int_between_numeric_strings_drops_row`; KNOWN DIVERGENCES in DiffSqlite and DiffDuckdb |
 | 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
 | 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | **Per dialect** (`DialectConfig.mixedMinMax`): standard, duckdb, postgres → error (row dropped / NULL); sqlite → type-class order | decided (dialects #260). Reachable only through untyped data (CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pins `minmax_mixed_*`, `max_mixed_sqlite_type_class`, `min_mixed_sqlite_type_class`, `minmax_mode_recorded_in_ast`; DiffSqlite type-class cases; DuckDB KNOWN DIVERGENCES (its error fails the query, ours is quieter) |
 | 14 | MIN/MAX over booleans (`MAX(age > 26)`) | Boolean not orderable by MAX in the standard aggregate set | Integers: `1` / `0`; with numbers, as 1/0 | Boolean result (false < true); with numbers, as 1/0; with strings, error | Error (no `max(boolean)`) | **Per dialect** (`DialectConfig.boolMinMax`): standard, postgres → error (row dropped / NULL); sqlite → `asInt`; duckdb → `ordered` | decided (#261) | Unit pins `max_bool_*` / `min_bool_*` (every dialect, HAVING, window); DiffSqlite and DiffDuckdb boolean cases |
@@ -136,8 +136,9 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   (matching DuckDB/Postgres), and emulate sqlite's TEXT affinity only in the
   Spider harness. The measured cost of the alternative for row 10: making
   `1 = 'a'` return FALSE makes the certified rewriter's `x LIKE '' → x = ''`
-  rule unsound for non-string `x` unless it gets a type guard. Row 11 is open
-  as #254.
+  rule unsound for non-string `x` unless it gets a type guard. Row 11 was
+  decided in #254 the same way (keep the type error), though here all three
+  engines convert: it is a documented divergence, pinned by unit tests.
 - **Row 12 harness emulation** is conservative: it rewrites only comparisons
   with a column that, in every table of the database, has TEXT affinity and
   holds only non-numeric strings in the synthetic data. Each query runs as
@@ -188,6 +189,5 @@ Rows that do not yet meet the testing requirements in §2:
 
 - **Row 5**: decide whether to error (Postgres, standard) or sort (sqlite,
   DuckDB), possibly per dialect; pinned in the meantime.
-- **Row 11**: decide via #254 (all three engines convert the literal); add a pin either way.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.
