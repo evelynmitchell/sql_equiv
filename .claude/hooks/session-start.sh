@@ -20,7 +20,7 @@ REPO_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 ELAN_BIN="$HOME/.elan/bin"
 export PATH="$ELAN_BIN:$PATH"
 
-# Pinned toolchain, e.g. "leanprover/lean4:v4.27.0"
+# Pinned toolchain, e.g. "leanprover/lean4:v4.36.0-rc2"
 TOOLCHAIN="$(tr -d '[:space:]' < "$REPO_DIR/lean-toolchain")"
 TOOLCHAIN_DIR="$HOME/.elan/toolchains/$(echo "$TOOLCHAIN" | sed -e 's|/|--|g' -e 's|:|---|g')"
 VERSION="${TOOLCHAIN##*:}"          # v4.27.0

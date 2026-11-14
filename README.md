@@ -858,7 +858,7 @@ sql_equiv/
 
 ## Dependencies
 
-- [Lean 4](https://lean-lang.org/) (v4.27.0) - The programming language and theorem prover
+- [Lean 4](https://lean-lang.org/) (v4.36.0-rc2, the toolchain of cslib-frontier) - The programming language and theorem prover
 - [Batteries](https://github.com/leanprover-community/batteries) - Standard library extensions
 - [LSpec](https://github.com/argumentcomputer/LSpec) - Property-based testing with SlimCheck
 

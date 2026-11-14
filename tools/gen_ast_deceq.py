@@ -1,7 +1,7 @@
 """Generate the total, structurally recursive DecidableEq and structural
 comparison block for the AST.
 
-`deriving DecidableEq` does not handle the nested mutual AST in Lean 4.27,
+`deriving DecidableEq` does not handle the nested mutual AST (Lean 4.27–4.36),
 so SqlEquiv/Ast.lean carries a hand-shaped block between
 `-- BEGIN GENERATED (tools/gen_ast_deceq.py)` and `-- END GENERATED`.
 

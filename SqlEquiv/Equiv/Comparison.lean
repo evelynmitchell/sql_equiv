@@ -1598,84 +1598,53 @@ theorem length_concat (a b : Expr) (ha : a.isStringOrNullValued) (hb : b.isStrin
   simp only [evalExprWithDb_func, List.map, evalExprWithDb_binOp]
   exact evalFunc_length_concat _ _ (ha db row) (hb db row)
 
--- Helper: (Char.ofNat n).toNat round-trips for valid char ordinals.
--- Uses full `simp` to let @[simp] lemmas (UInt32.toNat_ofNat' etc.) fire through UInt32 layer.
-private theorem toNat_ofNat_of_isValid (n : Nat) (h : n.isValidChar) :
-    (Char.ofNat n).toNat = n := by
-  simp [Char.ofNat, Char.ofNatAux, h, Char.toNat]
-
--- Cross-composition: keep Char.ofNat opaque, use toNat_ofNat helper + Char.ofNat_toNat
-private theorem char_toUpper_toLower_toUpper (c : Char) :
-    (c.toUpper.toLower).toUpper = c.toUpper := by
-  simp only [Char.toUpper, Char.toLower]
+-- ASCII case mapping at the code-point level (Lean ≥ 4.36 defines `Char.toUpper`
+-- / `toLower` by adding a `UInt32` offset; the proofs below go through these
+-- `Nat` characterisations so they do not depend on that representation).
+private theorem char_toUpper_toNat (c : Char) : c.toUpper.val.toNat =
+    if 97 ≤ c.val.toNat ∧ c.val.toNat ≤ 122 then c.val.toNat - 32 else c.val.toNat := by
+  simp only [Char.toUpper]
   split
-  · -- c.toNat ∈ [97,122] (lowercase)
-    rename_i h1
-    have hv1 : (c.toNat - 32).isValidChar := by
-      simp only [Nat.isValidChar, Char.toNat] at *; omega
-    rw [toNat_ofNat_of_isValid _ hv1]
-    have h2 : c.toNat - 32 ≥ 65 ∧ c.toNat - 32 ≤ 90 := by omega
-    rw [if_pos h2]
-    have hv2 : (c.toNat - 32 + 32).isValidChar := by
-      simp only [Nat.isValidChar, Char.toNat] at *; omega
-    rw [toNat_ofNat_of_isValid _ hv2, show c.toNat - 32 + 32 = c.toNat from by omega]
-    have h4 : c.toNat ≥ 97 ∧ c.toNat ≤ 122 := by omega
-    rw [if_pos h4]
-  · -- c.toNat ∉ [97,122]
-    rename_i h1
-    split
-    · -- c.toNat ∈ [65,90] (uppercase): toLower +32, toUpper -32 → round-trip to c
-      rename_i h2
-      have hv1 : (c.toNat + 32).isValidChar := by
-        simp only [Nat.isValidChar, Char.toNat] at *; omega
-      rw [toNat_ofNat_of_isValid _ hv1]
-      have h3 : c.toNat + 32 ≥ 97 ∧ c.toNat + 32 ≤ 122 := by omega
-      rw [if_pos h3]
-      rw [show c.toNat + 32 - 32 = c.toNat from by omega, Char.ofNat_toNat]
-    · -- Neither: all three operations are identity
-      rfl
+  · next h =>
+    simp only [UInt32.le_iff_toNat_le, seval] at h
+    rw [if_pos (by omega)]
+    simp only [UInt32.toNat_add, seval]; omega
+  · next h =>
+    simp only [UInt32.le_iff_toNat_le, seval] at h
+    rw [if_neg (by omega)]
+
+private theorem char_toLower_toNat (c : Char) : c.toLower.val.toNat =
+    if 65 ≤ c.val.toNat ∧ c.val.toNat ≤ 90 then c.val.toNat + 32 else c.val.toNat := by
+  simp only [Char.toLower]
+  split
+  · next h =>
+    simp only [UInt32.le_iff_toNat_le, seval, ge_iff_le] at h
+    rw [if_pos (by omega)]
+    simp only [UInt32.toNat_add, seval]; omega
+  · next h =>
+    simp only [UInt32.le_iff_toNat_le, seval, ge_iff_le] at h
+    rw [if_neg (by omega)]
+
+private theorem char_ext_toNat {a b : Char} (h : a.val.toNat = b.val.toNat) : a = b :=
+  Char.ext (UInt32.toNat_inj.mp h)
+
+/-- Close an equation between compositions of `Char.toUpper` / `Char.toLower`
+    by comparing code points. -/
+local macro "char_case_nat" : tactic => `(tactic|
+  (apply char_ext_toNat
+   simp only [char_toUpper_toNat, char_toLower_toNat]
+   repeat' split
+   all_goals omega))
+
+private theorem char_toUpper_toLower_toUpper (c : Char) :
+    (c.toUpper.toLower).toUpper = c.toUpper := by char_case_nat
 
 private theorem char_toLower_toUpper_toLower (c : Char) :
-    (c.toLower.toUpper).toLower = c.toLower := by
-  simp only [Char.toLower, Char.toUpper]
-  split
-  · -- c.toNat ∈ [65,90] (uppercase)
-    rename_i h1
-    have hv1 : (c.toNat + 32).isValidChar := by
-      simp only [Nat.isValidChar, Char.toNat] at *; omega
-    rw [toNat_ofNat_of_isValid _ hv1]
-    have h2 : c.toNat + 32 ≥ 97 ∧ c.toNat + 32 ≤ 122 := by omega
-    rw [if_pos h2]
-    rw [show c.toNat + 32 - 32 = c.toNat from by omega, Char.ofNat_toNat]
-    have h4 : c.toNat ≥ 65 ∧ c.toNat ≤ 90 := by omega
-    rw [if_pos h4]
-  · -- c.toNat ∉ [65,90]
-    rename_i h1
-    split
-    · -- c.toNat ∈ [97,122] (lowercase): toUpper -32, toLower +32 → round-trip to c
-      rename_i h2
-      have hv1 : (c.toNat - 32).isValidChar := by
-        simp only [Nat.isValidChar, Char.toNat] at *; omega
-      rw [toNat_ofNat_of_isValid _ hv1]
-      have h3 : c.toNat - 32 ≥ 65 ∧ c.toNat - 32 ≤ 90 := by omega
-      rw [if_pos h3]
-      rw [show c.toNat - 32 + 32 = c.toNat from by omega, Char.ofNat_toNat]
-    · -- Neither: identity
-      rfl
+    (c.toLower.toUpper).toLower = c.toLower := by char_case_nat
 
--- Char-level idempotence: toUpper maps [97,122]→[65,90], toLower maps [65,90]→[97,122]
--- After unfolding Char.ofNatAux, omega can see through UInt32 arithmetic.
-private theorem char_toUpper_idem (c : Char) : c.toUpper.toUpper = c.toUpper := by
-  simp only [Char.toUpper, Char.toNat, Char.ofNat, Char.ofNatAux]
-  split
-  · split <;> split <;> simp_all <;> omega
-  · rfl
+private theorem char_toUpper_idem (c : Char) : c.toUpper.toUpper = c.toUpper := by char_case_nat
 
-private theorem char_toLower_idem (c : Char) : c.toLower.toLower = c.toLower := by
-  simp only [Char.toLower, Char.toNat, Char.ofNat, Char.ofNatAux]
-  split
-  · split <;> split <;> simp_all <;> omega
-  · rfl
+private theorem char_toLower_idem (c : Char) : c.toLower.toLower = c.toLower := by char_case_nat
 
 -- String-level idempotence (lifted from Char via String.ext + toList_map + List.map_map)
 private theorem string_toUpper_idem (s : String) : s.toUpper.toUpper = s.toUpper := by
