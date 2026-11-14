@@ -35,8 +35,7 @@ theorem filter_join_left (db : Database) (ta : TableRef) (b : FromClause) (cond 
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db lr filter) :
     evalSelect db (.mk false items (some (.join (.table ta) .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.join (filtered ta filter) .inner b (some cond))) none groupBy having orderBy limit offset) :=
-  evalSelect_filter_join_left db (ta.alias.getD ta.name) (.table ta) b cond filter items groupBy having
-    orderBy limit offset h_filter_left
+  evalSelect_filter_join_left db ta b cond filter items groupBy having orderBy limit offset h_filter_left
 
 /-- Predicate pushdown: push a filter into the right side of an inner join.
     The right side is a table `tb`, wrapped as `filtered tb filter` (#269).
@@ -50,8 +49,7 @@ theorem filter_join_right (db : Database) (a : FromClause) (tb : TableRef) (cond
         evalExprWithDb db (lr ++ rr) filter = evalExprWithDb db rr filter) :
     evalSelect db (.mk false items (some (.join a .inner (.table tb) (some cond))) (some filter) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.join a .inner (filtered tb filter) (some cond))) none groupBy having orderBy limit offset) :=
-  evalSelect_filter_join_right db (tb.alias.getD tb.name) a (.table tb) cond filter items groupBy having
-    orderBy limit offset h_filter_right
+  evalSelect_filter_join_right db a tb cond filter items groupBy having orderBy limit offset h_filter_right
 
 /-- Filter pushdown for basic FROM clause with table.
     Proved: filter in WHERE is equivalent to filter in subquery. -/
@@ -60,7 +58,7 @@ theorem filter_pushdown_table (db : Database) (t : TableRef) (filter : Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items (some (.table t)) (some filter) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.subquery (.simple (.mk false [.star none] (some (.table t)) (some filter) [] none [] none none)) (t.alias.getD t.name))) none groupBy having orderBy limit offset) :=
-  evalSelect_filter_pushdown_table db items (some (.table t)) (t.alias.getD t.name) filter groupBy having orderBy limit offset
+  evalSelect_filter_pushdown_table db items t filter groupBy having orderBy limit offset
 
 -- ============================================================================
 -- Join Reordering Theorems
@@ -225,7 +223,7 @@ theorem filter_and (db : Database) (items : List SelectItem) (t : TableRef)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items (some (filtered t p)) (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.table t)) (some (.binOp .and p q)) groupBy having orderBy limit offset) :=
-  evalSelect_filter_and db (t.alias.getD t.name) items (some (.table t)) p q groupBy having orderBy limit offset
+  evalSelect_filter_and db items t p q groupBy having orderBy limit offset
 
 /-- Filter order doesn't matter: (WHERE p) WHERE q ≃ (WHERE q) WHERE p (#269 shape). -/
 theorem filter_commute (db : Database) (items : List SelectItem) (t : TableRef)
@@ -233,7 +231,7 @@ theorem filter_commute (db : Database) (items : List SelectItem) (t : TableRef)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items (some (filtered t p)) (some q) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (filtered t q)) (some p) groupBy having orderBy limit offset) :=
-  evalSelect_filter_commute db (t.alias.getD t.name) items (some (.table t)) p q groupBy having orderBy limit offset
+  evalSelect_filter_commute db items t p q groupBy having orderBy limit offset
 
 /-- Idempotence of filter: WHERE p WHERE p ≃ WHERE p (#269 shape). -/
 theorem filter_idempotent (db : Database) (items : List SelectItem) (t : TableRef)
@@ -241,7 +239,7 @@ theorem filter_idempotent (db : Database) (items : List SelectItem) (t : TableRe
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     evalSelect db (.mk false items (some (filtered t p)) (some p) groupBy having orderBy limit offset) =
     evalSelect db (.mk false items (some (.table t)) (some p) groupBy having orderBy limit offset) :=
-  evalSelect_filter_idempotent db (t.alias.getD t.name) items (some (.table t)) p groupBy having orderBy limit offset
+  evalSelect_filter_idempotent db items t p groupBy having orderBy limit offset
 
 /-- TRUE filter elimination: WHERE TRUE ≃ no WHERE.
     Theorem: follows from where_true_elim. -/

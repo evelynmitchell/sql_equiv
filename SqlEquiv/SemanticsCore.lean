@@ -106,8 +106,9 @@ def evalFromCore (db : Database)
     let qualifier := t.alias.getD t.name
     baseTable.map fun row =>
       row.map fun (col, val) => (s!"{qualifier}.{col}", val)
-  | .subquery sel _alias =>
-    selectEval db sel
+  | .subquery sel alias =>
+    -- standard derived-table scoping: columns are qualified by the alias (#257)
+    (selectEval db sel).map (requalifyRow alias)
   | .join left jtype right on_ =>
     let leftRows := evalFromCore db exprEval selectEval left
     let rightRows := evalFromCore db exprEval selectEval right
@@ -363,7 +364,8 @@ theorem evalFromCore_subquery (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
     (selectEval : Database → SubQuery → Table)
     (sel : SubQuery) (alias : String) :
-    evalFromCore db exprEval selectEval (.subquery sel alias) = selectEval db sel := by
+    evalFromCore db exprEval selectEval (.subquery sel alias) =
+      (selectEval db sel).map (requalifyRow alias) := by
   simp [evalFromCore]
 
 theorem evalFromCore_cross_join (db : Database)
@@ -1386,9 +1388,13 @@ theorem evalSelectCore_filter_and (db : Database) (alias_ : String)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
+    -- the derived table `(SELECT * FROM from_ WHERE r) AS alias_` evaluates to
+    -- its inner result (true when naming it `alias_` renames nothing, #257)
+    (h_subquery : ∀ r : Expr,
+      fromEval db (.subquery (.simple (.mk false [.star none] from_ (some r) [] none [] none none)) alias_) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
-        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel)
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+        (.mk false [.star none] from_ (some r) [] none [] none none))
     (h_and : ∀ row, (exprEval db row (.binOp .and p q) == some (Value.bool true)) =
       ((exprEval db row p == some (Value.bool true)) && (exprEval db row q == some (Value.bool true)))) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
@@ -1424,9 +1430,13 @@ theorem evalSelectCore_filter_commute (db : Database) (alias_ : String)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
+    -- the derived table `(SELECT * FROM from_ WHERE r) AS alias_` evaluates to
+    -- its inner result (true when naming it `alias_` renames nothing, #257)
+    (h_subquery : ∀ r : Expr,
+      fromEval db (.subquery (.simple (.mk false [.star none] from_ (some r) [] none [] none none)) alias_) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
-        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+        (.mk false [.star none] from_ (some r) [] none [] none none)) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
@@ -1462,9 +1472,13 @@ theorem evalSelectCore_filter_idempotent (db : Database) (alias_ : String)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
+    -- the derived table `(SELECT * FROM from_ WHERE r) AS alias_` evaluates to
+    -- its inner result (true when naming it `alias_` renames nothing, #257)
+    (h_subquery : ∀ r : Expr,
+      fromEval db (.subquery (.simple (.mk false [.star none] from_ (some r) [] none [] none none)) alias_) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
-        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+        (.mk false [.star none] from_ (some r) [] none [] none none)) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items
@@ -1503,9 +1517,13 @@ theorem evalSelectCore_filter_pushdown_table (db : Database)
     (h_hasAgg_star : hasAgg [.star none] = false)
     (h_hasWindowFn_star : hasWindowFn [.star none] = false)
     (h_star : ∀ db' row, selectItemEval db' row (.star none) = row)
-    (h_subquery : ∀ (sel : SelectStmt) alias, fromEval db (.subquery (.simple sel) alias) =
+    -- the derived table `(SELECT * FROM from_ WHERE r) AS alias_` evaluates to
+    -- its inner result (true when naming it `alias_` renames nothing, #257)
+    (h_subquery : ∀ r : Expr,
+      fromEval db (.subquery (.simple (.mk false [.star none] from_ (some r) [] none [] none none)) alias_) =
       evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
-        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg sel) :
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+        (.mk false [.star none] from_ (some r) [] none [] none none)) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (.mk false items from_ (some filter) groupBy having orderBy limit offset) =
@@ -2616,7 +2634,7 @@ theorem evalFromCore_congr (db : Database) :
     | table t => simp only [evalFromCore]
     | subquery sq a =>
       simp only [evalFromCore]
-      exact hs sq (by simp [FromClause.size])
+      rw [hs sq (by simp [FromClause.size])]
     | join l jt r on_ =>
       have hl := ih l (by simp [FromClause.size] at hfc; omega) f1 f2 s1 s2
         (fun e he r => hf e (by simp [FromClause.size]; omega) r)

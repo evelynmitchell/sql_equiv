@@ -170,19 +170,17 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
   SELECT" class): 549 → 553. Pinned by the `max_string*` / `min_string` unit
   tests and DiffSqlite/DiffDuckdb `over strings` cases.
 
-- **Derived-table alias is ignored** (open, #257, deferred by decision).
-  `FROM (SELECT name FROM users) AS d` keeps the subquery's own keys, so
-  `d.name` evaluates to NULL (all engines return the column) while `name`
-  works; out-of-scope references such as `users.name` outside the derived table
-  still resolve, where engines reject them. The six filter theorems that
-  depended on the pass-through (`filter_and`, `filter_commute`,
-  `filter_idempotent`, `filter_pushdown_table`, `filter_join_left`,
-  `filter_join_right`) were restated in #269 for a single table wrapped as a
-  derived table named after its own qualifier (`filtered t p` in
-  `Equiv/Comparison.lean`), a shape where standard scoping renames nothing. The
-  fix is therefore unblocked; it must *replace* an existing qualifier
-  (`t.col` → `alias.col`). Spider has no query that needs it. Pinned by the
-  `derived_*` unit tests.
+- **Derived-table alias** (fixed, #257). `FROM (SELECT name FROM users) AS d`
+  now qualifies the derived columns by the alias: `d.name` resolves (as in
+  sqlite, DuckDB and Postgres) and unqualified `name` still works. Keys are
+  re-qualified by `requalifyRow` (`SemanticsBase.lean`): a key that already
+  carries the alias is kept, otherwise its column part (after the last `.`)
+  is prefixed with the alias. The inner table's qualifier is out of scope
+  outside the derived table: `users.name` there finds no column (NULL, a quiet
+  error under #270), where engines reject the query. The six filter theorems
+  were restated beforehand in #269 so the fix needed no statement change.
+  Spider is unchanged (553/564). Pinned by the `derived_*` unit tests and
+  DiffSqlite/DiffDuckdb `derived:` cases.
 
 ---
 

@@ -66,6 +66,31 @@ def Row.lookupCI : Row → String → Option Value
 def Row.get (row : Row) (col : String) : Option Value :=
   row.lookupCI col
 
+/-- Does key `k` already carry qualifier `q` (`k` starts with `q.`)? -/
+def hasQualifier (q k : String) : Bool := (q ++ ".").toList.isPrefixOf k.toList
+
+theorem hasQualifier_mk (q c : String) : hasQualifier q s!"{q}.{c}" = true := by
+  unfold hasQualifier
+  rw [List.isPrefixOf_iff_prefix]
+  simp only [String.toList_append, toString]
+  exact ⟨c.toList, by simp⟩
+
+/-- Key of a derived-table column under alias `alias` (#257): a key that
+    already carries the qualifier is kept; otherwise its column part (after
+    the last `.`, or the whole key) is qualified by `alias`. So
+    `(SELECT name … ) AS x` exposes `x.name`, `(SELECT * FROM users) AS x`
+    turns `users.name` into `x.name`, and a derived table named after the
+    table it wraps renames nothing. -/
+def requalifyKey (alias k : String) : String :=
+  if hasQualifier alias k then k else s!"{alias}.{(k.splitOn ".").getLastD k}"
+
+/-- Re-qualify every key of a derived-table row by the table's alias. -/
+def requalifyRow (alias : String) (row : Row) : Row :=
+  row.map fun (k, v) => (requalifyKey alias k, v)
+
+theorem requalifyKey_mk (q c : String) : requalifyKey q s!"{q}.{c}" = s!"{q}.{c}" := by
+  simp [requalifyKey, hasQualifier_mk]
+
 /-- Get value from row by qualified column name -/
 def Row.getQualified (row : Row) (table : Option String) (col : String) : Option Value :=
   match table with

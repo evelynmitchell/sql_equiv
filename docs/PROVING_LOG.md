@@ -4639,3 +4639,41 @@ public theorems instantiate them with the table's qualifier.
 
 #257 can now change the evaluator. Re-qualification must replace the existing
 qualifier, and then only the supporting lemmas need re-proving.
+
+## #257: derived-table aliases qualify their columns (Nov 2026)
+
+### Semantics
+
+`evalFromCore (.subquery sel alias)` used to return the inner rows unchanged.
+It now maps them through `requalifyRow alias`:
+
+- a key that already starts with `alias.` is kept (`hasQualifier`, a
+  `List.isPrefixOf` check on the characters, so it can be reasoned about);
+- any other key becomes `alias.<part after its last '.'>`.
+
+So `users.name` turns into `x.name`, `name` into `x.name`, and a derived table
+named after the table it wraps renames nothing (`requalifyRow_table_row`).
+
+### Statement changes (internal lemmas; the six public filter theorems are unchanged)
+
+- `evalFromCore_subquery`, `evalFrom_subquery` and `evalFrom_subquery_simple`
+  now carry `.map (requalifyRow alias)`.
+- `evalSelectCore_filter_{and,commute,idempotent,pushdown_table}`: the
+  hypothesis `h_subquery` used to cover every subquery and alias. It now covers
+  only the derived table the lemma uses, `(SELECT * FROM from_ WHERE r) AS
+  alias_`, for each `r`. The proofs are unchanged.
+- `evalSelect_filter_{and,commute,idempotent,pushdown_table,join_left,join_right}`
+  are now stated for the single-table shape (`t`, `ta`, `tb` with the alias
+  equal to the table's qualifier), matching the public theorems from #269.
+  The join proofs used to push the filter into a derived table around the
+  whole join, which the new scoping would rename. They now go through the new
+  `evalSelect_where_to_from`: a WHERE over FROM `f1` equals no WHERE over FROM
+  `f2` when `f2`'s rows are `f1`'s filtered rows.
+- New: `hasQualifier`, `hasQualifier_mk`, `requalifyKey`, `requalifyKey_mk`,
+  `requalifyRow`, `requalifyRow_table_row`, `evalFrom_filtered_table` and
+  `evalSelect_where_to_from`.
+
+The public theorems `filter_and`, `filter_commute`, `filter_idempotent`,
+`filter_pushdown_table`, `filter_join_left` and `filter_join_right` keep the
+statements approved in #269. Only their proof terms changed, which completes
+#269's acceptance ("stays true under alias requalification").
