@@ -8,6 +8,7 @@ import Test.PropertyTest
 import Test.AxiomCoverageTest
 import Test.TrustBaseTest
 import Test.RewriterTest
+import Test.AstDecEqTest
 
 def main : IO UInt32 := do
   IO.println "╔═══════════════════════════════════╗"

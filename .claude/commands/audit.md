@@ -44,10 +44,12 @@ This is a thin adapter over the general **rewrite-audit** skill in
    `sql_equiv`) does not import it.
 
    When judging runtime/proof divergence, say which rewriter or decision
-   procedure an override is on the path of. For example, the `unsafe`
-   `DecidableEq Expr` is off-path for `certifiedRewrite` but **on-path** for
-   `checkEquivFull`'s syntactic branch and the `sql_equiv!` tactic. There it
-   rests on the documented lawful-BEq assumption in `Ast.lean`.
+   procedure an override is on the path of. For example, `native_decide` in
+   the `sql_equiv!` tactic is off-path for `certifiedRewrite` but **on-path**
+   for proofs that use the tactic (they gain `Lean.ofReduceBool`). The
+   `DecidableEq` on the AST used to be `unsafe` + `implemented_by`; since #278
+   it is a total, generated decider (`tools/gen_ast_deceq.py`), so it is no
+   longer an override.
 3. **Run the repo-only checks** listed in `projectSpecificChecks` of the
    config. In particular, `checkEquivFull` may conclude `≃ₑ` from ground
    evaluation only for `Expr.isClosed` operands; `Expr.isGround` admits
