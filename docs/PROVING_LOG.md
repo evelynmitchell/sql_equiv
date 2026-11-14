@@ -4609,3 +4609,33 @@ can now be discharged with `decide`; see `Test/TacticTest.lean`.
 - `partial def` count: 64 → **56**, **none on a proof or checker path**:
   parser 38, `Pretty.lean` 8, `toReprStr` 10. Nothing in the semantics,
   equivalence or rewriter modules calls `repr`, `toReprStr` or `toSql`.
+
+## #269: filter theorems restated for standard derived-table scoping (Nov 2026)
+
+Six public theorems in `Equiv/Comparison.lean` wrapped an arbitrary FROM in
+`(SELECT * …) AS "inner"` / `"filtered_a"` / `"filtered_b"`. They were true
+only because `evalFromCore` ignores a derived table's alias (#257). Under
+standard scoping, outer references would no longer resolve, and the output
+column names would change.
+
+### Sanctioned statement changes (option 1, approved)
+
+`filter_and`, `filter_commute`, `filter_idempotent`, `filter_join_left` and
+`filter_join_right` are now stated for a single table `t` (`ta`, `tb` for the
+joins), wrapped as `filtered t p := (SELECT * FROM t WHERE p) AS
+t.alias.getD t.name`. Base rows are keyed `q.col` and `SELECT *` keeps those
+keys, so naming the derived table `q` renames nothing. `filter_pushdown_table`
+already had this shape and is unchanged. Every other argument (items,
+GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, the other join side, the join
+condition) stays general.
+
+### Proofs
+
+The supporting lemmas `evalSelect_filter_{and,commute,idempotent,join_left,join_right}`
+and `evalSelectCore_filter_{and,commute,idempotent}` now take the alias as an
+argument (`alias_ : String`) instead of a literal. Their proofs were
+unchanged: they already went through an any-alias subquery hypothesis. The
+public theorems instantiate them with the table's qualifier.
+
+#257 can now change the evaluator. Re-qualification must replace the existing
+qualifier, and then only the supporting lemmas need re-proving.
