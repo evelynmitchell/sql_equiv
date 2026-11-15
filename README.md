@@ -54,10 +54,15 @@ This repository could become a basis for SQL support in
   - the representation choices above were made for a checker, not a library.
     Schemas and typed relations, `Multiset` for bag semantics, and a small
     core calculus with SQL translated into it are all open design questions.
-- **A likely split.** A core semantics module (bag relations, three-valued
-  logic, the equivalences, dialects as parameters) would go upstream.
-  The parser, rewriter, oracles and Spider harness would stay here,
-  depending on it.
+- **The plan: a typed core (#287).** `SqlCore` (in this repo, on Mathlib) rebuilds the
+  semantics in the typed style of
+  [cslib-frontier](https://github.com/cslib-community/cslib-frontier)'s SQL development:
+  positional rows, `Option` NULLs, strict errors, static typing with a soundness
+  theorem. Phases 1–3 (values, rows, typed expressions) are re-derived here. Queries and
+  laws then come from depending on cslib-frontier. The parser bridge, the
+  Postgres/DuckDB oracles, Spider and the features beyond the frontier are built on it
+  and offered upstream. See `docs/TYPED_CORE_PLAN.md` and
+  `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features
 

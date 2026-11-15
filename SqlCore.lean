@@ -7,6 +7,9 @@
   (phases 4–5) will come from depending on cslib-frontier. Decisions:
   `docs/TYPED_CORE_DECISIONS.md`; plan: `docs/TYPED_CORE_PLAN.md`.
 
-  Unlike `SqlEquiv`, this library may import Mathlib.
+  Unlike `SqlEquiv`, this library may import Mathlib, and it uses Lean's
+  module system as Mathlib and cslib-frontier do.
 -/
-import SqlCore.Basic
+module
+
+public import SqlCore.Basic

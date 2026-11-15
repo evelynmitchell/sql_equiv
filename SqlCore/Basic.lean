@@ -5,9 +5,16 @@
   on are available: `Fin` tuples (rows will be `Fin n → Datum`, #291) and
   `Fin.append` (joined rows). Phase 1 (#290) replaces this file's role with
   `SqlCore/Value.lean`.
+
+  `SqlCore` uses Lean's module system (`module`, `public import`), as Mathlib
+  and cslib-frontier do.
 -/
-import Mathlib.Data.Fin.Tuple.Basic
-import Mathlib.Data.Fin.VecNotation
+module
+
+public import Mathlib.Data.Fin.Tuple.Basic
+public import Mathlib.Data.Fin.VecNotation
+
+public section
 
 namespace SqlCore
 
@@ -17,3 +24,5 @@ theorem fin_append_smoke :
     Fin.append ![(1 : ℕ)] ![2, 3] (2 : Fin 3) = 3 := by decide
 
 end SqlCore
+
+end

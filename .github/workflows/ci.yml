@@ -43,6 +43,7 @@ jobs:
           path: |
             ~/.elan/toolchains
             .lake
+            !.lake/packages/mathlib/.lake/build
           key: ${{ runner.os }}-lake-${{ hashFiles('lakefile.toml', 'lean-toolchain') }}
           restore-keys: |
             ${{ runner.os }}-lake-
@@ -60,6 +61,8 @@ jobs:
         run: lake build SqlEquiv
 
       - name: Get Mathlib cache (typed core, #287)
+        # prebuilt Mathlib from cache.mathlib.org; its 6.7 GB build tree is
+        # excluded from the Actions cache above and fetched here instead
         run: lake exe cache get
 
       - name: Build typed core and its tests
