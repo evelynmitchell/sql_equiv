@@ -12,6 +12,16 @@ name = "LSpec"
 git = "https://github.com/argumentcomputer/LSpec"
 rev = "main"
 
+# Mathlib is used only by the typed core (`SqlCore`, #287); `SqlEquiv` does not
+# import it. Pinned to cslib-frontier's Mathlib (same Lean toolchain).
+# Kept last so Mathlib's dependency pins (plausible, batteries) take precedence
+# and `lake exe cache get` computes the right hashes.
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "69552756cd8a2d2d48763cf7279fd814d6a1224d"
+
+
 [[lean_lib]]
 name = "SqlEquiv"
 
@@ -34,6 +44,18 @@ globs = ["LSpecTests.*"]
 [[lean_exe]]
 name = "sql_equiv_lspec"
 root = "LSpecTests.Main"
+
+# Typed core (#287): a new library beside SqlEquiv, with its own tests.
+[[lean_lib]]
+name = "SqlCore"
+
+[[lean_lib]]
+name = "SqlCoreTest"
+globs = ["SqlCoreTest.*"]
+
+[[lean_exe]]
+name = "sqlcore_test"
+root = "SqlCoreTest.Main"
 
 [[lean_exe]]
 name = "unused_theorem_checker"

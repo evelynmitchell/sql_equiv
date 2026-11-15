@@ -59,6 +59,15 @@ jobs:
       - name: Build library
         run: lake build SqlEquiv
 
+      - name: Get Mathlib cache (typed core, #287)
+        run: lake exe cache get
+
+      - name: Build typed core and its tests
+        run: lake build SqlCore sqlcore_test
+
+      - name: Run typed core tests
+        run: lake exe sqlcore_test
+
       - name: Build CLI
         run: lake build sql_equiv
 

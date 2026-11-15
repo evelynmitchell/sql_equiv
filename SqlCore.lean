@@ -1,0 +1,12 @@
+/-
+  SqlCore: the typed semantic core of sql_equiv (#287).
+
+  A new library beside `SqlEquiv`, built in phases (#289–#298). Phases 1–3
+  (values and three-valued logic, rows and schemas, typed expressions) are
+  re-derived here from cslib-frontier's SQL development; queries and laws
+  (phases 4–5) will come from depending on cslib-frontier. Decisions:
+  `docs/TYPED_CORE_DECISIONS.md`; plan: `docs/TYPED_CORE_PLAN.md`.
+
+  Unlike `SqlEquiv`, this library may import Mathlib.
+-/
+import SqlCore.Basic
