@@ -284,7 +284,7 @@ Phase 6 (packaging) is open.
   Trace fully only unproven arms, and let the user target one function.
 - **Lean API drift.** `TrustBase.lean` uses `Lean.CollectAxioms`. Mitigation:
   pin the tested Lean version in the script header and keep a `#print axioms`
-  fallback.
+  fallback. *(Happened at Lean 4.36: the `CollectAxioms` internals became private; `TrustBase.lean` now uses the public `Lean.collectAxioms`.)*
 - **Mutant edits left behind.** The vacuity check edits code. Mitigation: do it
   on a scratch branch or in a temporary copy, and verify the working tree is
   clean afterwards.

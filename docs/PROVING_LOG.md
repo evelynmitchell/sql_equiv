@@ -4677,3 +4677,48 @@ The public theorems `filter_and`, `filter_commute`, `filter_idempotent`,
 `filter_pushdown_table`, `filter_join_left` and `filter_join_right` keep the
 statements approved in #269. Only their proof terms changed, which completes
 #269's acceptance ("stays true under alias requalification").
+
+## Toolchain bump: Lean v4.27.0 → v4.36.0-rc2 (Nov 2026)
+
+This is the prerequisite for the typed core (#287, #289). The target is
+cslib-frontier's toolchain, with Batteries at the frontier's pin (`d4c39b2`).
+LSpec moves to `main` (`d8eb3e0`), which now depends on `plausible` (pinned at
+the frontier's `129d1ba`).
+
+### What broke
+
+8 of about 2,800 theorems broke, plus the trust guard's API.
+
+- **`if b = true` on a Bool.** Its decidability instance now mentions `b`, so
+  `generalize` / `cases h : …` / `rw` can fail with "result is not type
+  correct" (3 in `SemanticsCore`). The fixes:
+  - `case_foldl_eq_evalCaseHelper`: also simp away the leftover
+    `if false = true` (`Bool.false_eq_true`, `↓reduceIte`);
+  - `evalSelectProjectDistinct_eq_of_length_eq`: `by_cases` instead of
+    `cases (… == …)`;
+  - `evalSelectCore_callbacks_congr`: `erw` instead of `rw`, because the
+    target's instance still holds unreduced `SelectStmt.mk` projections.
+- **`inner_join_true_is_cross`:** a now-redundant `dsimp` was removed.
+- **`Char.toUpper` / `toLower` are now defined by a `UInt32` offset**, which
+  broke the 4 case-folding lemmas in `Comparison`. They now go through
+  `Nat` characterisations (`char_toUpper_toNat`, `char_toLower_toNat`) plus
+  `omega`, so they no longer depend on the representation.
+- **`Lean.CollectAxioms` became a module**, so `M` and `collect` are private.
+  The trust guard (`Test/TrustBaseTest.lean` and
+  `tools/rewrite-audit/scripts/lean/TrustBase.lean`) now calls the public
+  `Lean.collectAxioms` per constant, which reads imported constants' axioms
+  precomputed at export time. The hand-written `badAxiomsOf` walk is gone,
+  because the per-constant results name the offenders directly.
+- **Each inductive's `ctorIdx` is now implemented by `ctorIdx._impl`.**
+  `#assert_no_runtime_overrides` allows that compiler pair, as it allows a
+  `partial def`'s `_unsafe_rec`.
+
+### Unchanged
+
+- Behaviour: all unit suites; LSpec (7,850 / 54,876 rewritten, 0 mismatches,
+  the mutant caught on 45 cases); Spider 553/564 evaluate and 563/563 parse.
+- The vacuity probes and the override probe are still caught.
+- The guard counts moved from 2822 / 2266 / 48 to 2760 / 2293 / 48, because
+  the compiler-generated auxiliary declarations differ.
+- 4.36 still has no `deriving DecidableEq` for nested inductives, so
+  `tools/gen_ast_deceq.py` stays.

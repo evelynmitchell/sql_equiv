@@ -301,7 +301,7 @@ private theorem case_foldl_eq_evalCaseHelper (f : Expr → Option Value)
   induction branches with
   | nil => simp [List.foldl, evalCaseHelper]
   | cons hd tl ih =>
-    simp only [List.foldl, evalCaseHelper]
+    simp only [List.foldl, evalCaseHelper, Bool.false_eq_true, ↓reduceIte]
     generalize hc : f hd.fst = c
     cases c with
     | none => simp; exact ih
@@ -2319,12 +2319,11 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
                 (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) := by
               congr 1; exact h_ea hcond rfl (row1 :: rest1) (row2 :: rest2) _ _ hlen'
             simp only [hph]
-            cases (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) with
-            | true =>
-              simp only [ite_true]
+            by_cases hx : (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) = true
+            · simp only [hx, ite_true]
               exact congrArg (fun x => [x]) (flatMap_congr_mem fun item hmem =>
                 h_sia item hmem (row1 :: rest1) (row2 :: rest2) _ _ hlen')
-            | false => simp
+            · simp [hx]
     · split
       · -- Aggregate branch
         first | apply congrArg List.eraseDups | skip
@@ -2756,7 +2755,7 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
   simp only [evalSelectCore, SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
     SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having, SelectStmt.orderBy,
     SelectStmt.limitVal, SelectStmt.offsetVal, hG, hSI, hSIA, hWin, hGK]
-  rw [hOrd]
+  erw [hOrd]
   cases from_ <;> cases w <;> cases hv <;>
     (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>
     (try simp only [hHe _ rfl, hHa _ rfl]) <;> rfl

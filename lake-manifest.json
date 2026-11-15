@@ -1,25 +1,44 @@
-{"version": "1.1.0",
+{
+ "version": "1.1.0",
  "packagesDir": ".lake/packages",
- "packages":
- [{"url": "https://github.com/argumentcomputer/LSpec",
+ "packages": [
+  {
+   "url": "https://github.com/argumentcomputer/LSpec",
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "1e6da63a9c92473747e816d07d5c6f6bc7c8a59e",
+   "rev": "d8eb3e0d9a8e33fc116e6700df0418a1d8114508",
    "name": "LSpec",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",
    "inherited": false,
-   "configFile": "lakefile.toml"},
-  {"url": "https://github.com/leanprover-community/batteries",
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/leanprover-community/batteries",
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "45926c76c3e0d876e39b3e9e5e77080fef0b10ba",
+   "rev": "d4c39b228d4a06f3b00748c2c445a7b9f056a6e3",
    "name": "batteries",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",
    "inherited": false,
-   "configFile": "lakefile.toml"}],
+   "configFile": "lakefile.toml"
+  },
+  {
+   "url": "https://github.com/leanprover-community/plausible",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "129d1ba9a16bc0660f46c79e9fb041ef5d5d80de",
+   "name": "plausible",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "main",
+   "inherited": true,
+   "configFile": "lakefile.toml"
+  }
+ ],
  "name": "sql_equiv",
- "lakeDir": ".lake"}
+ "lakeDir": ".lake"
+}

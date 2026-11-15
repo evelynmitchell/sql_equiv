@@ -9,9 +9,9 @@
   target `sql_equiv`) does not import this file. `unsafe` constants are
   skipped by the axiom walk; `#assert_no_runtime_overrides` (below) instead
   fails if any hand-written `unsafe`, `@[implemented_by]` or `@[extern]`
-  declaration appears in the namespace (#278). The compiler's own
-  `partial def` implementation (`f` implemented by `f._unsafe_rec`) is allowed:
-  partial definitions are tracked separately in #278.
+  declaration appears in the namespace (#278). The compiler's own pairs are
+  allowed: a `partial def f` implemented by `f._unsafe_rec`, and (Lean ≥ 4.36)
+  an inductive's `ctorIdx` implemented by `ctorIdx._impl`.
 
   Same implementation as `tools/rewrite-audit/scripts/lean/TrustBase.lean`.
 -/
@@ -26,25 +26,6 @@ private def inTrustScope (root n : Name) : Bool :=
   | some u => root.isPrefixOf u
   | none => root.isPrefixOf n
 
-/-- Non-standard axioms reachable from `n`, memoised across calls. A node is
-    marked visited before its dependencies are explored, so cycles (possible
-    among compiler-generated helpers) terminate. -/
-private partial def badAxiomsOf (env : Environment) (allowed : List Name) (n : Name) :
-    StateM (Std.HashMap Name (Array Name)) (Array Name) := do
-  if let some r := (← get)[n]? then return r
-  modify (·.insert n #[])
-  let r ← match env.find? n with
-    | some (.axiomInfo _) => pure (if allowed.contains n then #[] else #[n])
-    | some ci => do
-      let mut acc : Array Name := #[]
-      for d in ci.getUsedConstantsAsSet.toList do
-        for a in (← badAxiomsOf env allowed d) do
-          if !acc.contains a then acc := acc.push a
-      pure acc
-    | none => pure #[]
-  modify (·.insert n r)
-  return r
-
 /-- Fails unless every theorem, definition and opaque constant under namespace
     `ns` depends only on Lean's standard axioms (`propext`, `Classical.choice`,
     `Quot.sound`). This includes private declarations, auxiliary proofs and
@@ -56,9 +37,9 @@ elab "#assert_trust_base " ns:ident : command => do
   let root := ns.getId
   let env ← getEnv
   let mut names : Array Name := #[]
-  let mut nThm := 0
-  let mut nDef := 0
-  let mut nOpaque := 0
+  let mut nThm : Nat := 0
+  let mut nDef : Nat := 0
+  let mut nOpaque : Nat := 0
   for (n, ci) in env.constants.toList do
     if !inTrustScope root n || ci.isUnsafe then continue
     match ci with
@@ -68,21 +49,23 @@ elab "#assert_trust_base " ns:ident : command => do
     | _ => pure ()
   if nThm == 0 then
     throwError m!"no theorems found under namespace {root}"
-  let act : CollectAxioms.M Unit := names.toList.forM CollectAxioms.collect
-  let ((), st) := (act.run env).run {}
+  -- Lean 4.36 made the `Lean.CollectAxioms` internals private (module
+  -- system); the public `Lean.collectAxioms` looks up imported constants'
+  -- axioms precomputed at export time, so one call per constant is cheap.
   let allowed := [``propext, ``Classical.choice, ``Quot.sound]
-  let extra := st.axioms.filter (fun a => !allowed.contains a)
-  if extra.isEmpty then
-    logInfo m!"trust base OK under {root}: {nThm} theorems, {nDef} definitions, {nOpaque} opaque constants; axioms {st.axioms.toList}"
+  let mut all : Array Name := #[]
+  let mut offenders : Array (Name × List Name) := #[]
+  for n in names do
+    let axs ← collectAxioms n
+    for a in axs do
+      if !all.contains a then all := all.push a
+    let bad := axs.toList.filter (fun a => !allowed.contains a)
+    if !bad.isEmpty then offenders := offenders.push (n, bad)
+  if offenders.isEmpty then
+    logInfo m!"trust base OK under {root}: {nThm} theorems, {nDef} definitions, {nOpaque} opaque constants; axioms {all.toList}"
   else
-    -- failure only: name the offending constants (memoised walk)
-    let mut cache : Std.HashMap Name (Array Name) := {}
-    let mut offenders : Array (Name × List Name) := #[]
-    for n in names do
-      let (bad, c) := (badAxiomsOf env allowed n).run cache
-      cache := c
-      if !bad.isEmpty then offenders := offenders.push (n, bad.toList)
-    throwError m!"constants under {root} depend on non-standard axioms {extra.toList}; offenders ({offenders.size}): {(offenders.toList.take 25)}"
+    let extra := (offenders.toList.flatMap (·.2)).eraseDups
+    throwError m!"constants under {root} depend on non-standard axioms {extra}; offenders ({offenders.size}): {(offenders.toList.take 25)}"
 
 #assert_trust_base SqlEquiv
 
@@ -97,11 +80,17 @@ elab "#assert_no_runtime_overrides " ns:ident : command => do
   let mut bad : Array Name := #[]
   for (n, ci) in env.constants.toList do
     if !inTrustScope root n then continue
-    let isPartialAux := n.isStr && n.getString! == "_unsafe_rec"
-    if ci.isUnsafe && !isPartialAux then bad := bad.push n
+    -- compiler-generated pairs: `partial def f` is implemented by the unsafe
+    -- `f._unsafe_rec`; since Lean 4.36 each inductive's `ctorIdx` is
+    -- implemented by `ctorIdx._impl`
+    let isCtorIdx (m : Name) := m.isStr && m.getString! == "ctorIdx"
+    let isCompilerAux := n.isStr &&
+      (n.getString! == "_unsafe_rec" || (n.getString! == "_impl" && isCtorIdx n.getPrefix))
+    if ci.isUnsafe && !isCompilerAux then bad := bad.push n
     if let some impl := Compiler.implementedByAttr.getParam? env n then
-      if impl != n ++ `_unsafe_rec then bad := bad.push n
-    if isExtern env n then bad := bad.push n
+      if impl != n ++ `_unsafe_rec && !(isCtorIdx n && impl == n ++ `_impl) then
+        bad := bad.push n
+    if isExtern env n && !isCompilerAux then bad := bad.push n
   if bad.isEmpty then
     logInfo m!"no runtime overrides under {root}"
   else

@@ -279,7 +279,6 @@ theorem inner_join_true_is_cross (db : Database) (a b : FromClause) :
   rw [evalFrom_inner_join, evalFrom_cross_join]
   simp only -- unfold let rightRows bindings
   congr 1; funext lr
-  dsimp
   simp only [evalExprWithDb_lit, List.filterMap_some_comp]
 
 /-- INNER JOIN with ON FALSE produces empty result -/
