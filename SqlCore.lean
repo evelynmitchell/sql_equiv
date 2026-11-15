@@ -13,3 +13,6 @@
 module
 
 public import SqlCore.Basic
+public import SqlCore.Value
+public import SqlCore.Truth
+public import SqlCore.Scalar
