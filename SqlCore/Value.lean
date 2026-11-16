@@ -5,7 +5,7 @@ Authors: Evelyn Mitchell, Samuel Schlesinger
 -/
 module
 
-public import Mathlib.Data.Int.Notation
+public import Mathlib.Algebra.Order.Ring.Rat
 
 /-!
 # Values and `NULL` (typed core, phase 1, #290)
@@ -21,6 +21,13 @@ Mitchell and Samuel Schlesinger), which redesigned `SqlEquiv.Value`. The differe
   `none : Option Value` means an evaluation error; here `none` is `NULL`, and errors are a
   separate type (`SqlCore.EvalError`, in `SqlCore.Scalar`).
 * Integers are unbounded `ℤ`, and text is a Lean `String`, as in `SqlEquiv`.
+* An exact decimal is a rational `ℚ` (decision 4, #290 part 2). `SqlEquiv` stores a canonical
+  scaled integer (`Value.mkDecimal`); with `ℚ`, `2.50` and `2.5` are equal by construction and
+  the order is Mathlib's. Values built from SQL literals by `+ - * %` are decimal fractions; a
+  `decimal` whose denominator is not a power-of-ten divisor is representable but never produced.
+* `int` and `decimal` are the numeric types (`SqlType.isNumeric`); comparisons and arithmetic
+  promote `int` to `decimal` (decision 6), so two types can be `SqlType.Comparable` without being
+  equal.
 -/
 
 @[expose] public section
@@ -35,7 +42,29 @@ inductive SqlType where
   | text
   /-- Booleans. -/
   | bool
+  /-- Exact decimals. -/
+  | decimal
   deriving DecidableEq, Repr, Inhabited
+
+namespace SqlType
+
+/-- The numeric types, between which comparison and arithmetic promote. -/
+def isNumeric : SqlType → Bool
+  | int | decimal => true
+  | text | bool => false
+
+/-- Two types whose values can be compared: the same type, or two numeric types. -/
+def Comparable (τ σ : SqlType) : Prop := τ = σ ∨ (τ.isNumeric ∧ σ.isNumeric)
+
+instance (τ σ : SqlType) : Decidable (Comparable τ σ) :=
+  inferInstanceAs (Decidable (_ ∨ _))
+
+theorem Comparable.refl (τ : SqlType) : Comparable τ τ := .inl rfl
+
+theorem Comparable.symm {τ σ : SqlType} (h : Comparable τ σ) : Comparable σ τ :=
+  h.imp Eq.symm And.symm
+
+end SqlType
 
 /-- A non-null SQL value. -/
 inductive Value where
@@ -45,6 +74,8 @@ inductive Value where
   | text (s : String)
   /-- A boolean. -/
   | bool (b : Bool)
+  /-- An exact decimal. -/
+  | decimal (q : ℚ)
   deriving DecidableEq, Repr, Inhabited
 
 namespace Value
@@ -54,10 +85,12 @@ def type : Value → SqlType
   | int _ => .int
   | text _ => .text
   | bool _ => .bool
+  | decimal _ => .decimal
 
 @[simp] theorem type_int (z : ℤ) : (int z).type = .int := rfl
 @[simp] theorem type_text (s : String) : (text s).type = .text := rfl
 @[simp] theorem type_bool (b : Bool) : (bool b).type = .bool := rfl
+@[simp] theorem type_decimal (q : ℚ) : (decimal q).type = .decimal := rfl
 
 theorem type_eq_int_iff {v : Value} : v.type = .int ↔ ∃ z, v = int z := by
   cases v <;> simp [type]
@@ -66,6 +99,9 @@ theorem type_eq_text_iff {v : Value} : v.type = .text ↔ ∃ s, v = text s := b
   cases v <;> simp [type]
 
 theorem type_eq_bool_iff {v : Value} : v.type = .bool ↔ ∃ b, v = bool b := by
+  cases v <;> simp [type]
+
+theorem type_eq_decimal_iff {v : Value} : v.type = .decimal ↔ ∃ q, v = decimal q := by
   cases v <;> simp [type]
 
 end Value

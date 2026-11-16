@@ -18,8 +18,15 @@ An operator on datums returns a datum (possibly `NULL`) or fails with an `EvalEr
   Otherwise a `NULL` operand gives `NULL`: `NULL / 0` is `NULL`, `1 / 0` is `divisionByZero`.
 * Integers are unbounded; `/` truncates toward zero (`Int.tdiv`), `%` takes the dividend's sign
   (`Int.tmod`), as in `SqlEquiv`, sqlite, Postgres and DuckDB's `//`.
-* `= <> < <= > >=` need both operands of one type (decision 6): integers numerically, text by code
-  point, booleans with `false < true`. The result is `TRUE`, `FALSE`, or `NULL` for `unknown`.
+* Decimals are exact (`ℚ`). With a decimal operand, `int` is promoted (decision 6): `1 + 0.5` is
+  `1.5`, a decimal. `+ - *` are exact, `%` is exact with the dividend's sign (`7.5 % -2` is `1.5`),
+  and `/` on decimals is `unsupported`: its result scale differs between engines (Postgres rounds
+  to 20 places, DuckDB returns a double), as `SqlEquiv` defers it (#201). A zero divisor is
+  `divisionByZero` first.
+* `= <> < <= > >=` need comparable operands (`SqlType.Comparable`): one type, or two numeric
+  types compared as rationals (`1 = 1.0` is `TRUE`). Integers and decimals compare numerically,
+  text by code point, booleans with `false < true`. The result is `TRUE`, `FALSE`, or `NULL` for
+  `unknown`.
 * `AND`, `OR`, `NOT` are `⊓`, `⊔`, `Truth.not` on the operands' truth values (`Datum.toTruth`).
 * `IS [NOT] NULL` accepts any operand and is never `NULL`.
 * `e IN (v₁, …, vₖ)` (`Datum.inList`) is the Kleene disjunction of `e = vᵢ`, from `FALSE`;
@@ -43,8 +50,11 @@ namespace SqlCore
 inductive EvalError where
   /-- A non-null operand has the wrong type. -/
   | typeMismatch
-  /-- An integer division or remainder by zero. -/
+  /-- A division or remainder by zero. -/
   | divisionByZero
+  /-- An operation outside the fragment: decimal division, whose result scale is
+  implementation-defined. -/
+  | unsupported
   deriving DecidableEq, Repr
 
 @[simp] theorem ok_bind {ε α β : Type} (a : α) (f : α → Except ε β) :
@@ -77,11 +87,38 @@ def divInt (a b : ℤ) : Except EvalError ℤ :=
 def modInt (a b : ℤ) : Except EvalError ℤ :=
   if b = 0 then .error .divisionByZero else .ok (a.tmod b)
 
+/-- Decimal addition (exact). -/
+def addDec (a b : ℚ) : ℚ := a + b
+
+/-- Decimal subtraction (exact). -/
+def subDec (a b : ℚ) : ℚ := a - b
+
+/-- Decimal multiplication (exact). -/
+def mulDec (a b : ℚ) : ℚ := a * b
+
+/-- Decimal negation. -/
+def negDec (a : ℚ) : ℚ := -a
+
+/-- Truncation toward zero. -/
+def truncRat (q : ℚ) : ℤ := if q < 0 then q.ceil else q.floor
+
+/-- Decimal division: a zero divisor is `divisionByZero`; otherwise `unsupported`, since the result
+scale of an inexact quotient is implementation-defined. -/
+def divDec (_a b : ℚ) : Except EvalError ℚ :=
+  if b = 0 then .error .divisionByZero else .error .unsupported
+
+/-- Decimal remainder, exact, with the sign of the dividend; a zero divisor is `divisionByZero`. -/
+def modDec (a b : ℚ) : Except EvalError ℚ :=
+  if b = 0 then .error .divisionByZero else .ok (a - b * truncRat (a / b))
+
 /-- Text concatenation. -/
 def concatText (s t : String) : String := s ++ t
 
 /-- Integer comparison. -/
 def compareInt (a b : ℤ) : Ordering := compare a b
+
+/-- Numeric comparison, as rationals. -/
+def compareDec (a b : ℚ) : Ordering := compare a b
 
 /-- Text comparison by code points (binary collation), lexicographically. -/
 def compareText (s t : String) : Ordering := compare s t
@@ -93,9 +130,13 @@ end Primitives
 
 namespace Value
 
-/-- Compare two values of the same type; values of different types are a type error. -/
+/-- Compare two values of comparable types (`SqlType.Comparable`): an integer is promoted when the
+other operand is a decimal. Values of other types are a type error. -/
 def cmp : Value → Value → Except EvalError Ordering
   | int a, int b => .ok (compareInt a b)
+  | decimal p, decimal q => .ok (compareDec p q)
+  | int a, decimal q => .ok (compareDec a q)
+  | decimal p, int b => .ok (compareDec p b)
   | text s, text t => .ok (compareText s t)
   | bool a, bool b => .ok (compareBool a b)
   | _, _ => .error .typeMismatch
@@ -103,20 +144,26 @@ def cmp : Value → Value → Except EvalError Ordering
 /-- Comparing in the other order swaps the outcome. -/
 theorem cmp_swap (a b : Value) : cmp b a = Ordering.swap <$> cmp a b := by
   cases a <;> cases b <;>
-    simp only [cmp, compareInt, compareText, compareBool, Except.map_ok, Except.map_error] <;>
+    simp only [cmp, compareInt, compareDec, compareText, compareBool, Except.map_ok,
+      Except.map_error] <;>
     exact congrArg Except.ok Std.OrientedCmp.eq_swap
 
-/-- Two values compare equal exactly when they are equal. -/
-@[simp] theorem cmp_eq_ok_eq_iff {a b : Value} : cmp a b = .ok .eq ↔ a = b := by
-  cases a <;> cases b <;>
-    simp [cmp, compareInt, compareText, compareBool]
+/-- Two values of one type compare equal exactly when they are equal. Across numeric types this
+fails: `int 1` and `decimal 1` compare equal (`cmp_int_decimal`). -/
+theorem cmp_eq_ok_eq_iff {a b : Value} (h : a.type = b.type) : cmp a b = .ok .eq ↔ a = b := by
+  cases a <;> cases b <;> simp_all [cmp, compareInt, compareDec, compareText, compareBool]
 
 /-- A value compares equal to itself. -/
-@[simp] theorem cmp_self (a : Value) : cmp a a = .ok .eq := cmp_eq_ok_eq_iff.mpr rfl
+@[simp] theorem cmp_self (a : Value) : cmp a a = .ok .eq := (cmp_eq_ok_eq_iff rfl).mpr rfl
 
-/-- Two values are comparable exactly when they have the same type. -/
-theorem exists_cmp_eq_ok_iff {a b : Value} : (∃ o, cmp a b = .ok o) ↔ a.type = b.type := by
-  cases a <;> cases b <;> simp [cmp]
+/-- Promotion: an integer compares with a decimal as a rational. -/
+theorem cmp_int_decimal (z : ℤ) (q : ℚ) : cmp (int z) (decimal q) = .ok (compare (z : ℚ) q) :=
+  rfl
+
+/-- Two values can be compared exactly when their types are comparable. -/
+theorem exists_cmp_eq_ok_iff {a b : Value} :
+    (∃ o, cmp a b = .ok o) ↔ a.type.Comparable b.type := by
+  cases a <;> cases b <;> simp [cmp, SqlType.Comparable, SqlType.isNumeric]
 
 /-- Comparison fails only with a type error. -/
 theorem cmp_eq_error {a b : Value} {e : EvalError} (h : cmp a b = .error e) :
@@ -124,6 +171,33 @@ theorem cmp_eq_error {a b : Value} {e : EvalError} (h : cmp a b = .error e) :
   cases a <;> cases b <;> simp_all [cmp]
 
 end Value
+
+/-! ### Numeric operands -/
+
+/-- An operand of an arithmetic operator. -/
+inductive Numeric where
+  | int (z : ℤ)
+  | decimal (q : ℚ)
+  deriving DecidableEq, Repr
+
+namespace Numeric
+
+/-- The number as a value. -/
+def toValue : Numeric → Value
+  | int z => .int z
+  | decimal q => .decimal q
+
+/-- The number as a rational. -/
+def toRat : Numeric → ℚ
+  | int z => z
+  | decimal q => q
+
+/-- Negation, keeping the type. -/
+def neg : Numeric → Numeric
+  | int z => int (negInt z)
+  | decimal q => decimal (negDec q)
+
+end Numeric
 
 /-! ### Truth values as datums -/
 
@@ -142,10 +216,12 @@ def toTruth : Datum → Except EvalError Truth
   | some (.bool b) => .ok (.ofBool b)
   | some _ => .error .typeMismatch
 
-/-- An operand of an integer operator: `NULL` or an integer, any other value is a type error. -/
-def asInt : Datum → Except EvalError (Option ℤ)
+/-- An operand of an arithmetic operator: `NULL`, an integer or a decimal; any other value is a
+type error. -/
+def asNum : Datum → Except EvalError (Option Numeric)
   | none => .ok none
-  | some (.int z) => .ok (some z)
+  | some (.int z) => .ok (some (.int z))
+  | some (.decimal q) => .ok (some (.decimal q))
   | some _ => .error .typeMismatch
 
 /-- An operand of a text operator: `NULL` or a string, any other value is a type error. -/
@@ -168,38 +244,33 @@ theorem toTruth_eq_ok_iff {d : Datum} {t : Truth} : d.toTruth = .ok t ↔ d = t.
 
 /-- A datum has a truth value exactly when it is boolean-typed. -/
 theorem exists_toTruth_eq_ok_iff {d : Datum} : (∃ t, d.toTruth = .ok t) ↔ d.HasType .bool := by
-  rcases d with _ | (_ | _ | _) <;> simp [toTruth]
+  rcases d with _ | (_ | _ | _ | _) <;> simp [toTruth]
 
-/-- A datum is an integer operand exactly when it is integer-typed. -/
-theorem exists_asInt_eq_ok_iff {d : Datum} : (∃ x, d.asInt = .ok x) ↔ d.HasType .int := by
-  rcases d with _ | (_ | _ | _) <;> simp [asInt]
+/-- A datum is an arithmetic operand exactly when it is integer- or decimal-typed. -/
+theorem exists_asNum_eq_ok_iff {d : Datum} :
+    (∃ x, d.asNum = .ok x) ↔ d.HasType .int ∨ d.HasType .decimal := by
+  rcases d with _ | (_ | _ | _ | _) <;> simp [asNum]
 
 /-- A datum is a text operand exactly when it is text-typed. -/
 theorem exists_asText_eq_ok_iff {d : Datum} : (∃ x, d.asText = .ok x) ↔ d.HasType .text := by
-  rcases d with _ | (_ | _ | _) <;> simp [asText]
+  rcases d with _ | (_ | _ | _ | _) <;> simp [asText]
 
-/-- An integer operand is a given integer exactly when the datum is that integer. -/
-theorem asInt_eq_ok_some_iff {d : Datum} {z : ℤ} :
-    d.asInt = .ok (some z) ↔ d = some (.int z) := by
-  rcases d with _ | (_ | _ | _) <;> simp [asInt]
+/-- A numeric operand is a given number exactly when the datum is that number. -/
+theorem asNum_eq_ok_some_iff {d : Datum} {x : Numeric} :
+    d.asNum = .ok (some x) ↔ d = some x.toValue := by
+  rcases d with _ | (_ | _ | _ | _) <;> rcases x <;> simp [asNum, Numeric.toValue]
 
 theorem toTruth_eq_error {d : Datum} {e : EvalError} (h : d.toTruth = .error e) :
     e = .typeMismatch := by
-  match d, h with
-  | some (.int _), h => cases h; rfl
-  | some (.text _), h => cases h; rfl
+  rcases d with _ | (_ | _ | _ | _) <;> simp [toTruth] at h <;> exact h.symm
 
-theorem asInt_eq_error {d : Datum} {e : EvalError} (h : d.asInt = .error e) :
+theorem asNum_eq_error {d : Datum} {e : EvalError} (h : d.asNum = .error e) :
     e = .typeMismatch := by
-  match d, h with
-  | some (.text _), h => cases h; rfl
-  | some (.bool _), h => cases h; rfl
+  rcases d with _ | (_ | _ | _ | _) <;> simp [asNum] at h <;> exact h.symm
 
 theorem asText_eq_error {d : Datum} {e : EvalError} (h : d.asText = .error e) :
     e = .typeMismatch := by
-  match d, h with
-  | some (.int _), h => cases h; rfl
-  | some (.bool _), h => cases h; rfl
+  rcases d with _ | (_ | _ | _ | _) <;> simp [asText] at h <;> exact h.symm
 
 end Datum
 
@@ -234,7 +305,7 @@ inductive UnOp where
   | isNotNull
   deriving DecidableEq, Repr
 
-/-- Integer operators. -/
+/-- Arithmetic operators. -/
 inductive ArithOp where
   /-- `+`. -/
   | add
@@ -266,7 +337,7 @@ inductive CmpOp where
 
 /-- Binary operators. -/
 inductive BinOp where
-  /-- An integer operator. -/
+  /-- An arithmetic operator. -/
   | arith (op : ArithOp)
   /-- A comparison. -/
   | cmp (op : CmpOp)
@@ -288,18 +359,49 @@ def eval : ArithOp → ℤ → ℤ → Except EvalError ℤ
   | div, a, b => divInt a b
   | mod, a, b => modInt a b
 
+/-- An arithmetic operator on two decimals (or a promoted integer). -/
+def evalDec : ArithOp → ℚ → ℚ → Except EvalError ℚ
+  | add, a, b => .ok (addDec a b)
+  | sub, a, b => .ok (subDec a b)
+  | mul, a, b => .ok (mulDec a b)
+  | div, a, b => divDec a b
+  | mod, a, b => modDec a b
+
+/-- An arithmetic operator on two numeric operands: integers stay integers; with a decimal operand
+the integer is promoted and the result is a decimal; `NULL` gives `NULL`. -/
+def evalNum (op : ArithOp) : Option Numeric → Option Numeric → Except EvalError Datum
+  | some (.int x), some (.int y) => (fun z => some (.int z)) <$> op.eval x y
+  | some (.int x), some (.decimal q) => (fun r => some (.decimal r)) <$> op.evalDec x q
+  | some (.decimal p), some (.int y) => (fun r => some (.decimal r)) <$> op.evalDec p y
+  | some (.decimal p), some (.decimal q) => (fun r => some (.decimal r)) <$> op.evalDec p q
+  | none, _ => .ok none
+  | some _, none => .ok none
+
+@[simp] theorem evalNum_none_left (op : ArithOp) (y : Option Numeric) :
+    op.evalNum none y = .ok none := rfl
+
+@[simp] theorem evalNum_none_right (op : ArithOp) (x : Option Numeric) :
+    op.evalNum x none = .ok none := by
+  rcases x with _ | (_ | _) <;> rfl
+
+/-- `evalNum` is symmetric for a symmetric operator. -/
+theorem evalNum_comm {op : ArithOp} (h : ∀ x y, op.eval x y = op.eval y x)
+    (hd : ∀ p q, op.evalDec p q = op.evalDec q p) (x y : Option Numeric) :
+    op.evalNum x y = op.evalNum y x := by
+  rcases x with _ | (x | x) <;> rcases y with _ | (y | y) <;> simp only [evalNum, h, hd]
+
 /-- Whether the operator fails on a zero divisor: `/` and `%`. -/
 def isDivision : ArithOp → Bool
   | div | mod => true
   | add | sub | mul => false
 
-/-- An integer operator fails only by dividing by zero. -/
+/-- On integers, an operator fails only by dividing by zero. -/
 theorem eval_eq_error {op : ArithOp} {a b : ℤ} {e : EvalError} (h : op.eval a b = .error e) :
     e = .divisionByZero ∧ op.isDivision ∧ b = 0 := by
   cases op <;> simp only [eval, divInt, modInt, reduceCtorEq] at h <;> split_ifs at h with hb <;>
     cases h <;> exact ⟨rfl, rfl, hb⟩
 
-/-- An integer operator succeeds unless it divides by zero. -/
+/-- On integers, an operator succeeds unless it divides by zero. -/
 theorem exists_eval_eq_ok {op : ArithOp} {a b : ℤ} (h : op.isDivision → b ≠ 0) :
     ∃ z, op.eval a b = .ok z := by
   rcases hr : op.eval a b with e | z
@@ -385,43 +487,55 @@ theorem eval_swap (op : CmpOp) (a b : Datum) : op.swap.eval b a = op.eval a b :=
 theorem eval_eq_comm (a b : Datum) : eq.eval a b = eq.eval b a :=
   eval_swap eq b a
 
-/-- `a = b` is `TRUE` exactly when `a` and `b` are the same value. -/
-theorem eval_eq_ok_true_iff {a b : Datum} :
+/-- Over a common type, `a = b` is `TRUE` exactly when `a` and `b` are the same value. (Across
+numeric types, `1 = 1.0` is `TRUE` although the values differ.) -/
+theorem eval_eq_ok_true_iff {a b : Datum} {τ : SqlType} (ha : a.HasType τ) (hb : b.HasType τ) :
     eq.eval a b = .ok .true ↔ a ≠ none ∧ a = b := by
-  match a, b with
-  | none, _ => simp
-  | some _, none => simp
-  | some a, some b =>
+  match a, b, ha, hb with
+  | none, _, _, _ => simp
+  | some _, none, _, _ => simp
+  | some a, some b, ha, hb =>
+    have hab : a.type = b.type := ha.trans hb.symm
     rw [eval_some_some, Except.map_eq_ok]
     constructor
     · rintro ⟨o, ho, hto⟩
       have : o = .eq := by cases o <;> simp_all [test]
       subst this
-      simpa using ho
+      simpa using (Value.cmp_eq_ok_eq_iff hab).mp ho
     · rintro ⟨-, h⟩
       cases h
       exact ⟨.eq, Value.cmp_self a, rfl⟩
 
-/-- A comparison succeeds exactly when the operands have a common type (`NULL` has every type). -/
+/-- A comparison succeeds exactly when the operands have comparable types (`NULL` has every
+type). -/
 theorem exists_eval_eq_ok_iff {op : CmpOp} {a b : Datum} :
-    (∃ t, op.eval a b = .ok t) ↔ ∃ τ, a.HasType τ ∧ b.HasType τ := by
-  match a, b with
-  | none, none => simp
-  | none, some b => simp
-  | some a, none => simp
-  | some a, some b =>
-    simp only [eval_some_some, Except.map_eq_ok, Datum.hasType_some]
-    constructor
-    · rintro ⟨-, o, h, -⟩
-      exact ⟨a.type, rfl, (Value.exists_cmp_eq_ok_iff.mp ⟨o, h⟩).symm⟩
-    · rintro ⟨τ, ha, hb⟩
-      obtain ⟨o, h⟩ := Value.exists_cmp_eq_ok_iff.mpr (ha.trans hb.symm)
-      exact ⟨_, o, h, rfl⟩
+    (∃ t, op.eval a b = .ok t) ↔ ∃ τ σ, τ.Comparable σ ∧ a.HasType τ ∧ b.HasType σ := by
+  constructor
+  · rintro ⟨t, h⟩
+    match a, b, h with
+    | none, none, _ => exact ⟨.int, .int, .refl _, trivial, trivial⟩
+    | none, some b, _ => exact ⟨b.type, b.type, .refl _, trivial, rfl⟩
+    | some a, none, _ => exact ⟨a.type, a.type, .refl _, rfl, trivial⟩
+    | some a, some b, h =>
+      rw [eval_some_some, Except.map_eq_ok] at h
+      obtain ⟨o, ho, -⟩ := h
+      exact ⟨a.type, b.type, Value.exists_cmp_eq_ok_iff.mp ⟨o, ho⟩, rfl, rfl⟩
+  · rintro ⟨τ, σ, hc, ha, hb⟩
+    match a, b, ha, hb with
+    | none, _, _, _ => exact ⟨_, rfl⟩
+    | some _, none, _, _ => exact ⟨_, eval_none_right _ _⟩
+    | some a, some b, ha, hb =>
+      have hab : a.type.Comparable b.type := by
+        simp only [Datum.hasType_some] at ha hb
+        subst ha hb
+        exact hc
+      obtain ⟨o, ho⟩ := Value.exists_cmp_eq_ok_iff.mpr hab
+      exact ⟨_, by rw [eval_some_some, ho]; rfl⟩
 
 /-- A comparison of datums of a common type succeeds. -/
 theorem exists_eval_eq_ok {op : CmpOp} {a b : Datum} {τ : SqlType} (ha : a.HasType τ)
     (hb : b.HasType τ) : ∃ t, op.eval a b = .ok t :=
-  exists_eval_eq_ok_iff.mpr ⟨τ, ha, hb⟩
+  exists_eval_eq_ok_iff.mpr ⟨τ, τ, .refl τ, ha, hb⟩
 
 /-- A comparison fails only with a type error. -/
 theorem eval_eq_error {op : CmpOp} {a b : Datum} {e : EvalError} (h : op.eval a b = .error e) :
@@ -436,7 +550,7 @@ end CmpOp
 /-- A unary operator on a datum. -/
 def evalUnOp : UnOp → Datum → Except EvalError Datum
   | .not, d => (fun t => t.not.toDatum) <$> d.toTruth
-  | .neg, d => Option.map (fun z => .int (negInt z)) <$> d.asInt
+  | .neg, d => Option.map (fun x => x.neg.toValue) <$> d.asNum
   | .isNull, d => .ok (some (.bool d.isNone))
   | .isNotNull, d => .ok (some (.bool d.isSome))
 
@@ -444,11 +558,9 @@ def evalUnOp : UnOp → Datum → Except EvalError Datum
 propagates. -/
 def evalBinOp : BinOp → Datum → Datum → Except EvalError Datum
   | .arith op, a, b => do
-    let x ← a.asInt
-    let y ← b.asInt
-    match x, y with
-    | some x, some y => return some (.int (← op.eval x y))
-    | _, _ => return none
+    let x ← a.asNum
+    let y ← b.asNum
+    op.evalNum x y
   | .cmp op, a, b => Truth.toDatum <$> op.eval a b
   | .and, a, b => do return ((← a.toTruth) ⊓ (← b.toTruth)).toDatum
   | .or, a, b => do return ((← a.toTruth) ⊔ (← b.toTruth)).toDatum
@@ -551,83 +663,93 @@ theorem evalBinOp_or_true {a : Datum} (ha : a.HasType .bool) :
   rw [Datum.toTruth_eq_ok_iff.mp ht]
   cases t <;> rfl
 
-private theorem evalBinOp_arith_of_asInt {op : ArithOp} {a b : Datum} {x y : Option ℤ}
-    (ha : a.asInt = .ok x) (hb : b.asInt = .ok y) :
-    evalBinOp (.arith op) a b =
-      match x, y with
-      | some x, some y => (fun z => some (.int z)) <$> op.eval x y
-      | _, _ => .ok none := by
+private theorem evalBinOp_arith_of_asNum {op : ArithOp} {a b : Datum} {x y : Option Numeric}
+    (ha : a.asNum = .ok x) (hb : b.asNum = .ok y) :
+    evalBinOp (.arith op) a b = op.evalNum x y := by
   simp only [evalBinOp, ha, hb, ok_bind]
-  rcases x with _ | x <;> rcases y with _ | y <;> rfl
 
-/-- `NULL op a` is `NULL` for an integer operator and an integer-typed `a`. -/
-theorem evalBinOp_arith_null_left (op : ArithOp) {a : Datum} (ha : a.HasType .int) :
+/-- A numeric datum: `NULL`, an integer or a decimal. -/
+abbrev Datum.IsNumeric (d : Datum) : Prop := d.HasType .int ∨ d.HasType .decimal
+
+/-- `NULL op a` is `NULL` for an arithmetic operator and a numeric `a`. -/
+theorem evalBinOp_arith_null_left (op : ArithOp) {a : Datum} (ha : a.IsNumeric) :
     evalBinOp (.arith op) none a = .ok none := by
-  obtain ⟨x, hx⟩ := Datum.exists_asInt_eq_ok_iff.mpr ha
-  rw [evalBinOp_arith_of_asInt rfl hx]
+  obtain ⟨x, hx⟩ := Datum.exists_asNum_eq_ok_iff.mpr ha
+  rw [evalBinOp_arith_of_asNum rfl hx, ArithOp.evalNum_none_left]
 
-/-- `a op NULL` is `NULL` for an integer operator and an integer-typed `a`; in particular
-`NULL / 0` and `1 / NULL` are `NULL`. -/
-theorem evalBinOp_arith_null_right (op : ArithOp) {a : Datum} (ha : a.HasType .int) :
+/-- `a op NULL` is `NULL` for an arithmetic operator and a numeric `a`; in particular `NULL / 0`
+and `1 / NULL` are `NULL`. -/
+theorem evalBinOp_arith_null_right (op : ArithOp) {a : Datum} (ha : a.IsNumeric) :
     evalBinOp (.arith op) a none = .ok none := by
-  obtain ⟨x, hx⟩ := Datum.exists_asInt_eq_ok_iff.mpr ha
-  rw [evalBinOp_arith_of_asInt hx rfl]
-  rcases x <;> rfl
+  obtain ⟨x, hx⟩ := Datum.exists_asNum_eq_ok_iff.mpr ha
+  rw [evalBinOp_arith_of_asNum hx rfl, ArithOp.evalNum_none_right]
 
-private theorem bind_asInt_comm {β : Type} (a b : Datum)
-    (f : Option ℤ → Option ℤ → Except EvalError β) :
-    (do let x ← a.asInt; let y ← b.asInt; f x y : Except EvalError β) =
-      (do let y ← b.asInt; let x ← a.asInt; f x y) := by
-  rcases ha : a.asInt with e | x <;> rcases hb : b.asInt with e' | y
-  · rw [Datum.asInt_eq_error ha, Datum.asInt_eq_error hb]; rfl
+private theorem bind_asNum_comm {β : Type} (a b : Datum)
+    (f : Option Numeric → Option Numeric → Except EvalError β) :
+    (do let x ← a.asNum; let y ← b.asNum; f x y : Except EvalError β) =
+      (do let y ← b.asNum; let x ← a.asNum; f x y) := by
+  rcases ha : a.asNum with e | x <;> rcases hb : b.asNum with e' | y
+  · rw [Datum.asNum_eq_error ha, Datum.asNum_eq_error hb]; rfl
   all_goals rfl
 
 private theorem evalBinOp_arith_comm {op : ArithOp} (hop : ∀ x y, op.eval x y = op.eval y x)
-    (a b : Datum) : evalBinOp (.arith op) a b = evalBinOp (.arith op) b a := by
+    (hd : ∀ p q, op.evalDec p q = op.evalDec q p) (a b : Datum) :
+    evalBinOp (.arith op) a b = evalBinOp (.arith op) b a := by
   simp only [evalBinOp]
-  rw [bind_asInt_comm]
+  rw [bind_asNum_comm]
   congr 1; funext y; congr 1; funext x
-  rcases x with _ | x <;> rcases y with _ | y <;> simp only [hop]
+  exact ArithOp.evalNum_comm hop hd x y
 
-/-- `a + b` is `b + a`, also when an operand is not an integer. -/
+/-- `a + b` is `b + a`, also when an operand is not numeric. -/
 theorem evalBinOp_add_comm (a b : Datum) :
     evalBinOp (.arith .add) a b = evalBinOp (.arith .add) b a :=
-  evalBinOp_arith_comm (fun x y => by simp only [ArithOp.eval, addInt, Int.add_comm]) a b
+  evalBinOp_arith_comm (fun x y => by simp only [ArithOp.eval, addInt, Int.add_comm])
+    (fun p q => by simp only [ArithOp.evalDec, addDec, add_comm]) a b
 
-/-- `a * b` is `b * a`, also when an operand is not an integer. -/
+/-- `a * b` is `b * a`, also when an operand is not numeric. -/
 theorem evalBinOp_mul_comm (a b : Datum) :
     evalBinOp (.arith .mul) a b = evalBinOp (.arith .mul) b a :=
-  evalBinOp_arith_comm (fun x y => by simp only [ArithOp.eval, mulInt, Int.mul_comm]) a b
+  evalBinOp_arith_comm (fun x y => by simp only [ArithOp.eval, mulInt, Int.mul_comm])
+    (fun p q => by simp only [ArithOp.evalDec, mulDec, mul_comm]) a b
 
 private theorem evalBinOp_arith_right_id {op : ArithOp} {c : ℤ} (hop : ∀ x, op.eval x c = .ok x)
-    {a : Datum} (ha : a.HasType .int) : evalBinOp (.arith op) a (some (.int c)) = .ok a := by
-  obtain ⟨x, hx⟩ := Datum.exists_asInt_eq_ok_iff.mpr ha
-  rw [evalBinOp_arith_of_asInt hx rfl]
+    (hd : ∀ q, op.evalDec q c = .ok q) {a : Datum} (ha : a.IsNumeric) :
+    evalBinOp (.arith op) a (some (.int c)) = .ok a := by
+  obtain ⟨x, hx⟩ := Datum.exists_asNum_eq_ok_iff.mpr ha
+  rw [evalBinOp_arith_of_asNum hx rfl]
   match a, x, hx with
   | none, _, hx => cases hx; rfl
-  | some (.int z), _, hx => cases hx; simp only [hop, Except.map_ok]
+  | some (.int z), _, hx => cases hx; simp only [ArithOp.evalNum, hop, Except.map_ok]
+  | some (.decimal q), _, hx => cases hx; simp only [ArithOp.evalNum, hd, Except.map_ok]
 
-/-- `a + 0` is `a` on integer-typed datums; on a text or boolean `a` it is a type error. -/
-theorem evalBinOp_add_zero {a : Datum} (ha : a.HasType .int) :
+/-- `a + 0` is `a` on numeric datums; on a text or boolean `a` it is a type error. -/
+theorem evalBinOp_add_zero {a : Datum} (ha : a.IsNumeric) :
     evalBinOp (.arith .add) a (some (.int 0)) = .ok a :=
-  evalBinOp_arith_right_id (fun x => by simp only [ArithOp.eval, addInt, Int.add_zero]) ha
+  evalBinOp_arith_right_id (fun x => by simp only [ArithOp.eval, addInt, Int.add_zero])
+    (fun q => by simp [ArithOp.evalDec, addDec]) ha
 
-/-- `a - 0` is `a` on integer-typed datums. -/
-theorem evalBinOp_sub_zero {a : Datum} (ha : a.HasType .int) :
+/-- `a - 0` is `a` on numeric datums. -/
+theorem evalBinOp_sub_zero {a : Datum} (ha : a.IsNumeric) :
     evalBinOp (.arith .sub) a (some (.int 0)) = .ok a :=
-  evalBinOp_arith_right_id (fun x => by simp only [ArithOp.eval, subInt, Int.sub_zero]) ha
+  evalBinOp_arith_right_id (fun x => by simp only [ArithOp.eval, subInt, Int.sub_zero])
+    (fun q => by simp [ArithOp.evalDec, subDec]) ha
 
-/-- `a * 1` is `a` on integer-typed datums. -/
-theorem evalBinOp_mul_one {a : Datum} (ha : a.HasType .int) :
+/-- `a * 1` is `a` on numeric datums. -/
+theorem evalBinOp_mul_one {a : Datum} (ha : a.IsNumeric) :
     evalBinOp (.arith .mul) a (some (.int 1)) = .ok a :=
-  evalBinOp_arith_right_id (fun x => by simp only [ArithOp.eval, mulInt, Int.mul_one]) ha
+  evalBinOp_arith_right_id (fun x => by simp only [ArithOp.eval, mulInt, Int.mul_one])
+    (fun q => by simp [ArithOp.evalDec, mulDec]) ha
 
-/-- `-(-d)` is `d` on integer-typed datums. -/
-theorem evalUnOp_neg_neg {d : Datum} (hd : d.HasType .int) :
+/-- `-(-d)` is `d` on numeric datums. -/
+theorem evalUnOp_neg_neg {d : Datum} (hd : d.IsNumeric) :
     (evalUnOp .neg d >>= evalUnOp .neg) = .ok d := by
-  match d, hd with
-  | none, _ => rfl
-  | some (.int z), _ => simp [evalUnOp, Datum.asInt, negInt]
+  obtain ⟨x, hx⟩ := Datum.exists_asNum_eq_ok_iff.mpr hd
+  match d, x, hx with
+  | none, _, _ => rfl
+  | some (.int z), _, hx =>
+    cases hx; simp [evalUnOp, Datum.asNum, Numeric.neg, Numeric.toValue, negInt]
+  | some (.decimal q), _, hx =>
+    cases hx; simp [evalUnOp, Datum.asNum, Numeric.neg, Numeric.toValue, negDec]
 
 /-! ### Three-valued membership -/
 
@@ -688,16 +810,17 @@ private theorem eval_eq_of_hasType {e v : Datum} {τ : SqlType} (he : e.HasType 
   | none, _ => simp
   | some _, none => simp
   | some a, some b =>
-    obtain ⟨o, ho⟩ := Value.exists_cmp_eq_ok_iff.mpr (he.trans hv.symm)
+    have hab : a.type = b.type := he.trans hv.symm
+    obtain ⟨o, ho⟩ := Value.exists_cmp_eq_ok_iff.mpr (.inl hab)
     rw [CmpOp.eval_some_some, ho]
-    by_cases hab : a = b
-    · subst hab
+    by_cases hab' : a = b
+    · subst hab'
       rw [Value.cmp_self] at ho
       cases ho
       simp [CmpOp.test]
     · have : o ≠ .eq := by
         rintro rfl
-        exact hab (Value.cmp_eq_ok_eq_iff.mp ho)
+        exact hab' ((Value.cmp_eq_ok_eq_iff hab).mp ho)
       cases o <;> simp_all [CmpOp.test]
 
 /-- Over a common type, membership succeeds. -/
@@ -785,12 +908,13 @@ theorem isTrue_not_inList_iff_iff {e : Datum} {vs : List Datum} {τ : SqlType} {
     (t.not.isTrue = .true ↔ ¬∃ v ∈ vs, CmpOp.eq.eval v e = .ok .true) ↔
       vs = [] ∨ (∃ v ∈ vs, CmpOp.eq.eval v e = .ok .true) ∨ (e ≠ none ∧ none ∉ vs) := by
   have hmatch : (∃ v ∈ vs, CmpOp.eq.eval v e = .ok .true) ↔ e ≠ none ∧ e ∈ vs := by
-    simp only [CmpOp.eval_eq_comm _ e, CmpOp.eval_eq_ok_true_iff]
     constructor
-    · rintro ⟨v, hv, hne, rfl⟩
+    · rintro ⟨v, hv, h⟩
+      rw [CmpOp.eval_eq_comm, CmpOp.eval_eq_ok_true_iff he (hvs v hv)] at h
+      obtain ⟨hne, rfl⟩ := h
       exact ⟨hne, hv⟩
     · rintro ⟨hne, hv⟩
-      exact ⟨e, hv, hne, rfl⟩
+      exact ⟨e, hv, (CmpOp.eval_eq_ok_true_iff he he).mpr ⟨hne, rfl⟩⟩
   have htrue := inList_eq_ok_true_iff he hvs
   have hfalse := inList_eq_ok_false_iff he hvs
   rw [ht, Except.ok.injEq] at htrue hfalse

@@ -58,4 +58,27 @@ example : Datum.inList (i 1) [i 2, b true] = .error .typeMismatch := by decide
 example : evalBinOp .concat (t "ab") (t "c") = .ok (t "abc") := by decide
 example : evalBinOp (.cmp .lt) (t "a") (t "b") = .ok (b true) := by decide
 
+-- Decimals (#290 part 2): exact `ℚ`, int promoted. `decide +kernel`, since
+-- Mathlib's `ℚ` arithmetic is irreducible to the elaborator's `decide`.
+private def d (q : ℚ) : Datum := some (.decimal q)
+
+example : evalBinOp (.cmp .eq) (i 1) (d 1) = .ok (b true) := by decide +kernel
+example : evalBinOp (.cmp .lt) (i 1) (d (3/2)) = .ok (b true) := by decide +kernel
+example : evalBinOp (.cmp .eq) (d (5/2)) (d (25/10)) = .ok (b true) := by decide +kernel
+example : evalBinOp (.arith .add) (d (3/2)) (i 1) = .ok (d (5/2)) := by decide +kernel
+example : evalBinOp (.arith .mul) (d (1/10)) (d (2/10)) = .ok (d (2/100)) := by decide +kernel
+-- an integer result of decimal arithmetic stays a decimal
+example : evalBinOp (.arith .add) (d (1/2)) (d (1/2)) = .ok (d 1) := by decide +kernel
+-- `%` is exact with the dividend's sign, as Postgres and DuckDB
+example : evalBinOp (.arith .mod) (d (15/2)) (i 2) = .ok (d (3/2)) := by decide +kernel
+example : evalBinOp (.arith .mod) (d (-15/2)) (i 2) = .ok (d (-3/2)) := by decide +kernel
+example : evalBinOp (.arith .mod) (d (15/2)) (i (-2)) = .ok (d (3/2)) := by decide +kernel
+-- `/` on decimals is unsupported (implementation-defined scale); zero divisor first
+example : evalBinOp (.arith .div) (d 1) (i 4) = .error .unsupported := by decide +kernel
+example : evalBinOp (.arith .div) (d 1) (i 0) = .error .divisionByZero := by decide +kernel
+example : evalBinOp (.arith .div) null (d 0) = .ok null := by decide +kernel
+example : evalUnOp .neg (d (3/2)) = .ok (d (-3/2)) := by decide +kernel
+example : evalBinOp (.cmp .eq) (d 1) (t "1") = .error .typeMismatch := by decide +kernel
+example : Datum.inList (i 1) [d 2, d 1] = .ok .true := by decide +kernel
+
 end SqlCoreTest.ScalarExamples

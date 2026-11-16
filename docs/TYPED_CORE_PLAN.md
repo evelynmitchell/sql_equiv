@@ -38,9 +38,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [x] **Decisions** (#288)
 - [x] **Phase 0: groundwork** (#289): toolchain (#299), Mathlib, `SqlCore` scaffold,
   trust guard for `SqlCore`, CI
-- [ ] Phase 1: values, three-valued logic, scalar operators (#290), *re-derive*
-  - [x] `int`/`text`/`bool`: `SqlCore/Value.lean`, `Truth.lean`, `Scalar.lean`
-  - [ ] exact `decimal` and the int↔decimal comparison rule (decision 6, to revisit)
+- [x] **Phase 1: values, three-valued logic, scalar operators** (#290), *re-derive*
+  - [x] `int`/`text`/`bool`: `SqlCore/Value.lean`, `Truth.lean`, `Scalar.lean` (#301)
+  - [x] exact `decimal` as `ℚ`, with int↔decimal promotion (decisions 4 and 6)
 - [ ] Phase 2: rows, columns, schemas (#291), *re-derive*
 - [ ] Phase 3: resolved expressions, typing, type soundness (#292), *re-derive*
 - [ ] Correlated-subquery prototype (in #297), alongside phases 3–4
@@ -62,11 +62,21 @@ compared against `SqlEquiv`, Postgres 16 and DuckDB (decisions 8 and 9).
 | `false < true` | `TRUE` | error (no boolean order) | `t` | `true` |
 | `1 / 0` | `divisionByZero` | error (`none`) | `ERROR: division by zero` | `1 // 0` is `NULL` |
 | `FALSE AND 1` (ill-typed) | `typeMismatch` | `FALSE` (short-circuit) | error (type) | `false` (casts `1` to boolean) |
-| `1 = 1.0` | (no decimal yet) | `TRUE` (promotion) | `t` | `true` |
+| `1 = 1.0` | `TRUE` (promotion) | `TRUE` (promotion) | `t` | `true` |
+| `7.5 % -2` | `1.5` (exact, dividend's sign) | error (#201) | `1.5` | `1.5` |
+| `1.0 / 4` | `unsupported` | error (#201) | `0.25000000000000000000` | `0.25` (a `DOUBLE`) |
+| `1.0 / 0` | `divisionByZero` | error | `ERROR: division by zero` | `inf` |
 | `1 IN (2, NULL)` | `unknown` | (IN is in the expression evaluator) | `NULL` | `NULL` |
 
-`SqlCoreTest/ScalarDiffTest.lean` checks every well-typed operand pair over a small domain
-(1356 cases). The only disagreements are the 16 boolean orderings; any other one fails the test.
+`SqlCoreTest/ScalarDiffTest.lean` checks every well-typed operand pair over a small domain,
+with integers and decimals mixed (3668 cases). The only disagreements are the 16 boolean
+orderings and the 168 decimal remainders; any other one fails the test.
+
+Decimal division is `unsupported` because the engines disagree on its result type and scale.
+Equality of values (`=` on `Value`) is structural, so `int 1 ≠ decimal 1` although `1 = 1.0` is
+`TRUE` in SQL. The laws over a common type (`inList_eq_ok`, `eval_eq_ok_true_iff`) are unaffected.
+Mixed-type membership such as `1 IN (1.0)` still evaluates correctly; only its closed form is
+stated for a common type.
 
 ## Rules for every phase
 
