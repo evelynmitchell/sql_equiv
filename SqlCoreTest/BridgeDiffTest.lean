@@ -15,9 +15,10 @@ import SqlCoreTest.SchemaDiffTest
 namespace SqlCoreTest.BridgeDiff
 open SqlCore SqlBridge SqlCoreTest.SchemaExamples
 
-def named : NamedSchema :=
-  ⟨schema, [("users", .users), ("orders", .orders), ("products", .products), ("items", .items),
-    ("singer", .singer), ("museum", .museum)]⟩
+def named : NamedSchema where
+  S := schema
+  tables := [("users", .users), ("orders", .orders), ("products", .products), ("items", .items),
+    ("singer", .singer), ("museum", .museum)]
 
 /-- What a corpus query should do. -/
 inductive Expect where
