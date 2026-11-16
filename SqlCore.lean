@@ -27,3 +27,5 @@ public import SqlCore.Query
 public import SqlCore.Equiv
 public import SqlCore.QueryEquiv
 public import SqlCore.QueryLaws
+public import SqlCore.Simplify
+public import SqlCore.Check

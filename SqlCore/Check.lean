@@ -1,0 +1,190 @@
+/-
+Copyright (c) 2026 Evelyn Mitchell. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Evelyn Mitchell
+-/
+module
+
+public import SqlCore.Simplify
+public import Mathlib.Data.Fintype.Basic
+
+/-!
+# Certified equivalence checkers (typed core phase 7, #296)
+
+`Expr.checkEquiv Γ e₁ e₂` and `Query.checkEquiv q₁ q₂` either return a proof of equivalence or
+`unknown`. They are sound by construction, since every `proved` result carries a kernel-checked
+proof, and deliberately incomplete: two inputs are proved equivalent when their simplifications
+(`Expr.simplify`, `Query.simplify`) are syntactically equal, and the simplifier's certificates
+transfer the equality back to the inputs.
+
+`Query` has no derived `DecidableEq`: its `table` constructor is indexed by the table's arity,
+which defeats the deriving handler. `Query.beq` compares two queries of possibly different
+arities, and `Query.eq_of_beq` makes the comparison sound.
+
+These are the counterparts of `SqlEquiv`'s `checkSelectEquiv` and `checkQueryEquiv`
+(`SqlEquiv/Equiv/StatementChecker.lean`).
+-/
+
+@[expose] public section
+
+namespace SqlCore
+
+/-- The result of a certified check: a proof of `P`, or no verdict. -/
+inductive Check (P : Prop) : Type where
+  | proved (h : P)
+  | unknown
+
+/-- Whether the check produced a proof. -/
+def Check.isProved {P : Prop} : Check P → Bool
+  | .proved _ => true
+  | .unknown => false
+
+theorem Check.of_isProved {P : Prop} {c : Check P} (h : c.isProved) : P := by
+  cases c with
+  | proved h' => exact h'
+  | unknown => simp [Check.isProved] at h
+
+namespace Expr
+
+variable {n : ℕ}
+
+/-- Certified expression equivalence: equal simplifications prove `Equiv Γ e₁ e₂`. -/
+def checkEquiv (Γ : Fin n → SqlType) (e₁ e₂ : Expr n) : Check (Equiv Γ e₁ e₂) :=
+  if h : e₁.simplify Γ = e₂.simplify Γ then
+    .proved ((equiv_simplify Γ e₁).trans (h ▸ (equiv_simplify Γ e₂).symm))
+  else .unknown
+
+end Expr
+
+namespace Query
+
+variable {S : DbSchema} [DecidableEq S.Table]
+
+/-- Structural comparison of two queries of possibly different arities. Every pair of
+constructors is listed, so that Lean can generate the equation lemmas. -/
+def beq : {n m : ℕ} → Query S n → Query S m → Bool
+  | _, _, table t, q' =>
+    match q' with
+    | table t' => decide (t = t')
+    | select _ _ => false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct _ => false
+  | _, _, select (n := n) p q, q' =>
+    match q' with
+    | table _ => false
+    | select (n := m) p' q' => if h : n = m then decide (h ▸ p = p') && beq q q' else false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct _ => false
+  | _, _, project (n := n) (k := k) es q, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project (n := n') (k := k') es' q' =>
+      if h : n = n' ∧ k = k' then decide ((fun i => h.1 ▸ es (h.2 ▸ i)) = es') && beq q q' else false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct _ => false
+  | _, _, join (n := n₁) (m := m₁) θ q₁ q₂, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project _ _ => false
+    | join (n := n₁') (m := m₁') θ' q₁' q₂' =>
+      if h : n₁ = n₁' ∧ m₁ = m₁' then
+        decide ((h.1 ▸ h.2 ▸ θ : Expr (n₁' + m₁')) = θ') && beq q₁ q₁' && beq q₂ q₂'
+      else false
+    | unionAll _ _ => false
+    | distinct _ => false
+  | _, _, unionAll q₁ q₂, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll q₁' q₂' => beq q₁ q₁' && beq q₂ q₂'
+    | distinct _ => false
+  | _, _, distinct q, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct q' => beq q q'
+
+/-- `beq` is sound: equal results mean equal arities and equal queries. -/
+theorem eq_of_beq {n m : ℕ} {q : Query S n} {q' : Query S m} (h : beq q q' = true) :
+    ∃ h : n = m, h ▸ q = q' := by
+  induction q generalizing m with
+  | table t =>
+    cases q' <;> simp only [beq, decide_eq_true_eq, reduceCtorEq] at h
+    subst h
+    exact ⟨rfl, rfl⟩
+  | select p q ih =>
+    cases q' <;> simp only [beq, reduceCtorEq] at h
+    rename_i p' q'
+    split_ifs at h with hn
+    subst hn
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨rfl, hq⟩ := h
+    obtain ⟨hn', e⟩ := ih hq
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+  | project es q ih =>
+    cases q' <;> simp only [beq, reduceCtorEq] at h
+    split_ifs at h with hn
+    obtain ⟨rfl, rfl⟩ := hn
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨rfl, hq⟩ := h
+    obtain ⟨hn', e⟩ := ih hq
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+  | join θ q₁ q₂ ih₁ ih₂ =>
+    cases q' <;> simp only [beq, reduceCtorEq] at h
+    split_ifs at h with hn
+    obtain ⟨rfl, rfl⟩ := hn
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨⟨rfl, h₁⟩, h₂⟩ := h
+    obtain ⟨hn', e⟩ := ih₁ h₁
+    cases hn'
+    subst e
+    obtain ⟨hn', e⟩ := ih₂ h₂
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+  | unionAll q₁ q₂ ih₁ ih₂ =>
+    cases q' <;> simp only [beq, reduceCtorEq, Bool.and_eq_true] at h
+    obtain ⟨hn', e⟩ := ih₁ h.1
+    cases hn'
+    subst e
+    obtain ⟨hn', e⟩ := ih₂ h.2
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+  | distinct q ih =>
+    cases q' <;> simp only [beq, reduceCtorEq] at h
+    obtain ⟨hn', e⟩ := ih h
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+
+theorem eq_of_beq_self {n : ℕ} {q q' : Query S n} (h : beq q q' = true) : q = q' := by
+  obtain ⟨_, h⟩ := eq_of_beq h
+  exact h
+
+/-- Certified query equivalence: equal simplifications prove `Equiv .ordered q₁ q₂`, hence
+equivalence at every level. -/
+def checkEquiv {n : ℕ} (q₁ q₂ : Query S n) : Check (Equiv .ordered q₁ q₂) :=
+  if h : beq q₁.simplify q₂.simplify = true then
+    .proved ((equiv_simplify q₁).trans ((eq_of_beq_self h) ▸ (equiv_simplify q₂).symm))
+  else .unknown
+
+end Query
+
+end SqlCore
