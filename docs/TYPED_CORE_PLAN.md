@@ -39,6 +39,8 @@ CSLib through the frontier.
 | `SqlCore/Canon.lean` | canonical forms modulo AC, with strong-equivalence certificates |
 | `SqlBridge/CliMain.lean` | `lake exe sqlcore check …`: parse, elaborate, check |
 | `SqlCoreTest/SimplifyExamples.lean` | the frontier's simplifier tests, and checker examples |
+| `SqlCore/Aggregate.lean` | aggregate calls: evaluation over a group, typing, soundness |
+| `SqlCoreTest/AggregateExamples.lean` | `GROUP BY` and aggregates checked by `decide` |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -80,7 +82,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     `=`, `<>`, `+`, `*`, `>`/`>=` turned into `<`/`<=`); the checkers compare canonical forms
   - [x] Tactics `sql_expr_equiv`, `sql_query_equiv` (`decide +kernel`)
   - [x] Comparison with `SqlEquiv`'s certified rewriter (below)
-- [ ] Phase 8: features beyond the frontier (#297), *offered upstream*
+- [ ] Phase 8: features beyond the frontier (#297), *offered upstream*. Done when the Spider
+  elaboration rate matches `SqlEquiv` (about 553/564; decided on #297)
+  - [ ] 8a GROUP BY, HAVING, aggregates (#313)
+    - [x] Core: `AggCall`, `Query.aggregate`, typing, type soundness, simplifier and checker
+    - [ ] Elaboration from SQL, differential tests, Spider rate
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -301,6 +307,27 @@ comparison, for `SqlEquiv`.
 Every rewrite of `SqlEquiv`'s certified rewriter on the core fragment is performed. Rewrites
 outside the fragment (`EXISTS`, `LIKE`) are left for phase 8. The typed simplifier also rewrites
 queries (pushdown, projection fusion), which `SqlEquiv`'s rewriter does not.
+
+## Phase 8 notes
+
+Decisions (#297): GROUP BY and aggregates come first. The phase 9 bar is matching `SqlEquiv` on
+Spider. `AVG` is ill-typed until the #201 scale policy is decided.
+
+**8a, core (#313).**
+
+- `AggCall n` covers `COUNT(*)`, `COUNT/SUM([DISTINCT] e)`, `MIN(e)` and `MAX(e)`.
+  - `NULL` arguments are ignored. `SUM`/`MIN`/`MAX` over no value give `NULL`; `COUNT` gives `0`.
+  - `SUM` keeps `int`/`decimal`. `MIN`/`MAX` take int, decimal or text; booleans are ill-typed,
+    following Postgres (registry row 14).
+- `Query.aggregate keys aggs q : Query S (g + a)` groups by key tuple, in order of first
+  appearance, with `NULL` keys grouping together. With no keys there is one group even for no
+  rows. `HAVING` is a `select` over it.
+- Type soundness (`Query.eval_ok_or_divisionByZero`) covers it, as do `divSafe` and `IsSafe`.
+- Congruence is proved at the ordered level only (`Equiv.aggregate`). At the bag level it needs
+  grouping to be insensitive to input order. At the set level it fails, since counts change.
+- The simplifier keeps a `WHERE` above an aggregate. Pushing it below is valid only for
+  predicates on the keys, and would be a new law.
+- Every behaviour was checked against Postgres 16 and DuckDB.
 
 ## Rules for every phase
 
