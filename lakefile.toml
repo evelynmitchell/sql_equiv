@@ -58,6 +58,10 @@ name = "SqlCoreTest"
 globs = ["SqlCoreTest.*"]
 
 [[lean_exe]]
+name = "spider_elab"
+root = "SqlBridge.SpiderMain"
+
+[[lean_exe]]
 name = "sqlcore_test"
 root = "SqlCoreTest.Main"
 

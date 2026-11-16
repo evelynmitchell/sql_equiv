@@ -32,6 +32,7 @@ CSLib through the frontier.
 | `SqlCoreTest/ExprDiffTest.lean` | generated well-typed expressions evaluated against `SqlEquiv.evalExpr` |
 | `SqlCoreTest/QueryExamples.lean` | the frontier's query examples, decimals in queries, and queries over the typed test database |
 | `SqlBridge/Elab.lean` | elaborator from parsed SQL to typed queries (library `SqlBridge`) |
+| `SqlBridge/Spider.lean`, `SqlBridge/SpiderMain.lean` | Spider schemas; `lake exe spider_elab`, driven by `tools/spider_elab_baseline.py` |
 | `SqlCoreTest/BridgeDiffTest.lean` | parsed SQL through `SqlBridge` and through `SqlEquiv`, compared as bags |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
@@ -62,7 +63,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [ ] Phase 6: bridge from the parsed AST, differential tests against Postgres and DuckDB (#295)
   - [x] Elaborator `SqlBridge/Elab.lean`: parsed `SqlEquiv.Query` to `SqlCore.Query S n`
   - [x] Schema from the test database; differential test against `SqlEquiv` on parsed SQL
-  - [ ] Schema from Spider's `tables.json`, and the Spider elaboration rate (baseline)
+  - [x] Schema from Spider's `tables.json`, and the Spider elaboration rate: **129/564 (22.9%)**,
+    [`elab_report.md`](../benchmarks/spider/elab_report.md), ratcheted in CI
   - [ ] Differential test against DuckDB; register differences in `IMPLEMENTATION_DEFINED.md`
   - [ ] Stretch: elaborator correctness for single-table `WHERE` and column lists
 - [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
@@ -197,6 +199,16 @@ cross joins, `WHERE`, `UNION ALL`, and `UNION`. The elaborator makes these choic
 - A multi-branch `CASE` is nested `caseWhen`, and a missing `ELSE` is `NULL`.
 - An untyped `NULL` takes the type of the operand it meets, or the other branch of a `CASE`.
 - Names match exactly (decision 7): `SELECT NAME FROM users` is `unknownColumn`.
+
+Spider: `tools/spider_elab_baseline.py` elaborates the 564 dev queries against their schemas.
+129 elaborate (22.9%). The count is ratcheted in `tools/spider_elab_minimum.txt`, and CI checks
+it. The failure classes are phase 8's work list: GROUP BY 149, aggregates 122, ORDER BY 67,
+subqueries 46, INTERSECT 21, EXCEPT 16, LIKE 8, derived tables 1. 5 more queries are ill-typed
+under Spider's declared column types, for example a `text` age compared with `32`; sqlite
+accepts these through type affinity.
+
+Names are lowercased for Spider (`NamedSchema.fold`), because sqlite is case-insensitive. The
+lookup is still exact after that normalisation, as decision 7 asks.
 
 `SqlBridge` lives in its own library, because it imports both `SqlEquiv` and `SqlCore`. The trust
 guard covers it.

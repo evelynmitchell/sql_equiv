@@ -39,10 +39,13 @@ def ElabError.category : ElabError → String
   | .unsupported what => s!"unsupported: {what}"
   | .typeError _ => "typeError"
 
-/-- A schema with names for its tables. -/
+/-- A schema with names for its tables. `fold` normalises every referenced name (tables,
+aliases, columns) before the exact lookup of decision 7; it is the identity unless the schema's
+names were normalised the same way (for Spider: lowercase). -/
 structure NamedSchema where
   S : DbSchema
   tables : List (String × S.Table)
+  fold : String → String := id
 
 abbrev ElabM := Except ElabError
 
@@ -74,7 +77,7 @@ def elabBinOp : SqlEquiv.BinOp → ElabM BinOp
 
 section Exprs
 
-variable {n : ℕ} (cols : Fin n → Column)
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
 
 /-- The typing context of a scope. -/
 def ctx : Fin n → SqlType := fun i => (cols i).type
@@ -86,7 +89,7 @@ def retypeNull (e other : Expr n) : Expr n :=
   | e, _ => e
 
 def resolve (q : Option String) (name : String) : ElabM (Fin n) :=
-  match resolveColumn cols q name with
+  match resolveColumn cols (q.map fold) (fold name) with
   | .ok i => pure i
   | .error .unknownColumn => throw (.unknownColumn q name)
   | .error .ambiguousColumn => throw (.ambiguousColumn q name)
@@ -100,7 +103,7 @@ def elabExpr : SqlEquiv.Expr → ElabM (Expr n)
     | some w, _ => pure (.lit w)
     | none, .null τ => pure (.null ((τ.bind elabType).getD .int))
     | none, _ => pure (.null .int)
-  | .col c => return .col (← resolve cols c.table c.column)
+  | .col c => return .col (← resolve cols fold c.table c.column)
   | .binOp op a b => do
     let op ← elabBinOp op
     let a ← elabExpr a
@@ -162,23 +165,23 @@ def requalify {n : ℕ} (q : String) (cols : Fin n → Column) : Fin n → Colum
 variable (N : NamedSchema)
 
 def lookupTable (name : String) : ElabM N.S.Table :=
-  match N.tables.find? (·.1 == name) with
+  match N.tables.find? (·.1 == N.fold name) with
   | some (_, t) => pure t
   | none => throw (.unknownTable name)
 
 def elabFrom : SqlEquiv.FromClause → ElabM (Elaborated N.S)
   | .table ⟨name, al⟩ => do
     let t ← lookupTable N name
-    pure ⟨N.S.arity t, .table t, requalify (al.getD name) (N.S.columns t)⟩
+    pure ⟨N.S.arity t, .table t, requalify (N.fold (al.getD name)) (N.S.columns t)⟩
   | .join l kind r on => do
     let ⟨n, ql, cl⟩ ← elabFrom l
     let ⟨m, qr, cr⟩ ← elabFrom r
     let cols : Fin (n + m) → Column := Fin.append cl cr
     let θ ← match kind, on with
-      | .inner, some e => elabExpr cols e
+      | .inner, some e => elabExpr cols N.fold e
       | .inner, none => pure (.lit (.bool true))
       | .cross, none => pure (.lit (.bool true))
-      | .cross, some e => elabExpr cols e
+      | .cross, some e => elabExpr cols N.fold e
       | .left, _ => throw (.unsupported "LEFT JOIN")
       | .right, _ => throw (.unsupported "RIGHT JOIN")
       | .full, _ => throw (.unsupported "FULL JOIN")
@@ -192,11 +195,11 @@ def elabItems {n : ℕ} (cols : Fin n → Column) :
   | .star none :: rest => do
     return ((List.finRange n).map fun i => (.col i, cols i)) ++ (← elabItems cols rest)
   | .star (some t) :: rest => do
-    let mine := (List.finRange n).filter fun i => (cols i).qualifier == some t
+    let mine := (List.finRange n).filter fun i => (cols i).qualifier == some (N.fold t)
     if mine.isEmpty then throw (.unknownTable t)
     return (mine.map fun i => (.col i, cols i)) ++ (← elabItems cols rest)
   | .exprItem e al :: rest => do
-    let e' ← elabExpr cols e
+    let e' ← elabExpr cols N.fold e
     let some τ := e'.typeOf (ctx cols) | throw (.typeError "SELECT item")
     let name := al.getD (match e with | .col c => c.column | _ => "?column?")
     return (e', { qualifier := none, name, type := τ }) :: (← elabItems cols rest)
@@ -206,8 +209,8 @@ def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
     let ⟨n, q, cols⟩ ← elabFrom N from_
     let q : Query N.S n ← match where_ with
       | none => pure q
-      | some w => do pure (Query.select (← elabExpr cols w) q)
-    let its ← elabItems cols items
+      | some w => do pure (Query.select (← elabExpr cols N.fold w) q)
+    let its ← elabItems N cols items
     let k := its.length
     let es : Fin k → Expr n := fun i => (its[i]).1
     let outCols : Fin k → Column := fun i => (its[i]).2
