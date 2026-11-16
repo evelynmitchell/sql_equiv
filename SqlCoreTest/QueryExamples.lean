@@ -3,9 +3,10 @@
 
   The first part is the worked examples of cslib-frontier's
   `CslibFrontierTests/Languages/SQL/Query.lean` (pinned `e78796a1`, by Evelyn
-  Mitchell and Samuel Schlesinger), up to its equivalence section (phase 5):
+  Mitchell and Samuel Schlesinger), in full:
   bag semantics, three-valued `WHERE`, joins with duplicate and `NULL` keys,
-  strict errors, typing and safety. Results are compared through
+  strict errors, typing and safety, and the separations between the
+  equivalence levels (phase 5). Results are compared through
   `Except.toOption` by `decide`, since rows are functions.
 
   The second part is ours: decimals in queries, and queries over the typed
@@ -163,6 +164,57 @@ example : ¬(divZero empty).IsSafe := by decide
 example (D' : Database S) (hD' : D'.Conforms) : ∃ rs, (empDept.eval D').toOption = some rs := by
   obtain ⟨rs, h⟩ := IsSafe.exists_eval_eq_ok (q := empDept) (by decide) hD'
   exact ⟨rs, by rw [h]; rfl⟩
+
+/-! ### Equivalence levels -/
+
+/-- The employees without a department. -/
+abbrev noDept : Query S 2 := select (unary .isNull (col 1)) emp
+
+-- `UNION ALL` in either order gives the same bag (`Query.unionAll_comm`, used in
+-- `SqlCoreTest.LawExamples`) but not the same list.
+example : ¬Equiv .ordered (unionAll emp noDept) (unionAll noDept emp) := by
+  rw [equiv_ordered_iff]
+  intro h
+  exact absurd (h D hD) (by decide)
+
+-- A table and its `UNION ALL` with itself have the same rows …
+example : Equiv .set (unionAll emp emp) emp := fun D' _ =>
+  .some fun r => by simp only [List.mem_append, or_self]
+
+-- … but not the same multiplicities.
+example : ¬Equiv .bag (unionAll emp emp) emp := by
+  intro h
+  have h' := h D hD
+  simp only [eval_unionAll, eval_table, Except.ok_bind] at h'
+  exact absurd (Option.rel_some_some.mp h').length_eq (by decide)
+
+-- `DISTINCT` sees only sets, so it makes them bag-equivalent.
+example : Equiv .bag (distinct (unionAll emp emp)) (distinct emp) :=
+  Equiv.distinct_of_set fun D' _ => .some fun r => by simp only [List.mem_append, or_self]
+
+-- Equivalences compose by `calc` and weaken to coarser levels.
+example (q₁ q₂ q₃ : Query S 2) (h₁₂ : Equiv .ordered q₁ q₂) (h₂₃ : Equiv .bag q₂ q₃) :
+    Equiv .set q₁ q₃ :=
+  (calc Equiv .bag q₁ q₂ := h₁₂.of_ordered
+    Equiv .bag _ q₃ := h₂₃).mono (by decide)
+
+/-! ### Congruence -/
+
+/-- `dept = 1` and `name = 'ann'` over `emp`. -/
+abbrev isOne : Expr 2 := binary (.cmp .eq) (col 1) (int 1)
+abbrev isAnn : Expr 2 := binary (.cmp .eq) (col 0) (lit (.text "ann"))
+
+-- `AND` commutes inside a `WHERE` clause: the expression law lifts to queries over a well-typed
+-- input, at every level.
+example :
+    Equiv .ordered (select (binary .and isOne isAnn) emp) (select (binary .and isAnn isOne) emp) :=
+  Equiv.select_expr (Γ := S.ctx T.emp) rfl
+    (Expr.Equiv.binary_comm (fun a b => by rw [evalBinOp_and_comm]) _ _)
+
+-- Query arguments are congruences without any typing condition.
+example (q q' : Query S 2) (h : Equiv .bag q q') :
+    Equiv .bag (distinct (select isOne q)) (distinct (select isOne q')) :=
+  (h.select isOne).distinct
 
 end Frontier
 

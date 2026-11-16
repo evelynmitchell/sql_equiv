@@ -31,6 +31,7 @@ CSLib through the frontier.
 | `SqlCoreTest/ExprExamples.lean` | evaluation, typing, safety and lowering examples; soundness on the typed test database |
 | `SqlCoreTest/ExprDiffTest.lean` | generated well-typed expressions evaluated against `SqlEquiv.evalExpr` |
 | `SqlCoreTest/QueryExamples.lean` | the frontier's query examples, decimals in queries, and queries over the typed test database |
+| `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
 `SqlEquiv` stays on Batteries and never imports Mathlib. Mathlib and cslib-frontier
@@ -53,8 +54,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [ ] Correlated-subquery prototype (in #297), alongside phases 3–4
 - [x] **Phase 4: core queries with bag semantics** (#293), *re-derived* (decision 0, revised):
   `SqlCore/Query.lean`, `SqlCore/Except.lean`
-- [ ] Phase 5: equivalence and rewrite laws (#294), *re-derived* like phase 4; the inventory of
-  `SqlEquiv` theorems still applies
+- [x] **Phase 5: equivalence and rewrite laws** (#294), *re-derived* like phase 4: `SqlCore/Equiv.lean`,
+  `QueryEquiv.lean`, `QueryLaws.lean`, `Foundations/`. The inventory of `SqlEquiv` theorems is
+  [`TYPED_CORE_INVENTORY.md`](TYPED_CORE_INVENTORY.md)
 - [ ] Phase 6: bridge from the parsed AST, differential tests against Postgres and DuckDB (#295)
 - [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
 - [ ] Phase 8: features beyond the frontier (#297), *offered upstream*
@@ -147,6 +149,33 @@ Changes from the frontier, all because of decimals:
 
 `SqlCoreTest/QueryExamples.lean` checks queries over the typed `SemanticsTest.testDb` by `decide`:
 a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` price.
+
+## Phase 5 notes
+
+- `Expr.Equiv Γ` holds when two expressions have equal observations (`Except.toOption`) on every row
+  conforming to `Γ`. It is a setoid and a congruence for every constructor, and it is compatible
+  with renaming and substitution.
+- `Query.Equiv ℓ` has three levels, `ordered`, `bag` (`List.Perm`, decision 5) and `set`, over
+  conforming instances. It comes with `mono` and with congruence in every query and expression
+  argument.
+- The laws are the frontier's. The arithmetic identities (`add_zero`, `zero_add`, `sub_zero`,
+  `mul_one`, `one_mul`, `neg_neg`) are generalised from integers to any numeric type, so they also
+  hold for decimals.
+- Ten expression laws were added beyond the frontier: De Morgan (`not_and`, `not_or`),
+  associativity (`and_assoc`, `or_assoc`), distributivity (`and_or_distrib_left`,
+  `or_and_distrib_left`), idempotence (`and_self`, `or_self`, for a boolean operand) and absorption
+  (`and_or_absorb`, `or_and_absorb`, which also need a safe dropped operand). Each is lifted from the
+  `Truth` lattice through the operands' observed truth values.
+- Every side condition is a decidable check: `typeOf … = some τ`, `IsSafe` or `IsSafePredicate`.
+  No law takes a hypothesis quantified over databases or rows. The exceptions are the congruence
+  rules, whose hypothesis is itself an equivalence, and `binary_comm`, which asks for a property of
+  the operator on datums.
+- `SqlCoreTest/LawExamples.lean` shows, for each side condition, a concrete row or instance on which
+  the law fails without it. The query cases are the frontier's; the expression cases are ours.
+- `SqlCore/Foundations/` holds four small lemma files from the frontier's `Foundations`. They stay in
+  their root namespaces (`Option.Rel`, `List`, `Fin`) so that dot notation finds them, and they are
+  candidates for Mathlib and Batteries. The trust guard scans only `SqlCore`, but it collects axioms
+  transitively, so these lemmas are still covered through the theorems that use them.
 
 ## Rules for every phase
 
