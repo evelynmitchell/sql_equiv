@@ -383,7 +383,7 @@ Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125),
 - ORDER BY or LIMIT on a compound query is rejected. The parser binds them to the last branch
   (#317).
 
-The parsed-SQL corpus gained 27 queries; queries with `ORDER BY` are compared as ordered lists on
+The parsed-SQL corpus gained 28 queries (one pins the dialect's default NULL position, a documented DuckDB difference); queries with `ORDER BY` are compared as ordered lists on
 tie-free keys. They agree with DuckDB. They agree with `SqlEquiv` except two positional
 `ORDER BY` queries, where `SqlEquiv` sorts by a constant (#316).
 

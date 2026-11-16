@@ -21,7 +21,9 @@ open SqlCore SqlBridge SqlCoreTest.SchemaExamples SqlCoreTest.BridgeDiff
 /-- Queries on which DuckDB legitimately differs, with the registry row. -/
 def expectedDifferences : List (String × String) := [
   ("SELECT id * 10 + 1, age - 1, age / 7, age % 7 FROM users",
-    "integer `/`: DuckDB divides as DOUBLE (registry row 6)")
+    "integer `/`: DuckDB divides as DOUBLE (registry row 6)"),
+  ("SELECT name, staff FROM museum ORDER BY staff DESC, name",
+    "default NULL position: DuckDB puts NULLs last under DESC, the standard dialect first (registry row 1)")
 ]
 
 def sqlType : SqlType → String

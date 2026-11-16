@@ -87,6 +87,8 @@ def corpus : List (String × Expect) := [
   ("SELECT name, staff FROM museum ORDER BY staff DESC NULLS LAST, name", .agree),
   ("SELECT name FROM items ORDER BY price DESC NULLS LAST", .agree),
   ("SELECT name FROM items ORDER BY price NULLS FIRST", .agree),
+  -- no NULLS clause: the parser's dialect rule (standard: NULL largest, so first under DESC)
+  ("SELECT name, staff FROM museum ORDER BY staff DESC, name", .agree),
   ("SELECT DISTINCT department FROM users ORDER BY department", .agree),
   ("SELECT DISTINCT department FROM users ORDER BY 1 DESC LIMIT 2", .sqlEquivBug "#316: positional ORDER BY"),
   ("SELECT department, COUNT(*) FROM users GROUP BY department ORDER BY department", .agree),
