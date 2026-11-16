@@ -312,8 +312,12 @@ def elabOrderKey {m : ℕ} (fold : String → String) (sc : SqlEquiv.Expr → El
 
 /-- Projection, `DISTINCT`, `ORDER BY` and `LIMIT`/`OFFSET` over a scoped `SELECT`. Without
 `DISTINCT` the sort is below the projection, so a key may be any expression of the input. With
-`DISTINCT` it is above, and every key must be a selected expression (the standard and Postgres;
-registry row 5 / T13). -/
+`DISTINCT` and every key selected, the sort is above the `DISTINCT`, over the output columns.
+With a key that is not selected (registry row 5: the parser has already rejected it in the
+`standard` and `postgres` dialects), each distinct row sorts by the key of its first source row,
+as in sqlite and DuckDB: `aggregate` groups by the selected expressions, in order of first
+appearance like `DISTINCT`, with `AggCall.first` of each key; the sort is over those columns, and
+a projection keeps the selected ones. -/
 def finishSelect {S : DbSchema} (fold : String → String) (sc : Scoped S) (distinct : Bool)
     (orderBy : List SqlEquiv.OrderByItem) (limitVal offsetVal : Option ℕ) :
     ElabM (Elaborated S) := do
@@ -326,17 +330,20 @@ def finishSelect {S : DbSchema} (fold : String → String) (sc : Scoped S) (dist
   let o := keyList.length
   let proj (q : Query S sc.m) : Query S k := .project (fun i => (its[i]).1) q
   let q : Query S k ←
-    if distinct then do
-      let outKeys ← keyList.mapM fun key =>
+    if distinct then
+      let outKeys := keyList.filterMap fun key =>
         match its.findIdx? (·.1 == key.e) with
-        | some i =>
-          if h : i < k then pure ({ key with e := .col ⟨i, h⟩ } : SortKey k)
-          else throw (.unsupported "ORDER BY")
-        | none => throw (.unsupported "ORDER BY key not selected under DISTINCT")
+        | some i => if h : i < k then some ({ key with e := .col ⟨i, h⟩ } : SortKey k) else none
+        | none => none
       let dq : Query S k := .distinct (proj sc.q)
       if h : outKeys.length = o then
         pure (if o = 0 then dq else .orderBy (fun i : Fin o => outKeys[i]'(by omega)) dq)
-      else throw (.unsupported "ORDER BY")
+      else
+        -- a key that is not selected: sort by its value on each distinct row's first source row
+        let grouped : Query S (k + o) :=
+          .aggregate (fun i : Fin k => (its[i]).1) (fun j : Fin o => .first (keyList[j]).e) sc.q
+        let sortKeys : Fin o → SortKey (k + o) := fun j => { keyList[j] with e := .col (Fin.natAdd k j) }
+        pure (.project (fun i : Fin k => .col (Fin.castAdd o i)) (.orderBy sortKeys grouped))
     else
       pure (if o = 0 then proj sc.q
         else proj (.orderBy (fun i : Fin o => keyList[i]) sc.q))

@@ -78,4 +78,24 @@ example {q q' : Query S 2} (h : Equiv .bag q q') :
 example : Equiv .ordered (orderBy ![asc (col 0)] (select (lit (.bool true)) emp))
     (orderBy ![asc (col 0)] emp) := by sql_query_equiv
 
+/-! ### `SELECT DISTINCT … ORDER BY` an unselected key (registry row 5, `firstRow`)
+
+`SELECT DISTINCT id FROM dept ORDER BY title DESC`, as the bridge elaborates it in the sqlite and
+duckdb dialects: group by `id`, take the title of each group's first row, sort, keep `id`. The
+first titles are eng (1), law (2) and tmp (NULL), so the order is NULL, 2, 1; MAX would give ops
+for 1 and the order NULL, 1, 2. -/
+example : ((project ![col 0] (orderBy ![desc (col 1)]
+    (aggregate ![col 0] ![.first (col 1)] dept))).eval D).toOption =
+    some [![none], ![some (.int 2)], ![some (.int 1)]] := by
+  decide +kernel
+
+-- `first` takes each group's first row, and keeps its NULL: with the NULL department sorted first,
+-- the first department is NULL, not the first non-null one (DuckDB's `first`, not `any_value`).
+example : ((aggregate ![col 0] ![.first (col 1)] emp).eval D).toOption = some
+    [![some (.text "ann"), some (.int 1)], ![some (.text "bob"), some (.int 1)],
+     ![some (.text "cy"), none]] := by decide
+example : ((aggregate (g := 0) ![] ![.first (col 1)] (orderBy ![⟨col 1, false, true⟩] emp)).eval
+    D).toOption = some [![none]] := by decide +kernel
+example : (aggregate (g := 0) ![] ![.first (col 1)] emp).typeOf = some ![.int] := by decide
+
 end SqlCoreTest.OrderByExamples

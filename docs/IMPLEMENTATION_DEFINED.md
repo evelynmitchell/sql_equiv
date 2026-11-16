@@ -103,7 +103,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 2 | Order of rows tied on every sort key | Unspecified | Arbitrary | Arbitrary | Arbitrary | Stable: input order | decided | Spider harness **tie-valid** category + self-test (#249) |
 | 3 | Double-quoted text `SELECT "abc"` | Delimited identifier | String literal (fallback) | Identifier → error | Identifier → error | String literal | decided (#215; we have no quoted identifiers) | `Test/ParserTest.lean`; no differential (DuckDB/Postgres reject) |
 | 4 | ON-less JOIN `A JOIN B WHERE …` | Join condition required | Cross product + WHERE | Syntax error | Syntax error | Cross product (sqlite) | decided | `ParserTest`, `DiffSqlite` case; DuckDB KNOWN DIVERGENCES |
-| 5 | `SELECT DISTINCT name … ORDER BY price` (sort key not selected) | Not allowed | Sorts (by some source row) | Sorts | Error | Keys resolve against output columns only; key ties silently, so output stays in input order | **gap**: matches no engine; Postgres errors, the others sort. Decision pending (error per the standard, or sort; could be a dialect setting) | Unit pin `distinct_order_by_unselected_keeps_input_order`; DiffSqlite and DuckDB KNOWN DIVERGENCES |
+| 5 | `SELECT DISTINCT name … ORDER BY price` (sort key not selected) | Not allowed | Sorts by the key of each value's **first** source row | Same (plans it as `first(price)`) | Error ("ORDER BY expressions must appear in select list") | **Per dialect** (`DialectConfig.distinctOrderBy`): standard, postgres → parse error (`reject`); sqlite, duckdb → accepted (`firstRow`). In the accepting dialects `SqlEquiv` still ties the key, so output keeps input order (gap, #320); `SqlCore` implements `firstRow` (T13) | decided (#319); SqlEquiv evaluation in sqlite/duckdb open (#320) | Unit pins `distinct_order_by_unselected_per_dialect`, `distinct_order_by_selected_accepted`, `distinct_order_by_unselected_keeps_input_order` (gap); `DuckdbDiffTest` (`SqlCore` vs DuckDB, first-row cases); DiffSqlite and DuckDB KNOWN DIVERGENCES (`SqlEquiv` gap) |
 | 6 | Integer division `7 / 2`, `-7 / 2`, `-7 % 2` | Implementation-defined precision/scale | 3, -3, -1 (truncate toward zero) | 3.5 (`/` is float division); `//` gives 3, -3; `%` gives -1 | 3, -3, -1 | 3, -3, -1 (truncate toward zero; was Euclidean -4 / 1 before #262) | decided (#262) | Unit pins `int_division_*`, `int_mod_sign_of_dividend`; DiffSqlite agreement; DiffDuckdb `%` agreement + KNOWN DIVERGENCES for `/` |
 | 7 | AVG over integers (`AVG` of 1, 2) | Implementation-defined precision/scale | 1.5 | 1.5 | 1.5 | **1** (truncates; no fractional result type for integer AVG) | **open**: diverges from all three; tied to #201 (decimal division policy) and #202 (floats). *Not* the main cause of the AVG-in-subquery Spider failures (see "Bugs found" below) | Unit pin `avg` (750/4 → 187); DuckDB KNOWN DIVERGENCES (AVG over decimals) |
 | 8 | LIKE case sensitivity `'abc' LIKE 'ABC'` | Collation-dependent | true (ASCII case-insensitive by default) | false | false | **Per dialect** (`DialectConfig.likeCase`): sqlite → ASCII case-insensitive (`BinOp.likeCI`); standard, duckdb, postgres → case-sensitive (`BinOp.like`) | decided (#262) | Unit pins `like_*` (every dialect, non-ASCII, NULL, AST); DiffSqlite and DiffDuckdb cases in each dialect |
@@ -135,7 +135,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T10 | `AVG` over integers (`AVG` of 1, 2), row 7 | `1.5` (DOUBLE) | `1.5000…` (numeric) | Ill-typed until the #201 scale policy | open (#201; decided on #297) | `BridgeDiffTest` (rejection) |
 | T11 | `MIN`/`MAX` over booleans, row 14 | Boolean result | Error | Ill-typed | decided (#313) | `AggregateExamples` |
 | T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` splits typed NULLs (#315) | `AggregateExamples`, `DuckdbDiffTest` |
-| T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts | Error | `unsupported` at elaboration: under DISTINCT every key must be a selected expression | decided (standard and Postgres; #318) | `BridgeDiffTest` (rejection) |
+| T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts by the first source row's `b` | Error | Follows the parse (row 5): rejected in standard/postgres; in sqlite/duckdb, `aggregate` by the selected expressions with `AggCall.first b`, sorted, projected | decided (#319) | `OrderByExamples`; `DuckdbDiffTest` (duckdb-dialect corpus, ordered, agrees; also checked on sqlite) |
 | T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
 | T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318); `SqlEquiv` sorts by a constant (#316) | `BridgeDiffTest`, `DuckdbDiffTest` |
 
@@ -213,7 +213,8 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 
 Rows that do not yet meet the testing requirements in §2:
 
-- **Row 5**: decide whether to error (Postgres, standard) or sort (sqlite,
-  DuckDB), possibly per dialect; pinned in the meantime.
+- **Row 5**: decided per dialect (#319), but `SqlEquiv`'s evaluator still
+  ties an unselected key in the sqlite and duckdb dialects instead of using
+  the first source row (#320); pinned in the meantime.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.

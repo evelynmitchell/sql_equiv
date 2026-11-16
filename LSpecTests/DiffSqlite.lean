@@ -33,9 +33,12 @@
   - Row 11, number vs numeric-looking string (`age = '30'`): sqlite converts
     the string; we treat it as a type error (#254, decided: keep). Pinned by
     `int_vs_numeric_string_literal_drops_row` and siblings.
-  - Row 5, DISTINCT + ORDER BY on a non-selected column: sqlite sorts by a
-    source row; ours ties the key (output keeps input order). Gap, pinned by
-    `distinct_order_by_unselected_keeps_input_order`.
+  - Row 5, DISTINCT + ORDER BY on a non-selected column: accepted in the
+    sqlite dialect (`DialectConfig.distinctOrderBy = .firstRow`); sqlite sorts
+    by each value's first source row, but SqlEquiv's evaluator still ties the
+    key (output keeps input order). Gap (#320), pinned by
+    `distinct_order_by_unselected_keeps_input_order`; the typed core agrees
+    with the engines (`SqlCoreTest/DuckdbDiffTest.lean`).
   (Row 8, LIKE letter case, is per dialect: this harness parses in the
   sqlite dialect, so LIKE is ASCII case-insensitive here and has cases below.)
 

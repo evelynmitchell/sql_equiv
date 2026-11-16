@@ -96,7 +96,6 @@ def corpus : List (String × Expect) := [
   ("SELECT department, SUM(age) AS total FROM users GROUP BY department ORDER BY total LIMIT 2", .agree),
   ("SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.amount DESC", .agree),
   ("SELECT name FROM users LIMIT 2", .agree),
-  ("SELECT DISTINCT department FROM users ORDER BY age", .rejected "unsupported: ORDER BY key not selected"),
   ("SELECT name FROM users ORDER BY 3", .rejected "unsupported: ORDER BY position"),
   ("SELECT name FROM users ORDER BY name + 1", .rejected "typeError"),
   ("SELECT name, age AS name FROM users ORDER BY name", .rejected "ambiguousColumn"),

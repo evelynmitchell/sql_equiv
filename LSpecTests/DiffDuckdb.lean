@@ -20,10 +20,12 @@
     same #201 policy decision; DuckDB computes it.
   - (resolved) ORDER BY on non-projected columns used to no-op (#206); now
     fixed and covered by the ORDER BY agreement case below.
-  - DISTINCT + ORDER BY on a non-projected column: we follow the SQL standard
-    (sort keys must come from the output columns; the key silently ties), but
-    DuckDB is permissive and sorts by the pre-dedup source. Do not add such a
-    case without deciding which behavior to adopt.
+  - DISTINCT + ORDER BY on a non-projected column (registry row 5): accepted
+    in the duckdb dialect (`firstRow`); DuckDB sorts by each value's first
+    source row (`first(key)`), but SqlEquiv's evaluator still ties the key.
+    Gap (#320); the typed core agrees with DuckDB
+    (`SqlCoreTest/DuckdbDiffTest.lean`). Do not add such a case here until
+    #320 is fixed.
   - Number vs numeric-looking string (`age = '30'`, registry row 11): DuckDB
     converts the string; we treat it as a type error and drop the row (#254,
     decided: keep).

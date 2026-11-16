@@ -91,7 +91,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [ ] 8b ORDER BY, LIMIT, OFFSET (#318)
     - [x] Core: `SortKey`, `Query.orderBy`, `Query.limit`, typing, type soundness, congruences,
       simplifier and checker
-    - [x] Elaboration from SQL, differential tests, Spider rate: **363/564 (64.4%)**, up from 268
+    - [x] Elaboration from SQL, differential tests, Spider rate: **364/564 (64.5%)**, up from 268
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -377,8 +377,15 @@ Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125),
   those of the `SELECT` list and `HAVING`.
 - A bare name is first looked up among the output names (aliases and selected columns). An
   integer literal is a 1-based position, as in Postgres, sqlite and DuckDB.
-- Under DISTINCT the sort is above the `DISTINCT`. Every key must be a selected expression (the
-  standard and Postgres; registry row 5 / T13).
+- Under DISTINCT with every key selected, the sort is above the `DISTINCT`, over the output
+  columns.
+- A key that is not selected under DISTINCT is a dialect choice (registry row 5, decided on #319):
+  the parser rejects it in `standard` and `postgres`, as Postgres does. In `sqlite` and `duckdb`,
+  each distinct row sorts by the key of its first source row, as both engines do. The bridge builds
+  `aggregate` by the selected expressions with the new `AggCall.first` of each key (the first
+  row's value, `NULL` included, evaluated strictly on every row), sorts on those columns and
+  projects the selected ones (T13).
+- `spider_elab` parses in the `sqlite` dialect, like the SqlEquiv Spider harness.
 - `LIMIT`/`OFFSET` wrap the result.
 - ORDER BY or LIMIT on a compound query is rejected. The parser binds them to the last branch
   (#317).
@@ -387,7 +394,7 @@ The parsed-SQL corpus gained 28 queries (one pins the dialect's default NULL pos
 tie-free keys. They agree with DuckDB. They agree with `SqlEquiv` except two positional
 `ORDER BY` queries, where `SqlEquiv` sorts by a constant (#316).
 
-Spider: 363/564 now elaborate. The largest remaining classes:
+Spider: 364/564 now elaborate. The largest remaining classes:
 
 | Class | Queries | Notes |
 |---|---:|---|

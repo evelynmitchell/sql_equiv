@@ -41,6 +41,11 @@ inductive AggCall (n : ℕ) where
   | countStar
   /-- `fn([DISTINCT] e)`. -/
   | call (fn : AggFn) (distinct : Bool) (e : Expr n)
+  /-- The value of `e` on the first row of the group, `NULL` included (DuckDB's `first`). It has
+  no SQL syntax here: the bridge uses it for the sort key of `SELECT DISTINCT … ORDER BY` a key
+  that is not selected (registry row 5, `firstRow`). Like every aggregate, it evaluates `e` on
+  every row, so a failure on any row fails the group. -/
+  | first (e : Expr n)
   deriving DecidableEq, Repr
 
 namespace Value
@@ -87,6 +92,9 @@ def eval : AggCall n → List (Row n) → Except EvalError Datum
     let ds ← rs.mapM e.eval
     let vs := ds.filterMap id
     fn.apply (if distinct then vs.dedup else vs)
+  | first e, rs => do
+    let ds ← rs.mapM e.eval
+    return ds.head?.getD none
 
 /-- The result type of an aggregate call, if it is well-typed. -/
 def typeOf (Γ : Fin n → SqlType) : AggCall n → Option SqlType
@@ -103,11 +111,13 @@ def typeOf (Γ : Fin n → SqlType) : AggCall n → Option SqlType
     | some .decimal => some .decimal
     | some .text => some .text
     | _ => none
+  | first e => e.typeOf Γ
 
 /-- Every division in the argument is by a nonzero numeric literal. -/
 def divSafe : AggCall n → Bool
   | countStar => true
   | call _ _ e => e.divSafe
+  | first e => e.divSafe
 
 /-! ### Soundness -/
 
@@ -206,6 +216,13 @@ theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
         exact hdτ (some v) (by simpa using hd)
       obtain ⟨d, hd, hdσ⟩ := apply_type hvs hfn
       exact .inl ⟨d, by simpa [eval, hds] using hd, hdσ⟩
+    · exact .inr ⟨by simp [eval, hds], hs⟩
+  | first e =>
+    rcases mapM_eval_ok_or_divisionByZero hrs ha with ⟨ds, hds, hdτ⟩ | ⟨hds, hs⟩
+    · refine .inl ⟨ds.head?.getD none, by simp [eval, hds, pure, Except.pure], ?_⟩
+      rcases ds with _ | ⟨d, ds⟩
+      · trivial
+      · exact hdτ d (by simp)
     · exact .inr ⟨by simp [eval, hds], hs⟩
 
 /-- Evaluate a list of aggregate calls over a group: the row of results, or the first error. -/
