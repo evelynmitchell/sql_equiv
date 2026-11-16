@@ -22,6 +22,7 @@ public import SqlCore.Column
 public import SqlCore.Schema
 public import SqlCore.Expr
 public import SqlCore.Typing
+public import SqlCore.Aggregate
 public import SqlCore.Preconditions
 public import SqlCore.Query
 public import SqlCore.Equiv

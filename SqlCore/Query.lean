@@ -9,6 +9,7 @@ module
 public import SqlCore.Except
 public import SqlCore.Schema
 public import SqlCore.Typing
+public import SqlCore.Aggregate
 public import Mathlib.Data.List.Dedup
 public import Mathlib.Data.List.ProdSigma
 
@@ -231,7 +232,7 @@ theorem evalTruth_ok_or_divisionByZero {Γ : Fin n → SqlType} {r : Row n} (hr 
 
 /-- On rows conforming to `Γ`, `WHERE` with a boolean predicate keeps some of the rows, or divides
 by zero. -/
-private theorem filterRows_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+theorem filterRows_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
     (hrs : ∀ r ∈ rs, r.Conforms Γ) {p : Expr n} (hp : p.typeOf Γ = some .bool) :
     (∃ rs', p.filterRows rs = .ok rs' ∧ ∀ r ∈ rs', r ∈ rs) ∨
       (p.filterRows rs = .error .divisionByZero ∧ p.divSafe = false) := by
@@ -245,7 +246,7 @@ private theorem filterRows_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : L
 
 /-- Type soundness for `SELECT` lists: on a conforming row, well-typed expressions give a row of
 their types, or one of them divides by zero. -/
-private theorem evalRow_ok_or_divisionByZero {Γ : Fin n → SqlType} {Δ : Fin k → SqlType}
+theorem evalRow_ok_or_divisionByZero {Γ : Fin n → SqlType} {Δ : Fin k → SqlType}
     {r : Row n} (hr : r.Conforms Γ) {es : Fin k → Expr n}
     (hes : ∀ i, (es i).typeOf Γ = some (Δ i)) :
     (∃ d, evalRow es r = .ok d ∧ d.Conforms Δ) ∨
@@ -296,6 +297,81 @@ theorem isSafePredicate_eqCols_iff {Γ : Fin n → SqlType} {Δ : Fin m → SqlT
 
 end Expr
 
+/-! ### Grouping (phase 8a, #313) -/
+
+namespace Row
+
+variable {g : ℕ}
+
+/-- Add a row to the group of its key, or open a new group at the end. -/
+def insertGroup (k : Row g) (r : Row n) :
+    List (Row g × List (Row n)) → List (Row g × List (Row n))
+  | [] => [(k, [r])]
+  | (k', rs) :: gs => if k' = k then (k', rs ++ [r]) :: gs else (k', rs) :: insertGroup k r gs
+
+def groupAux (acc : List (Row g × List (Row n))) : List (Row g × Row n) → List (Row g × List (Row n))
+  | [] => acc
+  | (k, r) :: l => groupAux (insertGroup k r acc) l
+
+/-- The groups of keyed rows, in order of first appearance. With no key columns there is exactly
+one group, even for no rows, as an aggregate query without `GROUP BY` returns one row. -/
+def groups (keyed : List (Row g × Row n)) : List (Row g × List (Row n)) :=
+  if g = 0 then [(fun _ => none, keyed.map Prod.snd)] else groupAux [] keyed
+
+/-- Every group is nonempty, and pairs its key with rows keyed by it in `src`. -/
+def GroupsOf (src : List (Row g × Row n)) (gs : List (Row g × List (Row n))) : Prop :=
+  ∀ grp ∈ gs, grp.2 ≠ [] ∧ ∀ r ∈ grp.2, (grp.1, r) ∈ src
+
+theorem groupsOf_insertGroup {src : List (Row g × Row n)} {k : Row g} {r : Row n}
+    (hkr : (k, r) ∈ src) : ∀ {gs}, GroupsOf src gs → GroupsOf src (insertGroup k r gs)
+  | [], _ => by
+    intro grp hgrp
+    simp only [insertGroup, List.mem_singleton] at hgrp
+    subst hgrp
+    exact ⟨by simp, by simpa using hkr⟩
+  | (k', rs) :: gs, h => by
+    intro grp hgrp
+    unfold insertGroup at hgrp
+    split_ifs at hgrp with hk
+    · subst hk
+      rcases List.mem_cons.mp hgrp with rfl | hgrp
+      · refine ⟨by simp, fun r' hr' => ?_⟩
+        rcases List.mem_append.mp hr' with hr' | hr'
+        · exact (h (k', rs) (by simp)).2 r' hr'
+        · simp only [List.mem_singleton] at hr'
+          exact hr' ▸ hkr
+      · exact h grp (List.mem_cons_of_mem _ hgrp)
+    · rcases List.mem_cons.mp hgrp with rfl | hgrp
+      · exact h _ (by simp)
+      · exact groupsOf_insertGroup hkr (fun grp' hg' => h grp' (List.mem_cons_of_mem _ hg')) grp hgrp
+
+theorem groupsOf_groupAux {src : List (Row g × Row n)} :
+    ∀ {acc l}, GroupsOf src acc → (∀ x ∈ l, x ∈ src) → GroupsOf src (groupAux acc l)
+  | _, [], h, _ => h
+  | _, (k, r) :: l, h, hl => by
+    unfold groupAux
+    exact groupsOf_groupAux (groupsOf_insertGroup (hl _ (by simp)) h)
+      (fun x hx => hl x (List.mem_cons_of_mem _ hx))
+
+/-- The rows of a group come from the input, and its key is the key of an input row (or there are
+no key columns). -/
+theorem mem_groups {keyed : List (Row g × Row n)} {grp : Row g × List (Row n)}
+    (h : grp ∈ groups keyed) :
+    (∀ r ∈ grp.2, ∃ k, (k, r) ∈ keyed) ∧ (g = 0 ∨ ∃ r, (grp.1, r) ∈ keyed) := by
+  unfold groups at h
+  split_ifs at h with hg
+  · simp only [List.mem_singleton] at h
+    subst h
+    refine ⟨fun r hr => ?_, .inl hg⟩
+    obtain ⟨⟨k, r'⟩, hkr, rfl⟩ := List.mem_map.mp hr
+    exact ⟨k, hkr⟩
+  · obtain ⟨hne, hall⟩ := groupsOf_groupAux (src := keyed) (fun _ h => absurd h List.not_mem_nil)
+      (fun _ hx => hx) grp h
+    obtain ⟨r, hr⟩ := List.exists_mem_of_ne_nil _ hne
+    exact ⟨fun r hr => ⟨grp.1, hall r hr⟩, .inr ⟨r, hall r hr⟩⟩
+
+end Row
+
 /-! ### Queries -/
 
 /-- A query over the schema `S` whose result rows have `n` columns. -/
@@ -314,6 +390,12 @@ inductive Query (S : DbSchema) : ℕ → Type where
   /-- `SELECT DISTINCT * FROM q`: one copy of each row of `q`. Rows with `NULL` in the same places
   and equal values elsewhere are duplicates. -/
   | distinct {n : ℕ} (q : Query S n) : Query S n
+  /-- `SELECT keys, aggs FROM q GROUP BY keys` (phase 8a, #313): one row per group of the rows of
+  `q` with equal key values (`NULL` keys group together), in order of first appearance, made of
+  the key values followed by the aggregates over the group. With no keys there is one group,
+  even for no rows. -/
+  | aggregate {n g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → AggCall n) (q : Query S n) :
+      Query S (g + a)
 
 namespace Query
 
@@ -334,6 +416,10 @@ def eval (D : Database S) : {n : ℕ} → Query S n → Except EvalError (List (
     let ss ← q₂.eval D
     return rs ++ ss
   | _, distinct q => do return (← q.eval D).dedup
+  | _, aggregate keys aggs q => do
+    let rs ← q.eval D
+    let keyed ← rs.mapM fun r => do return (← Expr.evalRow keys r, r)
+    (Row.groups keyed).mapM fun kg => do return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)
 
 section Eval
 
@@ -357,6 +443,13 @@ theorem eval_unionAll (q₁ q₂ : Query S n) :
 
 theorem eval_distinct (q : Query S n) :
     (distinct q).eval D = (do return (← q.eval D).dedup) := rfl
+
+theorem eval_aggregate {g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → AggCall n) (q : Query S n) :
+    (aggregate keys aggs q).eval D = (do
+      let rs ← q.eval D
+      let keyed ← rs.mapM fun r => do return (← Expr.evalRow keys r, r)
+      (Row.groups keyed).mapM fun kg => do return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)) :=
+  rfl
 
 end Eval
 
@@ -400,6 +493,14 @@ def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
     let Γ ← q₁.typeOf
     if q₂.typeOf = some Γ then some Γ else none
   | _, distinct q => q.typeOf
+  | _, aggregate keys aggs q => do
+    let Γ ← q.typeOf
+    if h₁ : ∀ i, ((keys i).typeOf Γ).isSome then
+      if h₂ : ∀ j, ((aggs j).typeOf Γ).isSome then
+        some (Fin.append (fun i => ((keys i).typeOf Γ).get (h₁ i))
+          (fun j => ((aggs j).typeOf Γ).get (h₂ j)))
+      else none
+    else none
 
 @[simp] theorem typeOf_table (t : S.Table) : (table t).typeOf = some (S.ctx t) := rfl
 
@@ -455,6 +556,16 @@ theorem typeOf_unionAll_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType}
 
 @[simp] theorem typeOf_distinct (q : Query S n) : (distinct q).typeOf = q.typeOf := rfl
 
+theorem typeOf_aggregate_eq_some {g a : ℕ} {keys : Fin g → Expr n} {aggs : Fin a → AggCall n}
+    {q : Query S n} {Γ' : Fin (g + a) → SqlType} (h : (aggregate keys aggs q).typeOf = some Γ') :
+    ∃ Γ Δk Δa, q.typeOf = some Γ ∧ (∀ i, (keys i).typeOf Γ = some (Δk i)) ∧
+      (∀ j, (aggs j).typeOf Γ = some (Δa j)) ∧ Fin.append Δk Δa = Γ' := by
+  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨Γ, hq, h⟩ := h
+  split_ifs at h with h₁ h₂
+  cases h
+  exact ⟨Γ, _, _, hq, fun i => by simp, fun j => by simp, rfl⟩
+
 /-- Every division in the query's predicates and projections is by a nonzero numeric literal. -/
 def divSafe : {n : ℕ} → Query S n → Bool
   | _, table _ => true
@@ -463,6 +574,8 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, join θ q₁ q₂ => θ.divSafe && q₁.divSafe && q₂.divSafe
   | _, unionAll q₁ q₂ => q₁.divSafe && q₂.divSafe
   | _, distinct q => q.divSafe
+  | _, aggregate keys aggs q =>
+    decide (∀ i, (keys i).divSafe) && decide (∀ j, (aggs j).divSafe) && q.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -470,6 +583,33 @@ def IsSafe (q : Query S n) : Prop := q.typeOf.isSome ∧ q.divSafe
 
 instance (q : Query S n) : Decidable q.IsSafe :=
   inferInstanceAs (Decidable (q.typeOf.isSome ∧ q.divSafe))
+
+/-- The keyed rows of an aggregate's input: a key row per input row. -/
+private theorem keyed_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+    (hrs : ∀ r ∈ rs, r.Conforms Γ) {g : ℕ} {keys : Fin g → Expr n} {Δ : Fin g → SqlType}
+    (hks : ∀ i, (keys i).typeOf Γ = some (Δ i)) :
+    (∃ keyed, (rs.mapM fun r => do return (← Expr.evalRow keys r, r)) = .ok keyed ∧
+        ∀ x ∈ keyed, x.2 ∈ rs ∧ x.1.Conforms Δ) ∨
+      ((rs.mapM fun r => do return (← Expr.evalRow keys r, r)) =
+          (.error .divisionByZero : Except EvalError (List (Row g × Row n))) ∧
+        ∃ i, (keys i).divSafe = false) := by
+  rcases h : rs.mapM (fun r => do return (← Expr.evalRow keys r, r) :
+      Row n → Except EvalError (Row g × Row n)) with e | keyed
+  · obtain ⟨r, hr, he⟩ := Except.exists_mem_eq_error_of_mapM_eq_error h
+    rcases Expr.evalRow_ok_or_divisionByZero (hrs r hr) hks with ⟨d, hd, -⟩ | ⟨hd, i, hi⟩
+    · simp [hd, pure, Except.pure] at he
+    · simp only [hd, error_bind, _root_.Except.error.injEq] at he
+      exact .inr ⟨by rw [← he], i, hi⟩
+  · refine .inl ⟨keyed, rfl, fun x hx => ?_⟩
+    obtain ⟨r, hr, hrx⟩ := Except.exists_mem_eq_ok_of_mapM_eq_ok h hx
+    rcases hd : Expr.evalRow keys r with e | d
+    · simp [hd] at hrx
+    · simp only [hd, ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at hrx
+      subst hrx
+      rcases Expr.evalRow_ok_or_divisionByZero (hrs r hr) hks with ⟨d', hd', hconf⟩ | ⟨hd', -⟩
+      · rw [hd, _root_.Except.ok.injEq] at hd'
+        exact ⟨hr, hd' ▸ hconf⟩
+      · simp [hd] at hd'
 
 /-- Type soundness: on a conforming instance, a well-typed query returns rows of its type, or
 divides by zero, which requires a division that is not `divSafe`. -/
@@ -530,6 +670,44 @@ theorem eval_ok_or_divisionByZero {D : Database S} (hD : D.Conforms) {q : Query 
     · exact .inl ⟨rs.dedup, by simp [eval_distinct, hrs, pure, Except.pure],
         fun r hr => hconf r (List.mem_dedup.mp hr)⟩
     · exact .inr ⟨by simp [eval_distinct, he], by simp [divSafe, hs]⟩
+  | aggregate keys aggs q ih =>
+    obtain ⟨Γ₀, Δk, Δa, hq₀, hks, has, rfl⟩ := typeOf_aggregate_eq_some hq
+    rcases ih hq₀ with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    · rcases keyed_ok_or_divisionByZero hconf hks with ⟨keyed, hk, hkeyed⟩ | ⟨hk, i, hi⟩
+      · have hconfg : ∀ kg ∈ Row.groups keyed, ∀ r ∈ kg.2, r.Conforms Γ₀ := fun kg hkg r hr => by
+          obtain ⟨k, hkr⟩ := (Row.mem_groups hkg).1 r hr
+          exact hconf r (hkeyed _ hkr).1
+        rcases hout : (Row.groups keyed).mapM (fun kg => do
+            return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)) with e | outs
+        · obtain ⟨kg, hkg, he⟩ := Except.exists_mem_eq_error_of_mapM_eq_error hout
+          rcases AggCall.evalAll_ok_or_divisionByZero (hconfg kg hkg) has with
+            ⟨d, hd, -⟩ | ⟨hd, j, hj⟩
+          · simp [hd, pure, Except.pure] at he
+          · simp only [hd, error_bind, _root_.Except.error.injEq] at he
+            subst he
+            refine .inr ⟨by simp only [eval_aggregate, hrs, ok_bind, hk, hout], ?_⟩
+            simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
+            exact .inl (.inr ⟨j, by simp [hj]⟩)
+        · refine .inl ⟨outs, by simp only [eval_aggregate, hrs, ok_bind, hk, hout], fun t ht => ?_⟩
+          obtain ⟨kg, hkg, htk⟩ := Except.exists_mem_eq_ok_of_mapM_eq_ok hout ht
+          rcases hd : AggCall.evalAll aggs kg.2 with e | d
+          · simp [hd] at htk
+          · simp only [hd, ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at htk
+            subst htk
+            rcases AggCall.evalAll_ok_or_divisionByZero (hconfg kg hkg) has with
+              ⟨d', hd', hdc⟩ | ⟨hd', -⟩
+            · rw [hd, _root_.Except.ok.injEq] at hd'
+              subst hd'
+              have hkc : kg.1.Conforms Δk := by
+                rcases (Row.mem_groups hkg).2 with hg | ⟨r, hr⟩
+                · exact fun i => absurd i.isLt (by omega)
+                · exact (hkeyed _ hr).2
+              exact Row.conforms_append_iff.mpr ⟨hkc, hdc⟩
+            · simp [hd] at hd'
+      · refine .inr ⟨by simp only [eval_aggregate, hrs, ok_bind, hk, error_bind], ?_⟩
+        simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
+        exact .inl (.inl ⟨i, by simp [hi]⟩)
+    · exact .inr ⟨by simp only [eval_aggregate, he, error_bind], by simp [divSafe, hs]⟩
 
 /-- A well-typed query never raises a type error on a conforming instance. -/
 theorem eval_ne_typeMismatch {D : Database S} (hD : D.Conforms) {q : Query S n}

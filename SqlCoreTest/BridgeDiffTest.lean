@@ -25,6 +25,9 @@ inductive Expect where
   | agree
   /-- Elaboration fails, with an error whose category starts with this. -/
   | rejected (category : String)
+  /-- `SqlEquiv` is wrong here (the issue is cited); the query must elaborate and evaluate, and
+  `DuckdbDiffTest` checks it against DuckDB instead. -/
+  | sqlEquivBug (issue : String)
 
 def corpus : List (String × Expect) := [
   -- projection, selection, star
@@ -69,8 +72,22 @@ def corpus : List (String × Expect) := [
   -- Spider-style original-case names
   ("SELECT Name FROM singer WHERE Age > 20", .agree),
   -- outside the fragment, or ill-typed
-  ("SELECT COUNT(*) FROM users", .rejected "unsupported: aggregate"),
-  ("SELECT department, COUNT(*) FROM users GROUP BY department", .rejected "unsupported"),
+  -- GROUP BY and aggregates (phase 8a, #313)
+  ("SELECT COUNT(*) FROM users", .agree),
+  ("SELECT department, COUNT(*) FROM users GROUP BY department", .agree),
+  ("SELECT department, SUM(age), MIN(age), MAX(name) FROM users GROUP BY department", .agree),
+  ("SELECT COUNT(DISTINCT department), COUNT(age) FROM users", .agree),
+  ("SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1", .agree),
+  ("SELECT department, COUNT(*) + 1 FROM users WHERE age > 22 GROUP BY department", .agree),
+  ("SELECT staff, COUNT(*) FROM museum GROUP BY staff", .sqlEquivBug "#315: typed NULLs group apart"),
+  ("SELECT COUNT(staff), SUM(staff), MAX(staff) FROM museum", .agree),
+  ("SELECT SUM(price), MIN(price), COUNT(price) FROM items", .agree),
+  ("SELECT u.name, COUNT(*) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.name", .agree),
+  ("SELECT COUNT(*) FROM users WHERE age > 100", .agree),
+  ("SELECT AVG(age) FROM users", .rejected "unsupported: AVG"),
+  ("SELECT name, COUNT(*) FROM users", .rejected "unsupported: column not in GROUP BY"),
+  ("SELECT SUM(name) FROM users", .rejected "typeError"),
+  ("SELECT * FROM users GROUP BY department", .rejected "unsupported: *"),
   ("SELECT name FROM users ORDER BY age", .rejected "unsupported: ORDER BY"),
   ("SELECT name FROM users LIMIT 2", .rejected "unsupported: LIMIT/OFFSET"),
   ("SELECT name FROM users WHERE name LIKE 'A%'", .rejected "unsupported: LIKE"),
@@ -113,6 +130,9 @@ def run : Nat × List String := Id.run do
           fails := s!"{sql}: expected rejection {cat}, got {err.category}" :: fails
       | .rejected cat, .ok _ => fails := s!"{sql}: expected rejection {cat}, but it elaborated" :: fails
       | .agree, .error err => fails := s!"{sql}: did not elaborate: {err.category}" :: fails
+      | .sqlEquivBug _, .error err => fails := s!"{sql}: did not elaborate: {err.category}" :: fails
+      | .sqlEquivBug _, .ok e =>
+        if (newRows e).toOption.isNone then fails := s!"{sql}: SqlCore error" :: fails
       | .agree, .ok e =>
         let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
         match newRows e, old with

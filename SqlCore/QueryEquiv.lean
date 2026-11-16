@@ -324,6 +324,15 @@ theorem distinct_of_set {q q' : Query S n} (h : Equiv .set q q') :
   simp only [eval_distinct, Except.toOption_bind]
   exact (h D hD).bind fun _ _ hrel => .some hrel.perm_dedup
 
+/-- `GROUP BY` and aggregates (phase 8a, #313) are a congruence at the ordered level. (At the bag
+level it needs the order-insensitivity of grouping, and at the set level it fails: multiplicities
+change the counts.) -/
+theorem aggregate {g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → AggCall n) {q q' : Query S n}
+    (h : Equiv .ordered q q') : Equiv .ordered (aggregate keys aggs q) (aggregate keys aggs q') := by
+  rw [equiv_ordered_iff] at h ⊢
+  intro D hD
+  simp only [eval_aggregate, Except.toOption_bind, h D hD]
+
 /-! ### Congruence in the expression arguments -/
 
 /-- Replacing a `WHERE` predicate by an equivalent one in the typing context of the input gives an

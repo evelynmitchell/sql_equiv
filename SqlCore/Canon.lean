@@ -345,6 +345,7 @@ def canon : {n : ℕ} → Query S n → Query S n
   | _, join θ q₁ q₂ => join θ.canon q₁.canon q₂.canon
   | _, unionAll q₁ q₂ => unionAll q₁.canon q₂.canon
   | _, distinct q => distinct q.canon
+  | _, aggregate keys aggs q => aggregate keys aggs q.canon
 
 theorem select_sexpr {p p' : Expr n} (hp : p.SEquiv p') (q : Query S n) :
     Equiv ℓ (select p q) (select p' q) := fun D _ => by
@@ -380,6 +381,7 @@ theorem equiv_canon (q : Query S n) : Equiv .ordered q q.canon := by
   | join θ q₁ q₂ ih₁ ih₂ => exact (ih₁.join θ ih₂).trans (join_sexpr (Expr.sequiv_canon θ) _ _)
   | unionAll q₁ q₂ ih₁ ih₂ => exact ih₁.unionAll ih₂
   | distinct q ih => exact ih.distinct
+  | aggregate keys aggs q ih => exact Equiv.aggregate keys aggs ih
 
 end Query
 

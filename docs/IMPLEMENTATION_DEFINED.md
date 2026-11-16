@@ -131,6 +131,10 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T6 | `CASE WHEN … THEN 1 ELSE 1.5 END` | DECIMAL | numeric | Ill-typed: branches of one type | **gap**: matches neither; needs a conversion (phase 6 bridge or `CAST`) | `ExprExamples` |
 | T7 | Cross-type comparison (rows 10–12) | Error | Error | Type error at elaboration | decided | `BridgeDiffTest` (rejections) |
 | T8 | Boolean ordering `false < true` | true | true | true | decided (`SqlEquiv` has no boolean order) | `ScalarDiffTest` |
+| T9 | Bare column with aggregates `SELECT max(a), b FROM t` (sqlite returns `b` from the max row) | Error (binder) | Error | `unsupported` at elaboration | decided (standard; #313) | `BridgeDiffTest` (rejection); 37 Spider queries |
+| T10 | `AVG` over integers (`AVG` of 1, 2), row 7 | `1.5` (DOUBLE) | `1.5000…` (numeric) | Ill-typed until the #201 scale policy | open (#201; decided on #297) | `BridgeDiffTest` (rejection) |
+| T11 | `MIN`/`MAX` over booleans, row 14 | Boolean result | Error | Ill-typed | decided (#313) | `AggregateExamples` |
+| T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` splits typed NULLs (#315) | `AggregateExamples`, `DuckdbDiffTest` |
 
 ### Notes on individual rows
 
