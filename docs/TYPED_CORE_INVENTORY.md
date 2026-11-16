@@ -1,11 +1,13 @@
 # Typed core inventory: `SqlEquiv` laws → `SqlCore`
 
 This is the inventory that phase 5 (#294) of the [typed core plan](TYPED_CORE_PLAN.md) asks for. It
-lists every `theorem` declared in the four `SqlEquiv` equivalence files below and says what became
-of it in the typed core `SqlCore`. The typed laws are the ones in `SqlCore/Scalar.lean`,
+lists every `theorem` declared in six `SqlEquiv` equivalence files (`Defs`, `ExprAxioms`,
+`StatementAxioms`, `SetBagLemmas`, `ValueLemmas` and `Comparison`), and it says what became of
+each one in the typed core `SqlCore`. The typed laws are the ones in `SqlCore/Scalar.lean`,
 `Truth.lean`, `Preconditions.lean`, `Equiv.lean`, `QueryEquiv.lean` and `QueryLaws.lean`, re-derived
 from cslib-frontier at `e78796a1` (`CslibFrontier/Languages/SQL/{Equiv,QueryEquiv,QueryLaws}.lean`).
-None of the four files declares an `axiom` or a `lemma`.
+None of the six files declares an `axiom` or a `lemma`. `Decidable.lean` is covered by a
+paragraph, plus one row for the one law it states.
 
 The typed core covers the following fragment:
 
@@ -35,16 +37,8 @@ succeeds and with what result, but not which error is raised.
 In the tables, a name written without a namespace is in `SqlCore`. `Expr.Equiv.x` stands for
 `SqlCore.Expr.Equiv.x`, and `Query.x` stands for `SqlCore.Query.x`.
 
-**Other equivalence files (not inventoried):** `SqlEquiv/Equiv/` also contains the following files.
-
-| File | Declarations | Contents |
-|---|---|---|
-| `Comparison.lean` | 206 | NULL laws, comparison laws, predicate pushdown |
-| `ValueLemmas.lean` | 51 | value-level operator laws; their typed counterparts are the operator laws in `SqlCore/Scalar.lean` |
-| `Decidable.lean` | 43 | `DecidableEq`, ground-term detection, reference helpers |
-| `StatementChecker.lean` | 0 | the certified statement checkers |
-
-`Comparison.lean` clearly contains equivalence laws, and it needs its own inventory.
+**Other files:** `SqlEquiv/Equiv/StatementChecker.lean` declares no theorems. Its certified
+statement checkers are phase 7 infrastructure.
 
 ## `SqlEquiv/Equiv/Defs.lean` (21 theorems, 0 private)
 
@@ -83,16 +77,16 @@ In the tables, a name written without a namespace is in `SqlCore`. `Expr.Equiv.x
 | `not_not_bool` | counterpart | `evalUnOp_not_not` (datum level, `d.HasType .bool`, NULL included); `Truth.not_not` |
 | `not_not` | decidable check | `Expr.Equiv.not_not`: `isBoolValued` becomes `p.typeOf Γ = some .bool` |
 | `eq_comm` | counterpart | `Expr.Equiv.binary_comm` with `CmpOp.eval_eq_comm` (or `evalBinOp_cmp_swap .eq`) |
-| `and_assoc` | not carried over | Phase 7: no `Expr.Equiv` statement yet. `inf_assoc` on `Truth` gives it, and it needs no side condition because both sides evaluate `a`, `b` and `c` |
-| `or_assoc` | not carried over | Phase 7: no `Expr.Equiv` statement yet. `sup_assoc` on `Truth` gives it, with no side condition |
-| `not_and` | counterpart | `not_evalBinOp_and` (operator level, every datum); the `isBoolValued` hypotheses are dropped; the `Expr` lift is not stated |
-| `not_or` | counterpart | `not_evalBinOp_or` (operator level); the `isBoolValued` hypotheses are dropped |
-| `and_or_distrib_left` | not carried over | Phase 7: no `Expr.Equiv` statement. `Truth` is a distributive lattice (`inf_sup_left`), and no condition is needed because both sides evaluate every operand |
-| `and_or_distrib_right` | not carried over | Phase 7: as `and_or_distrib_left` (`inf_sup_right`) |
-| `or_and_distrib_left` | not carried over | Phase 7: as `and_or_distrib_left` (`sup_inf_left`) |
-| `or_and_distrib_right` | not carried over | Phase 7: as `and_or_distrib_left` (`sup_inf_right`) |
-| `and_absorb_or` | not carried over | Phase 7: `inf_sup_self` on `Truth`. The `Expr` law would need `IsSafePredicate b`, because the right side drops `b` |
-| `or_absorb_and` | not carried over | Phase 7: `sup_inf_self` on `Truth`. The `Expr` law would need `IsSafePredicate b` |
+| `and_assoc` | counterpart | `Expr.Equiv.and_assoc`; the `isBoolValued` hypotheses are dropped (no hypothesis, because both sides evaluate every operand) |
+| `or_assoc` | counterpart | `Expr.Equiv.or_assoc`; the `isBoolValued` hypotheses are dropped |
+| `not_and` | counterpart | `Expr.Equiv.not_and`; the `isBoolValued` hypotheses are dropped (Kleene De Morgan, `not_evalBinOp_and`) |
+| `not_or` | counterpart | `Expr.Equiv.not_or`; the `isBoolValued` hypotheses are dropped (`not_evalBinOp_or`) |
+| `and_or_distrib_left` | counterpart | `Expr.Equiv.and_or_distrib_left`; the `isBoolValued` hypotheses are dropped |
+| `and_or_distrib_right` | counterpart | `Expr.Equiv.and_or_distrib_left` composed with `Expr.Equiv.binary_comm` (`evalBinOp_and_comm`) and congruence |
+| `or_and_distrib_left` | counterpart | `Expr.Equiv.or_and_distrib_left`; the `isBoolValued` hypotheses are dropped |
+| `or_and_distrib_right` | counterpart | `Expr.Equiv.or_and_distrib_left` composed with `Expr.Equiv.binary_comm` (`evalBinOp_or_comm`) and congruence |
+| `and_absorb_or` | decidable check | `Expr.Equiv.and_or_absorb`: `isBoolValued a` becomes `a.typeOf Γ = some .bool`, and `isBoolValued b` becomes `b.IsSafePredicate Γ` |
+| `or_absorb_and` | decidable check | `Expr.Equiv.or_and_absorb`: `typeOf Γ = some .bool` for `a`, `IsSafePredicate Γ` for `b` |
 | `and_true` | decidable check | `Expr.Equiv.and_true`: `isBoolValued` becomes `typeOf Γ = some .bool` |
 | `or_false` | decidable check | `Expr.Equiv.or_false`: `isBoolValued` becomes `typeOf Γ = some .bool` |
 | `and_false` | counterpart | `Expr.Equiv.and_false`; it gains `IsSafePredicate p`, because strict errors mean there is no short-circuit |
@@ -122,16 +116,16 @@ In the tables, a name written without a namespace is in `SqlCore`. `Expr.Equiv.x
 | `false_or` | decidable check | `Expr.Equiv.false_or`: `isBoolValued` becomes `typeOf Γ = some .bool` |
 | `false_and` | counterpart | `Expr.Equiv.false_and`; it gains `IsSafePredicate p` (strict errors) |
 | `true_or` | counterpart | `Expr.Equiv.true_or`; it gains `IsSafePredicate p` (strict errors) |
-| `and_self` | not carried over | Phase 7: `inf_idem` on `Truth`. The `Expr` law would need `typeOf Γ = some .bool` |
-| `or_self` | not carried over | Phase 7: `sup_idem` on `Truth`. The `Expr` law would need `typeOf Γ = some .bool` |
+| `and_self` | decidable check | `Expr.Equiv.and_self`: `isBoolValued` becomes `a.typeOf Γ = some .bool` |
+| `or_self` | decidable check | `Expr.Equiv.or_self`: `isBoolValued` becomes `a.typeOf Γ = some .bool` |
 | `and_not_self` | not carried over | False under three-valued logic (`NULL AND NOT NULL` is `NULL`; `Truth.unknown_inf_not_unknown`). It needs `IsTwoValued`, which is semantic, not decidable |
 | `or_not_self` | not carried over | False under three-valued logic (`Truth.unknown_sup_not_unknown`). It needs `IsTwoValued`, which is not decidable |
 | `not_self_and` | not carried over | False under three-valued logic, as `and_not_self` |
 | `not_self_or` | not carried over | False under three-valued logic, as `or_not_self` |
-| `or_not_not` | counterpart | `not_evalBinOp_and`, read right to left (operator level, no hypothesis) |
-| `and_not_not` | counterpart | `not_evalBinOp_or`, read right to left (operator level, no hypothesis) |
-| `or_and_factor_left` | not carried over | Phase 7: reverse of `and_or_distrib_left` (`inf_sup_left` on `Truth`) |
-| `and_or_factor_left` | not carried over | Phase 7: reverse of `or_and_distrib_left` (`sup_inf_left` on `Truth`) |
+| `or_not_not` | counterpart | `(Expr.Equiv.not_and).symm` (no hypothesis) |
+| `and_not_not` | counterpart | `(Expr.Equiv.not_or).symm` (no hypothesis) |
+| `or_and_factor_left` | counterpart | `(Expr.Equiv.and_or_distrib_left).symm`; the hypotheses are dropped |
+| `and_or_factor_left` | counterpart | `(Expr.Equiv.or_and_distrib_left).symm`; the hypotheses are dropped |
 | `binOp_congr` | counterpart | `Expr.Equiv.binary` |
 | `unaryOp_congr` | counterpart | `Expr.Equiv.unary` |
 | `binOp_congr_left` | counterpart | `Expr.Equiv.binary` with `Expr.Equiv.refl` |
@@ -279,19 +273,347 @@ lemmas are replaced by Mathlib lemmas rather than carried over.
 | `mem_filter_contains` | not carried over | Artefact (`contains`-based `INTERSECT`/`EXCEPT`, which are phase 8); `List.mem_filter` covers it |
 | `mem_eraseDups_append` | not carried over | Subsumed by `List.mem_dedup` with `List.mem_append` |
 
+## `SqlEquiv/Equiv/ValueLemmas.lean` (51 theorems: 50 public, 1 private)
+
+These are value-level operator laws over `Option Value`, where an error is `none` and NULL is `.null t`. Their typed counterparts are datum-level laws in `SqlCore/Scalar.lean`, where an error is an `Except` and NULL is `none`, and lattice laws on `Truth`. `Truth` is a `LinearOrder`, so it is a distributive lattice, and Mathlib's `inf_assoc`, `inf_idem`, `inf_sup_left` and similar laws apply to it.
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `evalBinOp_and_comm` | counterpart | `evalBinOp_and_comm` (every datum) |
+| `evalBinOp_or_comm` | counterpart | `evalBinOp_or_comm` |
+| `evalBinOp_add_comm` | counterpart | `evalBinOp_add_comm` |
+| `evalBinOp_mul_comm` | counterpart | `evalBinOp_mul_comm` |
+| `Int.beq_comm` | not carried over | Artefact: `BEq` helper for untyped `Value.eq`; typed comparison is `Value.cmp` (`Value.cmp_swap`) |
+| `String.beq_comm` | not carried over | Artefact: `BEq` helper, as `Int.beq_comm` |
+| `Bool.beq_comm` | not carried over | Artefact: `BEq` helper, as `Int.beq_comm` |
+| `evalBinOp_eq_comm` | counterpart | `CmpOp.eval_eq_comm` (or `evalBinOp_cmp_swap .eq`) |
+| `evalBinOp_and_false_right` | counterpart | `evalBinOp_and_false`; it gains `a.HasType .bool`, because strict errors mean there is no short-circuit |
+| `evalBinOp_and_false_left` | counterpart | `evalBinOp_and_comm` with `evalBinOp_and_false` (`HasType .bool`) |
+| `evalBinOp_or_true_right` | counterpart | `evalBinOp_or_true`; it gains `HasType .bool` (no short-circuit) |
+| `evalBinOp_or_true_left` | counterpart | `evalBinOp_or_comm` with `evalBinOp_or_true` |
+| `evalBinOp_and_true_right` | counterpart | `evalBinOp_and_true` (bool datum, NULL included) |
+| `evalBinOp_or_false_right` | counterpart | `evalBinOp_or_false` |
+| `evalBinOp_and_idem` | counterpart | `inf_idem` on `Truth` |
+| `evalBinOp_or_idem` | counterpart | `sup_idem` on `Truth` |
+| `evalUnaryOp_not_bool` | counterpart | `Truth.ofBool_not` (`evalUnOp .not` is `Truth.not` through `toTruth`) |
+| `evalBinOp_and_not_self` | not carried over | False under three-valued logic for `unknown` (`Truth.unknown_inf_not_unknown`); the `Bool` case is `Bool.and_not_self` via `Truth.ofBool_and` |
+| `evalBinOp_or_not_self` | not carried over | False under three-valued logic for `unknown` (`Truth.unknown_sup_not_unknown`) |
+| `evalBinOp_and_true_left` | counterpart | `evalBinOp_and_comm` with `evalBinOp_and_true` |
+| `evalBinOp_or_false_left` | counterpart | `evalBinOp_or_comm` with `evalBinOp_or_false` |
+| `evalBinOp_and_assoc` | counterpart | `inf_assoc` on `Truth` |
+| `evalBinOp_or_assoc` | counterpart | `sup_assoc` on `Truth` |
+| `evalBinOp_and_absorb_or` | counterpart | `inf_sup_self` on `Truth` |
+| `evalBinOp_or_absorb_and` | counterpart | `sup_inf_self` on `Truth` |
+| `evalUnaryOp_not_and` | counterpart | `not_evalBinOp_and`, or `Truth.not_inf` |
+| `evalUnaryOp_not_or` | counterpart | `not_evalBinOp_or`, or `Truth.not_sup` |
+| `evalUnaryOp_not_or_bnn` | counterpart | `not_evalBinOp_or`; the bool-or-NULL-or-error hypothesis is dropped (every datum) |
+| `evalUnaryOp_not_and_bnn` | counterpart | `not_evalBinOp_and`; the hypothesis is dropped |
+| `evalBinOp_eq_isBoolOrNullOrNone` | not carried over | Artefact: a typed comparison returns `Truth` by its type (`CmpOp.eval : … → Except EvalError Truth`) |
+| `evalBinOp_ge_isBoolOrNullOrNone` | not carried over | Artefact, as `evalBinOp_eq_isBoolOrNullOrNone` |
+| `evalBinOp_le_isBoolOrNullOrNone` | not carried over | Artefact, as `evalBinOp_eq_isBoolOrNullOrNone` |
+| `evalBinOp_or_preserves_bnn` | not carried over | Artefact: `OR` returns `Truth.toDatum`, which is bool-typed (`Truth.toDatum_hasType`) |
+| `evalBinOp_and_or_distrib` | counterpart | `inf_sup_left` on `Truth` |
+| `evalBinOp_and_or_distrib_right` | counterpart | `inf_sup_right` on `Truth` |
+| `evalBinOp_or_and_distrib` | counterpart | `sup_inf_left` on `Truth` |
+| `evalBinOp_or_and_distrib_right` | counterpart | `sup_inf_right` on `Truth` |
+| `Value.eq_comm` | counterpart | `CmpOp.eval_eq_comm` / `Value.cmp_swap` |
+| `eq_true_of_evalBinOp_eq` | counterpart | `CmpOp.eval_eq_ok_true_iff` (operands of a common type) |
+| `evalBinOp_eq_of_eq_true` | counterpart | `CmpOp.eval_eq_ok_true_iff`, right to left |
+| `Value.eq_some_true_not_null_left` | not carried over | Artefact: NULL is not a `Value` in the typed core (it is `none`, and `CmpOp.eval_none_left` gives `unknown`) |
+| `Value.eq_some_true_not_null_right` | not carried over | Artefact, as `Value.eq_some_true_not_null_left` (`CmpOp.eval_none_right`) |
+| `Option.beq_some_true_iff` | not carried over | Artefact: `BEq` on `Option Bool`; the typed core uses `Truth.isTrue_iff` |
+| `Value.toTrilean_ofTrilean` | counterpart | `Datum.toTruth_toDatum` |
+| `Trilean.toOptionValue_isBoolOrNull` | counterpart | `Truth.toDatum_hasType` |
+| `evalBinOp_and_as_trilean` | not carried over | Subsumed by definition: typed `evalBinOp .and` is `⊓` through `Datum.toTruth` |
+| `evalBinOp_or_as_trilean` | not carried over | Subsumed by definition (`⊔` through `toTruth`) |
+| `evalUnaryOp_not_as_trilean` | not carried over | Subsumed by definition (`Truth.not` through `toTruth`) |
+| `evalUnaryOp_not_not_via_trilean` | counterpart | `evalUnOp_not_not` (`HasType .bool`); the typed-NULL caveat disappears |
+| `mismatched_types_error` | not carried over | Replaced by static typing: well-typed expressions never raise `typeMismatch` (`Expr.eval_ne_typeMismatch`) |
+
+The private helper `isBoolOrNull_some_elim` is `not carried over`. It is an artefact of the
+untyped bool-or-NULL predicate, and the typed core uses `Datum.exists_toTruth_eq_ok_iff`.
+
+## `SqlEquiv/Equiv/Comparison.lean` (202 theorems: 149 public, 53 private)
+
+A grep for `theorem` finds 206 lines in this file. Four of them are doc-comment lines, which leaves 202 declarations. None of them is an `axiom`.
+
+### Query rewrites (pushdown, joins, filters)
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `filter_join_left` | decidable check | `Query.select_join_left`: the semantic "filter ignores the right row" becomes `p : Expr n` renamed by `Fin.castAdd`, plus `IsSafePredicate` of `p` and `θ` |
+| `filter_join_right` | decidable check | `Query.select_join_right`: as `filter_join_left`, with `Fin.natAdd` |
+| `filter_pushdown_table` | not carried over | Artefact: the typed core has no derived-table/alias wrapper, so both sides are the same `select p (table t)` |
+| `join_assoc` | not carried over | Phase 7 (join reordering): there is no typed `join_assoc` |
+| `cross_join_assoc` | not carried over | Phase 7: as `join_assoc` (cross join is `join (lit true)`) |
+| `join_comm` | counterpart | `Query.join_comm` (bag); the semantic condition hypothesis becomes explicit renaming `θ.rename finAddFlip` |
+| `cross_join_comm` | counterpart | `Query.join_comm` with `θ = lit true` (bag, which is stronger than the membership up to column permutation stated here) |
+| `project_join` | not carried over | Vacuous: both sides are syntactically identical; there is no typed law to match |
+| `project_star_identity` | not carried over | Vacuous: both sides are identical; the intended law is `Query.project_col` |
+| `filter_and` | counterpart | `Query.select_select`; it gains `IsSafePredicate` of the outer predicate (strict errors) |
+| `filter_commute` | counterpart | `Query.select_comm`; it gains `IsSafePredicate` of both predicates |
+| `filter_idempotent` | counterpart | `Query.select_select` composed with `Query.Equiv.select_expr` and `Expr.Equiv.and_self` (`IsSafePredicate p`) |
+| `filter_true_elim'` | counterpart | `Query.select_true` |
+| `filter_false_empty'` | not carried over | Phase 7: as `where_false_empty` |
+| `filter_project_commute` | not carried over | Vacuous: both sides are identical; the intended law is `Query.select_project` |
+| `push_filter_project_through_join` | not carried over | Vacuous: both sides are identical; the intended laws are `Query.select_join_left` and `Query.select_project` |
+
+### NULL laws
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `is_null_on_null` | not carried over | Subsumed by definition (`evalUnOp .isNull none` reduces by `rfl`); the typed-NULL argument `t` is an artefact |
+| `is_null_on_none` | not carried over | Artefact: an error (`none`) has no typed analogue; a typed error propagates |
+| `is_null_on_int` | not carried over | Subsumed by definition (`evalUnOp .isNull (some v)` reduces by `rfl`) |
+| `is_null_on_string` | not carried over | Subsumed by definition, as `is_null_on_int` |
+| `is_null_on_bool` | not carried over | Subsumed by definition, as `is_null_on_int` |
+| `is_not_null_on_null` | not carried over | Subsumed by definition (`rfl`), with the typed-NULL argument as an artefact |
+| `is_not_null_on_none` | not carried over | Artefact: an error has no typed analogue |
+| `is_not_null_on_int` | not carried over | Subsumed by definition (`rfl`) |
+| `is_not_null_on_string` | not carried over | Subsumed by definition (`rfl`) |
+| `is_not_null_on_bool` | not carried over | Subsumed by definition (`rfl`) |
+| `is_null_is_not_null_complement` | counterpart | `not_evalUnOp_isNull` |
+| `null_add_left` | counterpart | `evalBinOp_arith_null_left .add`; it gains `IsNumeric` of the other operand (text is a type error) |
+| `null_add_right` | counterpart | `evalBinOp_arith_null_right .add` (`IsNumeric`) |
+| `null_sub_left` | counterpart | `evalBinOp_arith_null_left .sub` (`IsNumeric`) |
+| `null_sub_right` | counterpart | `evalBinOp_arith_null_right .sub` (`IsNumeric`) |
+| `null_mul_left` | counterpart | `evalBinOp_arith_null_left .mul` (`IsNumeric`) |
+| `null_mul_right` | counterpart | `evalBinOp_arith_null_right .mul` (`IsNumeric`) |
+| `null_div_left` | counterpart | `evalBinOp_arith_null_left .div` (`IsNumeric`) |
+| `null_div_right` | counterpart | `evalBinOp_arith_null_right .div` (`IsNumeric`; `1 / NULL` is `NULL`) |
+| `null_eq_left` | counterpart | `CmpOp.eval_none_left` (`unknown`, every datum) |
+| `null_eq_right` | counterpart | `CmpOp.eval_none_right` |
+| `null_ne_left` | counterpart | `CmpOp.eval_none_left` |
+| `null_ne_right` | counterpart | `CmpOp.eval_none_right` |
+| `null_lt_left` | counterpart | `CmpOp.eval_none_left` |
+| `null_lt_right` | counterpart | `CmpOp.eval_none_right` |
+| `false_and_null` | counterpart | `Truth.false_inf` |
+| `null_and_false` | counterpart | `Truth.inf_false` (also `evalBinOp_and_false`) |
+| `true_and_null` | counterpart | `Truth.true_inf` |
+| `null_and_true` | counterpart | `Truth.inf_true` |
+| `true_or_null` | counterpart | `Truth.true_sup` |
+| `null_or_true` | counterpart | `Truth.sup_true` |
+| `false_or_null` | counterpart | `Truth.false_sup` |
+| `null_or_false` | counterpart | `Truth.sup_false` |
+| `null_and_null` | counterpart | `inf_idem` at `unknown` |
+| `null_or_null` | counterpart | `sup_idem` at `unknown` |
+
+### Three-valued logic (`Trilean`)
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `trilean_not_not` | counterpart | `Truth.not_not` |
+| `trilean_and_comm` | counterpart | `inf_comm` on `Truth` |
+| `trilean_or_comm` | counterpart | `sup_comm` on `Truth` |
+| `trilean_and_true` | counterpart | `Truth.inf_true` |
+| `trilean_or_false` | counterpart | `Truth.sup_false` |
+| `trilean_and_false` | counterpart | `Truth.inf_false` |
+| `trilean_or_true` | counterpart | `Truth.sup_true` |
+| `trilean_de_morgan_and` | counterpart | `Truth.not_inf` |
+| `trilean_de_morgan_or` | counterpart | `Truth.not_sup` |
+| `trilean_and_assoc` | counterpart | `inf_assoc` on `Truth` |
+| `trilean_or_assoc` | counterpart | `sup_assoc` on `Truth` |
+| `trilean_and_self` | counterpart | `inf_idem` on `Truth` |
+| `trilean_or_self` | counterpart | `sup_idem` on `Truth` |
+| `trilean_ofBool_toBool` | counterpart | `Truth.isTrue_ofBool` (`Truth` has `isTrue` rather than `toBool`) |
+| `evalBinOp_and_comm_via_trilean` | counterpart | `evalBinOp_and_comm`, without the bool-or-NULL hypothesis |
+| `evalBinOp_or_comm_via_trilean` | counterpart | `evalBinOp_or_comm`, without the hypothesis |
+
+### COALESCE, NULLIF and value nullness
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `isNullValue_none` | not carried over | Artefact: the `isNullValue` helper on `Option Value`; a typed NULL is `none` (`Option.isNone`) |
+| `isNullValue_null` | not carried over | Artefact, as `isNullValue_none` |
+| `isNullValue_int` | not carried over | Artefact, as `isNullValue_none` |
+| `isNullValue_string` | not carried over | Artefact, as `isNullValue_none` |
+| `isNullValue_bool` | not carried over | Artefact, as `isNullValue_none` |
+| `coalesce_null_left_nonnull` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_int_left` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_string_left` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_bool_left` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_single_int` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_single_string` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_single_bool` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_single_null` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `coalesce_empty` | not carried over | Outside the fragment (`COALESCE`); phase 8 |
+| `nullif_same_int` | not carried over | Outside the fragment (`NULLIF`); phase 8 |
+| `nullif_diff_int` | not carried over | Outside the fragment (`NULLIF`); phase 8 |
+| `value_null_or_not_null` | not carried over | Subsumed: a `Datum` is an `Option`, so it is `none` or `some` (`Option.eq_none_or_eq_some`) |
+| `value_is_null_complement` | counterpart | `not_evalUnOp_isNull` (`IS NULL` is the negation of `IS NOT NULL`) |
+| `typed_null_same_nullness` | not carried over | Artefact of typed-NULL bookkeeping (`.null t`); a typed NULL is untyped `none` |
+
+### Aggregates
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `count_star_nonneg` | not carried over | Outside the fragment (aggregates: `COUNT(*)`); phase 8 |
+| `count_star_empty` | not carried over | Outside the fragment (aggregates); phase 8 |
+| `count_star_singleton` | not carried over | Outside the fragment (aggregates); phase 8 |
+| `count_after_filter_le` | not carried over | Subsumed by `List.length_filter_le` |
+| `sum_empty` | not carried over | Outside the fragment (aggregates: `SUM`); phase 8 |
+| `sum_singleton` | not carried over | Outside the fragment (aggregates); phase 8 |
+| `sum_add_zero` | not carried over | Outside the fragment (aggregates); phase 8 |
+| `min_singleton` | not carried over | Outside the fragment (aggregates: `MIN`); phase 8 |
+| `max_singleton` | not carried over | Outside the fragment (aggregates: `MAX`); phase 8 |
+| `min_le_elem` | not carried over | Outside the fragment (aggregates); phase 8 |
+| `max_ge_elem` | not carried over | Outside the fragment (aggregates); phase 8 |
+| `distinct_count_le` | not carried over | Outside the fragment (`COUNT(DISTINCT …)`); phase 8 |
+| `distinct_idempotent` | not carried over | Subsumed by Mathlib `List.dedup_idem` (at query level, `Query.distinct_distinct`) |
+| `count_distinct_le_count` | not carried over | Outside the fragment (`COUNT(DISTINCT …)`); phase 8 |
+
+### CASE, arithmetic, IN and BETWEEN
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `case_when_true` | counterpart | `Expr.Equiv.caseWhen_true` |
+| `case_when_false` | counterpart | `Expr.Equiv.caseWhen_false` |
+| `case_when_false_no_else` | counterpart | `Expr.Equiv.caseWhen_false` with `b = null τ` (typed `CASE` always has an `ELSE`; a missing one is `NULL`) |
+| `case_empty_else` | not carried over | Artefact of the n-ary `CASE` AST: typed `caseWhen` has exactly one branch, and the phase 6 bridge lowers lists of branches |
+| `case_empty_no_else` | not carried over | Artefact, as `case_empty_else` |
+| `filter_and_eq_filter_filter` | not carried over | Subsumed by `List.filter_filter` |
+| `filter_comm` | not carried over | Subsumed by `List.filter_filter` with `Bool.and_comm` |
+| `predicate_pushdown` | counterpart | `Query.select_select`; it gains `IsSafePredicate q` (strict errors) |
+| `expr_add_zero` | decidable check | `Expr.Equiv.add_zero`: `isIntValued` becomes `typeOf Γ = some .int` (NULL now allowed) |
+| `expr_zero_add` | decidable check | `Expr.Equiv.zero_add` (`typeOf Γ = some .int`) |
+| `expr_mul_one` | decidable check | `Expr.Equiv.mul_one` (`typeOf Γ = some .int`) |
+| `expr_one_mul` | decidable check | `Expr.Equiv.one_mul` (`typeOf Γ = some .int`) |
+| `expr_mul_zero` | not carried over | False for a NULL integer (`NULL * 0` is `NULL`); `isIntValued` excludes NULL, but nullability is not typed, so there is no decidable check |
+| `expr_zero_mul` | not carried over | False for a NULL integer, as `expr_mul_zero` |
+| `expr_sub_zero` | decidable check | `Expr.Equiv.sub_zero` (`typeOf Γ = some .int`) |
+| `in_empty_false` | counterpart | `Expr.Equiv.inList_nil`; it gains `IsSafe e` (strict errors) |
+| `not_in_empty_true` | counterpart | `Expr.Equiv.unary .not` applied to `Expr.Equiv.inList_nil` (`IsSafe e`); `NOT IN` is `NOT (… IN …)` |
+| `in_singleton` | counterpart | `Expr.Equiv.inList_singleton` (list elements are literal datums, not expressions) |
+| `not_in_singleton` | counterpart | `Expr.Equiv.inList_singleton` under `unary .not`, then `Expr.Equiv.not_cmp .eq` |
+| `in_pair` | counterpart | `Datum.inList_cons` twice with `Datum.inList_nil` and `Truth.false_sup` (datum level, literal elements) |
+| `not_in_pair` | counterpart | As `in_pair`, then `Truth.not_sup` and `CmpOp.eval_negate` |
+| `in_list_or_expansion` | counterpart | Definition of `Datum.inList` (Kleene `OR` of `=` from `FALSE`) and `Datum.inList_cons` (datum level, literal elements) |
+| `not_in_list_and_expansion` | counterpart | As `in_list_or_expansion`, then `Truth.not_sup` and `CmpOp.eval_negate` |
+| `between_expansion` | not carried over | Outside the fragment (`BETWEEN`); phase 8 |
+| `between_reflexive` | not carried over | Outside the fragment (`BETWEEN`); phase 8 |
+
+### LIKE and string functions
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `like_match_all` | not carried over | Outside the fragment (`LIKE`); phase 8. `isStringOrNull` would become `IsSafeText` |
+| `like_empty_pattern` | not carried over | Outside the fragment (`LIKE`); phase 8 |
+| `like_self` | not carried over | Outside the fragment (`LIKE`); phase 8 (`IsSafeText`) |
+| `concat_empty_left` | not carried over | Outside the fragment (string functions: `CONCAT`); phase 8. `isStringOrUntypedNullValued` would become `IsText` |
+| `concat_empty_right` | not carried over | Outside the fragment (`CONCAT`); phase 8 |
+| `length_concat` | not carried over | Outside the fragment (`LENGTH`, `CONCAT`); phase 8 |
+| `upper_idempotent` | not carried over | Outside the fragment (`UPPER`); phase 8 |
+| `lower_idempotent` | not carried over | Outside the fragment (`LOWER`); phase 8 |
+| `upper_lower_upper` | not carried over | Outside the fragment (`UPPER`/`LOWER`); phase 8 |
+| `lower_upper_lower` | not carried over | Outside the fragment (`UPPER`/`LOWER`); phase 8 |
+| `length_empty` | not carried over | Outside the fragment (`LENGTH`); phase 8 |
+
+### Comparisons
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `eq_reflexive` | not carried over | Phase 7: datum level is `Value.cmp_self`. There is no `Expr.Equiv` statement, and `evaluable` would become `IsSafe` |
+| `ne_irreflexive` | not carried over | Phase 7: as `eq_reflexive` |
+| `not_eq_is_ne` | counterpart | `Expr.Equiv.not_cmp .eq` (no hypothesis) |
+| `not_ne_is_eq` | counterpart | `Expr.Equiv.not_cmp .ne` |
+| `not_lt_is_ge` | counterpart | `Expr.Equiv.not_cmp .lt` |
+| `not_le_is_gt` | counterpart | `Expr.Equiv.not_cmp .le` |
+| `not_gt_is_le` | counterpart | `Expr.Equiv.not_cmp .gt` |
+| `not_ge_is_lt` | counterpart | `Expr.Equiv.not_cmp .ge` |
+| `not_between_expansion` | not carried over | Outside the fragment (`BETWEEN`); phase 8 |
+| `lt_flip` | counterpart | `evalBinOp_cmp_swap .lt` (operator level; the `Expr` lift is `Expr.Equiv.of_eval_eq` up to `toOption`) |
+| `le_flip` | counterpart | `evalBinOp_cmp_swap .le` |
+| `gt_flip` | counterpart | `evalBinOp_cmp_swap .gt` |
+| `ge_flip` | counterpart | `evalBinOp_cmp_swap .ge` |
+
+### Private helpers (53)
+
+All 53 private helpers are `not carried over`. They fall into these groups:
+
+- **Phase 8, `COALESCE`/`NULLIF` (2):** `coalesce_toUpper` and `nullif_toUpper`.
+- **Phase 8, aggregates (4):** `foldl_min_le_init`, `foldl_min_le_of_mem`, `init_le_foldl_max` and
+  `le_foldl_max_of_mem`.
+- **Phase 8, `LIKE` (7):** `simpleLike_pct`, `simpleLike_empty`, `evalBinOp_like_empty_eq_eq`,
+  `isPrefixOf_append`, `dropLast_isPrefixOf`, `stringContains_go_of_prefix_at` and
+  `simpleLike_self`.
+- **Phase 8, string functions (18):**
+  - `CONCAT`/`LENGTH`: `evalFunc_concat_empty_left`, `evalFunc_concat_empty_right` and
+    `evalFunc_length_concat`.
+  - `Char`: `char_toUpper_toNat`, `char_toLower_toNat`, `char_ext_toNat`,
+    `char_toUpper_toLower_toUpper`, `char_toLower_toUpper_toLower`, `char_toUpper_idem` and
+    `char_toLower_idem`.
+  - `String`: `string_toUpper_idem`, `string_toLower_idem`, `string_toUpper_toLower_toUpper` and
+    `string_toLower_toUpper_toLower`.
+  - `evalFunc`: `evalFunc_upper_idem`, `evalFunc_lower_idem`, `evalFunc_upper_lower_upper` and
+    `evalFunc_lower_upper_lower`.
+- **Subsumed by `CmpOp.eval_negate` / `evalBinOp_cmp_negate` (12):** `not_map_bool_eq`,
+  `evalUnaryOp_not_eq`, `not_map_bool_cancel`, `not_map_ordering_eq_lt`, `not_map_ordering_ne_gt`,
+  `not_map_ordering_eq_gt`, `not_map_ordering_ne_lt`, `evalUnaryOp_not_ne`, `evalUnaryOp_not_lt`,
+  `evalUnaryOp_not_le`, `evalUnaryOp_not_gt` and `evalUnaryOp_not_ge`.
+- **Subsumed by `Value.cmp_swap` / `CmpOp.eval_swap` (5):** `compare_swap_gen`,
+  `ordering_lt_eq_swap_gt`, `ordering_ne_gt_eq_swap_ne_lt`, `evalBinOp_lt_eq_gt_flip` and
+  `evalBinOp_le_eq_ge_flip`.
+- **Subsumed by `Datum.inList_cons` and the definition of `Datum.inList` (4):** `or_false_map_bool`,
+  `evalBinOp_or_false_left_eq`, `eval_foldl_or_eq` and `not_foldl_or_eq_is_foldl_and_ne`.
+- **Subsumed by Mathlib `List.dedup_eq_self` (1):** `nodup_implies_eraseDups_eq`.
+
+That is 31 helpers in phase 8 and 22 subsumed.
+
+## `SqlEquiv/Equiv/Decidable.lean` (not inventoried row by row)
+
+`Decidable.lean` is decision-procedure infrastructure. It contains the following, and its
+counterpart is phase 7 (#296):
+
+- **Generated decidable equality:** `DecidableEq` deciders and their `_eq_true_iff` lemmas.
+- **Ground and closed detection:** `isGround`/`isClosed` and the lemmas that ground or closed
+  expressions do not depend on the database or row. Typed `Expr` has no database dependence;
+  constant folding is `Expr.Equiv.of_eval_eq_ok`.
+- **Decider soundness:** `decideExprEquiv_sound`, `decideGroundExprEquiv_sound` and
+  `syntacticEquiv_implies_equiv`.
+- **Table-reference helpers:** `exprReferencesOnlyFrom` and similar. Typed columns are positions,
+  so these are not needed.
+- **`sizeOf` and `foldl` helpers.**
+
+One declaration in it states a law:
+
+| SqlEquiv theorem | Category | Typed counterpart / reason |
+|---|---|---|
+| `normalizeExpr_equiv` | not carried over | Phase 7: the soundness of `SqlEquiv`'s normaliser (`e ≃ₑ normalizeExpr e`); its counterpart is the certificate `Expr.equiv_simplify` of the frontier's `Expr.simplify` (`Simplify.lean`, not yet ported) |
+
 ## Summary
 
 | File | Theorems | counterpart | counterpart? | decidable check | not carried over: phase 7 | not carried over: phase 8 | not carried over: other reason |
 |---|---|---|---|---|---|---|---|
 | `Defs.lean` | 21 | 17 | 0 | 0 | 0 | 3 | 1 |
-| `ExprAxioms.lean` | 60 | 20 | 0 | 5 | 23 | 8 | 4 |
+| `ExprAxioms.lean` | 60 | 28 | 0 | 9 | 11 | 8 | 4 |
 | `StatementAxioms.lean` (public) | 75 | 3 | 1 | 0 | 1 | 58 | 12 |
 | `StatementAxioms.lean` (private) | 25 | 0 | 0 | 0 | 0 | 8 | 17 |
 | `SetBagLemmas.lean` | 11 | 0 | 0 | 0 | 0 | 0 | 11 |
-| **Total** | **192** | **40** | **1** | **5** | **24** | **77** | **45** |
+| `ValueLemmas.lean` (public) | 50 | 34 | 0 | 0 | 0 | 0 | 16 |
+| `ValueLemmas.lean` (private) | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
+| `Comparison.lean` (public) | 149 | 70 | 0 | 7 | 5 | 37 | 30 |
+| `Comparison.lean` (private) | 53 | 0 | 0 | 0 | 0 | 31 | 22 |
+| `Decidable.lean` (law rows only) | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
+| **Total** | **446** | **152** | **1** | **16** | **18** | **145** | **114** |
 
-In the summary, the "other reason" column covers three kinds of row: subsumed by a general lemma,
-artefact of the untyped representation, and false under three-valued logic. The four `ExprAxioms`
-complement laws (`and_not_self` and its siblings) are the only rows that are false under
-three-valued logic. Of the 25 private helpers, the 8 outer-join and pagination helpers count as
-phase 8, and the 17 list and name-lookup helpers count as other.
+The "other reason" column covers three kinds of row: subsumed by a general lemma or by a
+definition, artefact of the untyped representation (vacuous statements included), and false
+under three-valued logic or for NULL. These rows are false under three-valued logic or for
+NULL:
+
+- the four `ExprAxioms` complement laws;
+- `evalBinOp_and_not_self` and `evalBinOp_or_not_self` in `ValueLemmas`;
+- `expr_mul_zero` and `expr_zero_mul` in `Comparison`.
+
+The private helpers are counted from their grouped lists:
+
+| File | Phase 8 | Other |
+|---|---|---|
+| `StatementAxioms` | 8 (outer join, pagination) | 17 (lists, name lookup) |
+| `Comparison` | 31 (`COALESCE`, aggregates, `LIKE`, string functions) | 22 (subsumed comparison and `IN` helpers) |
+| `ValueLemmas` | 0 | 1 (artefact) |
+
+The `ExprAxioms` laws for associativity, De Morgan, distributivity, idempotence and absorption
+map to the expression-level laws `Expr.Equiv.and_assoc`, `or_assoc`, `not_and`, `not_or`,
+`and_or_distrib_left`, `or_and_distrib_left`, `and_self`, `or_self`, `and_or_absorb` and
+`or_and_absorb`. These laws are being added to `SqlCore/Equiv.lean` in this phase.
