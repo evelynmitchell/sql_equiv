@@ -238,6 +238,14 @@ theorem Rel.mapM_evalRow {rs rs' : List (Row n)} (h : ℓ.Rel rs rs') {es es' : 
   · exact absurd (hc.mpr hall') hall
   · exact .none
 
+/-- At the bag and set levels a relation is insensitive to permutations of either side. -/
+theorem Rel.perm_congr {l₁ l₂ l₁' l₂' : List α} (hℓ : ℓ ≠ .ordered) (h : ℓ.Rel l₁ l₂)
+    (p₁ : l₁'.Perm l₁) (p₂ : l₂'.Perm l₂) : ℓ.Rel l₁' l₂' := by
+  cases ℓ with
+  | ordered => exact absurd rfl hℓ
+  | bag => exact p₁.trans (h.trans p₂.symm)
+  | set => exact fun a => by rw [p₁.mem_iff, p₂.mem_iff]; exact h a
+
 end EquivLevel
 
 namespace Query
@@ -332,6 +340,69 @@ theorem aggregate {g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → AggCal
   rw [equiv_ordered_iff] at h ⊢
   intro D hD
   simp only [eval_aggregate, Except.toOption_bind, h D hD]
+
+/-- The second components of rows paired with a computed key are the input rows. -/
+theorem map_snd_of_mapM_pair {α : Type} {g : Row n → Except EvalError (α × Row n)}
+    (hg : ∀ r x, g r = .ok x → x.2 = r) {rs : List (Row n)} {keyed : List (α × Row n)}
+    (h : rs.mapM g = .ok keyed) : keyed.map Prod.snd = rs := by
+  have hf := List.mapM_eq_ok_iff_forall₂.mp h
+  clear h
+  induction hf with
+  | nil => rfl
+  | cons hab _ ih => simp [hg _ _ hab, ih]
+
+/-- `ORDER BY` is a congruence at every level: sorting only permutes the rows (phase 8b). -/
+theorem orderBy {k : ℕ} (keys : Fin k → SortKey n) {q q' : Query S n} (h : Equiv ℓ q q') :
+    Equiv ℓ (Query.orderBy keys q) (Query.orderBy keys q') := fun D hD => by
+  have h' := h D hD
+  simp only [eval_orderBy]
+  rcases hq : q.eval D with e | rs <;> rcases hq' : q'.eval D with e' | rs' <;>
+    rw [hq, hq'] at h'
+  · exact .none
+  · cases h'
+  · cases h'
+  · have hrel := Option.rel_some_some.mp h'
+    simp only [ok_bind]
+    generalize hf : (fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r) :
+      Row n → Except EvalError (Row k × Row n)) = f
+    have hfst : ∀ r x, f r = .ok x → x.2 = r := fun r x hx => by
+      subst hf
+      rcases he : Expr.evalRow (fun i => (keys i).e) r with e | d
+      · simp [he] at hx
+      · simp only [he, ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at hx
+        rw [← hx]
+    have hsome : (rs.mapM f).toOption.isSome ↔ (rs'.mapM f).toOption.isSome := by
+      rw [Except.toOption_mapM, Except.toOption_mapM]
+      have hc : (∀ r ∈ rs, (f r).toOption.isSome) ↔ ∀ r ∈ rs', (f r).toOption.isSome :=
+        ⟨fun hall r hr => hall r ((hrel.mem_iff r).mpr hr),
+          fun hall r hr => hall r ((hrel.mem_iff r).mp hr)⟩
+      split_ifs with h₁ h₂ h₂ <;> simp_all
+    rcases hk : rs.mapM f with e | keyed <;> rcases hk' : rs'.mapM f with e' | keyed'
+    · exact .none
+    · rw [hk, hk'] at hsome; simp at hsome
+    · rw [hk, hk'] at hsome; simp at hsome
+    · simp only [pure, Except.pure]
+      refine .some ?_
+      by_cases hℓ : ℓ = .ordered
+      · subst hℓ
+        have : rs = rs' := hrel
+        subst this
+        rw [hk, _root_.Except.ok.injEq] at hk'
+        subst hk'
+        exact EquivLevel.Rel.refl _ _
+      · have hp : ∀ {l : List (Row n)} {ks}, l.mapM f = .ok ks →
+            ((sortKeyed keys ks).map Prod.snd).Perm l := fun {l ks} hl => by
+          rw [← map_snd_of_mapM_pair hfst hl]
+          exact (List.perm_insertionSort _ ks).map Prod.snd
+        exact hrel.perm_congr hℓ (hp hk) (hp hk')
+
+/-- `LIMIT`/`OFFSET` is a congruence at the ordered level (at the bag and set levels it is not: which
+rows it keeps depends on their order). -/
+theorem limit (count : Option ℕ) (offset : ℕ) {q q' : Query S n} (h : Equiv .ordered q q') :
+    Equiv .ordered (Query.limit count offset q) (Query.limit count offset q') := by
+  rw [equiv_ordered_iff] at h ⊢
+  intro D hD
+  simp only [eval_limit, Except.toOption_bind, h D hD]
 
 /-! ### Congruence in the expression arguments -/
 

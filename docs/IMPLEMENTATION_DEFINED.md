@@ -135,6 +135,9 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T10 | `AVG` over integers (`AVG` of 1, 2), row 7 | `1.5` (DOUBLE) | `1.5000…` (numeric) | Ill-typed until the #201 scale policy | open (#201; decided on #297) | `BridgeDiffTest` (rejection) |
 | T11 | `MIN`/`MAX` over booleans, row 14 | Boolean result | Error | Ill-typed | decided (#313) | `AggregateExamples` |
 | T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` splits typed NULLs (#315) | `AggregateExamples`, `DuckdbDiffTest` |
+| T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts | Error | `unsupported` at elaboration: under DISTINCT every key must be a selected expression | decided (standard and Postgres; #318) | `BridgeDiffTest` (rejection) |
+| T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
+| T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318); `SqlEquiv` sorts by a constant (#316) | `BridgeDiffTest`, `DuckdbDiffTest` |
 
 ### Notes on individual rows
 

@@ -82,6 +82,8 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | unionAll _ _ => false
     | distinct _ => false
     | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
   | _, _, select (n := n) p q, q' =>
     match q' with
     | table _ => false
@@ -91,6 +93,8 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | unionAll _ _ => false
     | distinct _ => false
     | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
   | _, _, project (n := n) (k := k) es q, q' =>
     match q' with
     | table _ => false
@@ -101,6 +105,8 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | unionAll _ _ => false
     | distinct _ => false
     | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
   | _, _, join (n := n₁) (m := m₁) θ q₁ q₂, q' =>
     match q' with
     | table _ => false
@@ -113,6 +119,8 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | unionAll _ _ => false
     | distinct _ => false
     | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
   | _, _, unionAll q₁ q₂, q' =>
     match q' with
     | table _ => false
@@ -122,6 +130,8 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | unionAll q₁' q₂' => beq q₁ q₁' && beq q₂ q₂'
     | distinct _ => false
     | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
   | _, _, distinct q, q' =>
     match q' with
     | table _ => false
@@ -131,6 +141,8 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | unionAll _ _ => false
     | distinct q' => beq q q'
     | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
   | _, _, aggregate (n := n) (g := g) (a := a) keys aggs q, q' =>
     match q' with
     | table _ => false
@@ -144,6 +156,33 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
         decide ((fun i => h.1 ▸ keys (h.2.1 ▸ i)) = keys') &&
           decide ((fun j => h.1 ▸ aggs (h.2.2 ▸ j)) = aggs') && beq q q'
       else false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
+  | _, _, orderBy (n := n) (k := k) keys q, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct _ => false
+    | aggregate _ _ _ => false
+    | orderBy (n := n') (k := k') keys' q' =>
+      if h : n = n' ∧ k = k' then
+        decide ((fun i => h.1 ▸ keys (h.2 ▸ i)) = keys') && beq q q'
+      else false
+    | limit _ _ _ => false
+  | _, _, limit c o q, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct _ => false
+    | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit c' o' q' => decide (c = c') && decide (o = o') && beq q q'
 
 /-- `beq` is sound: equal results mean equal arities and equal queries. -/
 theorem eq_of_beq {n m : ℕ} {q : Query S n} {q' : Query S m} (h : beq q q' = true) :
@@ -207,6 +246,23 @@ theorem eq_of_beq {n m : ℕ} {q : Query S n} {q' : Query S m} (h : beq q q' = t
     split_ifs at h with hn
     obtain ⟨rfl, rfl, rfl⟩ := hn
     simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨⟨rfl, rfl⟩, hq⟩ := h
+    obtain ⟨hn', e⟩ := ih hq
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+  | orderBy keys q ih =>
+    cases q' <;> simp only [beq, reduceCtorEq] at h
+    split_ifs at h with hn
+    obtain ⟨rfl, rfl⟩ := hn
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h
+    obtain ⟨rfl, hq⟩ := h
+    obtain ⟨hn', e⟩ := ih hq
+    cases hn'
+    subst e
+    exact ⟨rfl, rfl⟩
+  | limit c o q ih =>
+    cases q' <;> simp only [beq, reduceCtorEq, Bool.and_eq_true, decide_eq_true_eq] at h
     obtain ⟨⟨rfl, rfl⟩, hq⟩ := h
     obtain ⟨hn', e⟩ := ih hq
     cases hn'

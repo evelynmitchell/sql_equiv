@@ -376,6 +376,8 @@ join that it cannot enter. Where it stops, it is simplified in place (`Query.sim
   | _, p, unionAll q₁ q₂ => unionAll (pushSelect p q₁) (pushSelect p q₂)
   | _, p, distinct q => distinct (pushSelect p q)
   | _, p, q@(aggregate _ _ _) => simpSelect p q
+  | _, p, q@(orderBy _ _) => simpSelect p q
+  | _, p, q@(limit _ _ _) => simpSelect p q
 
 /-- `SELECT es FROM q` with projections fused: over a safe projection, the two fuse by
 substitution, and the result fuses further down. Where it stops, it is simplified in place
@@ -393,6 +395,8 @@ substitution, and the result fuses further down. Where it stops, it is simplifie
   | _, _, es, unionAll q₁ q₂ => simpProject es (unionAll q₁ q₂)
   | _, _, es, distinct q => simpProject es (distinct q)
   | _, _, es, q@(aggregate _ _ _) => simpProject es q
+  | _, _, es, q@(orderBy _ _) => simpProject es q
+  | _, _, es, q@(limit _ _ _) => simpProject es q
 
 /-- The query simplifier: simplify the inputs of each node, then move its `WHERE` down, fuse its
 projections or simplify its join predicate. `Query.equiv_simplify` certifies it on every
@@ -405,6 +409,8 @@ conforming instance. -/
   | _, unionAll q₁ q₂ => unionAll q₁.simplify q₂.simplify
   | _, distinct q => distinct q.simplify
   | _, aggregate keys aggs q => aggregate keys aggs q.simplify
+  | _, orderBy keys q => orderBy keys q.simplify
+  | _, limit c o q => limit c o q.simplify
 
 theorem equiv_simpSelect (p : Expr n) (q : Query S n) :
     Equiv .ordered (select p q) (simpSelect p q) := by
@@ -505,6 +511,12 @@ theorem equiv_pushSelect (p : Expr n) (q : Query S n) :
   | aggregate keys aggs q _ =>
     rw [pushSelect]
     exact equiv_simpSelect p _
+  | orderBy keys q _ =>
+    rw [pushSelect]
+    exact equiv_simpSelect p _
+  | limit c o q _ =>
+    rw [pushSelect]
+    exact equiv_simpSelect p _
 
 theorem equiv_fuseProject (es : Fin k → Expr n) (q : Query S n) :
     Equiv .ordered (project es q) (fuseProject es q) := by
@@ -532,6 +544,8 @@ theorem equiv_simplify (q : Query S n) : Equiv .ordered q q.simplify := by
   | unionAll q₁ q₂ ih₁ ih₂ => exact Equiv.unionAll ih₁ ih₂
   | distinct q ih => exact Equiv.distinct ih
   | aggregate keys aggs q ih => exact Equiv.aggregate keys aggs ih
+  | orderBy keys q ih => exact Equiv.orderBy keys ih
+  | limit c o q ih => exact Equiv.limit c o ih
 
 end Query
 

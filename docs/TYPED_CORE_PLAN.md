@@ -41,6 +41,7 @@ CSLib through the frontier.
 | `SqlCoreTest/SimplifyExamples.lean` | the frontier's simplifier tests, and checker examples |
 | `SqlCore/Aggregate.lean` | aggregate calls: evaluation over a group, typing, soundness |
 | `SqlCoreTest/AggregateExamples.lean` | `GROUP BY` and aggregates checked by `decide` |
+| `SqlCoreTest/OrderByExamples.lean` | `ORDER BY`, `LIMIT` and `OFFSET` checked by `decide` |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -84,9 +85,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] Comparison with `SqlEquiv`'s certified rewriter (below)
 - [ ] Phase 8: features beyond the frontier (#297), *offered upstream*. Done when the Spider
   elaboration rate matches `SqlEquiv` (about 553/564; decided on #297)
-  - [ ] 8a GROUP BY, HAVING, aggregates (#313)
+  - [x] 8a GROUP BY, HAVING, aggregates (#313)
     - [x] Core: `AggCall`, `Query.aggregate`, typing, type soundness, simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **268/564 (47.5%)**, up from 129
+  - [ ] 8b ORDER BY, LIMIT, OFFSET (#318)
+    - [x] Core: `SortKey`, `Query.orderBy`, `Query.limit`, typing, type soundness, congruences,
+      simplifier and checker
+    - [x] Elaboration from SQL, differential tests, Spider rate: **363/564 (64.4%)**, up from 268
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -344,6 +349,54 @@ query is checked against DuckDB instead.
 
 Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125), subqueries
 (47), bare columns (37, a sqlite extension), AVG (27), and INTERSECT/EXCEPT (37).
+
+**8b, core (#318).**
+
+- `SortKey n` is an expression with a direction (`desc`) and a NULL position (`nullsFirst`).
+  The NULL position is explicit. The parser fills it from the dialect when the SQL leaves it out
+  (registry row 1).
+- `Query.orderBy keys q` evaluates the key tuple of every row, then sorts by it with Mathlib's
+  stable `List.insertionSort`. Tied rows keep their input order. Engines leave that order
+  unspecified (registry T14).
+  - A failing key fails the query. A key may be any well-typed expression of the input.
+  - Values compare by `Value.cmp`, so `int` and `decimal` are promoted.
+- `Query.limit count offset q` drops `offset` rows, then keeps `count` rows if there is a count.
+- Type soundness, `divSafe` and `IsSafe` cover both.
+- Congruence:
+  - `Equiv.orderBy` holds at every level: sorting only permutes the rows, and bag and set
+    equivalence are insensitive to permutations (`EquivLevel.Rel.perm_congr`).
+  - `Equiv.limit` holds at the ordered level only: a prefix of a bag is not determined by the bag.
+- The simplifier and canonical forms recurse below both nodes, and the checker compares them
+  structurally. A `WHERE` above a `LIMIT` cannot move below it.
+
+**8b, elaboration (#318).**
+
+- Without DISTINCT, `ORDER BY` goes below the projection. A key may be any expression of the
+  input, including columns that are not selected.
+- Under GROUP BY, keys go over the aggregate output. Aggregates in `ORDER BY` are collected with
+  those of the `SELECT` list and `HAVING`.
+- A bare name is first looked up among the output names (aliases and selected columns). An
+  integer literal is a 1-based position, as in Postgres, sqlite and DuckDB.
+- Under DISTINCT the sort is above the `DISTINCT`. Every key must be a selected expression (the
+  standard and Postgres; registry row 5 / T13).
+- `LIMIT`/`OFFSET` wrap the result.
+- ORDER BY or LIMIT on a compound query is rejected. The parser binds them to the last branch
+  (#317).
+
+The parsed-SQL corpus gained 28 queries (one pins the dialect's default NULL position, a documented DuckDB difference); queries with `ORDER BY` are compared as ordered lists on
+tie-free keys. They agree with DuckDB. They agree with `SqlEquiv` except two positional
+`ORDER BY` queries, where `SqlEquiv` sorts by a constant (#316).
+
+Spider: 363/564 now elaborate. The largest remaining classes:
+
+| Class | Queries | Notes |
+|---|---:|---|
+| Bare columns (T9) | 64 | Now including queries that also sort |
+| Subqueries | 47 | |
+| `AVG` | 27 | |
+| `INTERSECT`/`EXCEPT` | 37 | |
+| Type errors | 16 | sqlite affinity |
+| `LIKE` | 8 | |
 
 ## Rules for every phase
 

@@ -14,7 +14,8 @@ The typed core covers the following fragment:
 - **Scalar expressions:** int, text, bool and exact decimal values, `NULL`, unary and binary
   operators, `IN` over a list of literals, and `CASE`.
 - **Queries:** table, `WHERE` (`select`), `SELECT` list (`project`), inner join `ON θ`,
-  `UNION ALL` and `DISTINCT`.
+  `UNION ALL` and `DISTINCT`; since phase 8, `GROUP BY` with aggregates (#313) and `ORDER BY`,
+  `LIMIT` and `OFFSET` (#318).
 
 Side conditions quantify over rows that conform to a typing context `Γ`. Where possible they are
 decidable checks: `e.typeOf Γ = some τ`, `Expr.IsSafe`, `Expr.IsSafePredicate` and `q.typeOf = some Γ`.
@@ -206,23 +207,23 @@ statement checkers are phase 7 infrastructure.
 
 | SqlEquiv theorem | Category | Typed counterpart / reason |
 |---|---|---|
-| `order_by_preserves_count` | not carried over | Outside the fragment (`ORDER BY`); phase 8 |
-| `order_by_length_invariant` | not carried over | Outside the fragment (`ORDER BY`); phase 8 |
-| `limit_zero_empty` | not carried over | Outside the fragment (`LIMIT`); phase 8 |
-| `limit_upper_bound` | not carried over | Outside the fragment (`LIMIT`); phase 8 |
-| `limit_none_all_rows` | not carried over | Outside the fragment (`LIMIT`); phase 8 |
-| `limit_monotonic` | not carried over | Outside the fragment (`LIMIT`); phase 8 |
-| `limit_one_singleton` | not carried over | Outside the fragment (`LIMIT`); phase 8 |
-| `offset_zero_identity` | not carried over | Outside the fragment (`OFFSET`); phase 8 |
-| `offset_too_large_empty` | not carried over | Outside the fragment (`OFFSET`); phase 8 |
-| `offset_reduces_count` | not carried over | Outside the fragment (`OFFSET`); phase 8 |
-| `offset_monotonic` | not carried over | Outside the fragment (`OFFSET`); phase 8 |
-| `limit_offset_compose` | not carried over | Outside the fragment (`LIMIT`/`OFFSET`); phase 8 |
-| `offset_limit_zero_empty` | not carried over | Outside the fragment (`LIMIT`/`OFFSET`); phase 8 |
-| `pagination_upper_bound` | not carried over | Outside the fragment (`LIMIT`/`OFFSET`); phase 8 |
-| `pagination_identity` | not carried over | Outside the fragment (`LIMIT`/`OFFSET`); phase 8 |
-| `consecutive_pages` | not carried over | Outside the fragment (`LIMIT`/`OFFSET`); phase 8 |
-| `order_limit_deterministic` | not carried over | Outside the fragment (`ORDER BY`/`LIMIT`); phase 8 |
+| `order_by_preserves_count` | counterpart | `Query.perm_of_eval_orderBy`: the sorted rows are a permutation of the input, hence as many |
+| `order_by_length_invariant` | counterpart | `Query.perm_of_eval_orderBy`: every sort permutes the same input rows |
+| `limit_zero_empty` | counterpart | `Query.eval_limit_zero` (any offset) |
+| `limit_upper_bound` | counterpart | `Query.length_le_of_eval_limit` |
+| `limit_none_all_rows` | counterpart | `Query.eval_limit` with no count (the rows after the offset); `Query.limit_none_zero` with no offset |
+| `limit_monotonic` | counterpart? | `Query.limit_limit` with `m ≤ n` and no offsets: `LIMIT m` over `LIMIT n` is `LIMIT m`, so the shorter result is a prefix of the longer |
+| `limit_one_singleton` | counterpart | `Query.length_le_of_eval_limit` with `c = 1` |
+| `offset_zero_identity` | counterpart | `Query.limit_none_zero` (ordered) |
+| `offset_too_large_empty` | counterpart | `Query.length_of_eval_offset`: the length is `rs'.length - o = 0` |
+| `offset_reduces_count` | counterpart | `Query.length_of_eval_offset` |
+| `offset_monotonic` | counterpart | `Query.length_of_eval_offset` (`rs'.length - o` is antitone in `o`) |
+| `limit_offset_compose` | counterpart | `Query.eval_limit` (definitional: drop the offset, then take the count); `Query.limit_offset_offset` for nested offsets |
+| `offset_limit_zero_empty` | counterpart | `Query.eval_limit_zero` |
+| `pagination_upper_bound` | counterpart | `Query.length_le_of_eval_limit` |
+| `pagination_identity` | counterpart? | `Query.eval_limit` with `List.take_length`; no separate theorem, since the count depends on the instance |
+| `consecutive_pages` | counterpart | `Query.eval_limit_pages` |
+| `order_limit_deterministic` | counterpart | `Query.eval_limit` over `Query.orderBy` (evaluation is a function; the sort is stable, registry T14) |
 
 ### WHERE congruence
 
@@ -586,7 +587,7 @@ One declaration in it states a law:
 |---|---|---|---|---|---|---|---|
 | `Defs.lean` | 21 | 17 | 0 | 0 | 0 | 3 | 1 |
 | `ExprAxioms.lean` | 60 | 28 | 0 | 9 | 11 | 8 | 4 |
-| `StatementAxioms.lean` (public) | 75 | 3 | 1 | 0 | 1 | 58 | 12 |
+| `StatementAxioms.lean` (public) | 75 | 18 | 3 | 0 | 1 | 41 | 12 |
 | `StatementAxioms.lean` (private) | 25 | 0 | 0 | 0 | 0 | 8 | 17 |
 | `SetBagLemmas.lean` | 11 | 0 | 0 | 0 | 0 | 0 | 11 |
 | `ValueLemmas.lean` (public) | 50 | 34 | 0 | 0 | 0 | 0 | 16 |
@@ -594,7 +595,10 @@ One declaration in it states a law:
 | `Comparison.lean` (public) | 149 | 70 | 0 | 7 | 5 | 37 | 30 |
 | `Comparison.lean` (private) | 53 | 0 | 0 | 0 | 0 | 31 | 22 |
 | `Decidable.lean` (law rows only) | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
-| **Total** | **446** | **152** | **1** | **16** | **18** | **145** | **114** |
+| **Total** | **446** | **167** | **3** | **16** | **18** | **128** | **114** |
+
+Phase 8b (#318) moved the 17 `ORDER BY`/`LIMIT`/`OFFSET` rows from phase 8 to counterparts in
+`SqlCore/QueryLaws.lean`.
 
 The "other reason" column covers three kinds of row: subsumed by a general lemma or by a
 definition, artefact of the untyped representation (vacuous statements included), and false

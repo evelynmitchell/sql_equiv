@@ -484,6 +484,93 @@ theorem select_distinct (p : Expr n) (q : Query S n) :
   · rw [Option.bind_some, List.dedup_filter]
   · rfl
 
+/-! ### `ORDER BY`, `LIMIT` and `OFFSET` (phase 8b, #318) -/
+
+/-- `ORDER BY` returns a permutation of its input: the same rows, as many times each. -/
+theorem perm_of_eval_orderBy {k : ℕ} {keys : Fin k → SortKey n} {q : Query S n} {D : Database S}
+    {rs : List (Row n)} (h : (orderBy keys q).eval D = .ok rs) :
+    ∃ rs', q.eval D = .ok rs' ∧ rs.Perm rs' := by
+  rw [eval_orderBy] at h
+  rcases hq : q.eval D with e | rs'
+  · rw [hq] at h; cases h
+  refine ⟨rs', rfl, ?_⟩
+  rw [hq] at h
+  simp only [Except.ok_bind] at h
+  generalize hf : (fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r) :
+    Row n → Except EvalError (Row k × Row n)) = f at h
+  rcases hk : rs'.mapM f with e | keyed <;> rw [hk] at h
+  · cases h
+  simp only [Except.ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at h
+  subst h
+  have hfst : ∀ r x, f r = .ok x → x.2 = r := fun r x hx => by
+    subst hf
+    rcases he : Expr.evalRow (fun i => (keys i).e) r with e | d
+    · simp [he] at hx
+    · simp only [he, Except.ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at hx
+      rw [← hx]
+  rw [← Equiv.map_snd_of_mapM_pair hfst hk]
+  exact (List.perm_insertionSort _ keyed).map Prod.snd
+
+/-- No `LIMIT` and no `OFFSET` keep every row. -/
+theorem limit_none_zero (q : Query S n) : Equiv .ordered (limit none 0 q) q :=
+  Equiv.of_eval_eq fun D _ => by
+    simp only [eval_limit, List.drop_zero]
+    rcases q.eval D with e | rs <;> rfl
+
+/-- `LIMIT 0` returns no rows, whatever the offset. -/
+theorem eval_limit_zero (o : ℕ) (q : Query S n) (D : Database S) :
+    (limit (some 0) o q).eval D = (q.eval D).map fun _ => [] := by
+  simp only [eval_limit, List.take_zero]
+  rcases q.eval D with e | rs <;> rfl
+
+/-- `LIMIT c` returns at most `c` rows. -/
+theorem length_le_of_eval_limit {c o : ℕ} {q : Query S n} {D : Database S} {rs : List (Row n)}
+    (h : (limit (some c) o q).eval D = .ok rs) : rs.length ≤ c := by
+  rw [eval_limit] at h
+  rcases hq : q.eval D with e | rs' <;> rw [hq] at h
+  · cases h
+  simp only [Except.ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at h
+  subst h
+  exact List.length_take_le c _
+
+/-- `OFFSET o` without `LIMIT` removes `o` rows, or every row if there are fewer. -/
+theorem length_of_eval_offset {o : ℕ} {q : Query S n} {D : Database S} {rs rs' : List (Row n)}
+    (h : (limit none o q).eval D = .ok rs) (hq : q.eval D = .ok rs') :
+    rs.length = rs'.length - o := by
+  rw [eval_limit, hq] at h
+  simp only [Except.ok_bind, pure, Except.pure, _root_.Except.ok.injEq] at h
+  subst h
+  exact List.length_drop
+
+/-- Two `LIMIT`/`OFFSET`s compose into one: skip `o₁` then `o₂` rows, and keep at most `m` of the
+`n - o₂` rows that the inner `LIMIT` leaves. -/
+theorem limit_limit (m n o₁ o₂ : ℕ) (q : Query S k) :
+    Equiv .ordered (limit (some m) o₂ (limit (some n) o₁ q))
+      (limit (some (min m (n - o₂))) (o₁ + o₂) q) :=
+  Equiv.of_eval_eq fun D _ => by
+    simp only [eval_limit]
+    rcases q.eval D with e | rs
+    · rfl
+    simp only [Except.ok_bind, pure, Except.pure, List.drop_take, List.take_take, List.drop_drop]
+
+/-- An `OFFSET` over an `OFFSET` adds up. -/
+theorem limit_offset_offset (c : Option ℕ) (o₁ o₂ : ℕ) (q : Query S k) :
+    Equiv .ordered (limit c o₂ (limit none o₁ q)) (limit c (o₁ + o₂) q) :=
+  Equiv.of_eval_eq fun D _ => by
+    simp only [eval_limit]
+    rcases q.eval D with e | rs
+    · rfl
+    cases c <;> simp only [Except.ok_bind, pure, Except.pure, List.drop_drop]
+
+/-- Consecutive pages: the first `p` rows followed by the next `p` are the first `p + p`. -/
+theorem eval_limit_pages (p : ℕ) (q : Query S n) (D : Database S) :
+    (do let a ← (limit (some p) 0 q).eval D; let b ← (limit (some p) p q).eval D; pure (a ++ b)) =
+      (limit (some (p + p)) 0 q).eval D := by
+  simp only [eval_limit]
+  rcases q.eval D with e | rs
+  · rfl
+  simp only [Except.ok_bind, pure, Except.pure, List.drop_zero, List.take_add]
+
 end Query
 
 end SqlCore
