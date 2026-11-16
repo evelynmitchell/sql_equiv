@@ -28,6 +28,8 @@ CSLib through the frontier.
 | `SqlCoreTest/ScalarDiffTest.lean` | differential test against `SqlEquiv.evalBinOp`/`evalUnaryOp` |
 | `SqlCoreTest/SchemaExamples.lean` | column resolution examples; `SemanticsTest.testDb` as a `DbSchema` and a conforming instance |
 | `SqlCoreTest/SchemaDiffTest.lean` | the typed test database has exactly the original rows |
+| `SqlCoreTest/ExprExamples.lean` | evaluation, typing, safety and lowering examples; soundness on the typed test database |
+| `SqlCoreTest/ExprDiffTest.lean` | generated well-typed expressions evaluated against `SqlEquiv.evalExpr` |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
 `SqlEquiv` stays on Batteries and never imports Mathlib. Mathlib and cslib-frontier
@@ -45,7 +47,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] exact `decimal` as `ℚ`, with int↔decimal promotion (decisions 4 and 6)
 - [x] **Phase 2: rows, columns, schemas** (#291), *re-derive*: `SqlCore/Row.lean`, `Column.lean`,
   `Schema.lean`
-- [ ] Phase 3: resolved expressions, typing, type soundness (#292), *re-derive*
+- [x] **Phase 3: resolved expressions, typing, type soundness** (#292), *re-derive*:
+  `SqlCore/Expr.lean`, `Typing.lean`, `Preconditions.lean`
 - [ ] Correlated-subquery prototype (in #297), alongside phases 3–4
 - [ ] Phase 4: core queries with bag semantics (#293), *from cslib-frontier*
 - [ ] Phase 5: equivalence and rewrite laws (#294), *from cslib-frontier*; the inventory of
@@ -95,6 +98,35 @@ Phase 2 is done in the sense of #291: `SqlCoreTest/SchemaExamples.lean` writes `
 (six tables) as a `DbSchema` and an instance, and `decide` proves that it conforms.
 `SqlCoreTest/SchemaDiffTest.lean` checks at run time that every row matches the original.
 `deriving Fintype` fails at the current Mathlib pin, so the test writes the instance out.
+
+## Phase 3 differences
+
+| Case | `SqlCore` | `SqlEquiv` | Postgres 16 | DuckDB |
+|---|---|---|---|---|
+| Column reference | `col (i : Fin n)`, resolved | a name, looked up per row | | |
+| Error in a `CASE` condition | the error | swallowed; takes `ELSE` | the error | the error |
+| `CASE WHEN … THEN 1 ELSE 1.5 END` | ill-typed (branches of one type) | `1` | `1` (`numeric`) | `1.0` (`DECIMAL`) |
+| `1.0 / 2` | ill-typed | error (#201) | `0.5000…` | `0.5` (`DOUBLE`) |
+| `x IN (1, 2.5, NULL)` with `x` an integer | well-typed (comparable elements) | evaluates | evaluates | evaluates |
+| Aggregates, subqueries, windows | not in the fragment | in `Expr` | | |
+
+Accepting mixed int/decimal `CASE` branches would need evaluation to convert the int branch
+(soundness promises a datum of the declared type). It is left to the phase 6 bridge, which can insert
+the conversion, or to a later `CAST` expression.
+
+Type soundness (`Expr.eval_ok_or_divisionByZero`) is proved for every constructor. A well-typed
+expression never raises `typeMismatch` or `unsupported`, and a safe one (`Expr.IsSafe`, decidable)
+always succeeds. `SqlCore/Preconditions.lean` gives the typed counterpart of each precondition in
+`SqlEquiv/Equiv/Defs.lean`.
+
+`SqlCoreTest/ExprDiffTest.lean` evaluates every generated well-typed expression on the rows of `users`
+and `items` (17848 cases). The only disagreements are the 36 boolean orderings. Swapping the
+`CASE` branches in the translation makes 4536 cases disagree.
+
+Extension candidates that are already in `SqlEquiv` and not ported: `BETWEEN` (expressible as
+`AND` of two comparisons), `LIKE`/`ILIKE` (dialect-dependent, #262), string functions (`UPPER`,
+`LOWER`, `LENGTH`, `SUBSTR`, `TRIM`, …), `COALESCE`/`NULLIF`, `ABS`, and `CAST`. Port them when
+phases 4–6 need them.
 
 ## Rules for every phase
 
