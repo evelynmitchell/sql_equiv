@@ -5,8 +5,13 @@
   `Test/TrustBaseTest.lean` (shared in `Test/TrustBaseCommands.lean`).
 -/
 import SqlCore
+import SqlBridge.Elab
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore
 
 #assert_no_runtime_overrides SqlCore
+
+-- The bridge from parsed SQL (#295): the elaborator (definitions; the theorems are generated).
+#assert_trust_base SqlBridge
+#assert_no_runtime_overrides SqlBridge

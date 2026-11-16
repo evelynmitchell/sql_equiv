@@ -50,6 +50,10 @@ root = "LSpecTests.Main"
 name = "SqlCore"
 
 [[lean_lib]]
+name = "SqlBridge"
+globs = ["SqlBridge.*"]
+
+[[lean_lib]]
 name = "SqlCoreTest"
 globs = ["SqlCoreTest.*"]
 

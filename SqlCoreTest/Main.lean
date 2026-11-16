@@ -15,6 +15,7 @@ import SqlCoreTest.ExprExamples
 import SqlCoreTest.ExprDiffTest
 import SqlCoreTest.QueryExamples
 import SqlCoreTest.LawExamples
+import SqlCoreTest.BridgeDiffTest
 
 def main : IO UInt32 := do
   IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema, expression and query examples)"
@@ -30,5 +31,10 @@ def main : IO UInt32 := do
   IO.println s!"Expression differential vs SqlEquiv: {en} cases, {edoc} documented differences, {ebad.length} unexpected"
   for line in ebad.take 20 do
     IO.println s!"  UNEXPECTED: {line}"
-  if bad.isEmpty && documented > 0 && schemaBad.isEmpty && ebad.isEmpty && en > 0 then return 0
+  let (bn, bfails) := SqlCoreTest.BridgeDiff.run
+  IO.println s!"Parsed SQL through SqlBridge vs SqlEquiv: {bn} queries, {bfails.length} failures"
+  for line in bfails do
+    IO.println s!"  FAIL: {line}"
+  if bad.isEmpty && documented > 0 && schemaBad.isEmpty && ebad.isEmpty && en > 0 && bfails.isEmpty then
+    return 0
   else return 1
