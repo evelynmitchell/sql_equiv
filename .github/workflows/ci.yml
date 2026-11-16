@@ -80,6 +80,9 @@ jobs:
       - name: Check Spider evaluate-rate ratchet
         run: python3 tools/spider_eval_baseline.py --check
 
+      - name: Check Spider typed-core elaboration ratchet
+        run: lake build spider_elab && python3 tools/spider_elab_baseline.py --check
+
       - name: Build tests
         run: lake build sql_equiv_test
 

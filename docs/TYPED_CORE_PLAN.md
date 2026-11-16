@@ -31,6 +31,9 @@ CSLib through the frontier.
 | `SqlCoreTest/ExprExamples.lean` | evaluation, typing, safety and lowering examples; soundness on the typed test database |
 | `SqlCoreTest/ExprDiffTest.lean` | generated well-typed expressions evaluated against `SqlEquiv.evalExpr` |
 | `SqlCoreTest/QueryExamples.lean` | the frontier's query examples, decimals in queries, and queries over the typed test database |
+| `SqlBridge/Elab.lean` | elaborator from parsed SQL to typed queries (library `SqlBridge`) |
+| `SqlBridge/Spider.lean`, `SqlBridge/SpiderMain.lean` | Spider schemas; `lake exe spider_elab`, driven by `tools/spider_elab_baseline.py` |
+| `SqlCoreTest/BridgeDiffTest.lean` | parsed SQL through `SqlBridge` and through `SqlEquiv`, compared as bags |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -58,6 +61,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   `QueryEquiv.lean`, `QueryLaws.lean`, `Foundations/`. The inventory of `SqlEquiv` theorems is
   [`TYPED_CORE_INVENTORY.md`](TYPED_CORE_INVENTORY.md)
 - [ ] Phase 6: bridge from the parsed AST, differential tests against Postgres and DuckDB (#295)
+  - [x] Elaborator `SqlBridge/Elab.lean`: parsed `SqlEquiv.Query` to `SqlCore.Query S n`
+  - [x] Schema from the test database; differential test against `SqlEquiv` on parsed SQL
+  - [x] Schema from Spider's `tables.json`, and the Spider elaboration rate: **129/564 (22.9%)**,
+    [`elab_report.md`](../benchmarks/spider/elab_report.md), ratcheted in CI
+  - [ ] Differential test against DuckDB; register differences in `IMPLEMENTATION_DEFINED.md`
+  - [ ] Stretch: elaborator correctness for single-table `WHERE` and column lists
 - [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
 - [ ] Phase 8: features beyond the frontier (#297), *offered upstream*
 - [ ] Phase 9: retire the untyped semantics (#298)
@@ -176,6 +185,38 @@ a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` pric
   their root namespaces (`Option.Rel`, `List`, `Fin`) so that dot notation finds them, and they are
   candidates for Mathlib and Batteries. The trust guard scans only `SqlCore`, but it collects axioms
   transitively, so these lemmas are still covered through the theorems that use them.
+
+## Phase 6 notes (in progress)
+
+`SqlBridge.elabStmt` translates a parsed statement in the fragment and reports one of five
+distinct failures: `unknownTable`, `unknownColumn`, `ambiguousColumn`, `unsupported` (naming
+the construct) or `typeError`. The fragment is `SELECT [DISTINCT] … FROM` tables, inner and
+cross joins, `WHERE`, `UNION ALL`, and `UNION`. The elaborator makes these choices:
+
+- `UNION` is `DISTINCT (… UNION ALL …)`.
+- `BETWEEN a AND b` is `≥ a AND ≤ b`.
+- `NOT IN` is `NOT (… IN …)`.
+- A multi-branch `CASE` is nested `caseWhen`, and a missing `ELSE` is `NULL`.
+- An untyped `NULL` takes the type of the operand it meets, or the other branch of a `CASE`.
+- Names match exactly (decision 7): `SELECT NAME FROM users` is `unknownColumn`.
+
+Spider: `tools/spider_elab_baseline.py` elaborates the 564 dev queries against their schemas.
+129 elaborate (22.9%). The count is ratcheted in `tools/spider_elab_minimum.txt`, and CI checks
+it. The failure classes are phase 8's work list: GROUP BY 149, aggregates 122, ORDER BY 67,
+subqueries 46, INTERSECT 21, EXCEPT 16, LIKE 8, derived tables 1. 5 more queries are ill-typed
+under Spider's declared column types, for example a `text` age compared with `32`; sqlite
+accepts these through type affinity.
+
+Names are lowercased for Spider (`NamedSchema.fold`), because sqlite is case-insensitive. The
+lookup is still exact after that normalisation, as decision 7 asks.
+
+`SqlBridge` lives in its own library, because it imports both `SqlEquiv` and `SqlCore`. The trust
+guard covers it.
+
+`SqlCoreTest/BridgeDiffTest.lean` runs a corpus of 53 queries. 36 are in the fragment and agree
+with `SqlEquiv` as bags of rows; they cover NULL, decimals, joins, `IN`/`NOT IN` with NULL,
+`CASE` and set operations. 17 must be rejected with a specific failure. A seeded `BETWEEN` bug
+(`>` for `>=`) is caught.
 
 ## Rules for every phase
 
