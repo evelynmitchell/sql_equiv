@@ -36,6 +36,7 @@ CSLib through the frontier.
 | `SqlCoreTest/BridgeDiffTest.lean` | parsed SQL through `SqlBridge` and through `SqlEquiv`, compared as bags |
 | `SqlCoreTest/DuckdbDiffTest.lean` | parsed SQL through `SqlBridge` + `SqlCore` vs the `duckdb` CLI |
 | `SqlCore/Simplify.lean`, `SqlCore/Check.lean` | certified simplifier and checkers |
+| `SqlCore/Canon.lean` | canonical forms modulo AC, with strong-equivalence certificates |
 | `SqlBridge/CliMain.lean` | `lake exe sqlcore check …`: parse, elaborate, check |
 | `SqlCoreTest/SimplifyExamples.lean` | the frontier's simplifier tests, and checker examples |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
@@ -71,13 +72,14 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     [`elab_report.md`](../benchmarks/spider/elab_report.md), ratcheted in CI
   - [x] Differential test against DuckDB; differences registered (`IMPLEMENTATION_DEFINED.md`, rows T1–T8)
   - [ ] Stretch, split out: elaborator correctness for single-table `WHERE` and column lists
-- [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
+- [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
   - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)
   - [x] CLI `lake exe sqlcore check TABLES.json DB "SQL1" "SQL2"` (`SqlBridge/CliMain.lean`)
-  - [ ] Decision procedure on typed expressions (canonical order of `AND`/`OR` operands, ground
-    evaluation), and comparison with `SqlEquiv`'s certified rewriter
-  - [ ] Tactics for goals in the new library
+  - [x] Canonical forms `SqlCore/Canon.lean` (AC-sorted `AND`/`OR` chains, ordered operands of
+    `=`, `<>`, `+`, `*`, `>`/`>=` turned into `<`/`<=`); the checkers compare canonical forms
+  - [x] Tactics `sql_expr_equiv`, `sql_query_equiv` (`decide +kernel`)
+  - [x] Comparison with `SqlEquiv`'s certified rewriter (below)
 - [ ] Phase 8: features beyond the frontier (#297), *offered upstream*
 - [ ] Phase 9: retire the untyped semantics (#298)
 
@@ -240,7 +242,7 @@ whose columns hold values of their declared types. Its type affinity accepts the
 Spider queries above. The Spider harness (`tools/spider_eval_baseline.py`) remains the sqlite
 comparison, for `SqlEquiv`.
 
-## Phase 7 notes (in progress)
+## Phase 7 notes
 
 - **Simplifier.** `SqlCore/Simplify.lean` is the frontier's simplifier: bottom-up expression
   rewrites guarded by decidable checks, plus `WHERE` pushdown and projection fusion for queries.
@@ -255,9 +257,50 @@ comparison, for `SqlEquiv`.
 - **CLI.** `lake exe sqlcore check benchmarks/spider/dev_tables.json concert_singer "…" "…"`
   prints `equivalent (certified …)` (exit 0), `unknown` (1), or an elaboration error (2). It is a
   separate executable, so the `sql_equiv` CLI does not link Mathlib.
-- **Known gap.** `a AND b` against `b AND a` is `unknown`: the simplifier does not sort the
-  operands of commutative operators, and `SqlEquiv`'s normaliser does. This is the next part
-  (decision procedure).
+- **Canonical forms (part 2).** `SqlCore/Canon.lean` rebuilds every chain of `AND` and of `OR` in
+  sorted order. It also orders the operands of `=`, `<>`, `+` and `*`, and turns `>`/`>=` into
+  `<`/`<=` with the operands swapped.
+  - Every step holds with no side condition, so its certificate is a *strong* equivalence
+    (`Expr.SEquiv`): equivalence in every typing context, so agreement on every row, since a row
+    conforms to its own context (`Row.ctxOf`).
+  - Strong equivalence lifts into queries without typing hypotheses (`Query.select_sexpr`,
+    `project_sexpr`, `join_sexpr`, `Query.equiv_canon`).
+  - The checkers compare `normalize = canon ∘ simplify`. The sort is an insertion sort, because
+    `List.mergeSort` is well-founded recursion and the kernel does not unfold it.
+- **What the decision procedure decides.** `checkEquiv` proves two inputs equivalent when they
+  have the same normal form. That means equal up to the simplifier's rewrites, constant folding
+  (which also evaluates ground subexpressions), associativity and commutativity of
+  `AND`/`OR`/`+`/`*`, symmetry of `=`/`<>`, and the comparison swap. It is sound and incomplete:
+  `unknown` is not a refutation.
+- **Tactics.** `sql_expr_equiv` closes `Expr.Equiv Γ e₁ e₂`, and `sql_query_equiv` closes
+  `Query.Equiv ℓ q₁ q₂` at any level. Both run the checker in the kernel (`decide +kernel`, no
+  `native_decide`).
+
+### `SqlEquiv`'s certified rewriter (`SqlEquiv/Rewriter.lean`) against the typed simplifier
+
+| `SqlEquiv` rewrite | Typed core |
+|---|---|
+| `p AND FALSE`, `FALSE AND p` → `FALSE` (no guard) | Performed when `p` is a safe predicate. Under strict errors a failing `p` must still fail (`and_false`). |
+| `p OR TRUE`, `TRUE OR p` → `TRUE` (no guard) | Performed when `p` is a safe predicate, as above (`or_true`). |
+| `p AND TRUE`, `TRUE AND p`, `p OR FALSE`, `FALSE OR p` → `p` (`isDefinitelyBool`) | Performed when `p.typeOf Γ = some .bool`, which is a decidable check in place of the syntactic guard. |
+| `x + 0`, `0 + x`, `x - 0`, `x * 1`, `1 * x` → `x` (`isDefinitelyInt`) | Performed when `x` is an integer. The laws also hold for decimals; widening the guard is a follow-up. |
+| `NOT (a op b)` → `a (negate op) b`, for the six comparisons | Performed (`not_cmp`). |
+| `NOT (NOT p)` → `p` (`isDefinitelyBool`) | Performed when `p` is boolean. |
+| `NOT EXISTS` flag flip | Not performed: subqueries are outside the fragment (phase 8). |
+| `x LIKE ''` → `x = ''` | Not performed: `LIKE` is outside the fragment (phase 8). |
+| `e IN ()` → `FALSE` | Performed when `e` is safe. Strict errors: a failing `e` must still fail. |
+| `e NOT IN ()` → `TRUE` | Performed: `NOT (e IN ())` → `NOT FALSE` → `TRUE` (constant folding), when `e` is safe. |
+| `e IN (v)` → `e = v` | Performed (`inList_singleton`). |
+| `e NOT IN (v)` → `e <> v` | Performed: `NOT (e = v)` → `e <> v` (`not_cmp`). |
+| `CASE WHEN TRUE THEN x ELSE y` → `x`; `WHEN FALSE` → `y`, or `NULL` without `ELSE` | Performed (`caseWhen_true`, `caseWhen_false`, `caseWhen_null`). The elaborator makes a missing `ELSE` a typed `NULL`. |
+| `CASE` with no branches | Not applicable: a `CASE` always has a branch in the typed syntax. |
+| `BETWEEN` → `AND(>=, <=)` | Done by the elaborator (`SqlBridge`), which desugars `BETWEEN`. |
+| `normalizeExpr`: AC ordering (`Equiv/Decidable.lean`) | Performed by `Expr.canon` for `AND`, `OR`, `=`, `<>`, `+`, `*`, and comparison direction. |
+| Ground evaluation (`Equiv/Decidable.lean`) | Performed by constant folding in `Expr.simplify`. An error is never folded. |
+
+Every rewrite of `SqlEquiv`'s certified rewriter on the core fragment is performed. Rewrites
+outside the fragment (`EXISTS`, `LIKE`) are left for phase 8. The typed simplifier also rewrites
+queries (pushdown, projection fusion), which `SqlEquiv`'s rewriter does not.
 
 ## Rules for every phase
 

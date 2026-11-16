@@ -6,6 +6,7 @@ Authors: Evelyn Mitchell
 module
 
 public import SqlCore.Simplify
+public import SqlCore.Canon
 public import Mathlib.Data.Fintype.Basic
 
 /-!
@@ -13,9 +14,12 @@ public import Mathlib.Data.Fintype.Basic
 
 `Expr.checkEquiv Γ e₁ e₂` and `Query.checkEquiv q₁ q₂` either return a proof of equivalence or
 `unknown`. They are sound by construction, since every `proved` result carries a kernel-checked
-proof, and deliberately incomplete: two inputs are proved equivalent when their simplifications
-(`Expr.simplify`, `Query.simplify`) are syntactically equal, and the simplifier's certificates
-transfer the equality back to the inputs.
+proof, and deliberately incomplete: two inputs are proved equivalent when the canonical forms
+(`Expr.canon`, `Query.canon`) of their simplifications (`Expr.simplify`, `Query.simplify`) are
+syntactically equal, and the certificates of both steps transfer the equality back to the inputs.
+
+The tactics `sql_expr_equiv` and `sql_query_equiv` close goals `Expr.Equiv Γ e₁ e₂` and
+`Query.Equiv ℓ q₁ q₂` by running the checker in the kernel (`decide +kernel`, no `native_decide`).
 
 `Query` has no derived `DecidableEq`: its `table` constructor is indexed by the table's arity,
 which defeats the deriving handler. `Query.beq` compares two queries of possibly different
@@ -48,10 +52,16 @@ namespace Expr
 
 variable {n : ℕ}
 
-/-- Certified expression equivalence: equal simplifications prove `Equiv Γ e₁ e₂`. -/
+/-- Simplification, then the canonical form. -/
+def normalize (Γ : Fin n → SqlType) (e : Expr n) : Expr n := (e.simplify Γ).canon
+
+theorem equiv_normalize (Γ : Fin n → SqlType) (e : Expr n) : Equiv Γ e (e.normalize Γ) :=
+  (equiv_simplify Γ e).trans (sequiv_canon _ Γ)
+
+/-- Certified expression equivalence: equal normal forms prove `Equiv Γ e₁ e₂`. -/
 def checkEquiv (Γ : Fin n → SqlType) (e₁ e₂ : Expr n) : Check (Equiv Γ e₁ e₂) :=
-  if h : e₁.simplify Γ = e₂.simplify Γ then
-    .proved ((equiv_simplify Γ e₁).trans (h ▸ (equiv_simplify Γ e₂).symm))
+  if h : e₁.normalize Γ = e₂.normalize Γ then
+    .proved ((equiv_normalize Γ e₁).trans (h ▸ (equiv_normalize Γ e₂).symm))
   else .unknown
 
 end Expr
@@ -178,13 +188,37 @@ theorem eq_of_beq_self {n : ℕ} {q q' : Query S n} (h : beq q q' = true) : q = 
   obtain ⟨_, h⟩ := eq_of_beq h
   exact h
 
-/-- Certified query equivalence: equal simplifications prove `Equiv .ordered q₁ q₂`, hence
+/-- Simplification, then the canonical form of every expression. -/
+def normalize {n : ℕ} (q : Query S n) : Query S n := q.simplify.canon
+
+omit [DecidableEq S.Table] in
+theorem equiv_normalize {n : ℕ} (q : Query S n) : Equiv .ordered q q.normalize :=
+  (equiv_simplify q).trans (equiv_canon _)
+
+/-- Certified query equivalence: equal normal forms prove `Equiv .ordered q₁ q₂`, hence
 equivalence at every level. -/
 def checkEquiv {n : ℕ} (q₁ q₂ : Query S n) : Check (Equiv .ordered q₁ q₂) :=
-  if h : beq q₁.simplify q₂.simplify = true then
-    .proved ((equiv_simplify q₁).trans ((eq_of_beq_self h) ▸ (equiv_simplify q₂).symm))
+  if h : beq q₁.normalize q₂.normalize = true then
+    .proved ((equiv_normalize q₁).trans ((eq_of_beq_self h) ▸ (equiv_normalize q₂).symm))
   else .unknown
 
+/-- A successful check proves equivalence at any level. -/
+theorem equiv_of_check {n : ℕ} {ℓ : EquivLevel} {q₁ q₂ : Query S n}
+    (h : (checkEquiv q₁ q₂).isProved = true) : Equiv ℓ q₁ q₂ :=
+  (Check.of_isProved h).of_ordered
+
 end Query
+
+theorem Expr.equiv_of_check {n : ℕ} {Γ : Fin n → SqlType} {e₁ e₂ : Expr n}
+    (h : (Expr.checkEquiv Γ e₁ e₂).isProved = true) : Expr.Equiv Γ e₁ e₂ :=
+  Check.of_isProved h
+
+/-- Close `Expr.Equiv Γ e₁ e₂` by running `Expr.checkEquiv` in the kernel. -/
+macro "sql_expr_equiv" : tactic =>
+  `(tactic| exact SqlCore.Expr.equiv_of_check (by decide +kernel))
+
+/-- Close `Query.Equiv ℓ q₁ q₂` by running `Query.checkEquiv` in the kernel. -/
+macro "sql_query_equiv" : tactic =>
+  `(tactic| exact SqlCore.Query.equiv_of_check (by decide +kernel))
 
 end SqlCore
