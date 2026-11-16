@@ -34,6 +34,7 @@ CSLib through the frontier.
 | `SqlBridge/Elab.lean` | elaborator from parsed SQL to typed queries (library `SqlBridge`) |
 | `SqlBridge/Spider.lean`, `SqlBridge/SpiderMain.lean` | Spider schemas; `lake exe spider_elab`, driven by `tools/spider_elab_baseline.py` |
 | `SqlCoreTest/BridgeDiffTest.lean` | parsed SQL through `SqlBridge` and through `SqlEquiv`, compared as bags |
+| `SqlCoreTest/DuckdbDiffTest.lean` | parsed SQL through `SqlBridge` + `SqlCore` vs the `duckdb` CLI |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -60,13 +61,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [x] **Phase 5: equivalence and rewrite laws** (#294), *re-derived* like phase 4: `SqlCore/Equiv.lean`,
   `QueryEquiv.lean`, `QueryLaws.lean`, `Foundations/`. The inventory of `SqlEquiv` theorems is
   [`TYPED_CORE_INVENTORY.md`](TYPED_CORE_INVENTORY.md)
-- [ ] Phase 6: bridge from the parsed AST, differential tests against Postgres and DuckDB (#295)
+- [x] **Phase 6: bridge from the parsed AST, differential tests** (#295)
   - [x] Elaborator `SqlBridge/Elab.lean`: parsed `SqlEquiv.Query` to `SqlCore.Query S n`
   - [x] Schema from the test database; differential test against `SqlEquiv` on parsed SQL
   - [x] Schema from Spider's `tables.json`, and the Spider elaboration rate: **129/564 (22.9%)**,
     [`elab_report.md`](../benchmarks/spider/elab_report.md), ratcheted in CI
-  - [ ] Differential test against DuckDB; register differences in `IMPLEMENTATION_DEFINED.md`
-  - [ ] Stretch: elaborator correctness for single-table `WHERE` and column lists
+  - [x] Differential test against DuckDB; differences registered (`IMPLEMENTATION_DEFINED.md`, rows T1–T8)
+  - [ ] Stretch, split out: elaborator correctness for single-table `WHERE` and column lists
 - [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
 - [ ] Phase 8: features beyond the frontier (#297), *offered upstream*
 - [ ] Phase 9: retire the untyped semantics (#298)
@@ -186,7 +187,7 @@ a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` pric
   candidates for Mathlib and Batteries. The trust guard scans only `SqlCore`, but it collects axioms
   transitively, so these lemmas are still covered through the theorems that use them.
 
-## Phase 6 notes (in progress)
+## Phase 6 notes
 
 `SqlBridge.elabStmt` translates a parsed statement in the fragment and reports one of five
 distinct failures: `unknownTable`, `unknownColumn`, `ambiguousColumn`, `unsupported` (naming
@@ -217,6 +218,18 @@ guard covers it.
 with `SqlEquiv` as bags of rows; they cover NULL, decimals, joins, `IN`/`NOT IN` with NULL,
 `CASE` and set operations. 17 must be rejected with a specific failure. A seeded `BETWEEN` bug
 (`>` for `>=`) is caught.
+
+DuckDB: `SqlCoreTest/DuckdbDiffTest.lean` generates DuckDB's tables from the typed test database
+(`CREATE TABLE` with the declared types, then its rows), and runs the 36 in-fragment corpus
+queries through both. Results are compared as bags, with numbers as exact rationals. All 36 agree
+except `age / 7`, where DuckDB's `/` returns a DOUBLE (registry T1, documented). Removing that
+entry from the expected list makes the test fail. The typed core's differences from the engines
+are registry rows T1–T8.
+
+sqlite is dynamically typed, so a differential test against it is meaningful only on queries
+whose columns hold values of their declared types. Its type affinity accepts the 5 ill-typed
+Spider queries above. The Spider harness (`tools/spider_eval_baseline.py`) remains the sqlite
+comparison, for `SqlEquiv`.
 
 ## Rules for every phase
 
