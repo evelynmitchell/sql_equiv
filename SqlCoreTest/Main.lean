@@ -14,6 +14,7 @@ import SqlCoreTest.SchemaDiffTest
 import SqlCoreTest.ExprExamples
 import SqlCoreTest.ExprDiffTest
 import SqlCoreTest.QueryExamples
+import SqlCoreTest.LawExamples
 
 def main : IO UInt32 := do
   IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema, expression and query examples)"

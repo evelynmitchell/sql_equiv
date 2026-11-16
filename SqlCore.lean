@@ -24,3 +24,6 @@ public import SqlCore.Expr
 public import SqlCore.Typing
 public import SqlCore.Preconditions
 public import SqlCore.Query
+public import SqlCore.Equiv
+public import SqlCore.QueryEquiv
+public import SqlCore.QueryLaws
