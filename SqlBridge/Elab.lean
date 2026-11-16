@@ -12,6 +12,8 @@
   expressions: literals, columns, arithmetic, comparisons, AND/OR/NOT,
   IS [NOT] NULL, ||, [NOT] IN over literals, CASE, and BETWEEN (desugared to
   two comparisons). Untyped `NULL` takes its type from the operand it meets.
+  Phase 8 adds GROUP BY, aggregates and HAVING (#313), and ORDER BY, LIMIT and
+  OFFSET (#318).
 -/
 import SqlEquiv
 import SqlCore
@@ -282,19 +284,80 @@ def aggHook {n g a : ℕ} (cols : Fin n → Column) (fold : String → String) (
     | .ok e' => ((List.finRange g).find? fun i => keys i == e').map fun i => .col (Fin.castAdd a i)
     | .error _ => none
 
+/-- A `SELECT` before its projection (phase 8b): the query, a function elaborating an expression
+in its scope, and the elaborated `SELECT` list. -/
+structure Scoped (S : DbSchema) where
+  m : ℕ
+  q : Query S m
+  scope : SqlEquiv.Expr → ElabM (Expr m)
+  items : List (Expr m × Column)
+
+/-- An `ORDER BY` item over the scope of a `SELECT`. As in Postgres and sqlite, an integer literal
+is the position of a `SELECT` item, and a bare name is first looked up among the output column
+names (an alias or a selected column); anything else is an expression of the input. -/
+def elabOrderKey {m : ℕ} (fold : String → String) (sc : SqlEquiv.Expr → ElabM (Expr m))
+    (its : List (Expr m × Column)) : SqlEquiv.OrderByItem → ElabM (SortKey m)
+  | .mk e dir nulls => do
+    let e' ← match e with
+      | .lit (.int k) =>
+        if h : 0 < k.toNat ∧ k.toNat ≤ its.length then pure (its[k.toNat - 1]'(by omega)).1
+        else throw (.unsupported "ORDER BY position out of range")
+      | .col ⟨none, c⟩ =>
+        match (its.filter fun it => fold it.2.name == fold c).map (·.1) |>.eraseDups with
+        | [] => sc e
+        | [e'] => pure e'
+        | _ => throw (.ambiguousColumn none c)
+      | _ => sc e
+    pure ⟨e', dir == .desc, nulls == .first⟩
+
+/-- Projection, `DISTINCT`, `ORDER BY` and `LIMIT`/`OFFSET` over a scoped `SELECT`. Without
+`DISTINCT` the sort is below the projection, so a key may be any expression of the input. With
+`DISTINCT` it is above, and every key must be a selected expression (the standard and Postgres;
+registry row 5 / T13). -/
+def finishSelect {S : DbSchema} (fold : String → String) (sc : Scoped S) (distinct : Bool)
+    (orderBy : List SqlEquiv.OrderByItem) (limitVal offsetVal : Option ℕ) :
+    ElabM (Elaborated S) := do
+  let its := sc.items
+  let k := its.length
+  let keyList ← orderBy.mapM (elabOrderKey fold sc.scope its)
+  if let some Γ := sc.q.typeOf then
+    for key in keyList do
+      if (key.e.typeOf Γ).isNone then throw (.typeError "ORDER BY key")
+  let o := keyList.length
+  let proj (q : Query S sc.m) : Query S k := .project (fun i => (its[i]).1) q
+  let q : Query S k ←
+    if distinct then do
+      let outKeys ← keyList.mapM fun key =>
+        match its.findIdx? (·.1 == key.e) with
+        | some i =>
+          if h : i < k then pure ({ key with e := .col ⟨i, h⟩ } : SortKey k)
+          else throw (.unsupported "ORDER BY")
+        | none => throw (.unsupported "ORDER BY key not selected under DISTINCT")
+      let dq : Query S k := .distinct (proj sc.q)
+      if h : outKeys.length = o then
+        pure (if o = 0 then dq else .orderBy (fun i : Fin o => outKeys[i]'(by omega)) dq)
+      else throw (.unsupported "ORDER BY")
+    else
+      pure (if o = 0 then proj sc.q
+        else proj (.orderBy (fun i : Fin o => keyList[i]) sc.q))
+  let q : Query S k := match limitVal, offsetVal with
+    | none, none => q
+    | l, off => .limit l (off.getD 0) q
+  pure ⟨k, q, fun i => (its[i]).2⟩
+
 def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
-  | .mk distinct items (some from_) where_ groupBy having [] none none => do
+  | .mk distinct items (some from_) where_ groupBy having orderBy limitVal offsetVal => do
     let ⟨n, q, cols⟩ ← elabFrom N from_
     let q : Query N.S n ← match where_ with
       | none => pure q
       | some w => do pure (Query.select (← elabExpr cols N.fold noHook w) q)
     let itemExprs := items.filterMap fun | .exprItem e _ => some e | .star _ => none
-    let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having).eraseDups
+    let orderExprs := orderBy.map fun | .mk e _ _ => e
+    let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having ++ aggsOfList orderExprs).eraseDups
     if groupBy.isEmpty && aggExprs.isEmpty && having.isNone then
       let its ← elabItems N cols items
-      let k := its.length
-      let q : Query N.S k := .project (fun i => (its[i]).1) q
-      pure ⟨k, if distinct then .distinct q else q, fun i => (its[i]).2⟩
+      finishSelect N.fold ⟨n, q, elabExpr cols N.fold noHook, its⟩ distinct orderBy limitVal
+        offsetVal
     else
       -- GROUP BY and aggregates (phase 8a, #313)
       let keyList ← groupBy.mapM (elabExpr cols N.fold noHook)
@@ -324,16 +387,20 @@ def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
           let some τ := e'.typeOf (ctx out) | throw (.typeError "SELECT item")
           let name := al.getD (match e with | .col c => c.column | _ => "?column?")
           pure (e', ({ qualifier := none, name, type := τ } : Column))
-      let k := its.length
-      let q : Query N.S k := .project (fun i => (its[i]).1) q'
-      pure ⟨k, if distinct then .distinct q else q, fun i => (its[i]).2⟩
+      finishSelect N.fold ⟨g + a, q', outExpr, its⟩ distinct orderBy limitVal offsetVal
   | .mk _ _ none _ _ _ _ _ _ => throw (.unsupported "SELECT without FROM")
-  | .mk _ _ _ _ _ _ (_ :: _) _ _ => throw (.unsupported "ORDER BY")
-  | .mk _ _ _ _ _ _ _ _ _ => throw (.unsupported "LIMIT/OFFSET")
+
+/-- Whether a branch of a compound query has `ORDER BY`, `LIMIT` or `OFFSET`. -/
+def hasOrderOrLimit : SqlEquiv.Query → Bool
+  | .simple (.mk _ _ _ _ _ _ o l off) => !o.isEmpty || l.isSome || off.isSome
+  | _ => false
 
 def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
   | .simple s => elabSelect N s
   | .compound l op r => do
+    -- The parser attaches a trailing ORDER BY / LIMIT of a compound query to its last branch.
+    if hasOrderOrLimit l || hasOrderOrLimit r then
+      throw (.unsupported "ORDER BY/LIMIT in a compound query")
     let ⟨n, ql, cl⟩ ← elabQueryRaw l
     let ⟨m, qr, _⟩ ← elabQueryRaw r
     if h : m = n then

@@ -11,6 +11,7 @@ public import SqlCore.Schema
 public import SqlCore.Typing
 public import SqlCore.Aggregate
 public import Mathlib.Data.List.Dedup
+public import Mathlib.Data.List.Sort
 public import Mathlib.Data.List.ProdSigma
 
 /-!
@@ -372,6 +373,36 @@ theorem mem_groups {keyed : List (Row g × Row n)} {grp : Row g × List (Row n)}
 
 end Row
 
+/-! ### Sorting (phase 8b, ORDER BY) -/
+
+/-- An `ORDER BY` key: an expression, a direction, and where `NULL` sorts (absolute, independent
+of the direction; the parser resolves the dialect's default, registry row 1). -/
+structure SortKey (n : ℕ) where
+  e : Expr n
+  desc : Bool
+  nullsFirst : Bool
+  deriving DecidableEq, Repr
+
+/-- Compare two key datums under a key's direction and `NULL` placement. Values of one type
+compare by `Value.cmp`; incomparable values (excluded by typing) count as equal. -/
+def SortKey.cmpDatum {n : ℕ} (k : SortKey n) : Datum → Datum → Ordering
+  | none, none => .eq
+  | none, some _ => if k.nullsFirst then .lt else .gt
+  | some _, none => if k.nullsFirst then .gt else .lt
+  | some a, some b =>
+    let o := ((Value.cmp a b).toOption).getD .eq
+    if k.desc then o.swap else o
+
+/-- Lexicographic comparison of key rows. -/
+def cmpKeyRows {n k : ℕ} (keys : Fin k → SortKey n) (a b : Row k) : Ordering :=
+  (List.finRange k).foldr (fun i acc => (keys i |>.cmpDatum (a i) (b i)).then acc) .eq
+
+/-- Sort keyed rows by their keys, stably: rows with equal keys keep their input order
+(registry row 2). Insertion sort is structural, so the kernel evaluates it. -/
+def sortKeyed {n k : ℕ} (keys : Fin k → SortKey n) (rs : List (Row k × Row n)) :
+    List (Row k × Row n) :=
+  rs.insertionSort fun x y => cmpKeyRows keys x.1 y.1 ≠ .gt
+
 /-! ### Queries -/
 
 /-- A query over the schema `S` whose result rows have `n` columns. -/
@@ -396,6 +427,10 @@ inductive Query (S : DbSchema) : ℕ → Type where
   even for no rows. -/
   | aggregate {n g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → AggCall n) (q : Query S n) :
       Query S (g + a)
+  /-- `q ORDER BY keys` (phase 8b): the rows of `q`, stably sorted by the keys. -/
+  | orderBy {n k : ℕ} (keys : Fin k → SortKey n) (q : Query S n) : Query S n
+  /-- `q LIMIT count OFFSET offset` (phase 8b): skip `offset` rows, then keep at most `count`. -/
+  | limit {n : ℕ} (count : Option ℕ) (offset : ℕ) (q : Query S n) : Query S n
 
 namespace Query
 
@@ -420,6 +455,15 @@ def eval (D : Database S) : {n : ℕ} → Query S n → Except EvalError (List (
     let rs ← q.eval D
     let keyed ← rs.mapM fun r => do return (← Expr.evalRow keys r, r)
     (Row.groups keyed).mapM fun kg => do return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)
+  | _, orderBy keys q => do
+    let rs ← q.eval D
+    let keyed ← rs.mapM fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r)
+    return (sortKeyed keys keyed).map Prod.snd
+  | _, limit count offset q => do
+    let rs ← q.eval D
+    return match count with
+      | some c => (rs.drop offset).take c
+      | none => rs.drop offset
 
 section Eval
 
@@ -450,6 +494,19 @@ theorem eval_aggregate {g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → A
       let keyed ← rs.mapM fun r => do return (← Expr.evalRow keys r, r)
       (Row.groups keyed).mapM fun kg => do return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)) :=
   rfl
+
+theorem eval_orderBy {k : ℕ} (keys : Fin k → SortKey n) (q : Query S n) :
+    (orderBy keys q).eval D = (do
+      let rs ← q.eval D
+      let keyed ← rs.mapM fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r)
+      return (sortKeyed keys keyed).map Prod.snd) := rfl
+
+theorem eval_limit (count : Option ℕ) (offset : ℕ) (q : Query S n) :
+    (limit count offset q).eval D = (do
+      let rs ← q.eval D
+      return match count with
+        | some c => (rs.drop offset).take c
+        | none => rs.drop offset) := rfl
 
 end Eval
 
@@ -501,6 +558,10 @@ def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
           (fun j => ((aggs j).typeOf Γ).get (h₂ j)))
       else none
     else none
+  | _, orderBy keys q => do
+    let Γ ← q.typeOf
+    if ∀ i, ((keys i).e.typeOf Γ).isSome then some Γ else none
+  | _, limit _ _ q => q.typeOf
 
 @[simp] theorem typeOf_table (t : S.Table) : (table t).typeOf = some (S.ctx t) := rfl
 
@@ -556,6 +617,18 @@ theorem typeOf_unionAll_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType}
 
 @[simp] theorem typeOf_distinct (q : Query S n) : (distinct q).typeOf = q.typeOf := rfl
 
+theorem typeOf_orderBy_eq_some {k : ℕ} {keys : Fin k → SortKey n} {q : Query S n}
+    {Γ : Fin n → SqlType} (h : (orderBy keys q).typeOf = some Γ) :
+    q.typeOf = some Γ ∧ ∃ Δ : Fin k → SqlType, ∀ i, (keys i).e.typeOf Γ = some (Δ i) := by
+  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨Γ', hq, h⟩ := h
+  split_ifs at h with hk
+  cases h
+  exact ⟨hq, fun i => ((keys i).e.typeOf Γ).get (hk i), fun i => by simp⟩
+
+@[simp] theorem typeOf_limit (count : Option ℕ) (offset : ℕ) (q : Query S n) :
+    (limit count offset q).typeOf = q.typeOf := rfl
+
 theorem typeOf_aggregate_eq_some {g a : ℕ} {keys : Fin g → Expr n} {aggs : Fin a → AggCall n}
     {q : Query S n} {Γ' : Fin (g + a) → SqlType} (h : (aggregate keys aggs q).typeOf = some Γ') :
     ∃ Γ Δk Δa, q.typeOf = some Γ ∧ (∀ i, (keys i).typeOf Γ = some (Δk i)) ∧
@@ -576,6 +649,8 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, distinct q => q.divSafe
   | _, aggregate keys aggs q =>
     decide (∀ i, (keys i).divSafe) && decide (∀ j, (aggs j).divSafe) && q.divSafe
+  | _, orderBy keys q => decide (∀ i, (keys i).e.divSafe) && q.divSafe
+  | _, limit _ _ q => q.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -708,6 +783,24 @@ theorem eval_ok_or_divisionByZero {D : Database S} (hD : D.Conforms) {q : Query 
         simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
         exact .inl (.inl ⟨i, by simp [hi]⟩)
     · exact .inr ⟨by simp only [eval_aggregate, he, error_bind], by simp [divSafe, hs]⟩
+  | orderBy keys q ih =>
+    obtain ⟨hq₀, Δ, hks⟩ := typeOf_orderBy_eq_some hq
+    rcases ih hq₀ with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    · rcases keyed_ok_or_divisionByZero hconf hks with ⟨keyed, hk, hkeyed⟩ | ⟨hk, i, hi⟩
+      · refine .inl ⟨_, by simp only [eval_orderBy, hrs, ok_bind, hk]; rfl, fun r hr => ?_⟩
+        obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hr
+        exact hconf _ (hkeyed x ((List.perm_insertionSort _ keyed).subset hx)).1
+      · refine .inr ⟨by simp only [eval_orderBy, hrs, ok_bind, hk, error_bind], ?_⟩
+        simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
+        exact .inl ⟨i, by simp [hi]⟩
+    · exact .inr ⟨by simp only [eval_orderBy, he, error_bind], by simp [divSafe, hs]⟩
+  | limit count offset q ih =>
+    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    · refine .inl ⟨_, by simp only [eval_limit, hrs, ok_bind]; rfl, fun r hr => ?_⟩
+      cases count with
+      | none => exact hconf r (List.mem_of_mem_drop hr)
+      | some c => exact hconf r (List.mem_of_mem_drop (List.mem_of_mem_take hr))
+    · exact .inr ⟨by simp only [eval_limit, he, error_bind], by simp [divSafe, hs]⟩
 
 /-- A well-typed query never raises a type error on a conforming instance. -/
 theorem eval_ne_typeMismatch {D : Database S} (hD : D.Conforms) {q : Query S n}

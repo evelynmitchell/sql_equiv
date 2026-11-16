@@ -71,6 +71,36 @@ def corpus : List (String × Expect) := [
   ("SELECT age FROM users WHERE age > 30 UNION ALL SELECT age FROM users WHERE age < 25", .agree),
   -- Spider-style original-case names
   ("SELECT Name FROM singer WHERE Age > 20", .agree),
+  -- ORDER BY, LIMIT, OFFSET (phase 8b); queries with ORDER BY are compared as lists, on tie-free keys
+  ("SELECT name FROM users ORDER BY age", .agree),
+  ("SELECT name, age FROM users ORDER BY age DESC", .agree),
+  ("SELECT name FROM users ORDER BY department, name DESC", .agree),
+  ("SELECT name AS n FROM users ORDER BY n DESC", .agree),
+  ("SELECT name, age FROM users ORDER BY 2", .sqlEquivBug "#316: positional ORDER BY"),
+  ("SELECT name FROM users ORDER BY age * -1", .agree),
+  ("SELECT name FROM users WHERE age > 22 ORDER BY id LIMIT 2", .agree),
+  ("SELECT name FROM users ORDER BY id LIMIT 2 OFFSET 1", .agree),
+  ("SELECT name FROM users ORDER BY id LIMIT 10 OFFSET 4", .agree),
+  ("SELECT name FROM users ORDER BY id OFFSET 3", .agree),
+  ("SELECT name FROM users ORDER BY id LIMIT 0", .agree),
+  ("SELECT name, staff FROM museum ORDER BY staff NULLS FIRST, name", .agree),
+  ("SELECT name, staff FROM museum ORDER BY staff DESC NULLS LAST, name", .agree),
+  ("SELECT name FROM items ORDER BY price DESC NULLS LAST", .agree),
+  ("SELECT name FROM items ORDER BY price NULLS FIRST", .agree),
+  ("SELECT DISTINCT department FROM users ORDER BY department", .agree),
+  ("SELECT DISTINCT department FROM users ORDER BY 1 DESC LIMIT 2", .sqlEquivBug "#316: positional ORDER BY"),
+  ("SELECT department, COUNT(*) FROM users GROUP BY department ORDER BY department", .agree),
+  ("SELECT department FROM users GROUP BY department ORDER BY COUNT(*) DESC, department", .agree),
+  ("SELECT department, SUM(age) AS total FROM users GROUP BY department ORDER BY total LIMIT 2", .agree),
+  ("SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.amount DESC", .agree),
+  ("SELECT name FROM users LIMIT 2", .agree),
+  ("SELECT DISTINCT department FROM users ORDER BY age", .rejected "unsupported: ORDER BY key not selected"),
+  ("SELECT name FROM users ORDER BY 3", .rejected "unsupported: ORDER BY position"),
+  ("SELECT name FROM users ORDER BY name + 1", .rejected "typeError"),
+  ("SELECT name, age AS name FROM users ORDER BY name", .rejected "ambiguousColumn"),
+  -- #317: the parser binds a trailing ORDER BY/LIMIT to the last branch, so the bridge rejects it
+  ("SELECT name FROM users UNION ALL SELECT name FROM products ORDER BY 1",
+    .rejected "unsupported: ORDER BY/LIMIT in a compound"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
@@ -88,8 +118,6 @@ def corpus : List (String × Expect) := [
   ("SELECT name, COUNT(*) FROM users", .rejected "unsupported: column not in GROUP BY"),
   ("SELECT SUM(name) FROM users", .rejected "typeError"),
   ("SELECT * FROM users GROUP BY department", .rejected "unsupported: *"),
-  ("SELECT name FROM users ORDER BY age", .rejected "unsupported: ORDER BY"),
-  ("SELECT name FROM users LIMIT 2", .rejected "unsupported: LIMIT/OFFSET"),
   ("SELECT name FROM users WHERE name LIKE 'A%'", .rejected "unsupported: LIKE"),
   ("SELECT UPPER(name) FROM users", .rejected "unsupported: function"),
   ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id", .rejected "unsupported: LEFT JOIN"),
@@ -112,6 +140,11 @@ def eraseNullType : SqlEquiv.Value → SqlEquiv.Value
 /-- A bag of rows as a sorted list of printed rows. -/
 def bag (rows : List (List SqlEquiv.Value)) : List String :=
   (rows.map fun r => toString (repr (r.map eraseNullType))).mergeSort (· ≤ ·)
+
+/-- Rows in order when the query sorts, as a bag otherwise. -/
+def rowsFor (sql : String) (rows : List (List SqlEquiv.Value)) : List String :=
+  if (sql.splitOn "ORDER BY").length > 1 then rows.map fun r => toString (repr (r.map eraseNullType))
+  else bag rows
 
 def newRows (e : Elaborated schema) : Except EvalError (List (List SqlEquiv.Value)) :=
   (e.q.eval db).map fun rs => rs.map fun r =>
@@ -137,8 +170,8 @@ def run : Nat × List String := Id.run do
         let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
         match newRows e, old with
         | .ok nr, some or_ =>
-          if bag nr != bag or_ then
-            fails := s!"{sql}:\n    SqlCore {bag nr}\n    SqlEquiv {bag or_}" :: fails
+          if rowsFor sql nr != rowsFor sql or_ then
+            fails := s!"{sql}:\n    SqlCore {rowsFor sql nr}\n    SqlEquiv {rowsFor sql or_}" :: fails
         | .error err, _ => fails := s!"{sql}: SqlCore error {repr err}" :: fails
         | _, none => fails := s!"{sql}: SqlEquiv returned no table" :: fails
   return (corpus.length, fails.reverse)
