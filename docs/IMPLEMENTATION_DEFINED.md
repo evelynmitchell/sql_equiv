@@ -114,6 +114,24 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | **Per dialect** (`DialectConfig.mixedMinMax`): standard, duckdb, postgres → error (row dropped / NULL); sqlite → type-class order | decided (dialects #260). Reachable only through untyped data (CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pins `minmax_mixed_*`, `max_mixed_sqlite_type_class`, `min_mixed_sqlite_type_class`, `minmax_mode_recorded_in_ast`; DiffSqlite type-class cases; DuckDB KNOWN DIVERGENCES (its error fails the query, ours is quieter) |
 | 14 | MIN/MAX over booleans (`MAX(age > 26)`) | Boolean not orderable by MAX in the standard aggregate set | Integers: `1` / `0`; with numbers, as 1/0 | Boolean result (false < true); with numbers, as 1/0; with strings, error | Error (no `max(boolean)`) | **Per dialect** (`DialectConfig.boolMinMax`): standard, postgres → error (row dropped / NULL); sqlite → `asInt`; duckdb → `ordered` | decided (#261) | Unit pins `max_bool_*` / `min_bool_*` (every dialect, HAVING, window); DiffSqlite and DiffDuckdb boolean cases |
 
+### Typed core (`SqlCore`, #287)
+
+The registry rows above describe `SqlEquiv`. The typed core makes its choices statically: what
+`SqlEquiv` drops as a row error is a type error at elaboration (`SqlBridge`) or an evaluation error.
+`SqlCoreTest/DuckdbDiffTest.lean` checks it against DuckDB on parsed SQL; the decisions are in
+`docs/TYPED_CORE_DECISIONS.md` and `docs/TYPED_CORE_PLAN.md`.
+
+| # | Behaviour (example) | DuckDB | Postgres | **SqlCore** | Status | Tests |
+|---|---|---|---|---|---|---|
+| T1 | Integer `/` (`age / 7`), row 6 | DOUBLE | Truncates | Truncates (`Int.tdiv`) | decided | `DuckdbDiffTest` (documented difference), `ScalarExamples` |
+| T2 | Integer division by zero `1 / 0` | `//` gives NULL | Error | `divisionByZero` error | decided | `ScalarExamples` |
+| T3 | Decimal division `1.0 / 4` | DOUBLE `0.25` | `0.25000000000000000000` | Ill-typed (`unsupported` if evaluated); result scale is open (#201) | open (#201) | `ScalarExamples`, `ExprExamples` |
+| T4 | Decimal `%` (`7.5 % -2`) | `1.5` | `1.5` | `1.5` (exact, dividend's sign) | decided | `ScalarDiffTest` (scaled `tmod` reference) |
+| T5 | `1 = 1.0`, `1 + 0.5` | Promotes | Promotes | Promotes (decision 6) | decided | `ScalarExamples`, `BridgeDiffTest`, `DuckdbDiffTest` |
+| T6 | `CASE WHEN … THEN 1 ELSE 1.5 END` | DECIMAL | numeric | Ill-typed: branches of one type | **gap**: matches neither; needs a conversion (phase 6 bridge or `CAST`) | `ExprExamples` |
+| T7 | Cross-type comparison (rows 10–12) | Error | Error | Type error at elaboration | decided | `BridgeDiffTest` (rejections) |
+| T8 | Boolean ordering `false < true` | true | true | true | decided (`SqlEquiv` has no boolean order) | `ScalarDiffTest` |
+
 ### Notes on individual rows
 
 - **Row 1** is the model for a configurable behaviour: one enum on the AST
