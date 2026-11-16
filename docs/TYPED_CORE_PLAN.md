@@ -35,6 +35,9 @@ CSLib through the frontier.
 | `SqlBridge/Spider.lean`, `SqlBridge/SpiderMain.lean` | Spider schemas; `lake exe spider_elab`, driven by `tools/spider_elab_baseline.py` |
 | `SqlCoreTest/BridgeDiffTest.lean` | parsed SQL through `SqlBridge` and through `SqlEquiv`, compared as bags |
 | `SqlCoreTest/DuckdbDiffTest.lean` | parsed SQL through `SqlBridge` + `SqlCore` vs the `duckdb` CLI |
+| `SqlCore/Simplify.lean`, `SqlCore/Check.lean` | certified simplifier and checkers |
+| `SqlBridge/CliMain.lean` | `lake exe sqlcore check …`: parse, elaborate, check |
+| `SqlCoreTest/SimplifyExamples.lean` | the frontier's simplifier tests, and checker examples |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -69,6 +72,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] Differential test against DuckDB; differences registered (`IMPLEMENTATION_DEFINED.md`, rows T1–T8)
   - [ ] Stretch, split out: elaborator correctness for single-table `WHERE` and column lists
 - [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
+  - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
+  - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)
+  - [x] CLI `lake exe sqlcore check TABLES.json DB "SQL1" "SQL2"` (`SqlBridge/CliMain.lean`)
+  - [ ] Decision procedure on typed expressions (canonical order of `AND`/`OR` operands, ground
+    evaluation), and comparison with `SqlEquiv`'s certified rewriter
+  - [ ] Tactics for goals in the new library
 - [ ] Phase 8: features beyond the frontier (#297), *offered upstream*
 - [ ] Phase 9: retire the untyped semantics (#298)
 
@@ -230,6 +239,25 @@ sqlite is dynamically typed, so a differential test against it is meaningful onl
 whose columns hold values of their declared types. Its type affinity accepts the 5 ill-typed
 Spider queries above. The Spider harness (`tools/spider_eval_baseline.py`) remains the sqlite
 comparison, for `SqlEquiv`.
+
+## Phase 7 notes (in progress)
+
+- **Simplifier.** `SqlCore/Simplify.lean` is the frontier's simplifier: bottom-up expression
+  rewrites guarded by decidable checks, plus `WHERE` pushdown and projection fusion for queries.
+  Its certificates are `Expr.equiv_simplify` and `Query.equiv_simplify` (ordered level). The
+  arithmetic identity rewrites are guarded by integer type, as in the frontier; the laws behind
+  them also hold for decimals, so widening the guards is a small follow-up.
+- **Checkers.** `Expr.checkEquiv` and `Query.checkEquiv` return `Check.proved` with a proof when
+  the two simplifications are syntactically equal, and `unknown` otherwise.
+- **`Query.beq`.** `Query` cannot derive `DecidableEq`: the arity index of `table` defeats the
+  deriving handler. `Query.beq` is therefore written by hand, listing every pair of constructors,
+  and `Query.eq_of_beq` proves it sound.
+- **CLI.** `lake exe sqlcore check benchmarks/spider/dev_tables.json concert_singer "…" "…"`
+  prints `equivalent (certified …)` (exit 0), `unknown` (1), or an elaboration error (2). It is a
+  separate executable, so the `sql_equiv` CLI does not link Mathlib.
+- **Known gap.** `a AND b` against `b AND a` is `unknown`: the simplifier does not sort the
+  operands of commutative operators, and `SqlEquiv`'s normaliser does. This is the next part
+  (decision procedure).
 
 ## Rules for every phase
 

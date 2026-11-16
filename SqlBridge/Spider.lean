@@ -36,6 +36,9 @@ def schemaOf (ts : Array TableInfo) : NamedSchema where
   tables := (List.finRange ts.size).map fun t => (ts[t].name, t)
   fold := String.toLower
 
+instance (ts : Array TableInfo) : DecidableEq (schemaOf ts).S.Table :=
+  inferInstanceAs (DecidableEq (Fin ts.size))
+
 /-- The tables of one database entry of `tables.json`. -/
 def tablesOfJson (j : Json) : Except String (String × Array TableInfo) := do
   let db ← j.getObjValAs? String "db_id"

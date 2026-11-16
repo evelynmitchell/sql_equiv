@@ -16,6 +16,7 @@ import SqlCoreTest.ExprExamples
 import SqlCoreTest.ExprDiffTest
 import SqlCoreTest.QueryExamples
 import SqlCoreTest.LawExamples
+import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest
 
