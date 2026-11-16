@@ -19,3 +19,6 @@ public import SqlCore.Scalar
 public import SqlCore.Row
 public import SqlCore.Column
 public import SqlCore.Schema
+public import SqlCore.Expr
+public import SqlCore.Typing
+public import SqlCore.Preconditions
