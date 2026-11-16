@@ -329,6 +329,154 @@ theorem caseWhen_null (τ : SqlType) (a b : Expr n) : Equiv Γ (Expr.caseWhen (n
 
 end Equiv
 
+/-! ### Kleene connectives
+
+An `AND`/`OR`/`NOT` tree is observed through the truth values of its leaves
+(`(p.evalTruth r).toOption`): it fails exactly when a leaf fails, and otherwise its value is the
+lattice combination. So the lattice laws of `Truth` lift to expressions; where a law drops or
+duplicates a leaf, a side condition keeps the failures the same. -/
+
+private theorem toOption_eval_and (a b : Expr n) (r : Row n) :
+    ((Expr.binary .and a b).eval r).toOption =
+      ((a.evalTruth r).toOption.bind fun s => (b.evalTruth r).toOption.map fun t => s ⊓ t).map
+        Truth.toDatum := by
+  simp only [eval_binary, evalTruth, Except.toOption_bind]
+  rcases a.eval r with ea | da
+  · rfl
+  rcases b.eval r with eb | db
+  · rcases hs : da.toTruth with _ | s <;> simp [hs, evalBinOp]
+  · rcases hs : da.toTruth with _ | s <;> rcases ht : db.toTruth with _ | t <;>
+      simp [hs, ht, evalBinOp]
+
+private theorem toOption_eval_or (a b : Expr n) (r : Row n) :
+    ((Expr.binary .or a b).eval r).toOption =
+      ((a.evalTruth r).toOption.bind fun s => (b.evalTruth r).toOption.map fun t => s ⊔ t).map
+        Truth.toDatum := by
+  simp only [eval_binary, evalTruth, Except.toOption_bind]
+  rcases a.eval r with ea | da
+  · rfl
+  rcases b.eval r with eb | db
+  · rcases hs : da.toTruth with _ | s <;> simp [hs, evalBinOp]
+  · rcases hs : da.toTruth with _ | s <;> rcases ht : db.toTruth with _ | t <;>
+      simp [hs, ht, evalBinOp]
+
+private theorem toOption_eval_not (a : Expr n) (r : Row n) :
+    ((Expr.unary .not a).eval r).toOption =
+      ((a.evalTruth r).toOption.map Truth.not).map Truth.toDatum := by
+  simp only [eval_unary, evalTruth, Except.toOption_bind]
+  rcases a.eval r with ea | da
+  · rfl
+  · rcases hs : da.toTruth with _ | s <;> simp [hs, evalUnOp]
+
+private theorem toOption_evalTruth_of_toOption_eval {a : Expr n} {r : Row n} {o : Option Truth}
+    (h : (a.eval r).toOption = o.map Truth.toDatum) : (a.evalTruth r).toOption = o := by
+  simp only [evalTruth, Except.toOption_bind, h]
+  rcases o with _ | t <;> simp [Datum.toTruth_toDatum]
+
+private theorem toOption_evalTruth_and (a b : Expr n) (r : Row n) :
+    ((Expr.binary .and a b).evalTruth r).toOption =
+      (a.evalTruth r).toOption.bind fun s => (b.evalTruth r).toOption.map fun t => s ⊓ t :=
+  toOption_evalTruth_of_toOption_eval (toOption_eval_and a b r)
+
+private theorem toOption_evalTruth_or (a b : Expr n) (r : Row n) :
+    ((Expr.binary .or a b).evalTruth r).toOption =
+      (a.evalTruth r).toOption.bind fun s => (b.evalTruth r).toOption.map fun t => s ⊔ t :=
+  toOption_evalTruth_of_toOption_eval (toOption_eval_or a b r)
+
+private theorem toOption_evalTruth_not (a : Expr n) (r : Row n) :
+    ((Expr.unary .not a).evalTruth r).toOption = (a.evalTruth r).toOption.map Truth.not :=
+  toOption_evalTruth_of_toOption_eval (toOption_eval_not a r)
+
+/-- A boolean expression is observed through its truth value. -/
+private theorem toOption_eval_of_bool {Γ : Fin n → SqlType} {a : Expr n}
+    (ha : a.typeOf Γ = some .bool) {r : Row n} (hr : r.Conforms Γ) :
+    (a.eval r).toOption = (a.evalTruth r).toOption.map Truth.toDatum := by
+  rcases h : a.eval r with e | d
+  · simp [evalTruth, h]
+  · obtain ⟨t, ht⟩ := Datum.exists_toTruth_eq_ok_iff.mpr (hasType_of_eval_eq_ok hr ha h)
+    simp [evalTruth, h, Datum.toTruth_eq_ok_iff.mp ht]
+
+namespace Equiv
+
+variable {Γ : Fin n → SqlType}
+
+/-- De Morgan: `NOT (a AND b)` is `NOT a OR NOT b`. -/
+theorem not_and (a b : Expr n) :
+    Equiv Γ (Expr.unary .not (Expr.binary .and a b))
+      (Expr.binary .or (Expr.unary .not a) (Expr.unary .not b)) := fun r _ => by
+  rw [toOption_eval_not, toOption_eval_or, toOption_evalTruth_and, toOption_evalTruth_not,
+    toOption_evalTruth_not]
+  rcases (a.evalTruth r).toOption <;> rcases (b.evalTruth r).toOption <;> simp
+
+/-- De Morgan: `NOT (a OR b)` is `NOT a AND NOT b`. -/
+theorem not_or (a b : Expr n) :
+    Equiv Γ (Expr.unary .not (Expr.binary .or a b))
+      (Expr.binary .and (Expr.unary .not a) (Expr.unary .not b)) := fun r _ => by
+  rw [toOption_eval_not, toOption_eval_and, toOption_evalTruth_or, toOption_evalTruth_not,
+    toOption_evalTruth_not]
+  rcases (a.evalTruth r).toOption <;> rcases (b.evalTruth r).toOption <;> simp
+
+theorem and_assoc (a b c : Expr n) :
+    Equiv Γ (Expr.binary .and (Expr.binary .and a b) c)
+      (Expr.binary .and a (Expr.binary .and b c)) := fun r _ => by
+  rw [toOption_eval_and, toOption_eval_and, toOption_evalTruth_and, toOption_evalTruth_and]
+  rcases (a.evalTruth r).toOption <;> rcases (b.evalTruth r).toOption <;>
+    rcases (c.evalTruth r).toOption <;> simp [inf_assoc]
+
+theorem or_assoc (a b c : Expr n) :
+    Equiv Γ (Expr.binary .or (Expr.binary .or a b) c)
+      (Expr.binary .or a (Expr.binary .or b c)) := fun r _ => by
+  rw [toOption_eval_or, toOption_eval_or, toOption_evalTruth_or, toOption_evalTruth_or]
+  rcases (a.evalTruth r).toOption <;> rcases (b.evalTruth r).toOption <;>
+    rcases (c.evalTruth r).toOption <;> simp [sup_assoc]
+
+/-- `a AND (b OR c)` is `(a AND b) OR (a AND c)`; duplicating `a` changes no observation. -/
+theorem and_or_distrib_left (a b c : Expr n) :
+    Equiv Γ (Expr.binary .and a (Expr.binary .or b c))
+      (Expr.binary .or (Expr.binary .and a b) (Expr.binary .and a c)) := fun r _ => by
+  rw [toOption_eval_and, toOption_eval_or, toOption_evalTruth_or, toOption_evalTruth_and,
+    toOption_evalTruth_and]
+  rcases (a.evalTruth r).toOption <;> rcases (b.evalTruth r).toOption <;>
+    rcases (c.evalTruth r).toOption <;> simp [inf_sup_left]
+
+/-- `a OR (b AND c)` is `(a OR b) AND (a OR c)`. -/
+theorem or_and_distrib_left (a b c : Expr n) :
+    Equiv Γ (Expr.binary .or a (Expr.binary .and b c))
+      (Expr.binary .and (Expr.binary .or a b) (Expr.binary .or a c)) := fun r _ => by
+  rw [toOption_eval_or, toOption_eval_and, toOption_evalTruth_and, toOption_evalTruth_or,
+    toOption_evalTruth_or]
+  rcases (a.evalTruth r).toOption <;> rcases (b.evalTruth r).toOption <;>
+    rcases (c.evalTruth r).toOption <;> simp [sup_inf_left]
+
+/-- `a AND a` is `a` for a boolean `a` (an integer `a` makes the left side fail). -/
+theorem and_self {a : Expr n} (ha : a.typeOf Γ = some .bool) :
+    Equiv Γ (Expr.binary .and a a) a := fun r hr => by
+  rw [toOption_eval_and, toOption_eval_of_bool ha hr]
+  rcases (a.evalTruth r).toOption <;> simp
+
+/-- `a OR a` is `a` for a boolean `a`. -/
+theorem or_self {a : Expr n} (ha : a.typeOf Γ = some .bool) :
+    Equiv Γ (Expr.binary .or a a) a := fun r hr => by
+  rw [toOption_eval_or, toOption_eval_of_bool ha hr]
+  rcases (a.evalTruth r).toOption <;> simp
+
+/-- Absorption: `a AND (a OR b)` is `a` for a boolean `a` and a safe predicate `b`; the right side
+drops `b`, so `b` must not fail. -/
+theorem and_or_absorb {a b : Expr n} (ha : a.typeOf Γ = some .bool) (hb : b.IsSafePredicate Γ) :
+    Equiv Γ (Expr.binary .and a (Expr.binary .or a b)) a := fun r hr => by
+  obtain ⟨t, ht⟩ := hb.exists_evalTruth_eq_ok hr
+  rw [toOption_eval_and, toOption_evalTruth_or, toOption_eval_of_bool ha hr, ht]
+  rcases (a.evalTruth r).toOption <;> simp
+
+/-- Absorption: `a OR (a AND b)` is `a` for a boolean `a` and a safe predicate `b`. -/
+theorem or_and_absorb {a b : Expr n} (ha : a.typeOf Γ = some .bool) (hb : b.IsSafePredicate Γ) :
+    Equiv Γ (Expr.binary .or a (Expr.binary .and a b)) a := fun r hr => by
+  obtain ⟨t, ht⟩ := hb.exists_evalTruth_eq_ok hr
+  rw [toOption_eval_or, toOption_evalTruth_and, toOption_eval_of_bool ha hr, ht]
+  rcases (a.evalTruth r).toOption <;> simp
+
+end Equiv
+
 /-- Equivalence in a typing context, as a setoid. -/
 def equivSetoid (Γ : Fin n → SqlType) : Setoid (Expr n) := ⟨Equiv Γ, Equiv.equivalence Γ⟩
 

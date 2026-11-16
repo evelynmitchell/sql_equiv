@@ -449,6 +449,29 @@ example : ¬ Expr.Equiv Γ (binary (.arith .mul) (lit (.int 1)) c1) c1 :=
 example : ¬ Expr.Equiv Γ (Expr.inList (binary (.arith .div) c0 (lit (.int 0))) []) ff :=
   not_equiv_of_row r (by decide) (by decide)
 
+-- `and_self`, `or_self` need a boolean operand: `5 AND 5` fails, `5` does not.
+example : ¬ Expr.Equiv Γ (binary .and c0 c0) c0 := not_equiv_of_row r (by decide) (by decide)
+example : ¬ Expr.Equiv Γ (binary .or c0 c0) c0 := not_equiv_of_row r (by decide) (by decide)
+-- Absorption needs a safe `b`: the left side evaluates `c0 / 0`, the right side drops it.
+example : ¬ Expr.Equiv Γ (binary .and tt (binary .or tt unsafeP)) tt :=
+  not_equiv_of_row r (by decide) (by decide)
+example : ¬ Expr.Equiv Γ (binary .or ff (binary .and ff unsafeP)) ff :=
+  not_equiv_of_row r (by decide) (by decide)
+-- … and a boolean `a`.
+example : ¬ Expr.Equiv Γ (binary .and c0 (binary .or c0 tt)) c0 :=
+  not_equiv_of_row r (by decide) (by decide)
+
+-- De Morgan, associativity and distributivity hold with no side condition, even for operands
+-- that fail or are not boolean: both sides fail together.
+example : Expr.Equiv Γ (unary .not (binary .and unsafeP c1))
+    (binary .or (unary .not unsafeP) (unary .not c1)) := Expr.Equiv.not_and _ _
+example : Expr.Equiv Γ (binary .and c1 (binary .or unsafeP tt))
+    (binary .or (binary .and c1 unsafeP) (binary .and c1 tt)) := Expr.Equiv.and_or_distrib_left _ _ _
+example : Expr.Equiv Γ (binary .or (binary .or c0 unsafeP) tt) (binary .or c0 (binary .or unsafeP tt)) :=
+  Expr.Equiv.or_assoc _ _ _
+example : Expr.Equiv Γ (binary .and unsafeP (binary .or unsafeP tt)) unsafeP :=
+  Expr.Equiv.and_or_absorb (by decide) (by decide)
+
 -- With the side conditions the laws hold; the arithmetic ones also for decimals.
 example : Expr.Equiv Γ (binary .and unsafeP tt) unsafeP := Expr.Equiv.and_true (by decide)
 example : Expr.Equiv ![SqlType.decimal] (binary (.arith .add) (col 0) (lit (.int 0))) (col 0) :=

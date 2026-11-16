@@ -161,6 +161,11 @@ a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` pric
 - The laws are the frontier's. The arithmetic identities (`add_zero`, `zero_add`, `sub_zero`,
   `mul_one`, `one_mul`, `neg_neg`) are generalised from integers to any numeric type, so they also
   hold for decimals.
+- Ten expression laws were added beyond the frontier: De Morgan (`not_and`, `not_or`),
+  associativity (`and_assoc`, `or_assoc`), distributivity (`and_or_distrib_left`,
+  `or_and_distrib_left`), idempotence (`and_self`, `or_self`, for a boolean operand) and absorption
+  (`and_or_absorb`, `or_and_absorb`, which also need a safe dropped operand). Each is lifted from the
+  `Truth` lattice through the operands' observed truth values.
 - Every side condition is a decidable check: `typeOf … = some τ`, `IsSafe` or `IsSafePredicate`.
   No law takes a hypothesis quantified over databases or rows. The exceptions are the congruence
   rules, whose hypothesis is itself an equivalence, and `binary_comm`, which asks for a property of
