@@ -13,9 +13,10 @@ import SqlCoreTest.SchemaExamples
 import SqlCoreTest.SchemaDiffTest
 import SqlCoreTest.ExprExamples
 import SqlCoreTest.ExprDiffTest
+import SqlCoreTest.QueryExamples
 
 def main : IO UInt32 := do
-  IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema and expression examples)"
+  IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema, expression and query examples)"
   let (n, documented, bad) := SqlCoreTest.ScalarDiff.run
   IO.println s!"Scalar differential vs SqlEquiv: {n} cases, {documented} documented differences, {bad.length} unexpected"
   for line in bad do

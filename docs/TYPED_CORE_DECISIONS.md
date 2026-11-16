@@ -6,7 +6,7 @@ Changing one is a design decision: propose it on an issue and wait for a pick
 
 | # | Question | Pick |
 |---|---|---|
-| 0 | Build on cslib-frontier, or re-derive it? | **Hybrid.** Re-derive phases 1–3 (values, rows, typed expressions) by hand, to learn the design. Then depend on [cslib-frontier](https://github.com/cslib-community/cslib-frontier) for queries and laws (phases 4–5). Phases 6 (bridge, oracles, Spider) and 8 (features beyond the frontier) are built on it and offered upstream. |
+| 0 | Build on cslib-frontier, or re-derive it? | **Hybrid.** Re-derive phases 1–3 (values, rows, typed expressions) by hand, to learn the design. Then depend on [cslib-frontier](https://github.com/cslib-community/cslib-frontier) for queries and laws (phases 4–5). Phases 6 (bridge, oracles, Spider) and 8 (features beyond the frontier) are built on it and offered upstream. *Revised at #293: phase 4 is re-derived onto `SqlCore`'s types as well, so queries see decimals (the frontier has none), and the decimal extension is offered upstream. Phase 5's laws are stated over these queries, so they follow the same path.* |
 | 1 | Mathlib | **Yes, in `SqlCore` only, from phase 1.** It arrives through the frontier from phase 4 anyway. `SqlEquiv` does not import it. |
 | 2 | Error behaviour | **Strict, as in the frontier.** A predicate or projection that fails on any row fails the whole query. Laws that move, duplicate or drop an expression carry a decidable safety condition. (This contrasts with `SqlEquiv`'s quiet errors, #270.) |
 | 3 | Library name and location | **`SqlCore`, a Lake library in this repo** (namespace `SqlCore`, tests in `SqlCoreTest`). cslib-frontier is added later as a `require`. |

@@ -30,6 +30,7 @@ CSLib through the frontier.
 | `SqlCoreTest/SchemaDiffTest.lean` | the typed test database has exactly the original rows |
 | `SqlCoreTest/ExprExamples.lean` | evaluation, typing, safety and lowering examples; soundness on the typed test database |
 | `SqlCoreTest/ExprDiffTest.lean` | generated well-typed expressions evaluated against `SqlEquiv.evalExpr` |
+| `SqlCoreTest/QueryExamples.lean` | the frontier's query examples, decimals in queries, and queries over the typed test database |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
 `SqlEquiv` stays on Batteries and never imports Mathlib. Mathlib and cslib-frontier
@@ -50,8 +51,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [x] **Phase 3: resolved expressions, typing, type soundness** (#292), *re-derive*:
   `SqlCore/Expr.lean`, `Typing.lean`, `Preconditions.lean`
 - [ ] Correlated-subquery prototype (in #297), alongside phases 3–4
-- [ ] Phase 4: core queries with bag semantics (#293), *from cslib-frontier*
-- [ ] Phase 5: equivalence and rewrite laws (#294), *from cslib-frontier*; the inventory of
+- [x] **Phase 4: core queries with bag semantics** (#293), *re-derived* (decision 0, revised):
+  `SqlCore/Query.lean`, `SqlCore/Except.lean`
+- [ ] Phase 5: equivalence and rewrite laws (#294), *re-derived* like phase 4; the inventory of
   `SqlEquiv` theorems still applies
 - [ ] Phase 6: bridge from the parsed AST, differential tests against Postgres and DuckDB (#295)
 - [ ] Phase 7: certified simplifier, decision procedure, tactics (#296)
@@ -127,6 +129,24 @@ Extension candidates that are already in `SqlEquiv` and not ported: `BETWEEN` (e
 `AND` of two comparisons), `LIKE`/`ILIKE` (dialect-dependent, #262), string functions (`UPPER`,
 `LOWER`, `LENGTH`, `SUBSTR`, `TRIM`, …), `COALESCE`/`NULLIF`, `ABS`, and `CAST`. Port them when
 phases 4–6 need them.
+
+## Phase 4 notes
+
+`Query S n` (table, `WHERE`, `SELECT` list, inner join `ON θ`, `UNION ALL`, `DISTINCT`) has
+evaluation, typing and type soundness for every constructor (`Query.eval_ok_or_divisionByZero`).
+A safe query (`Query.IsSafe`, decidable) succeeds on every conforming instance.
+
+Changes from the frontier, all because of decimals:
+
+- `Expr.evalTruth_eqCols_eq_ok_true_iff` takes a common-type hypothesis, since `1 = 1.0` is `TRUE`
+  although the values differ.
+- `Expr.isSafePredicate_eqCols_iff` asks for comparable key types, not equal ones.
+- `SqlCore/Except.lean` is the frontier's `Foundations/Control/Except.lean` in namespace
+  `SqlCore.Except`. It also has a local `map_error`, which lives in a Mathlib module this library
+  does not import.
+
+`SqlCoreTest/QueryExamples.lean` checks queries over the typed `SemanticsTest.testDb` by `decide`:
+a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` price.
 
 ## Rules for every phase
 

@@ -8,6 +8,7 @@ module
 
 public import SqlCore.Row
 public import SqlCore.Scalar
+public import SqlCore.Except
 
 /-!
 # Resolved SQL expressions
@@ -65,16 +66,7 @@ namespace SqlCore
 
 /-! ### Helpers
 
-The frontier takes these from its `Control.Except` module and from CSLib's circuit library
-(`Fin.append_comp_castAdd`, `Fin.append_comp_natAdd`); neither is a dependency here. -/
-
-theorem Except.bind_eq_ok {ε α β : Type} {x : Except ε α} {f : α → Except ε β} {b : β} :
-    x >>= f = .ok b ↔ ∃ a, x = .ok a ∧ f a = .ok b := by
-  cases x <;> simp [bind, Except.bind]
-
-theorem Except.toOption_bind {ε α β : Type} (x : Except ε α) (f : α → Except ε β) :
-    (x >>= f).toOption = x.toOption.bind fun a => (f a).toOption := by
-  cases x <;> rfl
+The frontier takes these from CSLib's circuit library, which is not a dependency here. -/
 
 theorem Fin.append_comp_castAdd {α : Type} {n m : ℕ} (r : Fin n → α) (s : Fin m → α) :
     Fin.append r s ∘ Fin.castAdd m = r :=
