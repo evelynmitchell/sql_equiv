@@ -96,7 +96,9 @@ def run : IO (Option (Nat × Nat × List String)) := do
   let mut documented := 0
   let mut fails : List String := []
   for (sql, ex) in corpus do
-    let .agree := ex | continue
+    match ex with
+    | .rejected _ => continue
+    | _ => pure ()
     let .ok stmt := SqlEquiv.parse sql | fails := s!"{sql}: parse error" :: fails
     let .ok e := elabStmt named stmt | fails := s!"{sql}: did not elaborate" :: fails
     let .ok rs := e.q.eval db | fails := s!"{sql}: SqlCore error" :: fails

@@ -78,6 +78,7 @@ def elabBinOp : SqlEquiv.BinOp → ElabM BinOp
 section Exprs
 
 variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+  (hook : SqlEquiv.Expr → Option (Expr n))
 
 /-- The typing context of a scope. -/
 def ctx : Fin n → SqlType := fun i => (cols i).type
@@ -96,8 +97,13 @@ def resolve (q : Option String) (name : String) : ElabM (Fin n) :=
 
 mutual
 
-/-- Elaborate an expression in a scope. -/
-def elabExpr : SqlEquiv.Expr → ElabM (Expr n)
+/-- Elaborate an expression in a scope. `hook` is consulted first at every node; with `GROUP BY`
+it maps aggregate calls and grouping keys to columns of the aggregate's output. -/
+def elabExpr (e : SqlEquiv.Expr) : ElabM (Expr n) :=
+  match hook e with
+  | some e' => pure e'
+  | none =>
+  match e with
   | .lit v =>
     match elabValue v, v with
     | some w, _ => pure (.lit w)
@@ -151,7 +157,52 @@ def elabBranches (els : Expr n) : List (SqlEquiv.Expr × SqlEquiv.Expr) → Elab
 
 end
 
+/-- No hook: plain elaboration. -/
+def noHook {n : ℕ} : SqlEquiv.Expr → Option (Expr n) := fun _ => none
+
 end Exprs
+
+/-! ### Aggregates (phase 8a, #313) -/
+
+mutual
+
+/-- The aggregate calls in an expression, outermost first. -/
+def aggsOf : SqlEquiv.Expr → List SqlEquiv.Expr
+  | .agg fn arg d => [.agg fn arg d]
+  | .countStar => [.countStar]
+  | .binOp _ a b => aggsOf a ++ aggsOf b
+  | .unaryOp _ a => aggsOf a
+  | .inList e _ vs => aggsOf e ++ aggsOfList vs
+  | .«case» bs els => aggsOfBranches bs ++ aggsOfOpt els
+  | .between a b c => aggsOf a ++ aggsOf b ++ aggsOf c
+  | .func _ args => aggsOfList args
+  | _ => []
+
+def aggsOfList : List SqlEquiv.Expr → List SqlEquiv.Expr
+  | [] => []
+  | e :: es => aggsOf e ++ aggsOfList es
+
+def aggsOfOpt : Option SqlEquiv.Expr → List SqlEquiv.Expr
+  | none => []
+  | some e => aggsOf e
+
+def aggsOfBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List SqlEquiv.Expr
+  | [] => []
+  | (c, a) :: bs => aggsOf c ++ aggsOf a ++ aggsOfBranches bs
+
+end
+
+/-- Elaborate one aggregate call over the input scope. -/
+def elabAgg {n : ℕ} (cols : Fin n → Column) (fold : String → String) :
+    SqlEquiv.Expr → ElabM (AggCall n)
+  | .countStar => pure .countStar
+  | .agg .count none _ => pure .countStar
+  | .agg .count (some e) d => return .call .count d (← elabExpr cols fold noHook e)
+  | .agg .sum (some e) d => return .call .sum d (← elabExpr cols fold noHook e)
+  | .agg (.min _) (some e) d => return .call .min d (← elabExpr cols fold noHook e)
+  | .agg (.max _) (some e) d => return .call .max d (← elabExpr cols fold noHook e)
+  | .agg .avg _ _ => throw (.unsupported "AVG (ill-typed until #201)")
+  | _ => throw (.unsupported "aggregate")
 
 /-- An elaborated query: its arity, the query, and the names and types of its columns. -/
 structure Elaborated (S : DbSchema) where
@@ -178,10 +229,10 @@ def elabFrom : SqlEquiv.FromClause → ElabM (Elaborated N.S)
     let ⟨m, qr, cr⟩ ← elabFrom r
     let cols : Fin (n + m) → Column := Fin.append cl cr
     let θ ← match kind, on with
-      | .inner, some e => elabExpr cols N.fold e
+      | .inner, some e => elabExpr cols N.fold noHook e
       | .inner, none => pure (.lit (.bool true))
       | .cross, none => pure (.lit (.bool true))
-      | .cross, some e => elabExpr cols N.fold e
+      | .cross, some e => elabExpr cols N.fold noHook e
       | .left, _ => throw (.unsupported "LEFT JOIN")
       | .right, _ => throw (.unsupported "RIGHT JOIN")
       | .full, _ => throw (.unsupported "FULL JOIN")
@@ -199,26 +250,84 @@ def elabItems {n : ℕ} (cols : Fin n → Column) :
     if mine.isEmpty then throw (.unknownTable t)
     return (mine.map fun i => (.col i, cols i)) ++ (← elabItems cols rest)
   | .exprItem e al :: rest => do
-    let e' ← elabExpr cols N.fold e
+    let e' ← elabExpr cols N.fold noHook e
     let some τ := e'.typeOf (ctx cols) | throw (.typeError "SELECT item")
     let name := al.getD (match e with | .col c => c.column | _ => "?column?")
     return (e', { qualifier := none, name, type := τ }) :: (← elabItems cols rest)
 
+/-- The aggregate's output scope: the key columns (a key that is a column keeps its name), then one
+column per aggregate call. -/
+def aggScope {n g a : ℕ} (cols : Fin n → Column) (keys : Fin g → Expr n) (aggs : Fin a → AggCall n) :
+    ElabM (Fin (g + a) → Column) := do
+  let keyCols ← (List.finRange g).mapM fun i => do
+    let some τ := (keys i).typeOf (ctx cols) | throw (.typeError "GROUP BY key")
+    pure (match keys i with
+      | .col k => cols k
+      | _ => ({ qualifier := none, name := "?column?", type := τ } : Column))
+  let aggCols ← (List.finRange a).mapM fun j => do
+    let some τ := (aggs j).typeOf (ctx cols) | throw (.typeError "aggregate")
+    pure ({ qualifier := none, name := "?aggregate?", type := τ } : Column)
+  if h : keyCols.length = g ∧ aggCols.length = a then
+    pure (Fin.append (fun i => keyCols[i]'(by omega)) (fun j => aggCols[j]'(by omega)))
+  else throw (.typeError "aggregate scope")
+
+/-- The hook for the aggregate's output: an aggregate call becomes its column, and an expression
+equal to a grouping key becomes the key's column. -/
+def aggHook {n g a : ℕ} (cols : Fin n → Column) (fold : String → String) (keys : Fin g → Expr n)
+    (aggExprs : List SqlEquiv.Expr) (e : SqlEquiv.Expr) : Option (Expr (g + a)) :=
+  match aggExprs.findIdx? (· == e) with
+  | some j => if h : j < a then some (.col (Fin.natAdd g ⟨j, h⟩)) else none
+  | none =>
+    match elabExpr cols fold noHook e with
+    | .ok e' => ((List.finRange g).find? fun i => keys i == e').map fun i => .col (Fin.castAdd a i)
+    | .error _ => none
+
 def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
-  | .mk distinct items (some from_) where_ [] none [] none none => do
+  | .mk distinct items (some from_) where_ groupBy having [] none none => do
     let ⟨n, q, cols⟩ ← elabFrom N from_
     let q : Query N.S n ← match where_ with
       | none => pure q
-      | some w => do pure (Query.select (← elabExpr cols N.fold w) q)
-    let its ← elabItems N cols items
-    let k := its.length
-    let es : Fin k → Expr n := fun i => (its[i]).1
-    let outCols : Fin k → Column := fun i => (its[i]).2
-    let q : Query N.S k := .project es q
-    pure ⟨k, if distinct then .distinct q else q, outCols⟩
+      | some w => do pure (Query.select (← elabExpr cols N.fold noHook w) q)
+    let itemExprs := items.filterMap fun | .exprItem e _ => some e | .star _ => none
+    let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having).eraseDups
+    if groupBy.isEmpty && aggExprs.isEmpty && having.isNone then
+      let its ← elabItems N cols items
+      let k := its.length
+      let q : Query N.S k := .project (fun i => (its[i]).1) q
+      pure ⟨k, if distinct then .distinct q else q, fun i => (its[i]).2⟩
+    else
+      -- GROUP BY and aggregates (phase 8a, #313)
+      let keyList ← groupBy.mapM (elabExpr cols N.fold noHook)
+      let aggList ← aggExprs.mapM (elabAgg cols N.fold)
+      let g := keyList.length
+      let a := aggList.length
+      let keys : Fin g → Expr n := fun i => keyList[i]
+      let aggs : Fin a → AggCall n := fun j => aggList[j]
+      let out ← aggScope cols keys aggs
+      let hook := aggHook (a := a) cols N.fold keys aggExprs
+      let outExpr (e : SqlEquiv.Expr) : ElabM (Expr (g + a)) :=
+        match elabExpr out N.fold hook e with
+        | .ok e' => pure e'
+        | .error (.unknownColumn q c) =>
+          match resolveColumn cols (q.map N.fold) (N.fold c) with
+          | .ok _ => throw (.unsupported "column not in GROUP BY or an aggregate")
+          | .error _ => throw (.unknownColumn q c)
+        | .error err => throw err
+      let q' : Query N.S (g + a) := .aggregate keys aggs q
+      let q' : Query N.S (g + a) ← match having with
+        | none => pure q'
+        | some h => do pure (Query.select (← outExpr h) q')
+      let its ← items.mapM fun
+        | .star _ => throw (.unsupported "* with GROUP BY or aggregates")
+        | .exprItem e al => do
+          let e' ← outExpr e
+          let some τ := e'.typeOf (ctx out) | throw (.typeError "SELECT item")
+          let name := al.getD (match e with | .col c => c.column | _ => "?column?")
+          pure (e', ({ qualifier := none, name, type := τ } : Column))
+      let k := its.length
+      let q : Query N.S k := .project (fun i => (its[i]).1) q'
+      pure ⟨k, if distinct then .distinct q else q, fun i => (its[i]).2⟩
   | .mk _ _ none _ _ _ _ _ _ => throw (.unsupported "SELECT without FROM")
-  | .mk _ _ _ _ (_ :: _) _ _ _ _ => throw (.unsupported "GROUP BY")
-  | .mk _ _ _ _ _ (some _) _ _ _ => throw (.unsupported "HAVING")
   | .mk _ _ _ _ _ _ (_ :: _) _ _ => throw (.unsupported "ORDER BY")
   | .mk _ _ _ _ _ _ _ _ _ => throw (.unsupported "LIMIT/OFFSET")
 

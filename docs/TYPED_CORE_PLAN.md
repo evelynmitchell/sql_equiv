@@ -86,7 +86,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   elaboration rate matches `SqlEquiv` (about 553/564; decided on #297)
   - [ ] 8a GROUP BY, HAVING, aggregates (#313)
     - [x] Core: `AggCall`, `Query.aggregate`, typing, type soundness, simplifier and checker
-    - [ ] Elaboration from SQL, differential tests, Spider rate
+    - [x] Elaboration from SQL, differential tests, Spider rate: **268/564 (47.5%)**, up from 129
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -328,6 +328,22 @@ Spider. `AVG` is ill-typed until the #201 scale policy is decided.
 - The simplifier keeps a `WHERE` above an aggregate. Pushing it below is valid only for
   predicates on the keys, and would be a new law.
 - Every behaviour was checked against Postgres 16 and DuckDB.
+
+**8a, elaboration (#313).** `SqlBridge` elaborates `GROUP BY`, aggregates and `HAVING`:
+
+- The aggregate calls of the `SELECT` list and `HAVING` are collected (`aggsOf`) and elaborated over
+  the input. The query becomes `aggregate keys aggs q`.
+- The `SELECT` list and `HAVING` are elaborated over the aggregate's output. A hook maps each
+  aggregate call to its column, and each expression equal to a key to the key's column.
+- A column that is neither grouped nor aggregated is rejected (registry T9), as the standard,
+  Postgres and DuckDB do; sqlite accepts it.
+
+The parsed-SQL corpus gained 15 aggregate queries. They agree with `SqlEquiv` and with DuckDB,
+except `GROUP BY staff` over two typed NULLs, where `SqlEquiv` splits the NULL group (#315). That
+query is checked against DuckDB instead.
+
+Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125), subqueries
+(47), bare columns (37, a sqlite extension), AVG (27), and INTERSECT/EXCEPT (37).
 
 ## Rules for every phase
 
