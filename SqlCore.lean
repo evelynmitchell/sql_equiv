@@ -16,3 +16,6 @@ public import SqlCore.Basic
 public import SqlCore.Value
 public import SqlCore.Truth
 public import SqlCore.Scalar
+public import SqlCore.Row
+public import SqlCore.Column
+public import SqlCore.Schema

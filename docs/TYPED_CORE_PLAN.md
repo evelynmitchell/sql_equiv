@@ -26,6 +26,8 @@ CSLib through the frontier.
 | `SqlCoreTest/TrustBaseTest.lean` | trust base and runtime-override guard for namespace `SqlCore` |
 | `SqlCoreTest/ScalarExamples.lean` | kernel-checked (`decide`) examples of the operators |
 | `SqlCoreTest/ScalarDiffTest.lean` | differential test against `SqlEquiv.evalBinOp`/`evalUnaryOp` |
+| `SqlCoreTest/SchemaExamples.lean` | column resolution examples; `SemanticsTest.testDb` as a `DbSchema` and a conforming instance |
+| `SqlCoreTest/SchemaDiffTest.lean` | the typed test database has exactly the original rows |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
 `SqlEquiv` stays on Batteries and never imports Mathlib. Mathlib and cslib-frontier
@@ -41,7 +43,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [x] **Phase 1: values, three-valued logic, scalar operators** (#290), *re-derive*
   - [x] `int`/`text`/`bool`: `SqlCore/Value.lean`, `Truth.lean`, `Scalar.lean` (#301)
   - [x] exact `decimal` as `ℚ`, with int↔decimal promotion (decisions 4 and 6)
-- [ ] Phase 2: rows, columns, schemas (#291), *re-derive*
+- [x] **Phase 2: rows, columns, schemas** (#291), *re-derive*: `SqlCore/Row.lean`, `Column.lean`,
+  `Schema.lean`
 - [ ] Phase 3: resolved expressions, typing, type soundness (#292), *re-derive*
 - [ ] Correlated-subquery prototype (in #297), alongside phases 3–4
 - [ ] Phase 4: core queries with bag semantics (#293), *from cslib-frontier*
@@ -77,6 +80,21 @@ Equality of values (`=` on `Value`) is structural, so `int 1 ≠ decimal 1` alth
 `TRUE` in SQL. The laws over a common type (`inList_eq_ok`, `eval_eq_ok_true_iff`) are unaffected.
 Mixed-type membership such as `1 IN (1.0)` still evaluates correctly; only its closed form is
 stated for a common type.
+
+## Phase 2 differences
+
+| Case | `SqlCore` | `SqlEquiv` |
+|---|---|---|
+| Column reference | a position `Fin n`, resolved once by `resolveColumn` | a name, looked up in each row |
+| Name case | exact (decision 7); the parser normalises | case-insensitive (`Row.lookupCI`) |
+| Unqualified name in two tables | `ambiguousColumn` | the first match |
+| Columns and types of a table | the schema, so an empty table has them | read off the rows, so an empty table has none |
+| Type of a `NULL` cell | the column's declared type | `.null (some τ)` on the value |
+
+Phase 2 is done in the sense of #291: `SqlCoreTest/SchemaExamples.lean` writes `SemanticsTest.testDb`
+(six tables) as a `DbSchema` and an instance, and `decide` proves that it conforms.
+`SqlCoreTest/SchemaDiffTest.lean` checks at run time that every row matches the original.
+`deriving Fintype` fails at the current Mathlib pin, so the test writes the instance out.
 
 ## Rules for every phase
 
