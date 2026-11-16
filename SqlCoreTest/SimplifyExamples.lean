@@ -223,24 +223,45 @@ open SqlCore.Expr (col lit unary binary)
 
 -- Expressions: `NOT (a < b)` and `a >= b` simplify to the same expression.
 example : (Expr.checkEquiv Γemp (unary .not (binary (.cmp .lt) (col 1) (int 3)))
-    (binary (.cmp .ge) (col 1) (int 3))).isProved = true := by decide
+    (binary (.cmp .ge) (col 1) (int 3))).isProved = true := by decide +kernel
 -- `dept + 0` and `dept`, for an integer column.
 example : (Expr.checkEquiv Γemp (binary (.arith .add) (col 1) (int 0)) (col 1)).isProved = true := by
-  decide
+  decide +kernel
 -- Unknown (not refuted): `dept = 1` and `dept = 2` differ.
 example : (Expr.checkEquiv Γemp isOne (binary (.cmp .eq) (col 1) (int 2))).isProved = false := by
-  decide
+  decide +kernel
 
 -- Queries: two `WHERE`s merge, so these simplify to the same query.
 example : (Query.checkEquiv (select isAnn (select isOne emp))
-    (select (binary .and isOne isAnn) emp)).isProved = true := by decide
+    (select (binary .and isOne isAnn) emp)).isProved = true := by decide +kernel
 -- A proof comes out of a successful check, at every equivalence level.
 example : Equiv .bag (select isAnn (select isOne emp)) (select (binary .and isOne isAnn) emp) :=
   (Check.of_isProved (c := Query.checkEquiv (select isAnn (select isOne emp))
-    (select (binary .and isOne isAnn) emp)) (by decide)).of_ordered
+    (select (binary .and isOne isAnn) emp)) (by decide +kernel)).of_ordered
 -- `WHERE TRUE` disappears.
-example : (Query.checkEquiv (select (lit (.bool true)) emp) emp).isProved = true := by decide
+example : (Query.checkEquiv (select (lit (.bool true)) emp) emp).isProved = true := by decide +kernel
 -- Different tables: unknown.
-example : (Query.checkEquiv emp dept).isProved = false := by decide
+example : (Query.checkEquiv emp dept).isProved = false := by decide +kernel
+
+-- Canonical forms (part 2): operand order of AND/OR, comparisons and + / * is irrelevant.
+example : (Expr.checkEquiv Γemp (binary .and isOne isAnn) (binary .and isAnn isOne)).isProved = true := by
+  decide +kernel
+example : (Expr.checkEquiv Γemp (binary (.cmp .gt) (col 1) (int 3))
+    (binary (.cmp .lt) (int 3) (col 1))).isProved = true := by decide +kernel
+example : (Expr.checkEquiv Γemp (binary .or (binary .or isOne isAnn) (unary .isNull (col 1)))
+    (binary .or (unary .isNull (col 1)) (binary .or isAnn isOne))).isProved = true := by decide +kernel
+example : (Expr.checkEquiv Γemp (binary (.arith .add) (col 1) (int 2))
+    (binary (.arith .add) (int 2) (col 1))).isProved = true := by decide +kernel
+-- `-` is not commutative: unknown.
+example : (Expr.checkEquiv Γemp (binary (.arith .sub) (col 1) (int 2))
+    (binary (.arith .sub) (int 2) (col 1))).isProved = false := by decide +kernel
+-- Queries: a commuted conjunction inside WHERE.
+example : (Query.checkEquiv (select (binary .and isOne isAnn) emp)
+    (select (binary .and isAnn isOne) emp)).isProved = true := by decide +kernel
+
+-- Tactics: the checker run in the kernel.
+example : Expr.Equiv Γemp (binary .and isOne isAnn) (binary .and isAnn isOne) := by sql_expr_equiv
+example : Equiv .set (select isAnn (select isOne emp)) (select (binary .and isAnn isOne) emp) := by
+  sql_query_equiv
 
 end SqlCoreTest.CheckExamples
