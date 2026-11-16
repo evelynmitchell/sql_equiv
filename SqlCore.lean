@@ -13,6 +13,7 @@
 module
 
 public import SqlCore.Basic
+public import SqlCore.Except
 public import SqlCore.Value
 public import SqlCore.Truth
 public import SqlCore.Scalar
@@ -22,3 +23,4 @@ public import SqlCore.Schema
 public import SqlCore.Expr
 public import SqlCore.Typing
 public import SqlCore.Preconditions
+public import SqlCore.Query
