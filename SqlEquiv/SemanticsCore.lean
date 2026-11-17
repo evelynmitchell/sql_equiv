@@ -2704,10 +2704,10 @@ theorem evalSelectGroupOrderKeys_congr (db : Database)
   have hK := groupOrderKeyRow_congr db aA aB ob hOK
   have hG' := groupKey_congr hG
   cases hv with
-  | none => simp only [evalSelectGroupOrderKeys, hG, hG', hSIA, hK]
+  | none => simp only [evalSelectGroupOrderKeys, hG', hSIA, hK]
   | some c =>
     have hc := hHa c rfl
-    simp only [evalSelectGroupOrderKeys, hG, hG', hSIA, hK, hc]
+    simp only [evalSelectGroupOrderKeys, hG', hSIA, hK, hc]
 
 
 /-- `evalSelectCore` congruence over its callbacks: two callback tuples that
@@ -2763,7 +2763,7 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     | some f => exact hF f rfl
   simp only [evalSelectCore, SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
     SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having, SelectStmt.orderBy,
-    SelectStmt.limitVal, SelectStmt.offsetVal, hG, groupKey_congr hG, hSI, hSIA, hWin, hGK]
+    SelectStmt.limitVal, SelectStmt.offsetVal, groupKey_congr hG, hSI, hSIA, hWin, hGK]
   erw [hOrd]
   cases from_ <;> cases w <;> cases hv <;>
     (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>
