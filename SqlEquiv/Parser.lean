@@ -706,6 +706,24 @@ def reservedSelectKeywords : List String := [
 ]
 
 -- Expression parsing uses mutual recursion with SELECT parser (for subqueries)
+/-- Whether an ORDER BY key of a `SELECT DISTINCT` appears in its select list
+    (row 5): a position, an output name (alias or column name), or an
+    expression equal to a selected one. The check is syntactic and lenient:
+    with a `*` item every key is accepted, and column names match without
+    their qualifier and case-insensitively, so it never rejects a query that
+    Postgres accepts. -/
+def distinctOrderKeySelected (items : List SelectItem) (e : Expr) : Bool :=
+  items.any fun
+    | .star _ => true
+    | .exprItem e' al =>
+      e' == e ||
+      (match e with
+       | .lit (.int _) => true
+       | .col ⟨_, c⟩ =>
+         al.any (·.toLower == c.toLower) ||
+         (match e' with | .col ⟨_, c'⟩ => c'.toLower == c.toLower | _ => false)
+       | _ => false)
+
 mutual
 
 /-- Parse the rest of a subquery body (#218): fold UNION [ALL] / INTERSECT /
@@ -1498,6 +1516,12 @@ partial def parseSelectStmt : Parser SelectStmt := do
   let tEnd ← Parser.peek
   if isKeyword "OVER" tEnd then
     Parser.fail "OVER is only valid immediately after a window or aggregate function call"
+
+  -- Row 5: DISTINCT with an ORDER BY key outside the select list, per dialect.
+  let dob ← fun st => .ok (st.config.distinctOrderBy, st)
+  if distinct && dob == .reject &&
+      orderBy.any (fun | .mk e _ _ => !distinctOrderKeySelected items e) then
+    Parser.fail "for SELECT DISTINCT, ORDER BY expressions must appear in select list"
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
 

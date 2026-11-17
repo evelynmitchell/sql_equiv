@@ -236,6 +236,17 @@ inductive LikeCase where
   | asciiInsensitive
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- `SELECT DISTINCT` with an `ORDER BY` key that is not selected (row 5):
+    `SELECT DISTINCT a FROM t ORDER BY b`.
+    - `reject`: a parse error, as the standard and Postgres require ("for
+      SELECT DISTINCT, ORDER BY expressions must appear in select list").
+    - `firstRow`: accepted; each output row sorts by the key of its first
+      source row (sqlite and DuckDB; DuckDB plans it as `first(b)`). -/
+inductive DistinctOrderBy where
+  | reject
+  | firstRow
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- The dialect choices a MIN/MAX node records. -/
 structure MinMaxMode where
   mixed : MixedMinMax
@@ -328,6 +339,8 @@ structure DialectConfig where
   boolMinMax : BoolMinMax
   /-- LIKE letter case (row 8) -/
   likeCase : LikeCase
+  /-- DISTINCT with an unselected ORDER BY key (row 5) -/
+  distinctOrderBy : DistinctOrderBy
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -335,13 +348,17 @@ structure DialectConfig where
     Postgres standards tiebreaker. -/
 def Dialect.config : Dialect → DialectConfig
   | .standard => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
-                   boolMinMax := .error,   likeCase := .sensitive }
+                   boolMinMax := .error,   likeCase := .sensitive,
+                   distinctOrderBy := .reject }
   | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass,
-                   boolMinMax := .asInt,   likeCase := .asciiInsensitive }
+                   boolMinMax := .asInt,   likeCase := .asciiInsensitive,
+                   distinctOrderBy := .firstRow }
   | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
-                   boolMinMax := .ordered, likeCase := .sensitive }
+                   boolMinMax := .ordered, likeCase := .sensitive,
+                   distinctOrderBy := .firstRow }
   | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
-                   boolMinMax := .error,   likeCase := .sensitive }
+                   boolMinMax := .error,   likeCase := .sensitive,
+                   distinctOrderBy := .reject }
 
 /-- The MIN/MAX mode a dialect configuration records on each MIN/MAX node. -/
 def DialectConfig.minMaxMode (c : DialectConfig) : MinMaxMode :=

@@ -93,6 +93,18 @@ def bagOf (sql : String) (rows : List (List String)) : List String :=
   let rs := rows.map fun r => " | ".intercalate r
   if (sql.splitOn "ORDER BY").length > 1 then rs else rs.mergeSort (· ≤ ·)
 
+/-- Queries parsed in the `duckdb` dialect, for behaviour that the default dialect rejects at
+parse time. Registry row 5 (`firstRow`): `SELECT DISTINCT … ORDER BY` a key that is not selected
+sorts each distinct row by the key of its first source row. The keys are chosen so that the first
+row, the last row and MIN/MAX give different orders. -/
+def duckdbDialectCorpus : List String := [
+  "SELECT DISTINCT user_id FROM orders ORDER BY amount",
+  "SELECT DISTINCT user_id FROM orders ORDER BY amount DESC",
+  "SELECT DISTINCT user_id FROM orders ORDER BY amount DESC LIMIT 2",
+  "SELECT DISTINCT department FROM users GROUP BY department, age ORDER BY age",
+  "SELECT DISTINCT department FROM users ORDER BY age DESC, department"
+]
+
 /-- (compared, documented differences, failures); `none` when DuckDB is missing. -/
 def run : IO (Option (Nat × Nat × List String)) := do
   unless ← duckdbAvailable do return none
@@ -115,6 +127,17 @@ def run : IO (Option (Nat × Nat × List String)) := do
       if ours != theirs then
         if expectedDifferences.any (·.1 == sql) then documented := documented + 1
         else fails := s!"{sql}:\n    SqlCore {ours}\n    DuckDB  {theirs}" :: fails
+  for sql in duckdbDialectCorpus do
+    let .ok stmt := SqlEquiv.parse sql (dialect := .duckdb) | fails := s!"{sql}: parse error" :: fails
+    let .ok e := elabStmt named stmt | fails := s!"{sql}: did not elaborate" :: fails
+    let .ok rs := e.q.eval db | fails := s!"{sql}: SqlCore error" :: fails
+    let ours := bagOf sql (rs.map fun r => (List.finRange e.n).map fun i => normCell (r i))
+    n := n + 1
+    match ← runDuckdb sql with
+    | .error err => fails := s!"{sql}: DuckDB error {err}" :: fails
+    | .ok theirs =>
+      let theirs := bagOf sql theirs
+      if ours != theirs then fails := s!"{sql}:\n    SqlCore {ours}\n    DuckDB  {theirs}" :: fails
   return some (n, documented, fails.reverse)
 
 end SqlCoreTest.DuckdbDiff

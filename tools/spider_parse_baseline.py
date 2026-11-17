@@ -53,7 +53,7 @@ def run() -> tuple[int, int, dict[str, list[tuple[int, str]]]]:
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
     queries = QUERIES.read_text().splitlines()
     out = subprocess.run(
-        [str(EXE), "--parse-lines", str(QUERIES)],
+        [str(EXE), "--dialect", "sqlite", "--parse-lines", str(QUERIES)],
         capture_output=True, text=True, check=True,
     ).stdout
     ok, failures = 0, defaultdict(list)
@@ -82,6 +82,8 @@ def write_report(ok: int, total: int, failures: dict) -> None:
         "",
         "Corpus: `dev_queries.sql` — unique queries from the Spider dev set",
         "([taoyds/spider](https://github.com/taoyds/spider), CC BY-SA 4.0).",
+        "Parsed in the `sqlite` dialect, since Spider's gold results come from sqlite",
+        "(`docs/IMPLEMENTATION_DEFINED.md`).",
         "",
         "## Failure classes (each is an issue candidate, largest first)",
         "",

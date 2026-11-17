@@ -78,7 +78,7 @@ This repository could become a basis for SQL support in
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries (inner-first name resolution), and derived tables (`FROM (SELECT …) AS d`). A derived table's alias qualifies its columns (`d.name`, #257); unqualified `name` also works.
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries
-- **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET. ORDER BY may use non-projected columns; in GROUP BY queries it may also sort on aggregates (`ORDER BY COUNT(*) DESC`), non-projected grouping columns, and expressions mixing output aliases with aggregates. `NULLS FIRST` / `NULLS LAST` are supported; without them, NULL sort keys follow the target dialect's rule (see **Dialects** below). Known gap: with DISTINCT, sort keys resolve against output columns only.
+- **Clauses**: WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, OFFSET. ORDER BY may use non-projected columns; in GROUP BY queries it may also sort on aggregates (`ORDER BY COUNT(*) DESC`), non-projected grouping columns, and expressions mixing output aliases with aggregates. `NULLS FIRST` / `NULLS LAST` are supported; without them, NULL sort keys follow the target dialect's rule (see **Dialects** below). With DISTINCT, a sort key that is not selected is a dialect choice: a parse error in `standard` and `postgres`, accepted in `sqlite` and `duckdb` (where the engines sort by each value's first source row; our evaluator still ties the key, #320).
 - **INSERT statements**: VALUES, INSERT...SELECT
 - **UPDATE statements**: SET with WHERE conditions
 - **DELETE statements**: With WHERE conditions
@@ -200,8 +200,9 @@ In the REPL, `dialect sqlite` switches dialect. The dialect is resolved at parse
 time: the parser records each choice in the AST (e.g. the NULL position of every
 ORDER BY item), so evaluation and every equivalence theorem are
 dialect-independent. Configurable today: NULL ordering, LIKE letter case
-(sqlite's LIKE ignores ASCII case), and MIN/MAX over mixed numbers and strings
-or over booleans. `toSql` prints SQL for the default dialect (explicit
+(sqlite's LIKE ignores ASCII case), MIN/MAX over mixed numbers and strings
+or over booleans, and whether `SELECT DISTINCT` may sort on a key it does not
+select. `toSql` prints SQL for the default dialect (explicit
 `NULLS FIRST/LAST` where an item differs from it); the MIN/MAX mode has no SQL
 spelling, so re-parsing printed SQL uses the parsing dialect's mode. The full registry of implementation-defined behaviour,
 with what each engine does, is `docs/IMPLEMENTATION_DEFINED.md`.

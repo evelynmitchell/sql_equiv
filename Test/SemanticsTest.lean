@@ -481,13 +481,42 @@ def registryPinTests : List TestResult := [
      then .pass "like_mode_recorded_in_ast"
      else .fail "like_mode_recorded_in_ast" s!"{reprStr a} / {reprStr b}"
    | _, _ => .fail "like_mode_recorded_in_ast" "parse error"),
-  -- Row 5 (gap): DISTINCT with a non-selected sort key. The key resolves
-  -- against output columns only, so it ties and output keeps input order;
-  -- sqlite/DuckDB sort by a source row (Sales, Marketing, Engineering),
-  -- Postgres errors.
-  testColumn "distinct_order_by_unselected_keeps_input_order"
-    "SELECT DISTINCT department FROM users ORDER BY age" "department"
-    [.string "Engineering", .string "Sales", .string "Marketing"],
+  -- Row 5 (per dialect): DISTINCT with a non-selected sort key. standard and
+  -- postgres reject it at parse time, as Postgres does; sqlite and duckdb
+  -- accept it.
+  (match parse "SELECT DISTINCT department FROM users ORDER BY age",
+         parse "SELECT DISTINCT department FROM users ORDER BY age" (dialect := .postgres),
+         parse "SELECT DISTINCT department FROM users ORDER BY age" (dialect := .sqlite),
+         parse "SELECT DISTINCT department FROM users ORDER BY age" (dialect := .duckdb) with
+   | .error e1, .error e2, .ok _, .ok _ =>
+     if (e1.splitOn "must appear in select list").length == 2 &&
+        (e2.splitOn "must appear in select list").length == 2
+     then .pass "distinct_order_by_unselected_per_dialect"
+     else .fail "distinct_order_by_unselected_per_dialect" s!"{e1} / {e2}"
+   | _, _, _, _ => .fail "distinct_order_by_unselected_per_dialect" "wrong accept/reject pattern"),
+  -- Selected keys stay accepted in the rejecting dialects: the expression, an
+  -- alias, a position, a qualified name, a `*` item, and an expression key.
+  (let ok := [
+      "SELECT DISTINCT department FROM users ORDER BY department",
+      "SELECT DISTINCT department AS d FROM users ORDER BY d DESC",
+      "SELECT DISTINCT department FROM users ORDER BY 1",
+      "SELECT DISTINCT u.department FROM users u ORDER BY u.department",
+      "SELECT DISTINCT department FROM users u ORDER BY u.department",
+      "SELECT DISTINCT * FROM users ORDER BY age",
+      "SELECT DISTINCT age + 1 FROM users ORDER BY age + 1"]
+   match ok.filter (fun q => (parse q).toOption.isNone) with
+   | [] => .pass "distinct_order_by_selected_accepted"
+   | bad => .fail "distinct_order_by_selected_accepted" s!"rejected: {bad}"),
+  -- In the sqlite and duckdb dialects SqlEquiv still ties the key, so output
+  -- keeps input order; the engines sort by each value's first source row
+  -- (Sales, Marketing, Engineering). Gap, #320; SqlCore implements it.
+  (match evalQueryIn .sqlite "SELECT DISTINCT department FROM users ORDER BY age" with
+   | .ok t =>
+     let col := t.map fun row => ((row.find? (·.1 == "department")).map (·.2)).getD (.null none)
+     if col == [.string "Engineering", .string "Sales", .string "Marketing"]
+     then .pass "distinct_order_by_unselected_keeps_input_order"
+     else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
+   | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
   -- Row 11 (decided, #254: keep): a number compared with a numeric-looking
   -- string is a type error, so the row is dropped. sqlite, DuckDB and
   -- Postgres all convert the string and return Alice (age 30). Kept as a
