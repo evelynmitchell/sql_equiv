@@ -93,10 +93,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Core: `SortKey`, `Query.orderBy`, `Query.limit`, typing, type soundness, congruences,
       simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **364/564 (64.5%)**, up from 268
-  - [ ] 8c INTERSECT, EXCEPT, LIKE (#322)
+  - [x] 8c INTERSECT, EXCEPT, LIKE (#322)
     - [x] Core: `Query.intersect`, `Query.difference`, `BinOp.like`, typing, type soundness,
       congruences at every level, laws, simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **405/564 (71.8%)**, up from 364
+  - [ ] 8d AVG and decimal `/`, exact (#326; decides #201 for the typed core)
+    - [x] Core: exact `divDec`, `AggFn.avg`, typing and type soundness
+    - [x] Elaboration, differential tests, Spider rate: **426/564 (75.5%)**, up from 405
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -119,7 +122,8 @@ compared against `SqlEquiv`, Postgres 16 and DuckDB (decisions 8 and 9).
 with integers and decimals mixed (3668 cases). The only disagreements are the 16 boolean
 orderings and the 168 decimal remainders; any other one fails the test.
 
-Decimal division is `unsupported` because the engines disagree on its result type and scale.
+Decimal division was `unsupported` in phase 1, because the engines disagree on its result type and
+scale. Phase 8d (#326) made it exact.
 Equality of values (`=` on `Value`) is structural, so `int 1 ≠ decimal 1` although `1 = 1.0` is
 `TRUE` in SQL. The laws over a common type (`inList_eq_ok`, `eval_eq_ok_true_iff`) are unaffected.
 Mixed-type membership such as `1 IN (1.0)` still evaluates correctly; only its closed form is
@@ -321,7 +325,7 @@ queries (pushdown, projection fusion), which `SqlEquiv`'s rewriter does not.
 ## Phase 8 notes
 
 Decisions (#297): GROUP BY and aggregates come first. The phase 9 bar is matching `SqlEquiv` on
-Spider. `AVG` is ill-typed until the #201 scale policy is decided.
+Spider. `AVG` and decimal `/` are exact rationals (#326, decided 2026-11-17; see 8d below).
 
 **8a, core (#313).**
 
@@ -448,6 +452,38 @@ against DuckDB instead:
 
 Spider: 405/564 now elaborate. The largest remaining classes are bare columns (64, T9),
 subqueries (47), `AVG` (27, #201) and type errors under sqlite's affinity (20).
+
+**8d, AVG and decimal `/` (#326).** The decision, made in session on 2026-11-17, is exact
+rationals.
+
+- Decimal `/`:
+  - `1.0 / 3` is `1/3`, and a zero divisor is still `divisionByZero`.
+  - Integer `/` keeps truncating (T1).
+  - Decimal `/` is now well-typed, so it no longer raises the `unsupported` error.
+- `AVG`:
+  - It is the exact mean of an int or decimal argument, as a decimal: `SUM / COUNT`, with `DISTINCT`
+    as for `SUM`.
+  - It is `NULL` over no values and ill-typed over text.
+- The engines all round, and each does it differently:
+  - Postgres uses a scale that varies with the input, so `AVG(i) * 3` over 1, 1, 2 is
+    `3.9999999999999999`.
+  - sqlite and DuckDB return doubles.
+
+  The exact value agrees with every engine whenever it is a finite decimal (T3, T10). The Spider
+  harness compares numbers to 10 significant digits.
+- Tests:
+  - The DuckDB differential rounds both sides to 12 decimal places.
+  - The scalar differential accepts a decimal `/` difference from `SqlEquiv` only if the quotient
+    multiplies back exactly.
+  - `SqlEquiv` still truncates `AVG` (registry row 7) and leaves decimal `/` unimplemented, so
+    fractional results are checked against DuckDB.
+- Spider: 426/564. The remaining classes:
+
+  | Class | Queries | Note |
+  |---|---:|---|
+  | Bare columns | 64 | T9 |
+  | Subqueries | 47 | |
+  | Type errors | 26 | sqlite affinity, now including six `AVG`s of text columns |
 
 ## Rules for every phase
 

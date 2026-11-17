@@ -19,8 +19,8 @@ Postgres and DuckDB (#313).
 
 Typing (`AggCall.typeOf`): `COUNT` is `int`. `SUM` takes an `int` or `decimal` argument and keeps
 its type. `MIN` and `MAX` take `int`, `decimal` or `text`; booleans are ill-typed, because
-Postgres rejects them and DuckDB accepts them (registry row 14). `AVG` is not in the fragment
-(#297: ill-typed until the #201 scale policy).
+Postgres rejects them and DuckDB accepts them (registry row 14). `AVG` takes an `int` or `decimal`
+argument and is the exact mean, a `decimal` (phase 8d, #326; registry T10).
 
 Soundness (`AggCall.eval_ok_or_divisionByZero`): on rows conforming to `Γ`, a well-typed call
 returns a datum of its type, or its argument divides by zero.
@@ -33,6 +33,8 @@ namespace SqlCore
 /-- The aggregate functions. -/
 inductive AggFn where
   | count | sum | min | max
+  /-- `AVG`: the exact mean as a decimal (phase 8d; registry T10). -/
+  | avg
   deriving DecidableEq, Repr
 
 /-- An aggregate call over rows of `n` columns. -/
@@ -73,6 +75,13 @@ def extremeFrom (pick : Ordering) (acc : Value) : List Value → Except EvalErro
     let o ← Value.cmp v acc
     extremeFrom pick (if o = pick then v else acc) vs
 
+/-- The mean of a sum over `k` values, exact, as a decimal (an integer sum is promoted). -/
+def meanOf (s : Value) (k : ℕ) : Except EvalError Value :=
+  match s with
+  | .int z => .ok (.decimal ((z : ℚ) / k))
+  | .decimal q => .ok (.decimal (q / k))
+  | _ => .error .typeMismatch
+
 /-- An aggregate function over the non-null values of a group. -/
 def AggFn.apply : AggFn → List Value → Except EvalError Datum
   | .count, vs => .ok (some (.int vs.length))
@@ -80,6 +89,7 @@ def AggFn.apply : AggFn → List Value → Except EvalError Datum
   | .sum, v :: vs => some <$> sumFrom v vs
   | .min, v :: vs => some <$> extremeFrom .lt v vs
   | .max, v :: vs => some <$> extremeFrom .gt v vs
+  | .avg, v :: vs => do return some (← meanOf (← sumFrom v vs) (vs.length + 1))
 
 namespace AggCall
 
@@ -105,6 +115,11 @@ def typeOf (Γ : Fin n → SqlType) : AggCall n → Option SqlType
     | some .int => some .int
     | some .decimal => some .decimal
     | _ => none
+  | call .avg _ e =>
+    match e.typeOf Γ with
+    | some .int => some .decimal
+    | some .decimal => some .decimal
+    | _ => none
   | call .min _ e | call .max _ e =>
     match e.typeOf Γ with
     | some .int => some .int
@@ -127,6 +142,7 @@ def _root_.SqlCore.AggFn.ResultType (fn : AggFn) (τ σ : SqlType) : Prop :=
   | .count => σ = .int
   | .sum => (τ = .int ∨ τ = .decimal) ∧ σ = τ
   | .min | .max => σ = τ
+  | .avg => (τ = .int ∨ τ = .decimal) ∧ σ = .decimal
 
 private theorem sumFrom_type {τ : SqlType} (hτ : τ = .int ∨ τ = .decimal) :
     ∀ (acc : Value) (vs : List Value), acc.type = τ → (∀ v ∈ vs, v.type = τ) →
@@ -173,6 +189,18 @@ private theorem apply_type {fn : AggFn} {τ σ : SqlType} {vs : List Value}
     · exact ⟨none, rfl, trivial⟩
     · obtain ⟨w, hw, hwτ⟩ := extremeFrom_type .gt v vs (hvs v (by simp)) fun u hu => hvs u (by simp [hu])
       exact ⟨some w, by simp [AggFn.apply, hw], hwτ⟩
+  case avg =>
+    obtain ⟨hτ, rfl⟩ := h
+    rcases vs with _ | ⟨v, vs⟩
+    · exact ⟨none, rfl, trivial⟩
+    · obtain ⟨w, hw, hwτ⟩ := sumFrom_type hτ v vs (hvs v (by simp)) fun u hu => hvs u (by simp [hu])
+      rcases hτ with rfl | rfl <;> cases w <;> simp at hwτ
+      case inl.int z =>
+        exact ⟨some (.decimal ((z : ℚ) / (vs.length + 1 : ℕ))),
+          by simp [AggFn.apply, hw, meanOf, pure, Except.pure], rfl⟩
+      case inr.decimal q =>
+        exact ⟨some (.decimal (q / (vs.length + 1 : ℕ))),
+          by simp [AggFn.apply, hw, meanOf, pure, Except.pure], rfl⟩
 
 /-- The argument of an aggregate over conforming rows: all values of its type, or a division by
 zero. -/

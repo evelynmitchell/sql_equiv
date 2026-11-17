@@ -20,9 +20,8 @@ An operator on datums returns a datum (possibly `NULL`) or fails with an `EvalEr
   (`Int.tmod`), as in `SqlEquiv`, sqlite, Postgres and DuckDB's `//`.
 * Decimals are exact (`ℚ`). With a decimal operand, `int` is promoted (decision 6): `1 + 0.5` is
   `1.5`, a decimal. `+ - *` are exact, `%` is exact with the dividend's sign (`7.5 % -2` is `1.5`),
-  and `/` on decimals is `unsupported`: its result scale differs between engines (Postgres rounds
-  to 20 places, DuckDB returns a double), as `SqlEquiv` defers it (#201). A zero divisor is
-  `divisionByZero` first.
+  and `/` with a decimal operand is exact (phase 8d, #201): `1.0 / 3` is `1/3`, where engines round
+  (registry T3). A zero divisor is `divisionByZero`.
 * `= <> < <= > >=` need comparable operands (`SqlType.Comparable`): one type, or two numeric
   types compared as rationals (`1 = 1.0` is `TRUE`). Integers and decimals compare numerically,
   text by code point, booleans with `false < true`. The result is `TRUE`, `FALSE`, or `NULL` for
@@ -102,10 +101,12 @@ def negDec (a : ℚ) : ℚ := -a
 /-- Truncation toward zero. -/
 def truncRat (q : ℚ) : ℤ := if q < 0 then q.ceil else q.floor
 
-/-- Decimal division: a zero divisor is `divisionByZero`; otherwise `unsupported`, since the result
-scale of an inexact quotient is implementation-defined. -/
-def divDec (_a b : ℚ) : Except EvalError ℚ :=
-  if b = 0 then .error .divisionByZero else .error .unsupported
+/-- Decimal division, exact (phase 8d, #201): `1.0 / 3` is the rational `1/3`; a zero divisor is
+`divisionByZero`. Engines round an inexact quotient (Postgres to a variable scale, sqlite and
+DuckDB to a double); the exact quotient agrees with all of them whenever it is a finite decimal
+(registry T3). -/
+def divDec (a b : ℚ) : Except EvalError ℚ :=
+  if b = 0 then .error .divisionByZero else .ok (a / b)
 
 /-- Decimal remainder, exact, with the sign of the dividend; a zero divisor is `divisionByZero`. -/
 def modDec (a b : ℚ) : Except EvalError ℚ :=

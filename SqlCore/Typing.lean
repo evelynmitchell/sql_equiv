@@ -16,8 +16,7 @@ and `Expr.typeOf Γ e` the type of an expression over a typing context `Γ : Fin
 literal has its value's type, `NULL` its declared type, `col i` the type `Γ i`, `e IN vs` is
 boolean when every list element is comparable with `e`'s type, and `CASE` needs a boolean
 condition and branches of one type. Arithmetic with a decimal operand has type `decimal`, and
-comparison needs comparable types (decisions 4 and 6). Decimal `/` is ill-typed: its result scale
-is implementation-defined, and `evalBinOp` reports it as `unsupported`.
+comparison needs comparable types (decisions 4 and 6). Decimal `/` is exact (phase 8d, #201).
 
 Type soundness (`Expr.eval_ok_or_divisionByZero`): on a row conforming to `Γ`, a well-typed
 expression of type `τ` never raises `typeMismatch`; it either returns `NULL` or a value of type
@@ -70,12 +69,11 @@ def UnOp.typeOf : UnOp → SqlType → Option SqlType
   | .isNotNull, _ => some .bool
   | _, _ => none
 
-/-- The result type of an arithmetic operator: integers stay integers, a decimal operand makes the
-result a decimal, and decimal `/` is ill-typed. -/
+/-- The result type of an arithmetic operator: integers stay integers (integer `/` truncates), and a
+decimal operand makes the result a decimal (decimal `/` is exact, phase 8d). -/
 def ArithOp.typeOf (op : ArithOp) : SqlType → SqlType → Option SqlType
   | .int, .int => some .int
-  | .int, .decimal | .decimal, .int | .decimal, .decimal =>
-    if op = .div then none else some .decimal
+  | .int, .decimal | .decimal, .int | .decimal, .decimal => some .decimal
   | _, _ => none
 
 /-- The result type of a binary operator on operands of types `τ₁` and `τ₂`, if the application is
@@ -154,15 +152,18 @@ private theorem arith_int_int (op : ArithOp) (x y : ℤ) :
   · exact .inl ⟨z, by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hz]⟩
 
 /-- The decimal case: away from `/`, the operator succeeds unless `%` divides by zero. -/
-private theorem evalDec_ok_or_zero {op : ArithOp} (hop : op ≠ .div) (p q : ℚ) :
-    (∃ r, op.evalDec p q = .ok r) ∨ (op.evalDec p q = .error .divisionByZero ∧ op = .mod ∧ q = 0) := by
-  cases op <;> simp only [ArithOp.evalDec, modDec] at hop ⊢
+private theorem evalDec_ok_or_zero (op : ArithOp) (p q : ℚ) :
+    (∃ r, op.evalDec p q = .ok r) ∨
+      (op.evalDec p q = .error .divisionByZero ∧ op.isDivision ∧ q = 0) := by
+  cases op <;> simp only [ArithOp.evalDec, divDec, modDec]
   · exact .inl ⟨_, rfl⟩
   · exact .inl ⟨_, rfl⟩
   · exact .inl ⟨_, rfl⟩
-  · exact absurd rfl hop
   · by_cases hq : q = 0
-    · exact .inr ⟨by simp [hq], by simp, hq⟩
+    · exact .inr ⟨by simp [hq], rfl, hq⟩
+    · exact .inl ⟨p / q, by simp [hq]⟩
+  · by_cases hq : q = 0
+    · exact .inr ⟨by simp [hq], rfl, hq⟩
     · exact .inl ⟨p - q * truncRat (p / q), by simp [hq]⟩
 
 /-- A well-typed binary operator succeeds with a result of its type, unless it divides by zero,
@@ -193,19 +194,19 @@ theorem evalBinOp_ok_or_divisionByZero {op : BinOp} {τ₁ τ₂ τ : SqlType}
     all_goals
       simp only [Datum.hasType_some, Value.type_int, Value.type_decimal] at ha hb
       subst ha hb
-      simp only [ArithOp.typeOf, Option.ite_none_left_eq_some, Option.some.injEq] at h
-      obtain ⟨hop, rfl⟩ := h
-    · rcases evalDec_ok_or_zero hop x q with ⟨r, hr⟩ | ⟨hr, rfl, rfl⟩
+      simp only [ArithOp.typeOf, Option.some.injEq] at h
+      subst h
+    · rcases evalDec_ok_or_zero op x q with ⟨r, hr⟩ | ⟨hr, hd, rfl⟩
       · exact .inl ⟨some (.decimal r), by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], rfl⟩
-      · exact .inr ⟨by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], rfl, by simp [Datum.isZero]⟩
-    · rcases evalDec_ok_or_zero hop p y with ⟨r, hr⟩ | ⟨hr, rfl, hy⟩
+      · exact .inr ⟨by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], hd, by simp [Datum.isZero]⟩
+    · rcases evalDec_ok_or_zero op p y with ⟨r, hr⟩ | ⟨hr, hd, hy⟩
       · exact .inl ⟨some (.decimal r), by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], rfl⟩
-      · refine .inr ⟨by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], rfl, ?_⟩
+      · refine .inr ⟨by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], hd, ?_⟩
         simp only [Datum.isZero, beq_iff_eq]
         exact_mod_cast hy
-    · rcases evalDec_ok_or_zero hop p q with ⟨r, hr⟩ | ⟨hr, rfl, rfl⟩
+    · rcases evalDec_ok_or_zero op p q with ⟨r, hr⟩ | ⟨hr, hd, rfl⟩
       · exact .inl ⟨some (.decimal r), by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], rfl⟩
-      · exact .inr ⟨by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], rfl, by simp [Datum.isZero]⟩
+      · exact .inr ⟨by simp [evalBinOp, Datum.asNum, ArithOp.evalNum, hr], hd, by simp [Datum.isZero]⟩
   | .cmp op, h =>
     simp only [BinOp.typeOf, Option.ite_none_right_eq_some, Option.some.injEq] at h
     obtain ⟨hc, rfl⟩ := h

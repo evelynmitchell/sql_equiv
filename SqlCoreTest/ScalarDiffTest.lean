@@ -18,6 +18,10 @@
   * `%` with a decimal operand: `SqlCore` is exact (Postgres and DuckDB agree);
     `SqlEquiv` leaves decimal `%` unimplemented (#201), an error. These cases
     are checked against `refMod`, a scaled-integer `Int.tmod` reference.
+  * `/` with a decimal operand: `SqlCore` is exact (phase 8d, registry T3);
+    `SqlEquiv` leaves decimal `/` unimplemented (#201), an error. These cases
+    are checked by multiplying back: the quotient times the divisor is the
+    dividend.
   * `LIKE` (and sqlite's `likeCI`) with `_` or a `%` inside the pattern:
     `SqlEquiv`'s `simpleLike` treats them as literal characters (#323);
     sqlite and DuckDB agree with `SqlCore`. These cases are checked against
@@ -112,6 +116,16 @@ def modMatchesRef (a b : SqlCore.Datum) : Bool :=
   | some r, .ok d => r == d
   | _, _ => false
 
+/-- A documented decimal `/` difference must multiply back: `(a / b) * b = a`. -/
+def divMatchesRef (a b : SqlCore.Datum) : Bool :=
+  let toQ : SqlCore.Datum → Option ℚ
+    | some (.int z) => some z
+    | some (.decimal q) => some q
+    | _ => none
+  match toQ a, toQ b, SqlCore.evalBinOp (.arith .div) a b with
+  | some x, some y, .ok (some (.decimal r)) => y != 0 && r * y == x
+  | _, _, _ => false
+
 /-- Independent reference for `LIKE`: backtracking over where each `%` stops, with fuel. -/
 def refLikeAux (eq : Char → Char → Bool) : ℕ → List Char → List Char → Bool
   | 0, _, _ => false
@@ -143,6 +157,7 @@ def likeMatchesRef (ci : Bool) (a b : SqlCore.Datum) : Bool :=
 def expectedDifference (name : String) (a b : SqlCore.Datum) : Bool :=
   (["<", "<=", ">", ">="].contains name && isBool a && isBool b) ||
   (name == "%" && (isDecimal a || isDecimal b) && modMatchesRef a b) ||
+  (name == "/" && (isDecimal a || isDecimal b) && divMatchesRef a b) ||
   (name == "LIKE" && beyondSimpleLike b && likeMatchesRef false a b) ||
   (name == "LIKE (sqlite)" && beyondSimpleLike b && likeMatchesRef true a b)
 

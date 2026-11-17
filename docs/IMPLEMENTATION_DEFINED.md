@@ -125,14 +125,14 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 |---|---|---|---|---|---|---|
 | T1 | Integer `/` (`age / 7`), row 6 | DOUBLE | Truncates | Truncates (`Int.tdiv`) | decided | `DuckdbDiffTest` (documented difference), `ScalarExamples` |
 | T2 | Integer division by zero `1 / 0` | `//` gives NULL | Error | `divisionByZero` error | decided | `ScalarExamples` |
-| T3 | Decimal division `1.0 / 4` | DOUBLE `0.25` | `0.25000000000000000000` | Ill-typed (`unsupported` if evaluated); result scale is open (#201) | open (#201) | `ScalarExamples`, `ExprExamples` |
+| T3 | Decimal division `1.0 / 4`, `1.0 / 3` | DOUBLE `0.25`, `0.3333333333333333` | `0.25000000000000000000`, `0.33333333333333333333` (scale varies) | Exact rational: `1/4`, `1/3`; agrees with every engine whenever the quotient is a finite decimal | decided (#326, phase 8d; exact rational chosen over a fixed scale, Postgres's scale rule or a float type) | `ScalarExamples`, `ScalarDiffTest` (multiplied back), `BridgeDiffTest`/`DuckdbDiffTest` (rounded to 12 places) |
 | T4 | Decimal `%` (`7.5 % -2`) | `1.5` | `1.5` | `1.5` (exact, dividend's sign) | decided | `ScalarDiffTest` (scaled `tmod` reference) |
 | T5 | `1 = 1.0`, `1 + 0.5` | Promotes | Promotes | Promotes (decision 6) | decided | `ScalarExamples`, `BridgeDiffTest`, `DuckdbDiffTest` |
 | T6 | `CASE WHEN … THEN 1 ELSE 1.5 END` | DECIMAL | numeric | Ill-typed: branches of one type | **gap**: matches neither; needs a conversion (phase 6 bridge or `CAST`) | `ExprExamples` |
 | T7 | Cross-type comparison (rows 10–12) | Error | Error | Type error at elaboration | decided | `BridgeDiffTest` (rejections) |
 | T8 | Boolean ordering `false < true` | true | true | true | decided (`SqlEquiv` has no boolean order) | `ScalarDiffTest` |
 | T9 | Bare column with aggregates `SELECT max(a), b FROM t` (sqlite returns `b` from the max row) | Error (binder) | Error | `unsupported` at elaboration | decided (standard; #313) | `BridgeDiffTest` (rejection); 37 Spider queries |
-| T10 | `AVG` over integers (`AVG` of 1, 2), row 7 | `1.5` (DOUBLE) | `1.5000…` (numeric) | Ill-typed until the #201 scale policy | open (#201; decided on #297) | `BridgeDiffTest` (rejection) |
+| T10 | `AVG` over integers (`AVG` of 1, 2; of 1, 1, 2), row 7 | `1.5`, `1.3333333333333333` (DOUBLE) | `1.5000…`, `1.3333333333333333` (numeric; `AVG(i) * 3` is `3.9999999999999999`) | Exact rational decimal: `3/2`, `4/3` (`AVG(i) * 3` is exactly `4`); `NULL` over no values; ill-typed over text | decided (#326, phase 8d) | `AggregateExamples`, `DuckdbDiffTest` (rounded to 12 places), `BridgeDiffTest` |
 | T11 | `MIN`/`MAX` over booleans, row 14 | Boolean result | Error | Ill-typed | decided (#313) | `AggregateExamples` |
 | T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` splits typed NULLs (#315) | `AggregateExamples`, `DuckdbDiffTest` |
 | T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts by the first source row's `b` | Error | Follows the parse (row 5): rejected in standard/postgres; in sqlite/duckdb, `aggregate` by the selected expressions with `AggCall.first b`, sorted, projected | decided (#319) | `OrderByExamples`; `DuckdbDiffTest` (duckdb-dialect corpus, ordered, agrees; also checked on sqlite) |
