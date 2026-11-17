@@ -517,6 +517,16 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #315: NULLs group together whatever their static type tag (museum has an
+  -- untyped and an int-typed NULL staff): one NULL group of 2, as every engine.
+  testRowCount "group_by_typed_nulls_one_group"
+    "SELECT staff, COUNT(*) FROM museum GROUP BY staff" 5,
+  (match evalQuery "SELECT staff, COUNT(*) FROM museum WHERE staff IS NULL GROUP BY staff" with
+   | .ok [row] =>
+     if (row.map (·.2)).getLast? == some (.int 2) then .pass "group_by_typed_nulls_count"
+     else .fail "group_by_typed_nulls_count" s!"{row.map (·.2.toSql)}"
+   | .ok t => .fail "group_by_typed_nulls_count" s!"{t.length} groups"
+   | .error e => .fail "group_by_typed_nulls_count" e),
   -- Row 11 (decided, #254: keep): a number compared with a numeric-looking
   -- string is a type error, so the row is dropped. sqlite, DuckDB and
   -- Postgres all convert the string and return Alice (age 30). Kept as a

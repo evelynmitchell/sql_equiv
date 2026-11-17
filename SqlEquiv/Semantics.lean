@@ -179,7 +179,7 @@ def compareByOrderItemsParam (exprEval : Database → Row → Expr → Option Va
 /-- Parameterized GROUP BY key -/
 def evalGroupKeyParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=
-  groupExprs.map (exprEval db row)
+  groupExprs.map (fun e => (exprEval db row e).map Value.eraseNullType)
 
 /-- Parameterized group rows by key -/
 def groupRowsByKeyParam (exprEval : Database → Row → Expr → Option Value)

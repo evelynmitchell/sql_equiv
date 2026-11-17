@@ -154,7 +154,7 @@ def corpus : List (String × Expect) := [
   ("SELECT COUNT(DISTINCT department), COUNT(age) FROM users", .agree),
   ("SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1", .agree),
   ("SELECT department, COUNT(*) + 1 FROM users WHERE age > 22 GROUP BY department", .agree),
-  ("SELECT staff, COUNT(*) FROM museum GROUP BY staff", .sqlEquivBug "#315: typed NULLs group apart"),
+  ("SELECT staff, COUNT(*) FROM museum GROUP BY staff", .agree),
   ("SELECT COUNT(staff), SUM(staff), MAX(staff) FROM museum", .agree),
   ("SELECT SUM(price), MIN(price), COUNT(price) FROM items", .agree),
   ("SELECT u.name, COUNT(*) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.name", .agree),
