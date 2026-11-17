@@ -527,12 +527,16 @@ def registryPinTests : List TestResult := [
     "name" [.string "Widget", .string "Gizmo", .string "Gadget", .string "Bob", .string "Alice"],
   (match parse "SELECT name FROM users ORDER BY name UNION SELECT name FROM products",
          parse "SELECT name FROM users UNION SELECT name FROM products ORDER BY 2",
-         parse "SELECT age + 1 FROM users UNION SELECT id FROM users ORDER BY 1" with
-   | .error e1, .error e2, .error e3 =>
+         parse "SELECT age + 1 FROM users UNION SELECT id FROM users ORDER BY 1",
+         parse "SELECT name FROM users UNION SELECT name FROM products ORDER BY users.name",
+         parse "SELECT name FROM users UNION SELECT name FROM products ORDER BY lower(name)",
+         parse "SELECT name FROM users UNION SELECT title AS t FROM products ORDER BY t" with
+   | .error e1, .error e2, .error e3, .error e4, .error e5, .error e6 =>
      if (e1.splitOn "after the last branch").length == 2 && (e2.splitOn "not in the select list").length == 2 &&
-        (e3.splitOn "without an alias").length == 2
-     then .pass "compound_order_by_errors" else .fail "compound_order_by_errors" s!"{e1} / {e2} / {e3}"
-   | _, _, _ => .fail "compound_order_by_errors" "parsed"),
+        (e3.splitOn "without an alias").length == 2 && (e4.splitOn "must name an output column").length == 2 &&
+        (e5.splitOn "must name an output column").length == 2 && (e6.splitOn "not a column of its first branch").length == 2
+     then .pass "compound_order_by_errors" else .fail "compound_order_by_errors" s!"{e1} / {e2} / {e3} / {e4} / {e5} / {e6}"
+   | _, _, _, _, _, _ => .fail "compound_order_by_errors" "parsed"),
   -- #316: `ORDER BY k` sorts by the k-th SELECT item (sqlite, DuckDB and
   -- Postgres); out of range is an error in all three.
   testColumn "order_by_position"

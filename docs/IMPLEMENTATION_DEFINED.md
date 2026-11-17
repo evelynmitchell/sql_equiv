@@ -113,6 +113,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 12 | TEXT column vs number `tag >= 2014` | Error without CAST | Column affinity: compares as **text** | Error ("explicit cast required") | Error ("no operator") | Error (row dropped) | **decided** (#235, option A): the core keeps the type error; the **Spider harness** emulates sqlite by quoting the literal for our engine only (`year >= 2014` → `year >= '2014'`), reported as the "TEXT-affinity emulated" category | Unit pins `text_vs_number_is_type_error`, `text_vs_quoted_number_compares_as_text`; harness self-test; DiffSqlite KNOWN DIVERGENCES |
 | 13 | MIN/MAX over mixed numbers and strings (`MAX` of `'abc'`, `5`) | Error (one declared type per column) | Type-class order (numbers < text): MAX `'abc'`, MIN `5` | Error ("explicit cast required") | Error (invalid input syntax) | **Per dialect** (`DialectConfig.mixedMinMax`): standard, duckdb, postgres → error (row dropped / NULL); sqlite → type-class order | decided (dialects #260). Reachable only through untyped data (CASE mixing types, Spider TEXT columns with numeric-looking cells) | Unit pins `minmax_mixed_*`, `max_mixed_sqlite_type_class`, `min_mixed_sqlite_type_class`, `minmax_mode_recorded_in_ast`; DiffSqlite type-class cases; DuckDB KNOWN DIVERGENCES (its error fails the query, ours is quieter) |
 | 14 | MIN/MAX over booleans (`MAX(age > 26)`) | Boolean not orderable by MAX in the standard aggregate set | Integers: `1` / `0`; with numbers, as 1/0 | Boolean result (false < true); with numbers, as 1/0; with strings, error | Error (no `max(boolean)`) | **Per dialect** (`DialectConfig.boolMinMax`): standard, postgres → error (row dropped / NULL); sqlite → `asInt`; duckdb → `ordered` | decided (#261) | Unit pins `max_bool_*` / `min_bool_*` (every dialect, HAVING, window); DiffSqlite and DiffDuckdb boolean cases |
+| 15 | `ORDER BY` key after a compound query that names only a later branch's column (`SELECT 'b' AS x UNION ALL SELECT 'a' AS y ORDER BY y`) | Result column names (the first branch's) | Accepted: resolves to that column's position | Accepted (same) | Error (only result column names) | Parse error, as Postgres: keys must be positions or output names of the first branch; qualified names and expressions are errors in every engine and here. The accepted subset agrees with all three engines | decided (#317), revisitable | Unit pin `compound_order_by_errors` |
 
 ### Typed core (`SqlCore`, #287)
 
@@ -215,7 +216,11 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   compound query (sqlite, DuckDB and Postgres agree). A tail on an inner branch is
   a parse error, as in sqlite and Postgres. A position `k` resolves to the
   name of the leftmost branch's `k`-th column; an unaliased expression there is a
-  parse error. Caveat: rows of a compound keep their branch's column names
+  parse error. Any other key must be an output name of the first branch;
+  qualified names and expressions are errors, as in every engine, because
+  evaluated on the compound's rows they would quietly sort by NULL (registry
+  row 15 for names that only a later branch uses). Caveat: rows of a compound
+  keep their branch's column names
   (#324), so a key that names a column differently in another branch does not
   find it in that branch's rows. Spider is unchanged: none of its queries has a
   compound tail. Pinned by the `compound_order_by_*` unit tests and the

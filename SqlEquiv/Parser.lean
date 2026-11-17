@@ -729,22 +729,36 @@ def Query.leftmostItems : Query → List SelectItem
   | .withCTE _ q => q.leftmostItems
   | .ordered q _ _ _ => q.leftmostItems
 
-/-- `ORDER BY k` after a compound query names its `k`-th output column (#317), which is named by
-    the leftmost branch: an alias, or a column's name. The key becomes that output name. An
-    out-of-range position, or one naming an unaliased expression, is an error; after a `*` item
-    positions are left as written (#316). -/
+/-- The keys of an `ORDER BY` after a compound query (#317) name its output columns, which the
+    leftmost branch names: an alias, or a column's name.
+    - A position `k` becomes the `k`-th output name. Out of range, or naming an unaliased
+      expression, is an error.
+    - An unqualified name must be one of the output names.
+    - Any other key (a qualified column, an expression) is an error, as in sqlite, DuckDB and
+      Postgres: evaluating it on the compound's rows would quietly sort by `NULL`.
+    sqlite and DuckDB also accept a name that only a later branch uses; Postgres and we reject it.
+    After a `*` item the output names are unknown: positions are left as written (#316) and names
+    are not checked. -/
 def resolveCompoundPositions (items : List SelectItem) (ob : List OrderByItem) :
     Except String (List OrderByItem) :=
-  if items.any (fun | .star _ => true | _ => false) then .ok ob
-  else ob.mapM fun
-    | .mk (.lit (.int k)) dir nulls =>
+  let star := items.any (fun | .star _ => true | _ => false)
+  let outName : SelectItem → Option String
+    | .exprItem _ (some al) => some al
+    | .exprItem (.col c) none => some c.column
+    | _ => none
+  let names := items.filterMap outName
+  ob.mapM fun
+    | o@(.mk (.lit (.int k)) dir nulls) =>
+      if star then .ok o else
       match (if 1 ≤ k then items[(k - 1).toNat]? else none) with
-      | some (.exprItem _ (some al)) => .ok (.mk (.col ⟨none, al⟩) dir nulls)
-      | some (.exprItem (.col c) none) => .ok (.mk (.col ⟨none, c.column⟩) dir nulls)
-      | some (.exprItem _ none) =>
-        .error s!"ORDER BY position {k} of a compound query names an expression without an alias"
-      | _ => .error s!"ORDER BY position {k} is not in the select list (1 to {items.length})"
-    | o => .ok o
+      | some it => match outName it with
+        | some n => .ok (.mk (.col ⟨none, n⟩) dir nulls)
+        | none => .error s!"ORDER BY position {k} of a compound query names an expression without an alias"
+      | none => .error s!"ORDER BY position {k} is not in the select list (1 to {items.length})"
+    | o@(.mk (.col ⟨none, n⟩) _ _) =>
+      if star || names.contains n then .ok o
+      else .error s!"ORDER BY {n} of a compound query is not a column of its first branch"
+    | _ => .error "ORDER BY of a compound query must name an output column or a position"
 
 /-- Whether an ORDER BY key of a `SELECT DISTINCT` appears in its select list
     (row 5): a position, an output name (alias or column name), or an
