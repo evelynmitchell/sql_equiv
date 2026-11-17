@@ -39,6 +39,9 @@
     key (output keeps input order). Gap (#320), pinned by
     `distinct_order_by_unselected_keeps_input_order`; the typed core agrees
     with the engines (`SqlCoreTest/DuckdbDiffTest.lean`).
+  - `x NOT IN (subquery)` where `x` or a subquery value is NULL (#330):
+    SqlEquiv returns the row; the engines (and the typed core) treat the
+    comparison as unknown and drop it.
   - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
     treats them as literal characters; the engines (and the typed core)
     match them as wildcards. Do not add such a case until #323 is fixed.

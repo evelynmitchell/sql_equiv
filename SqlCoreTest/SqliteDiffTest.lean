@@ -1,6 +1,7 @@
 /-
-  Typed core phase 8e: bare columns (registry T9) through `SqlBridge` +
-  `SqlCore`, against sqlite.
+  Typed core phases 8e and 8f: bare columns (registry T9) and scalar
+  subqueries with several rows (T17) through `SqlBridge` + `SqlCore`, against
+  sqlite.
 
   Only sqlite accepts a column that is neither grouped nor aggregated next to
   aggregates; the standard, Postgres and DuckDB reject it. In the sqlite
@@ -45,7 +46,10 @@ def corpus : List String := [
   "SELECT department, COUNT(*), name FROM users GROUP BY department",
   "SELECT department, name FROM users GROUP BY department",
   "SELECT COUNT(*), name FROM users",
-  "SELECT user_id, product FROM orders GROUP BY user_id"
+  "SELECT user_id, product FROM orders GROUP BY user_id",
+  -- a scalar subquery with several rows: sqlite takes the first row (registry T17)
+  "SELECT name FROM users WHERE age > (SELECT age FROM users)",
+  "SELECT name FROM users WHERE age > (SELECT age FROM users ORDER BY age DESC)"
 ]
 
 /-- Queries that stay unsupported in the sqlite dialect, with the error category. -/

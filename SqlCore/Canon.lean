@@ -351,6 +351,7 @@ def canon : {n : ℕ} → Query S n → Query S n
   | _, limit c o q => limit c o q.canon
   | _, intersect q₁ q₂ => intersect q₁.canon q₂.canon
   | _, difference q₁ q₂ => difference q₁.canon q₂.canon
+  | _, attach kind sub q => attach kind sub.canon q.canon
 
 theorem select_sexpr {p p' : Expr n} (hp : p.SEquiv p') (q : Query S n) :
     Equiv ℓ (select p q) (select p' q) := fun D _ => by
@@ -391,6 +392,7 @@ theorem equiv_canon (q : Query S n) : Equiv .ordered q q.canon := by
   | limit c o q ih => exact Equiv.limit c o ih
   | intersect q₁ q₂ ih₁ ih₂ => exact Equiv.intersect ih₁ ih₂
   | difference q₁ q₂ ih₁ ih₂ => exact Equiv.difference ih₁ ih₂
+  | attach kind sub q ihs ihq => exact Equiv.attach kind ihs ihq
 
 end Query
 

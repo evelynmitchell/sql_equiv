@@ -39,7 +39,7 @@ so the same query succeeds (`Expr.filterRows`, `Expr.evalRow`).
 
 `Query.typeOf q` is the typing context of the result, if `q` is well-typed: predicates are
 boolean in the context of their input, projections are well-typed, and `UNION ALL` combines two
-inputs of the same types. Type soundness (`Query.eval_ok_or_divisionByZero`): on a conforming
+inputs of the same types. Type soundness (`Query.eval_ok_or_runtimeError`): on a conforming
 instance, a well-typed query returns rows conforming to its type, or fails with
 `divisionByZero`, which requires a division that is not `divSafe`; it never raises
 `typeMismatch`. The decidable check `Query.IsSafe` (well-typed, every division by a nonzero
@@ -74,7 +74,7 @@ silently dropped.
 * `SqlCore.Expr.evalTruth_eqCols_eq_ok_true_iff`, `SqlCore.Expr.isSafePredicate_eqCols_iff`:
   over keys of one type the equijoin predicate keeps the pairs with the same non-null key, and it
   is safe exactly when the key columns have comparable types.
-* `SqlCore.Query.eval_ok_or_divisionByZero`: type soundness.
+* `SqlCore.Query.eval_ok_or_runtimeError`: type soundness.
 * `SqlCore.Query.eval_ne_typeMismatch`, `SqlCore.Query.conforms_of_eval_eq_ok`: a well-typed
   query never raises a type error, and its rows have its types.
 * `SqlCore.Query.IsSafe.exists_eval_eq_ok`: a safe query succeeds on every conforming instance.
@@ -415,6 +415,34 @@ theorem Row.mem_setOp {n : ℕ} {keep : Bool} {rs ss : List (Row n)} {r : Row n}
     r ∈ Row.setOp keep rs ss ↔ r ∈ rs ∧ (r ∈ ss ↔ keep = true) := by
   cases keep <;> simp [Row.setOp, List.mem_dedup, List.mem_filter]
 
+/-- How an uncorrelated subquery contributes a column to each row of the outer query (phase 8f,
+#329): its value (`scalar`), or the truth of `e [NOT] IN (subquery)` (`inSub`). With `firstRow`, a
+scalar subquery with several rows gives its first row's value (sqlite); otherwise it is a
+`cardinality` error (the standard, Postgres and DuckDB). -/
+inductive SubKind (n : ℕ) where
+  | scalar (firstRow : Bool)
+  | inSub (neg : Bool) (e : Expr n)
+  deriving DecidableEq, Repr
+
+/-- The value of a scalar subquery with values `vals`: `NULL` for none, the value for one, and for
+several the first one (`firstRow`) or a `cardinality` error. -/
+def scalarOf (firstRow : Bool) : List Datum → Except EvalError Datum
+  | [] => .ok none
+  | [v] => .ok v
+  | v :: _ :: _ => if firstRow then .ok v else .error .cardinality
+
+/-- The extra column's expression, given the subquery's values. -/
+def SubKind.extra {n : ℕ} : SubKind n → List Datum → Except EvalError (Expr n)
+  | .scalar firstRow, vals => Expr.ofDatum .int <$> scalarOf firstRow vals
+  | .inSub neg e, vals =>
+    .ok (if neg then .unary .not (.inList e vals) else .inList e vals)
+
+/-- The kind cannot fail at evaluation: a scalar subquery that takes its first row, or `IN` with a
+`divSafe` probe. -/
+def SubKind.divSafe {n : ℕ} : SubKind n → Bool
+  | .scalar firstRow => firstRow
+  | .inSub _ e => e.divSafe
+
 /-- A query over the schema `S` whose result rows have `n` columns. -/
 inductive Query (S : DbSchema) : ℕ → Type where
   /-- The rows of a table, in the instance's list order. -/
@@ -445,6 +473,10 @@ inductive Query (S : DbSchema) : ℕ → Type where
   | intersect {n : ℕ} (q₁ q₂ : Query S n) : Query S n
   /-- `q₁ EXCEPT q₂` (phase 8c): one copy of each row of `q₁` that is not a row of `q₂`. -/
   | difference {n : ℕ} (q₁ q₂ : Query S n) : Query S n
+  /-- An uncorrelated subquery `sub` of one column, attached to `q` as an extra last column
+  (phase 8f, #329): its value or the truth of `e [NOT] IN sub` on each row. `sub` is evaluated
+  once, first. -/
+  | attach {n : ℕ} (kind : SubKind n) (sub : Query S 1) (q : Query S n) : Query S (n + 1)
 
 namespace Query
 
@@ -480,6 +512,10 @@ def eval (D : Database S) : {n : ℕ} → Query S n → Except EvalError (List (
       | none => rs.drop offset
   | _, intersect q₁ q₂ => do return Row.setOp true (← q₁.eval D) (← q₂.eval D)
   | _, difference q₁ q₂ => do return Row.setOp false (← q₁.eval D) (← q₂.eval D)
+  | _, attach kind sub q => do
+    let ss ← sub.eval D
+    let x ← kind.extra (ss.map (· 0))
+    (← q.eval D).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))
 
 section Eval
 
@@ -531,6 +567,12 @@ theorem eval_intersect (q₁ q₂ : Query S n) :
 theorem eval_difference (q₁ q₂ : Query S n) :
     (difference q₁ q₂).eval D =
       (do let rs ← q₁.eval D; let ss ← q₂.eval D; return Row.setOp false rs ss) := rfl
+
+theorem eval_attach (kind : SubKind n) (sub : Query S 1) (q : Query S n) :
+    (attach kind sub q).eval D = (do
+      let ss ← sub.eval D
+      let x ← kind.extra (ss.map (· 0))
+      (← q.eval D).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))) := rfl
 
 end Eval
 
@@ -592,6 +634,14 @@ def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
   | _, difference q₁ q₂ => do
     let Γ ← q₁.typeOf
     if q₂.typeOf = some Γ then some Γ else none
+  | _, attach kind sub q => do
+    let Δ ← sub.typeOf
+    let Γ ← q.typeOf
+    match kind with
+    | .scalar _ => some (Fin.append Γ ![Δ 0])
+    | .inSub _ e =>
+      if (e.typeOf Γ).any (fun τ => decide (τ.Comparable (Δ 0))) then some (Fin.append Γ ![.bool])
+      else none
 
 @[simp] theorem typeOf_table (t : S.Table) : (table t).typeOf = some (S.ctx t) := rfl
 
@@ -703,6 +753,7 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, limit _ _ q => q.divSafe
   | _, intersect q₁ q₂ => q₁.divSafe && q₂.divSafe
   | _, difference q₁ q₂ => q₁.divSafe && q₂.divSafe
+  | _, attach kind sub q => kind.divSafe && sub.divSafe && q.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -738,68 +789,122 @@ private theorem keyed_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (
         exact ⟨hr, hd' ▸ hconf⟩
       · simp [hd] at hd'
 
-/-- Type soundness: on a conforming instance, a well-typed query returns rows of its type, or
-divides by zero, which requires a division that is not `divSafe`. -/
-theorem eval_ok_or_divisionByZero {D : Database S} (hD : D.Conforms) {q : Query S n}
+/-- Appending a computed column `x` to every row: the rows conform to `Fin.append Γ ![σ]`, or `x`
+divides by zero on some row (and then `P` holds). -/
+theorem mapM_evalRow_append {rs : List (Row n)} {Γ : Fin n → SqlType} (hrs : ∀ r ∈ rs, r.Conforms Γ)
+    {x : Expr n} {σ : SqlType} {P : Prop}
+    (hx : ∀ r : Row n, r.Conforms Γ →
+      (∃ d, x.eval r = .ok d ∧ d.HasType σ) ∨ (x.eval r = .error .divisionByZero ∧ P)) :
+    (∃ ts, rs.mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x])) = .ok ts ∧
+        ∀ t ∈ ts, t.Conforms (Fin.append Γ ![σ])) ∨
+      (rs.mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x])) = .error .divisionByZero ∧
+        P) := by
+  have hrow : ∀ r : Row n, r.Conforms Γ →
+      (∃ t, Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]) r = .ok t ∧
+        t.Conforms (Fin.append Γ ![σ])) ∨
+      (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]) r = .error .divisionByZero ∧ P) := by
+    intro r hr
+    rcases hx r hr with ⟨d, hd, hdσ⟩ | ⟨hd, hP⟩
+    · refine .inl ⟨Fin.append r ![d], Expr.evalRow_eq_ok_iff.mpr fun i => ?_,
+        Row.conforms_append_iff.mpr ⟨hr, fun j => ?_⟩⟩
+      · induction i using Fin.addCases with
+        | left j => simp
+        | right j =>
+          obtain rfl : j = 0 := Subsingleton.elim _ _
+          simpa using hd
+      · obtain rfl : j = 0 := Subsingleton.elim _ _
+        simpa using hdσ
+    · refine .inr ⟨?_, hP⟩
+      rcases h : Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]) r with e | t
+      · obtain ⟨i, hi⟩ := Expr.exists_eval_eq_error_of_evalRow_eq_error h
+        induction i using Fin.addCases with
+        | left j => simp at hi
+        | right j =>
+          obtain rfl : j = 0 := Subsingleton.elim _ _
+          simp only [Fin.append_right] at hi
+          simp only [Fin.isValue, Matrix.cons_val_fin_one] at hi
+          rw [hd] at hi
+          simp only [_root_.Except.error.injEq] at hi
+          rw [← hi]
+      · have := Expr.evalRow_eq_ok_iff.mp h (Fin.natAdd n 0)
+        simp [hd] at this
+  induction rs with
+  | nil => exact .inl ⟨[], rfl, by simp⟩
+  | cons r rs ih =>
+    have hr := hrs r (by simp)
+    have hrs' : ∀ r' ∈ rs, r'.Conforms Γ := fun r' h => hrs r' (by simp [h])
+    rcases hrow r hr with ⟨t, ht, htc⟩ | ⟨ht, hP⟩
+    · rcases ih hrs' with ⟨ts, hts, htsc⟩ | ⟨hts, hP⟩
+      · refine .inl ⟨t :: ts, by simp [List.mapM_cons, ht, hts, pure, Except.pure], ?_⟩
+        intro u hu
+        rcases List.mem_cons.mp hu with rfl | hu
+        exacts [htc, htsc u hu]
+      · exact .inr ⟨by simp [List.mapM_cons, ht, hts], hP⟩
+    · exact .inr ⟨by simp [List.mapM_cons, ht], hP⟩
+
+/-- Type soundness: on a conforming instance, a well-typed query returns rows of its type, or fails
+with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar subquery with several
+rows), which requires a part that is not `divSafe`. -/
+theorem eval_ok_or_runtimeError {D : Database S} (hD : D.Conforms) {q : Query S n}
     {Γ : Fin n → SqlType} (hq : q.typeOf = some Γ) :
     (∃ rs, q.eval D = .ok rs ∧ ∀ r ∈ rs, r.Conforms Γ) ∨
-      (q.eval D = .error .divisionByZero ∧ q.divSafe = false) := by
+      (∃ e, q.eval D = .error e ∧ e.IsRuntime ∧ q.divSafe = false) := by
   induction q with
   | table t =>
     cases hq
     exact .inl ⟨D t, rfl, hD t⟩
   | select p q ih =>
     obtain ⟨hq, hp⟩ := typeOf_select_eq_some.mp hq
-    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
     · rcases Expr.filterRows_ok_or_divisionByZero hconf hp with ⟨rs', h, hsub⟩ | ⟨h, hs⟩
       · exact .inl ⟨rs', by simp [eval_select, hrs, h], fun r hr => hconf r (hsub r hr)⟩
-      · exact .inr ⟨by simp [eval_select, hrs, h], by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp [eval_select, he], by simp [divSafe, hs]⟩
+      · exact .inr ⟨_, by simp [eval_select, hrs, h], .inl rfl, by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [eval_select, he], hre, by simp [divSafe, hs]⟩
   | project es q ih =>
     obtain ⟨Γ₀, hq, hes⟩ := typeOf_project_eq_some.mp hq
-    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
     · rcases h : rs.mapM (Expr.evalRow es) with e | ds
       · obtain ⟨r, hr, he⟩ := Except.exists_mem_eq_error_of_mapM_eq_error h
         rcases Expr.evalRow_ok_or_divisionByZero (hconf r hr) hes with ⟨d, hd, -⟩ | ⟨hd, i, hi⟩
         · simp [hd] at he
         · rw [he, Except.error.injEq] at hd
-          refine .inr ⟨by simp [eval_project, hrs, h, hd], ?_⟩
+          refine .inr ⟨_, by simp [eval_project, hrs, h, hd], .inl rfl, ?_⟩
           simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
           exact .inl ⟨i, by simp [hi]⟩
       · refine .inl ⟨ds, by simp [eval_project, hrs, h], fun d hd i => ?_⟩
         obtain ⟨r, hr, hrd⟩ := Except.exists_mem_eq_ok_of_mapM_eq_ok h hd
         exact Expr.hasType_of_eval_eq_ok (hconf r hr) (hes i) (Expr.evalRow_eq_ok_iff.mp hrd i)
-    · exact .inr ⟨by simp [eval_project, he], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [eval_project, he], hre, by simp [divSafe, hs]⟩
   | join θ q₁ q₂ ih₁ ih₂ =>
     obtain ⟨Γ₁, Γ₂, h₁, h₂, hθ, rfl⟩ := typeOf_join_eq_some.mp hq
-    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨he, hs⟩
-    · rcases ih₂ h₂ with ⟨ss, hss, hconf₂⟩ | ⟨he, hs⟩
+    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨ee, he, hre, hs⟩
+    · rcases ih₂ h₂ with ⟨ss, hss, hconf₂⟩ | ⟨ee, he, hre, hs⟩
       · have hconf : ∀ t ∈ Row.product rs ss, t.Conforms (Fin.append Γ₁ Γ₂) :=
           fun _ => Row.conforms_of_mem_product hconf₁ hconf₂
         rcases Expr.filterRows_ok_or_divisionByZero hconf hθ with ⟨ts, h, hsub⟩ | ⟨h, hs⟩
         · exact .inl ⟨ts, by simp [eval_join, hrs, hss, h], fun t ht => hconf t (hsub t ht)⟩
-        · exact .inr ⟨by simp [eval_join, hrs, hss, h], by simp [divSafe, hs]⟩
-      · exact .inr ⟨by simp [eval_join, hrs, he], by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp [eval_join, he], by simp [divSafe, hs]⟩
+        · exact .inr ⟨_, by simp [eval_join, hrs, hss, h], .inl rfl, by simp [divSafe, hs]⟩
+      · exact .inr ⟨ee, by simp [eval_join, hrs, he], hre, by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [eval_join, he], hre, by simp [divSafe, hs]⟩
   | unionAll q₁ q₂ ih₁ ih₂ =>
     obtain ⟨h₁, h₂⟩ := typeOf_unionAll_eq_some.mp hq
-    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨he, hs⟩
-    · rcases ih₂ h₂ with ⟨ss, hss, hconf₂⟩ | ⟨he, hs⟩
+    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨ee, he, hre, hs⟩
+    · rcases ih₂ h₂ with ⟨ss, hss, hconf₂⟩ | ⟨ee, he, hre, hs⟩
       · refine .inl ⟨rs ++ ss, by simp [eval_unionAll, hrs, hss, pure, Except.pure], ?_⟩
         intro r hr
         rcases List.mem_append.mp hr with hr | hr
         · exact hconf₁ r hr
         · exact hconf₂ r hr
-      · exact .inr ⟨by simp [eval_unionAll, hrs, he], by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp [eval_unionAll, he], by simp [divSafe, hs]⟩
+      · exact .inr ⟨ee, by simp [eval_unionAll, hrs, he], hre, by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [eval_unionAll, he], hre, by simp [divSafe, hs]⟩
   | distinct q ih =>
-    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
     · exact .inl ⟨rs.dedup, by simp [eval_distinct, hrs, pure, Except.pure],
         fun r hr => hconf r (List.mem_dedup.mp hr)⟩
-    · exact .inr ⟨by simp [eval_distinct, he], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [eval_distinct, he], hre, by simp [divSafe, hs]⟩
   | aggregate keys aggs q ih =>
     obtain ⟨Γ₀, Δk, Δa, hq₀, hks, has, rfl⟩ := typeOf_aggregate_eq_some hq
-    rcases ih hq₀ with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    rcases ih hq₀ with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
     · rcases keyed_ok_or_divisionByZero hconf hks with ⟨keyed, hk, hkeyed⟩ | ⟨hk, i, hi⟩
       · have hconfg : ∀ kg ∈ Row.groups keyed, ∀ r ∈ kg.2, r.Conforms Γ₀ := fun kg hkg r hr => by
           obtain ⟨k, hkr⟩ := (Row.mem_groups hkg).1 r hr
@@ -812,7 +917,7 @@ theorem eval_ok_or_divisionByZero {D : Database S} (hD : D.Conforms) {q : Query 
           · simp [hd, pure, Except.pure] at he
           · simp only [hd, error_bind, _root_.Except.error.injEq] at he
             subst he
-            refine .inr ⟨by simp only [eval_aggregate, hrs, ok_bind, hk, hout], ?_⟩
+            refine .inr ⟨_, by simp only [eval_aggregate, hrs, ok_bind, hk, hout], .inl rfl, ?_⟩
             simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
             exact .inl (.inr ⟨j, by simp [hj]⟩)
         · refine .inl ⟨outs, by simp only [eval_aggregate, hrs, ok_bind, hk, hout], fun t ht => ?_⟩
@@ -831,57 +936,125 @@ theorem eval_ok_or_divisionByZero {D : Database S} (hD : D.Conforms) {q : Query 
                 · exact (hkeyed _ hr).2
               exact Row.conforms_append_iff.mpr ⟨hkc, hdc⟩
             · simp [hd] at hd'
-      · refine .inr ⟨by simp only [eval_aggregate, hrs, ok_bind, hk, error_bind], ?_⟩
+      · refine .inr ⟨_, by simp only [eval_aggregate, hrs, ok_bind, hk, error_bind], .inl rfl, ?_⟩
         simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
         exact .inl (.inl ⟨i, by simp [hi]⟩)
-    · exact .inr ⟨by simp only [eval_aggregate, he, error_bind], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp only [eval_aggregate, he, error_bind], hre, by simp [divSafe, hs]⟩
   | orderBy keys q ih =>
     obtain ⟨hq₀, Δ, hks⟩ := typeOf_orderBy_eq_some hq
-    rcases ih hq₀ with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    rcases ih hq₀ with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
     · rcases keyed_ok_or_divisionByZero hconf hks with ⟨keyed, hk, hkeyed⟩ | ⟨hk, i, hi⟩
       · refine .inl ⟨_, by simp only [eval_orderBy, hrs, ok_bind, hk]; rfl, fun r hr => ?_⟩
         obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hr
         exact hconf _ (hkeyed x ((List.perm_insertionSort _ keyed).subset hx)).1
-      · refine .inr ⟨by simp only [eval_orderBy, hrs, ok_bind, hk, error_bind], ?_⟩
+      · refine .inr ⟨_, by simp only [eval_orderBy, hrs, ok_bind, hk, error_bind], .inl rfl, ?_⟩
         simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
         exact .inl ⟨i, by simp [hi]⟩
-    · exact .inr ⟨by simp only [eval_orderBy, he, error_bind], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp only [eval_orderBy, he, error_bind], hre, by simp [divSafe, hs]⟩
   | limit count offset q ih =>
-    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨he, hs⟩
+    rcases ih hq with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
     · refine .inl ⟨_, by simp only [eval_limit, hrs, ok_bind]; rfl, fun r hr => ?_⟩
       cases count with
       | none => exact hconf r (List.mem_of_mem_drop hr)
       | some c => exact hconf r (List.mem_of_mem_drop (List.mem_of_mem_take hr))
-    · exact .inr ⟨by simp only [eval_limit, he, error_bind], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp only [eval_limit, he, error_bind], hre, by simp [divSafe, hs]⟩
   | intersect q₁ q₂ ih₁ ih₂ =>
     obtain ⟨h₁, h₂⟩ := typeOf_intersect_eq_some.mp hq
-    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨he, hs⟩
-    · rcases ih₂ h₂ with ⟨ss, hss, -⟩ | ⟨he, hs⟩
+    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨ee, he, hre, hs⟩
+    · rcases ih₂ h₂ with ⟨ss, hss, -⟩ | ⟨ee, he, hre, hs⟩
       · exact .inl ⟨_, by simp only [eval_intersect, hrs, hss, ok_bind]; rfl,
           fun r hr => hconf₁ r (Row.mem_setOp.mp hr).1⟩
-      · exact .inr ⟨by simp only [eval_intersect, hrs, he, ok_bind, error_bind],
+      · exact .inr ⟨ee, by simp only [eval_intersect, hrs, he, ok_bind, error_bind], hre,
           by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp only [eval_intersect, he, error_bind], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp only [eval_intersect, he, error_bind], hre, by simp [divSafe, hs]⟩
   | difference q₁ q₂ ih₁ ih₂ =>
     obtain ⟨h₁, h₂⟩ := typeOf_difference_eq_some.mp hq
-    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨he, hs⟩
-    · rcases ih₂ h₂ with ⟨ss, hss, -⟩ | ⟨he, hs⟩
+    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨ee, he, hre, hs⟩
+    · rcases ih₂ h₂ with ⟨ss, hss, -⟩ | ⟨ee, he, hre, hs⟩
       · exact .inl ⟨_, by simp only [eval_difference, hrs, hss, ok_bind]; rfl,
           fun r hr => hconf₁ r (Row.mem_setOp.mp hr).1⟩
-      · exact .inr ⟨by simp only [eval_difference, hrs, he, ok_bind, error_bind],
+      · exact .inr ⟨ee, by simp only [eval_difference, hrs, he, ok_bind, error_bind], hre,
           by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp only [eval_difference, he, error_bind], by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp only [eval_difference, he, error_bind], hre, by simp [divSafe, hs]⟩
+  | attach kind sub q ihs ihq =>
+    simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at hq
+    obtain ⟨Δ, hs₀, Γ₀, hq₀, hk⟩ := hq
+    rcases ihs hs₀ with ⟨ss, hss, hconfs⟩ | ⟨ee, he, hre, hs⟩
+    · have hvals : ∀ v ∈ ss.map (· 0), v.HasType (Δ 0) := by
+        intro v hv
+        obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hv
+        exact hconfs r hr 0
+      cases kind with
+      | scalar firstRow =>
+        cases hk
+        rcases hsc : scalarOf firstRow (ss.map (· 0)) with err | v
+        · have hcard : err = .cardinality ∧ firstRow = false := by
+            unfold scalarOf at hsc
+            split at hsc
+            · cases hsc
+            · cases hsc
+            · split_ifs at hsc with hf
+              cases hsc
+              exact ⟨rfl, by simpa using hf⟩
+          obtain ⟨rfl, hf⟩ := hcard
+          refine .inr ⟨_, by simp [eval_attach, hss, SubKind.extra, hsc], .inr rfl, ?_⟩
+          simp [divSafe, SubKind.divSafe, hf]
+        · have hv : v.HasType (Δ 0) := by
+            rcases hm : ss.map (· 0) with _ | ⟨v₁, _ | ⟨v₂, rest⟩⟩ <;> rw [hm] at hsc hvals <;>
+              simp only [scalarOf] at hsc
+            · cases hsc; trivial
+            · cases hsc; exact hvals _ (by simp)
+            · split_ifs at hsc
+              cases hsc
+              exact hvals _ (by simp)
+          rcases ihq hq₀ with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
+          · rcases mapM_evalRow_append hconf (x := Expr.ofDatum .int v) (σ := Δ 0) (P := False)
+                (fun _ _ => .inl ⟨v, by simp, hv⟩) with ⟨ts, hts, htc⟩ | ⟨_, hF⟩
+            · exact .inl ⟨ts, by simp [eval_attach, hss, SubKind.extra, hsc, hrs, hts], htc⟩
+            · exact hF.elim
+          · exact .inr ⟨ee, by simp [eval_attach, hss, SubKind.extra, hsc, he], hre,
+              by simp [divSafe, hs]⟩
+      | inSub neg e =>
+        dsimp only at hk
+        split_ifs at hk with hc
+        cases hk
+        obtain ⟨τ₀, he₀, hcmp⟩ : ∃ τ₀, e.typeOf Γ₀ = some τ₀ ∧ τ₀.Comparable (Δ 0) := by
+          revert hc
+          cases e.typeOf Γ₀ <;> simp
+        have hall : (ss.map (· 0)).all (fun v => v.comparableWith τ₀) = true := by
+          rw [List.all_eq_true]
+          intro v hv
+          rcases v with _ | w
+          · rfl
+          · have hw : w.type = Δ 0 := by simpa using hvals _ hv
+            simpa [Datum.comparableWith, hw] using hcmp
+        have hx : (if neg then Expr.unary .not (Expr.inList e (ss.map (· 0)))
+            else Expr.inList e (ss.map (· 0))).typeOf Γ₀ = some .bool := by
+          have hall' : ∀ x ∈ ss, Datum.comparableWith τ₀ (x 0) = true := by
+            simpa [List.all_eq_true] using hall
+          split_ifs <;> simp only [Expr.typeOf, he₀, Option.bind_eq_bind, Option.bind_some] <;>
+            split_ifs with H <;> first | rfl | exact absurd (by simpa using hall') H
+        rcases ihq hq₀ with ⟨rs, hrs, hconf⟩ | ⟨ee, he', hre, hs⟩
+        · rcases mapM_evalRow_append hconf (σ := .bool) (fun r hr => Expr.eval_ok_or_divisionByZero hr hx)
+            with ⟨ts, hts, htc⟩ | ⟨hts, hP⟩
+          · exact .inl ⟨ts, by simp [eval_attach, hss, SubKind.extra, hrs, hts], htc⟩
+          · refine .inr ⟨_, by simp [eval_attach, hss, SubKind.extra, hrs, hts], .inl rfl, ?_⟩
+            split_ifs at hP <;> simp_all [divSafe, SubKind.divSafe, Expr.divSafe]
+        · exact .inr ⟨ee, by simp [eval_attach, hss, SubKind.extra, he'], hre, by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [eval_attach, he], hre, by simp [divSafe, hs]⟩
 
 /-- A well-typed query never raises a type error on a conforming instance. -/
 theorem eval_ne_typeMismatch {D : Database S} (hD : D.Conforms) {q : Query S n}
     {Γ : Fin n → SqlType} (hq : q.typeOf = some Γ) : q.eval D ≠ .error .typeMismatch := by
-  rcases eval_ok_or_divisionByZero hD hq with ⟨rs, h, -⟩ | ⟨h, -⟩ <;> simp [h]
+  rcases eval_ok_or_runtimeError hD hq with ⟨rs, h, -⟩ | ⟨e, h, hr, -⟩
+  · simp [h]
+  · rw [h]; rcases hr with rfl | rfl <;> simp
 
 /-- The rows of a well-typed query on a conforming instance conform to its type. -/
 theorem conforms_of_eval_eq_ok {D : Database S} (hD : D.Conforms) {q : Query S n}
     {Γ : Fin n → SqlType} (hq : q.typeOf = some Γ) {rs : List (Row n)} (h : q.eval D = .ok rs) :
     ∀ r ∈ rs, r.Conforms Γ := by
-  rcases eval_ok_or_divisionByZero hD hq with ⟨rs', h', hconf⟩ | ⟨h', -⟩
+  rcases eval_ok_or_runtimeError hD hq with ⟨rs', h', hconf⟩ | ⟨e, h', -, -⟩
   · rw [h, Except.ok.injEq] at h'
     exact h' ▸ hconf
   · simp [h] at h'
@@ -890,7 +1063,7 @@ theorem conforms_of_eval_eq_ok {D : Database S} (hD : D.Conforms) {q : Query S n
 theorem IsSafe.exists_eval_eq_ok {q : Query S n} (hs : q.IsSafe) {D : Database S}
     (hD : D.Conforms) : ∃ rs, q.eval D = .ok rs := by
   obtain ⟨Γ, hΓ⟩ := Option.isSome_iff_exists.mp hs.1
-  rcases eval_ok_or_divisionByZero hD hΓ with ⟨rs, h, -⟩ | ⟨-, h⟩
+  rcases eval_ok_or_runtimeError hD hΓ with ⟨rs, h, -⟩ | ⟨-, -, -, h⟩
   · exact ⟨rs, h⟩
   · simp [hs.2] at h
 

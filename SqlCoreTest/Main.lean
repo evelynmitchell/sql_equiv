@@ -20,6 +20,7 @@ import SqlCoreTest.LawExamples
 import SqlCoreTest.AggregateExamples
 import SqlCoreTest.OrderByExamples
 import SqlCoreTest.SetOpExamples
+import SqlCoreTest.SubqueryExamples
 import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest

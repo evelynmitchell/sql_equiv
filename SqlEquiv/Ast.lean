@@ -260,6 +260,16 @@ inductive BareColumns where
   | sqlite
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- A scalar subquery that returns several rows (`WHERE x > (SELECT a FROM t)` with two rows in
+    `t`).
+    - `error`: an evaluation error, as the standard, Postgres and DuckDB do.
+    - `firstRow`: the first row's value (sqlite).
+    Used by the typed-core bridge (`SqlBridge`), which records it on each subquery node. -/
+inductive ScalarSubqueryRows where
+  | error
+  | firstRow
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- The dialect choices a MIN/MAX node records. -/
 structure MinMaxMode where
   mixed : MixedMinMax
@@ -356,6 +366,8 @@ structure DialectConfig where
   distinctOrderBy : DistinctOrderBy
   /-- Bare columns next to aggregates (registry T9; typed-core bridge) -/
   bareColumns : BareColumns := .reject
+  /-- A scalar subquery with several rows (registry T17; typed-core bridge) -/
+  scalarSubqueryRows : ScalarSubqueryRows := .error
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -367,7 +379,8 @@ def Dialect.config : Dialect → DialectConfig
                    distinctOrderBy := .reject }
   | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass,
                    boolMinMax := .asInt,   likeCase := .asciiInsensitive,
-                   distinctOrderBy := .firstRow, bareColumns := .sqlite }
+                   distinctOrderBy := .firstRow, bareColumns := .sqlite,
+                   scalarSubqueryRows := .firstRow }
   | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
                    boolMinMax := .ordered, likeCase := .sensitive,
                    distinctOrderBy := .firstRow }
