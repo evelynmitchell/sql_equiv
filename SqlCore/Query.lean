@@ -405,6 +405,16 @@ def sortKeyed {n k : ℕ} (keys : Fin k → SortKey n) (rs : List (Row k × Row 
 
 /-! ### Queries -/
 
+/-- `INTERSECT` (`keep = true`) and `EXCEPT` (`keep = false`) of two lists of rows: the rows of
+`rs` that occur (or do not occur) in `ss`, one copy each (phase 8c). Rows are compared as wholes, so
+`NULL`s in the same places are equal, as in `DISTINCT`. -/
+def Row.setOp {n : ℕ} (keep : Bool) (rs ss : List (Row n)) : List (Row n) :=
+  (rs.filter fun r => decide (r ∈ ss) == keep).dedup
+
+theorem Row.mem_setOp {n : ℕ} {keep : Bool} {rs ss : List (Row n)} {r : Row n} :
+    r ∈ Row.setOp keep rs ss ↔ r ∈ rs ∧ (r ∈ ss ↔ keep = true) := by
+  cases keep <;> simp [Row.setOp, List.mem_dedup, List.mem_filter]
+
 /-- A query over the schema `S` whose result rows have `n` columns. -/
 inductive Query (S : DbSchema) : ℕ → Type where
   /-- The rows of a table, in the instance's list order. -/
@@ -431,6 +441,10 @@ inductive Query (S : DbSchema) : ℕ → Type where
   | orderBy {n k : ℕ} (keys : Fin k → SortKey n) (q : Query S n) : Query S n
   /-- `q LIMIT count OFFSET offset` (phase 8b): skip `offset` rows, then keep at most `count`. -/
   | limit {n : ℕ} (count : Option ℕ) (offset : ℕ) (q : Query S n) : Query S n
+  /-- `q₁ INTERSECT q₂` (phase 8c): one copy of each row of `q₁` that is also a row of `q₂`. -/
+  | intersect {n : ℕ} (q₁ q₂ : Query S n) : Query S n
+  /-- `q₁ EXCEPT q₂` (phase 8c): one copy of each row of `q₁` that is not a row of `q₂`. -/
+  | difference {n : ℕ} (q₁ q₂ : Query S n) : Query S n
 
 namespace Query
 
@@ -464,6 +478,8 @@ def eval (D : Database S) : {n : ℕ} → Query S n → Except EvalError (List (
     return match count with
       | some c => (rs.drop offset).take c
       | none => rs.drop offset
+  | _, intersect q₁ q₂ => do return Row.setOp true (← q₁.eval D) (← q₂.eval D)
+  | _, difference q₁ q₂ => do return Row.setOp false (← q₁.eval D) (← q₂.eval D)
 
 section Eval
 
@@ -507,6 +523,14 @@ theorem eval_limit (count : Option ℕ) (offset : ℕ) (q : Query S n) :
       return match count with
         | some c => (rs.drop offset).take c
         | none => rs.drop offset) := rfl
+
+theorem eval_intersect (q₁ q₂ : Query S n) :
+    (intersect q₁ q₂).eval D =
+      (do let rs ← q₁.eval D; let ss ← q₂.eval D; return Row.setOp true rs ss) := rfl
+
+theorem eval_difference (q₁ q₂ : Query S n) :
+    (difference q₁ q₂).eval D =
+      (do let rs ← q₁.eval D; let ss ← q₂.eval D; return Row.setOp false rs ss) := rfl
 
 end Eval
 
@@ -562,6 +586,12 @@ def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
     let Γ ← q.typeOf
     if ∀ i, ((keys i).e.typeOf Γ).isSome then some Γ else none
   | _, limit _ _ q => q.typeOf
+  | _, intersect q₁ q₂ => do
+    let Γ ← q₁.typeOf
+    if q₂.typeOf = some Γ then some Γ else none
+  | _, difference q₁ q₂ => do
+    let Γ ← q₁.typeOf
+    if q₂.typeOf = some Γ then some Γ else none
 
 @[simp] theorem typeOf_table (t : S.Table) : (table t).typeOf = some (S.ctx t) := rfl
 
@@ -617,6 +647,26 @@ theorem typeOf_unionAll_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType}
 
 @[simp] theorem typeOf_distinct (q : Query S n) : (distinct q).typeOf = q.typeOf := rfl
 
+theorem typeOf_intersect_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
+    (intersect q₁ q₂).typeOf = some Γ ↔ q₁.typeOf = some Γ ∧ q₂.typeOf = some Γ := by
+  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ', h₁, h₂, rfl⟩
+    exact ⟨h₁, h₂⟩
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨Γ, h₁, h₂, rfl⟩
+
+theorem typeOf_difference_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
+    (difference q₁ q₂).typeOf = some Γ ↔ q₁.typeOf = some Γ ∧ q₂.typeOf = some Γ := by
+  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ', h₁, h₂, rfl⟩
+    exact ⟨h₁, h₂⟩
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨Γ, h₁, h₂, rfl⟩
+
 theorem typeOf_orderBy_eq_some {k : ℕ} {keys : Fin k → SortKey n} {q : Query S n}
     {Γ : Fin n → SqlType} (h : (orderBy keys q).typeOf = some Γ) :
     q.typeOf = some Γ ∧ ∃ Δ : Fin k → SqlType, ∀ i, (keys i).e.typeOf Γ = some (Δ i) := by
@@ -651,6 +701,8 @@ def divSafe : {n : ℕ} → Query S n → Bool
     decide (∀ i, (keys i).divSafe) && decide (∀ j, (aggs j).divSafe) && q.divSafe
   | _, orderBy keys q => decide (∀ i, (keys i).e.divSafe) && q.divSafe
   | _, limit _ _ q => q.divSafe
+  | _, intersect q₁ q₂ => q₁.divSafe && q₂.divSafe
+  | _, difference q₁ q₂ => q₁.divSafe && q₂.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -801,6 +853,24 @@ theorem eval_ok_or_divisionByZero {D : Database S} (hD : D.Conforms) {q : Query 
       | none => exact hconf r (List.mem_of_mem_drop hr)
       | some c => exact hconf r (List.mem_of_mem_drop (List.mem_of_mem_take hr))
     · exact .inr ⟨by simp only [eval_limit, he, error_bind], by simp [divSafe, hs]⟩
+  | intersect q₁ q₂ ih₁ ih₂ =>
+    obtain ⟨h₁, h₂⟩ := typeOf_intersect_eq_some.mp hq
+    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨he, hs⟩
+    · rcases ih₂ h₂ with ⟨ss, hss, -⟩ | ⟨he, hs⟩
+      · exact .inl ⟨_, by simp only [eval_intersect, hrs, hss, ok_bind]; rfl,
+          fun r hr => hconf₁ r (Row.mem_setOp.mp hr).1⟩
+      · exact .inr ⟨by simp only [eval_intersect, hrs, he, ok_bind, error_bind],
+          by simp [divSafe, hs]⟩
+    · exact .inr ⟨by simp only [eval_intersect, he, error_bind], by simp [divSafe, hs]⟩
+  | difference q₁ q₂ ih₁ ih₂ =>
+    obtain ⟨h₁, h₂⟩ := typeOf_difference_eq_some.mp hq
+    rcases ih₁ h₁ with ⟨rs, hrs, hconf₁⟩ | ⟨he, hs⟩
+    · rcases ih₂ h₂ with ⟨ss, hss, -⟩ | ⟨he, hs⟩
+      · exact .inl ⟨_, by simp only [eval_difference, hrs, hss, ok_bind]; rfl,
+          fun r hr => hconf₁ r (Row.mem_setOp.mp hr).1⟩
+      · exact .inr ⟨by simp only [eval_difference, hrs, he, ok_bind, error_bind],
+          by simp [divSafe, hs]⟩
+    · exact .inr ⟨by simp only [eval_difference, he, error_bind], by simp [divSafe, hs]⟩
 
 /-- A well-typed query never raises a type error on a conforming instance. -/
 theorem eval_ne_typeMismatch {D : Database S} (hD : D.Conforms) {q : Query S n}

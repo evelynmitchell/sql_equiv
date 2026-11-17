@@ -378,6 +378,8 @@ join that it cannot enter. Where it stops, it is simplified in place (`Query.sim
   | _, p, q@(aggregate _ _ _) => simpSelect p q
   | _, p, q@(orderBy _ _) => simpSelect p q
   | _, p, q@(limit _ _ _) => simpSelect p q
+  | _, p, q@(intersect _ _) => simpSelect p q
+  | _, p, q@(difference _ _) => simpSelect p q
 
 /-- `SELECT es FROM q` with projections fused: over a safe projection, the two fuse by
 substitution, and the result fuses further down. Where it stops, it is simplified in place
@@ -397,6 +399,8 @@ substitution, and the result fuses further down. Where it stops, it is simplifie
   | _, _, es, q@(aggregate _ _ _) => simpProject es q
   | _, _, es, q@(orderBy _ _) => simpProject es q
   | _, _, es, q@(limit _ _ _) => simpProject es q
+  | _, _, es, q@(intersect _ _) => simpProject es q
+  | _, _, es, q@(difference _ _) => simpProject es q
 
 /-- The query simplifier: simplify the inputs of each node, then move its `WHERE` down, fuse its
 projections or simplify its join predicate. `Query.equiv_simplify` certifies it on every
@@ -411,6 +415,8 @@ conforming instance. -/
   | _, aggregate keys aggs q => aggregate keys aggs q.simplify
   | _, orderBy keys q => orderBy keys q.simplify
   | _, limit c o q => limit c o q.simplify
+  | _, intersect q₁ q₂ => intersect q₁.simplify q₂.simplify
+  | _, difference q₁ q₂ => difference q₁.simplify q₂.simplify
 
 theorem equiv_simpSelect (p : Expr n) (q : Query S n) :
     Equiv .ordered (select p q) (simpSelect p q) := by
@@ -517,6 +523,12 @@ theorem equiv_pushSelect (p : Expr n) (q : Query S n) :
   | limit c o q _ =>
     rw [pushSelect]
     exact equiv_simpSelect p _
+  | intersect q₁ q₂ _ _ =>
+    rw [pushSelect]
+    exact equiv_simpSelect p _
+  | difference q₁ q₂ _ _ =>
+    rw [pushSelect]
+    exact equiv_simpSelect p _
 
 theorem equiv_fuseProject (es : Fin k → Expr n) (q : Query S n) :
     Equiv .ordered (project es q) (fuseProject es q) := by
@@ -546,6 +558,8 @@ theorem equiv_simplify (q : Query S n) : Equiv .ordered q q.simplify := by
   | aggregate keys aggs q ih => exact Equiv.aggregate keys aggs ih
   | orderBy keys q ih => exact Equiv.orderBy keys ih
   | limit c o q ih => exact Equiv.limit c o ih
+  | intersect q₁ q₂ ih₁ ih₂ => exact Equiv.intersect ih₁ ih₂
+  | difference q₁ q₂ ih₁ ih₂ => exact Equiv.difference ih₁ ih₂
 
 end Query
 

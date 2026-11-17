@@ -18,6 +18,10 @@
   * `%` with a decimal operand: `SqlCore` is exact (Postgres and DuckDB agree);
     `SqlEquiv` leaves decimal `%` unimplemented (#201), an error. These cases
     are checked against `refMod`, a scaled-integer `Int.tmod` reference.
+  * `LIKE` (and sqlite's `likeCI`) with `_` or a `%` inside the pattern:
+    `SqlEquiv`'s `simpleLike` treats them as literal characters (#323);
+    sqlite and DuckDB agree with `SqlCore`. These cases are checked against
+    `refLike`, a backtracking matcher written independently of `likeText`.
   Ill-typed operands are out of scope: `SqlCore` makes them `typeMismatch`,
   while `SqlEquiv` short-circuits `FALSE AND 1` to `FALSE`.
 -/
@@ -55,6 +59,10 @@ def texts : List SqlCore.Datum := [none] ++ (["", "a", "ab", "b", "B", "é"].map
 def bools : List SqlCore.Datum := [none, some (.bool false), some (.bool true)]
 def decimals : List SqlCore.Datum :=
   [(0 : ℚ), 1/2, -3/2, 2, 9/4, 15/2, -15/2, 1/10].map (some ∘ .decimal)
+/-- Texts and `LIKE` patterns: wildcards, letter case, a non-ASCII letter, NULL. -/
+def likeTexts : List SqlCore.Datum := [none] ++
+  (["", "a", "ab", "aB", "Ab", "abc", "b", "é", "É", "%", "_", "a%", "%b", "_b", "a_", "%a%",
+    "A%", "%B", "a%c", "a_c", "%%", "__", "%_%", "_%_", "a%%b", "%é"].map (some ∘ .text))
 /-- Integers and decimals, NULL once. -/
 def nums : List SqlCore.Datum := ints ++ decimals
 
@@ -67,7 +75,8 @@ def binOps : List (String × SqlCore.BinOp × SqlEquiv.BinOp × List (List SqlCo
    ("<", .cmp .lt, .lt, [nums, texts, bools]), ("<=", .cmp .le, .le, [nums, texts, bools]),
    (">", .cmp .gt, .gt, [nums, texts, bools]), (">=", .cmp .ge, .ge, [nums, texts, bools]),
    ("AND", .and, .and, [bools]), ("OR", .or, .or, [bools]),
-   ("||", .concat, .concat, [texts])]
+   ("||", .concat, .concat, [texts]),
+   ("LIKE", .like false, .like, [likeTexts]), ("LIKE (sqlite)", .like true, .likeCI, [likeTexts])]
 
 def unOps : List (String × SqlCore.UnOp × SqlEquiv.UnaryOp × List (List SqlCore.Datum)) :=
   [("NOT", .not, .not, [bools]), ("-", .neg, .neg, [nums]),
@@ -103,10 +112,39 @@ def modMatchesRef (a b : SqlCore.Datum) : Bool :=
   | some r, .ok d => r == d
   | _, _ => false
 
+/-- Independent reference for `LIKE`: backtracking over where each `%` stops, with fuel. -/
+def refLikeAux (eq : Char → Char → Bool) : ℕ → List Char → List Char → Bool
+  | 0, _, _ => false
+  | _ + 1, [], s => s.isEmpty
+  | f + 1, '%' :: p, s => (List.range (s.length + 1)).any fun k => refLikeAux eq f p (s.drop k)
+  | f + 1, '_' :: p, _ :: s => refLikeAux eq f p s
+  | f + 1, d :: p, c :: s => d != '_' && d != '%' && eq d c && refLikeAux eq f p s
+  | _ + 1, _ :: _, [] => false
+
+def refLike (ci : Bool) (s p : String) : Bool :=
+  refLikeAux (if ci then fun a b => a.toLower == b.toLower else (· == ·)) (p.length + 1) p.toList
+    s.toList
+
+/-- The pattern uses `_` or a `%` that is not at either end: outside `simpleLike` (#323). -/
+def beyondSimpleLike : SqlCore.Datum → Bool
+  | some (.text p) =>
+    let cs := p.toList
+    cs.contains '_' || ((cs.drop 1).dropLast.contains '%')
+  | _ => false
+
+/-- A documented `LIKE` difference must still match the reference. -/
+def likeMatchesRef (ci : Bool) (a b : SqlCore.Datum) : Bool :=
+  match a, b with
+  | some (.text s), some (.text p) =>
+    SqlCore.evalBinOp (.like ci) a b == .ok (some (.bool (refLike ci s p)))
+  | _, _ => false
+
 /-- The documented differences (see the header). -/
 def expectedDifference (name : String) (a b : SqlCore.Datum) : Bool :=
   (["<", "<=", ">", ">="].contains name && isBool a && isBool b) ||
-  (name == "%" && (isDecimal a || isDecimal b))
+  (name == "%" && (isDecimal a || isDecimal b) && modMatchesRef a b) ||
+  (name == "LIKE" && beyondSimpleLike b && likeMatchesRef false a b) ||
+  (name == "LIKE (sqlite)" && beyondSimpleLike b && likeMatchesRef true a b)
 
 /-- Returns (cases checked, documented differences seen, unexpected disagreements). -/
 def run : Nat × Nat × List String := Id.run do
@@ -121,7 +159,7 @@ def run : Nat × Nat × List String := Id.run do
           let new := resToOld (SqlCore.evalBinOp newOp a b)
           let old := SqlEquiv.evalBinOp oldOp (datumToOld a) (datumToOld b)
           if new != old then
-            if expectedDifference name a b && (name != "%" || modMatchesRef a b) then
+            if expectedDifference name a b then
               documented := documented + 1
             else bad := s!"{repr a} {name} {repr b}: SqlCore {repr new}, SqlEquiv {repr old}" :: bad
   for (name, newOp, oldOp, doms) in unOps do

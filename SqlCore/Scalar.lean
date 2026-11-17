@@ -114,6 +114,110 @@ def modDec (a b : ℚ) : Except EvalError ℚ :=
 /-- Text concatenation. -/
 def concatText (s t : String) : String := s ++ t
 
+/-! ### `LIKE`
+
+A pattern is matched by simulating its automaton: the state is the list of pattern suffixes that the
+text read so far can still be followed by. The recursion is structural (on the pattern for the
+closure, on the text for the run), so `decide` evaluates it. `%` matches any sequence of
+characters, `_` any one character, and every other character itself; there is no `ESCAPE`. -/
+
+/-- The pattern suffixes reachable without reading a character: a leading `%` may match the empty
+string. -/
+def likeClosure : List Char → List (List Char)
+  | '%' :: p => ('%' :: p) :: likeClosure p
+  | p => [p]
+
+/-- The pattern suffixes after reading `c` from the state `p`; `eq` compares a pattern character
+with a text character. -/
+def likeStep (eq : Char → Char → Bool) (c : Char) : List Char → List (List Char)
+  | '%' :: p => likeClosure ('%' :: p)
+  | '_' :: p => likeClosure p
+  | d :: p => if eq d c then likeClosure p else []
+  | [] => []
+
+/-- Run the automaton over the text from a set of states; the text matches if the empty suffix
+(the whole pattern used) is reachable at its end. -/
+def likeRun (eq : Char → Char → Bool) : List (List Char) → List Char → Bool
+  | sts, [] => sts.contains []
+  | sts, c :: s => likeRun eq ((sts.flatMap (likeStep eq c)).eraseDups) s
+
+/-- `s LIKE p`. With `ci`, ASCII letters match regardless of case and other characters exactly
+(sqlite's rule; registry row 8); without it, characters match exactly (the standard, Postgres and
+DuckDB). -/
+def likeText (ci : Bool) (s p : String) : Bool :=
+  likeRun (if ci then fun a b => a.toLower == b.toLower else fun a b => a == b)
+    (likeClosure p.toList) s.toList
+
+/-! #### Laws of `LIKE` (counterparts of `SqlEquiv`'s `like_match_all`, `like_empty_pattern` and
+`like_self`) -/
+
+/-- With no state left, nothing is accepted. -/
+theorem likeRun_nil_states (eq : Char → Char → Bool) (s : List Char) : likeRun eq [] s = false := by
+  induction s with
+  | nil => rfl
+  | cons c s ih => simpa [likeRun] using ih
+
+/-- A run that holds the state `%` (and the empty suffix) accepts every text. -/
+theorem likeRun_of_pct {eq : Char → Char → Bool} :
+    ∀ (s : List Char) {sts : List (List Char)}, ['%'] ∈ sts → [] ∈ sts → likeRun eq sts s = true
+  | [], _, _, h => by simpa [likeRun] using h
+  | c :: s, sts, hp, _ => by
+    have hstep : likeStep eq c ['%'] = [['%'], []] := rfl
+    refine likeRun_of_pct s ?_ ?_ <;>
+      simp only [List.mem_eraseDups, List.mem_flatMap] <;> exact ⟨['%'], hp, by simp [hstep]⟩
+
+/-- `s LIKE '%'` holds for every text. -/
+@[simp] theorem likeText_pct (ci : Bool) (s : String) : likeText ci s "%" = true :=
+  likeRun_of_pct _ (by simp [likeClosure]) (by simp [likeClosure])
+
+/-- `s LIKE ''` holds exactly for the empty text. -/
+theorem likeText_empty_iff (ci : Bool) (s : String) : likeText ci s "" = true ↔ s = "" := by
+  have he : ("" : String).toList = [] := String.toList_eq_nil_iff.mpr rfl
+  rcases hs : s.toList with _ | ⟨c, cs⟩
+  · simp [likeText, likeClosure, likeRun, he, String.toList_eq_nil_iff.mp hs]
+  · have hne : s ≠ "" := fun h => by simp [h] at hs
+    have hcl : likeClosure ([] : List Char) = [[]] := rfl
+    have hstep : ∀ eq, (([[]] : List (List Char)).flatMap (likeStep eq c)).eraseDups = [] :=
+      fun _ => rfl
+    simp only [likeText, hs, he, hcl, likeRun, hstep, likeRun_nil_states, hne]
+    decide
+
+/-- Every pattern is in its own closure. -/
+theorem mem_likeClosure_self (p : List Char) : p ∈ likeClosure p := by
+  unfold likeClosure
+  split <;> simp
+
+/-- Reading a pattern's first character leads to the rest of the pattern: `%` reads `%`, `_` reads
+`_`, and any other character itself. -/
+theorem mem_likeStep_self {eq : Char → Char → Bool} (heq : ∀ c, eq c c = true) (c : Char)
+    (p : List Char) : p ∈ likeStep eq c (c :: p) := by
+  by_cases h₁ : c = '%'
+  · subst h₁
+    exact List.mem_cons_of_mem _ (mem_likeClosure_self p)
+  by_cases h₂ : c = '_'
+  · subst h₂
+    exact mem_likeClosure_self p
+  have hs : likeStep eq c (c :: p) = if eq c c then likeClosure p else [] := by
+    unfold likeStep
+    split <;> simp_all
+  simp [hs, heq, mem_likeClosure_self]
+
+/-- A text read from a state set holding it as a pattern is accepted. -/
+theorem likeRun_self {eq : Char → Char → Bool} (heq : ∀ c, eq c c = true) :
+    ∀ (s : List Char) {sts : List (List Char)}, s ∈ sts → likeRun eq sts s = true
+  | [], _, h => by simpa [likeRun] using h
+  | c :: s, sts, h => by
+    refine likeRun_self heq s ?_
+    simp only [List.mem_eraseDups, List.mem_flatMap]
+    exact ⟨c :: s, h, mem_likeStep_self heq c s⟩
+
+/-- Every text matches itself as a pattern (`SqlEquiv`'s `like_self`), in either case mode:
+`%` and `_` in the pattern match themselves. -/
+theorem likeText_self (ci : Bool) (s : String) : likeText ci s s = true := by
+  unfold likeText
+  refine likeRun_self ?_ _ (mem_likeClosure_self _)
+  intro c; cases ci <;> simp
+
 /-- Integer comparison. -/
 def compareInt (a b : ℤ) : Ordering := compare a b
 
@@ -347,6 +451,8 @@ inductive BinOp where
   | or
   /-- Text concatenation `||`. -/
   | concat
+  /-- `LIKE`; with `ci`, ASCII case-insensitive (the sqlite dialect, registry row 8). -/
+  | like (ci : Bool)
   deriving DecidableEq, Repr
 
 namespace ArithOp
@@ -569,6 +675,12 @@ def evalBinOp : BinOp → Datum → Datum → Except EvalError Datum
     let y ← b.asText
     match x, y with
     | some s, some t => return some (.text (concatText s t))
+    | _, _ => return none
+  | .like ci, a, b => do
+    let x ← a.asText
+    let y ← b.asText
+    match x, y with
+    | some s, some p => return some (.bool (likeText ci s p))
     | _, _ => return none
 
 /-! ### Laws of the operators -/

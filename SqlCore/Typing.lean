@@ -86,6 +86,7 @@ def BinOp.typeOf : BinOp → SqlType → SqlType → Option SqlType
   | .and, .bool, .bool => some .bool
   | .or, .bool, .bool => some .bool
   | .concat, .text, .text => some .text
+  | .like _, .text, .text => some .bool
   | _, _, _ => none
 
 /-- Whether the operator fails on a zero divisor: `/` and `%`. -/
@@ -233,6 +234,17 @@ theorem evalBinOp_ok_or_divisionByZero {op : BinOp} {τ₁ τ₂ τ : SqlType}
     rcases x with _ | x <;> rcases y with _ | y
     case some.some =>
       refine .inl ⟨some (.text (concatText x y)), ?_, rfl⟩
+      simp [evalBinOp, hx, hy, pure, Except.pure]
+    all_goals exact .inl ⟨none, by simp [evalBinOp, hx, hy, pure, Except.pure], trivial⟩
+  | .like ci, h =>
+    match τ₁, τ₂, h with
+    | .text, .text, h =>
+    cases h
+    obtain ⟨x, hx⟩ := Datum.exists_asText_eq_ok_iff.mpr ha
+    obtain ⟨y, hy⟩ := Datum.exists_asText_eq_ok_iff.mpr hb
+    rcases x with _ | x <;> rcases y with _ | y
+    case some.some =>
+      refine .inl ⟨some (.bool (likeText ci x y)), ?_, rfl⟩
       simp [evalBinOp, hx, hy, pure, Except.pure]
     all_goals exact .inl ⟨none, by simp [evalBinOp, hx, hy, pure, Except.pure], trivial⟩
 

@@ -12,8 +12,8 @@
   expressions: literals, columns, arithmetic, comparisons, AND/OR/NOT,
   IS [NOT] NULL, ||, [NOT] IN over literals, CASE, and BETWEEN (desugared to
   two comparisons). Untyped `NULL` takes its type from the operand it meets.
-  Phase 8 adds GROUP BY, aggregates and HAVING (#313), and ORDER BY, LIMIT and
-  OFFSET (#318).
+  Phase 8 adds GROUP BY, aggregates and HAVING (#313), ORDER BY, LIMIT and
+  OFFSET (#318), and INTERSECT, EXCEPT and LIKE (#322).
 -/
 import SqlEquiv
 import SqlCore
@@ -75,7 +75,7 @@ def elabBinOp : SqlEquiv.BinOp → ElabM BinOp
   | .eq => pure (.cmp .eq) | .ne => pure (.cmp .ne) | .lt => pure (.cmp .lt)
   | .le => pure (.cmp .le) | .gt => pure (.cmp .gt) | .ge => pure (.cmp .ge)
   | .and => pure .and | .or => pure .or | .concat => pure .concat
-  | .like => throw (.unsupported "LIKE") | .likeCI => throw (.unsupported "LIKE")
+  | .like => pure (.like false) | .likeCI => pure (.like true)
 
 section Exprs
 
@@ -415,8 +415,8 @@ def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
       match op with
       | .unionAll => pure ⟨n, u, cl⟩
       | .union => pure ⟨n, .distinct u, cl⟩
-      | .intersect => throw (.unsupported "INTERSECT")
-      | .exceptOp => throw (.unsupported "EXCEPT")
+      | .intersect => pure ⟨n, .intersect ql (h ▸ qr), cl⟩
+      | .exceptOp => pure ⟨n, .difference ql (h ▸ qr), cl⟩
     else throw (.typeError "set operation arity")
   | .withCTE _ _ => throw (.unsupported "WITH")
 

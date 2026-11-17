@@ -42,6 +42,7 @@ CSLib through the frontier.
 | `SqlCore/Aggregate.lean` | aggregate calls: evaluation over a group, typing, soundness |
 | `SqlCoreTest/AggregateExamples.lean` | `GROUP BY` and aggregates checked by `decide` |
 | `SqlCoreTest/OrderByExamples.lean` | `ORDER BY`, `LIMIT` and `OFFSET` checked by `decide` |
+| `SqlCoreTest/SetOpExamples.lean` | `INTERSECT`, `EXCEPT` and `LIKE` checked by `decide` |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -88,10 +89,14 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] 8a GROUP BY, HAVING, aggregates (#313)
     - [x] Core: `AggCall`, `Query.aggregate`, typing, type soundness, simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **268/564 (47.5%)**, up from 129
-  - [ ] 8b ORDER BY, LIMIT, OFFSET (#318)
+  - [x] 8b ORDER BY, LIMIT, OFFSET (#318)
     - [x] Core: `SortKey`, `Query.orderBy`, `Query.limit`, typing, type soundness, congruences,
       simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **364/564 (64.5%)**, up from 268
+  - [ ] 8c INTERSECT, EXCEPT, LIKE (#322)
+    - [x] Core: `Query.intersect`, `Query.difference`, `BinOp.like`, typing, type soundness,
+      congruences at every level, laws, simplifier and checker
+    - [x] Elaboration from SQL, differential tests, Spider rate: **405/564 (71.8%)**, up from 364
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -404,6 +409,45 @@ Spider: 364/564 now elaborate. The largest remaining classes:
 | `INTERSECT`/`EXCEPT` | 37 | |
 | Type errors | 16 | sqlite affinity |
 | `LIKE` | 8 | |
+
+**8c, core (#322).**
+
+- `Query.intersect q₁ q₂` and `Query.difference q₁ q₂` (`EXCEPT`) are the standard set operations.
+  They keep one copy of each row of `q₁` that is (or is not) a row of `q₂`. Rows compare
+  positionally as wholes, so `NULL`s in the same places are equal. The parser has no `ALL`
+  variants.
+- Both are congruences at every level (`EquivLevel.Rel.setOp`): the right input matters only
+  through which rows it contains.
+- Laws:
+  - `eval_difference_self` and `eval_intersect_of_eval_eq_nil`.
+  - `intersect_self` (`q INTERSECT q` is `DISTINCT q`).
+  - `intersect_assoc` (ordered) and `intersect_comm` (bag).
+- `BinOp.like ci` is `text LIKE text → bool`, with `NULL` from `NULL`.
+  - `%` matches any sequence and `_` exactly one character; there is no `ESCAPE`.
+  - With `ci`, ASCII letters match regardless of case: the sqlite dialect (registry row 8, T16).
+  - The matcher (`likeText`) simulates the pattern's automaton by structural recursion, so
+    `decide` evaluates it.
+  - It agrees with DuckDB (case-sensitive) and sqlite (`ci`) on all 676 pairs of a 26-string
+    sample. The scalar differential against `SqlEquiv` checks it with an independent backtracking
+    reference.
+  - Laws: `likeText_pct`, `likeText_empty_iff` and `likeText_self` (every text matches itself).
+
+**8c, elaboration (#322).** `INTERSECT` and `EXCEPT` branches elaborate like `UNION`. `LIKE` and
+sqlite's `likeCI` map to `BinOp.like false` and `BinOp.like true`. The corpus gained:
+
+- 19 queries in the default dialect;
+- 4 in the sqlite dialect, compared against `SqlEquiv` and non-empty only when the match ignores
+  case.
+
+They found three `SqlEquiv` bugs, all confirmed by DuckDB, and the affected queries are checked
+against DuckDB instead:
+
+- #323: `LIKE` treats `_` and interior `%` as literals.
+- #324: `INTERSECT`/`EXCEPT` compare column names.
+- #324: `INTERSECT`/`EXCEPT` keep typed `NULL`s apart.
+
+Spider: 405/564 now elaborate. The largest remaining classes are bare columns (64, T9),
+subqueries (47), `AVG` (27, #201) and type errors under sqlite's affinity (20).
 
 ## Rules for every phase
 

@@ -39,6 +39,12 @@
     key (output keeps input order). Gap (#320), pinned by
     `distinct_order_by_unselected_keeps_input_order`; the typed core agrees
     with the engines (`SqlCoreTest/DuckdbDiffTest.lean`).
+  - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
+    treats them as literal characters; the engines (and the typed core)
+    match them as wildcards. Do not add such a case until #323 is fixed.
+  - INTERSECT/EXCEPT between columns of different names, or over typed and
+    untyped NULLs (#324): SqlEquiv compares rows by (name, value) pairs; the
+    engines (and the typed core) compare values positionally.
   (Row 8, LIKE letter case, is per dialect: this harness parses in the
   sqlite dialect, so LIKE is ASCII case-insensitive here and has cases below.)
 
