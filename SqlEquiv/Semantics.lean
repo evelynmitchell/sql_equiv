@@ -840,6 +840,10 @@ def evalQuery (db : Database) (q : Query) : Table :=
     let newDb : Database := fun name =>
       if name == cte.name then cteResult else db name
     evalQuery newDb (.withCTE rest query)
+  | .ordered query ob lim off =>
+    -- #317: sort/limit the whole compound result; keys are evaluated on its output rows.
+    applyOrderByLimitOffsetAligned (compareByOrderItemsParam evalExprWithDb) db ob lim off false []
+      (evalQuery db query)
 termination_by sizeOf q
 decreasing_by
   all_goals simp_wf

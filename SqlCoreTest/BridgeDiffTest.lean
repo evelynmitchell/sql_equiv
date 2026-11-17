@@ -101,9 +101,14 @@ def corpus : List (String × Expect) := [
   ("SELECT * FROM users ORDER BY 3", .sqlEquivBug "#316: positions after * are not resolved"),
   ("SELECT name FROM users ORDER BY name + 1", .rejected "typeError"),
   ("SELECT name, age AS name FROM users ORDER BY name", .rejected "ambiguousColumn"),
-  -- #317: the parser binds a trailing ORDER BY/LIMIT to the last branch, so the bridge rejects it
-  ("SELECT name FROM users UNION ALL SELECT name FROM products ORDER BY 1",
-    .rejected "unsupported: ORDER BY/LIMIT in a compound"),
+  -- #317: a trailing ORDER BY/LIMIT/OFFSET applies to the whole compound query
+  ("SELECT name FROM users UNION ALL SELECT name FROM products ORDER BY 1", .agree),
+  ("SELECT name FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY 1 LIMIT 1", .agree),
+  ("SELECT name FROM users UNION SELECT name FROM products ORDER BY name DESC LIMIT 3", .agree),
+  ("SELECT name AS n FROM users INTERSECT SELECT name AS n FROM users WHERE age > 25 ORDER BY n", .agree),
+  ("SELECT name AS n FROM users INTERSECT SELECT name FROM users WHERE age > 25 ORDER BY n",
+    .sqlEquivBug "#324: set ops compare column names"),
+  ("SELECT name FROM users EXCEPT SELECT name FROM users WHERE age > 29 ORDER BY 1 LIMIT 2 OFFSET 1", .agree),
   -- INTERSECT, EXCEPT, LIKE (phase 8c, #322); set operations compared as bags
   ("SELECT name FROM users INTERSECT SELECT name FROM products", .agree),
   ("SELECT department FROM users INTERSECT SELECT department FROM users WHERE age > 26", .agree),
