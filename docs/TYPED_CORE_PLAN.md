@@ -86,8 +86,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     `=`, `<>`, `+`, `*`, `>`/`>=` turned into `<`/`<=`); the checkers compare canonical forms
   - [x] Tactics `sql_expr_equiv`, `sql_query_equiv` (`decide +kernel`)
   - [x] Comparison with `SqlEquiv`'s certified rewriter (below)
-- [ ] Phase 8: features beyond the frontier (#297), *offered upstream*. Done when the Spider
-  elaboration rate matches `SqlEquiv` (about 553/564; decided on #297)
+- [x] Phase 8: features beyond the frontier (#297), *offered upstream*. Done when the Spider
+  elaboration rate matches `SqlEquiv` except for schema-typing defects. The bar was first
+  "about 553/564" (#297); it was revised on 2026-11-17 to exclude the sqlite type-affinity
+  queries, which a typed core rejects by design (see "Phase 8 result" below). **520/564 (92.2%)**
   - [x] 8a GROUP BY, HAVING, aggregates (#313)
     - [x] Core: `AggCall`, `Query.aggregate`, typing, type soundness, simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **268/564 (47.5%)**, up from 129
@@ -106,7 +108,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Core: `AggCall.atExtreme`, typing and type soundness
     - [x] Bridge (`DialectConfig.bareColumns`), sqlite differential, Spider rate: **479/564
       (84.9%)**, up from 426
-  - [ ] 8f Uncorrelated subqueries in `WHERE` (#329)
+  - [x] 8f Uncorrelated subqueries in `WHERE` (#329), and derived tables
     - [x] Core: `Query.attach`, `SubKind`, `EvalError.cardinality`; soundness generalised to runtime
       errors (`Query.eval_ok_or_runtimeError`); congruence; simplifier and checker
     - [x] Bridge (nested, compound bodies, correlated rejected), differential tests, Spider rate:
@@ -187,7 +189,8 @@ phases 4–6 need them.
 ## Phase 4 notes
 
 `Query S n` (table, `WHERE`, `SELECT` list, inner join `ON θ`, `UNION ALL`, `DISTINCT`) has
-evaluation, typing and type soundness for every constructor (`Query.eval_ok_or_divisionByZero`).
+evaluation, typing and type soundness for every constructor (`Query.eval_ok_or_divisionByZero`,
+renamed `Query.eval_ok_or_runtimeError` in phase 8f).
 A safe query (`Query.IsSafe`, decidable) succeeds on every conforming instance.
 
 Changes from the frontier, all because of decimals:
@@ -317,8 +320,8 @@ comparison, for `SqlEquiv`.
 | `x + 0`, `0 + x`, `x - 0`, `x * 1`, `1 * x` → `x` (`isDefinitelyInt`) | Performed when `x` is an integer. The laws also hold for decimals; widening the guard is a follow-up. |
 | `NOT (a op b)` → `a (negate op) b`, for the six comparisons | Performed (`not_cmp`). |
 | `NOT (NOT p)` → `p` (`isDefinitelyBool`) | Performed when `p` is boolean. |
-| `NOT EXISTS` flag flip | Not performed: subqueries are outside the fragment (phase 8). |
-| `x LIKE ''` → `x = ''` | Not performed: `LIKE` is outside the fragment (phase 8). |
+| `NOT EXISTS` flag flip | Not performed: `EXISTS` is outside the fragment. Phase 8f added uncorrelated `IN` and scalar subqueries only. |
+| `x LIKE ''` → `x = ''` | Not performed by the simplifier. Since phase 8c the law is `likeText_empty_iff`. |
 | `e IN ()` → `FALSE` | Performed when `e` is safe. Strict errors: a failing `e` must still fail. |
 | `e NOT IN ()` → `TRUE` | Performed: `NOT (e IN ())` → `NOT FALSE` → `TRUE` (constant folding), when `e` is safe. |
 | `e IN (v)` → `e = v` | Performed (`inList_singleton`). |
@@ -335,8 +338,9 @@ queries (pushdown, projection fusion), which `SqlEquiv`'s rewriter does not.
 
 ## Phase 8 notes
 
-Decisions (#297): GROUP BY and aggregates come first. The phase 9 bar is matching `SqlEquiv` on
-Spider. `AVG` and decimal `/` are exact rationals (#326, decided 2026-11-17; see 8d below).
+Decisions (#297): GROUP BY and aggregates come first. The phase 9 bar was matching `SqlEquiv` on
+Spider; it was revised on 2026-11-17 to exclude schema-typing defects (see "Phase 8 result"). `AVG`
+and decimal `/` are exact rationals (#326, decided 2026-11-17; see 8d below).
 
 **8a, core (#313).**
 
@@ -347,7 +351,7 @@ Spider. `AVG` and decimal `/` are exact rationals (#326, decided 2026-11-17; see
 - `Query.aggregate keys aggs q : Query S (g + a)` groups by key tuple, in order of first
   appearance, with `NULL` keys grouping together. With no keys there is one group even for no
   rows. `HAVING` is a `select` over it.
-- Type soundness (`Query.eval_ok_or_divisionByZero`) covers it, as do `divSafe` and `IsSafe`.
+- Type soundness (`Query.eval_ok_or_runtimeError` since 8f) covers it, as do `divSafe` and `IsSafe`.
 - Congruence is proved at the ordered level only (`Equiv.aggregate`). At the bag level it needs
   grouping to be insensitive to input order. At the set level it fails, since counts change.
 - The simplifier keeps a `WHERE` above an aggregate. Pushing it below is valid only for
@@ -571,6 +575,32 @@ The tests found a quiet `SqlEquiv` bug, #330: `NOT IN (subquery)` ignores NULLs.
 
 Spider: 519/564 now elaborate. The remaining classes are type errors under sqlite's affinity (44)
 and one derived table.
+
+**Derived tables (8f).** `FROM (SELECT …) AS t` elaborates the body as a subquery, with fuel. Its
+output columns are requalified by the alias, as in `SqlEquiv` (#257). The corpus gained 4 queries.
+They agree with DuckDB. They agree with `SqlEquiv` except a `UNION ALL` body whose branches name a
+column differently: `SqlEquiv` reads it by the first branch's name, which is the #324 root cause.
+
+**Phase 8 result.** 520/564 Spider dev queries elaborate, up from 129 after phase 6. All 44 that
+remain are type errors that sqlite accepts through *type affinity*. The Spider schemas declare a
+column's type inconsistently with how queries use it:
+
+| Kind | Queries | Example |
+|---|---:|---|
+| A `text` column compared with a number literal | ≈22 | `year = 2014` |
+| Join keys declared `text` on one side and `number` on the other | ≈15 | |
+| An aggregate over a `text` column | ≈6 | `avg(age)` |
+| A double-quoted string compared with a number | 1 | |
+
+On 2026-11-17 these were classified as schema defects that a typed core rejects by design. The
+phase 8 bar became "`SqlEquiv`'s coverage minus these", and it is met: every Spider query
+`SqlEquiv` handles either elaborates or is one of these 44.
+
+The two options not taken are recorded for later:
+
+- **Literal coercion in the bridge** for the sqlite dialect (`year = 2014` read as
+  `year = '2014'`, which is exactly what sqlite does): about 22 queries, with no core change.
+- **A text-to-number conversion in the core:** all 44, but a semantics change.
 
 ## Rules for every phase
 

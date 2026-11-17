@@ -140,6 +140,12 @@ def corpus : List (String × Expect) := [
     .rejected "unsupported: correlated subquery"),
   ("SELECT name FROM users WHERE id IN (SELECT id, age FROM users)", .rejected "typeError"),
   ("SELECT name FROM users WHERE name IN (SELECT id FROM users)", .rejected "typeError"),
+  -- derived tables (phase 8f): the subquery's columns, requalified by the alias
+  ("SELECT COUNT(*) FROM (SELECT name FROM users WHERE age > 25) AS t", .agree),
+  ("SELECT t.n FROM (SELECT name AS n, age FROM users) AS t WHERE t.age > 28", .agree),
+  ("SELECT u.name, t.total FROM users u JOIN (SELECT user_id, SUM(amount) AS total FROM orders GROUP BY user_id) AS t ON u.id = t.user_id", .agree),
+  ("SELECT name FROM (SELECT name, age FROM users UNION ALL SELECT name, price FROM products) AS t WHERE age > 30",
+    .sqlEquivBug "#324: set-operation rows keep their branch's column names (price, not age)"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

@@ -14,8 +14,8 @@ The typed core covers the following fragment:
 - **Scalar expressions:** int, text, bool and exact decimal values, `NULL`, unary and binary
   operators, `IN` over a list of literals, and `CASE`.
 - **Queries:** table, `WHERE` (`select`), `SELECT` list (`project`), inner join `ON θ`,
-  `UNION ALL` and `DISTINCT`; since phase 8, `GROUP BY` with aggregates (#313) and `ORDER BY`,
-  `LIMIT` and `OFFSET` (#318).
+  `UNION ALL` and `DISTINCT`; since phase 8, `GROUP BY` with aggregates (#313), `ORDER BY`,
+  `LIMIT` and `OFFSET` (#318), `INTERSECT`/`EXCEPT` (#322), and uncorrelated subqueries (#329).
 
 Side conditions quantify over rows that conform to a typing context `Γ`. Where possible they are
 decidable checks: `e.typeOf Γ = some τ`, `Expr.IsSafe`, `Expr.IsSafePredicate` and `q.typeOf = some Γ`.
@@ -184,9 +184,9 @@ statement checkers are phase 7 infrastructure.
 | `exists_nonempty_true` | not carried over | Outside the fragment (`EXISTS`); phase 8 |
 | `not_exists_nonempty_false` | not carried over | Outside the fragment (`EXISTS`); phase 8 |
 | `not_not_exists` | not carried over | Outside the fragment (`EXISTS`); phase 8 |
-| `in_empty_subquery_false` | not carried over | Outside the fragment (IN subquery); phase 8. The literal-list analogue is `Expr.Equiv.inList_nil` (`IsSafe e`) |
-| `not_in_empty_subquery_true` | not carried over | Outside the fragment (NOT IN subquery); phase 8 |
-| `scalar_subquery_empty_null` | not carried over | Outside the fragment (scalar subquery); phase 8 |
+| `in_empty_subquery_false` | not carried over | `IN` subqueries are in the fragment since phase 8f (`Query.attach`, `SubKind.inSub`); the law is not stated yet (examples in `SubqueryExamples`). The literal-list analogue is `Expr.Equiv.inList_nil` (`IsSafe e`) |
+| `not_in_empty_subquery_true` | not carried over | `NOT IN` subqueries are in the fragment since phase 8f; the law is not stated yet |
+| `scalar_subquery_empty_null` | not carried over | Scalar subqueries are in the fragment since phase 8f; an empty one gives `NULL` (`scalarOf`, `SubqueryExamples`), but the law is not stated yet |
 | `exists_as_count_gt_zero` | not carried over | Outside the fragment (`EXISTS` and `COUNT`); phase 8 |
 | `not_exists_as_count_eq_zero` | not carried over | Outside the fragment (`EXISTS` and `COUNT`); phase 8 |
 | `in_subquery_as_exists` | not carried over | Outside the fragment (IN subquery, `EXISTS`); phase 8 |
