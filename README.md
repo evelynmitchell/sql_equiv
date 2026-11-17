@@ -58,11 +58,14 @@ This repository could become a basis for SQL support in
   semantics in the typed style of
   [cslib-frontier](https://github.com/cslib-community/cslib-frontier)'s SQL development:
   positional rows, `Option` NULLs, strict errors, static typing with a soundness
-  theorem. Phases 1–3 (values, rows, typed expressions) are re-derived here. Queries and
-  laws then come from depending on cslib-frontier. The parser bridge, the
-  Postgres/DuckDB oracles, Spider and the features beyond the frontier are built on it
-  and offered upstream. See `docs/TYPED_CORE_PLAN.md` and
-  `docs/TYPED_CORE_DECISIONS.md`.
+  theorem. Phases 1–8 are done here: values, rows, typed expressions, queries and their
+  laws are re-derived from cslib-frontier, and then extended with a certified simplifier,
+  the parser bridge (`SqlBridge`), differential tests against SqlEquiv, DuckDB and sqlite,
+  and the features beyond the frontier: GROUP BY and aggregates, ORDER BY/LIMIT,
+  INTERSECT/EXCEPT, LIKE, exact AVG and division, and uncorrelated subqueries. 520 of the
+  564 Spider dev queries elaborate into it. The other 44 are sqlite type-affinity cases,
+  which a typed core rejects by design. Phase 9 retires the untyped semantics. These are
+  offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features
 

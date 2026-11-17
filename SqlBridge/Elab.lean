@@ -288,13 +288,16 @@ def lookupTable (name : String) : ElabM N.S.Table :=
   | some (_, t) => pure t
   | none => throw (.unknownTable name)
 
-def elabFrom : SqlEquiv.FromClause → ElabM (Elaborated N.S)
+/-- Elaborate a `FROM` clause. `sub` elaborates the body of a derived table `(SELECT …) AS alias`
+(phase 8f): its columns are requalified by the alias, as in `SqlEquiv` (#257). -/
+def elabFrom (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) :
+    SqlEquiv.FromClause → ElabM (Elaborated N.S)
   | .table ⟨name, al⟩ => do
     let t ← lookupTable N name
     pure ⟨N.S.arity t, .table t, requalify (N.fold (al.getD name)) (N.S.columns t)⟩
   | .join l kind r on => do
-    let ⟨n, ql, cl⟩ ← elabFrom l
-    let ⟨m, qr, cr⟩ ← elabFrom r
+    let ⟨n, ql, cl⟩ ← elabFrom sub l
+    let ⟨m, qr, cr⟩ ← elabFrom sub r
     let cols : Fin (n + m) → Column := Fin.append cl cr
     let θ ← match kind, on with
       | .inner, some e => elabExpr cols N.fold noHook e
@@ -305,7 +308,9 @@ def elabFrom : SqlEquiv.FromClause → ElabM (Elaborated N.S)
       | .right, _ => throw (.unsupported "RIGHT JOIN")
       | .full, _ => throw (.unsupported "FULL JOIN")
     pure ⟨n + m, .join θ ql qr, cols⟩
-  | .subquery _ _ => throw (.unsupported "derived table")
+  | .subquery sq al => do
+    let ⟨n, q, cols⟩ ← sub sq
+    pure ⟨n, q, requalify (N.fold al) cols⟩
 
 /-- The expressions and output columns of a `SELECT` list. -/
 def elabItems {n : ℕ} (cols : Fin n → Column) :
@@ -444,7 +449,9 @@ termination_by fuel
 def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.S) :=
   match stmt with
   | .mk distinct items (some from_) where_ groupBy having orderBy limitVal offsetVal => do
-    let ⟨n, q, cols⟩ ← elabFrom N from_
+    let ⟨n, q, cols⟩ ← elabFrom N (fun sq => match fuel with
+      | 0 => throw (.unsupported "subqueries nested too deeply")
+      | f + 1 => elabSubQuery f sq) from_
     let q : Query N.S n ← match where_ with
       | none => pure q
       | some w =>
