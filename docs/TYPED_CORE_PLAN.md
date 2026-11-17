@@ -43,7 +43,8 @@ CSLib through the frontier.
 | `SqlCoreTest/AggregateExamples.lean` | `GROUP BY` and aggregates checked by `decide` |
 | `SqlCoreTest/OrderByExamples.lean` | `ORDER BY`, `LIMIT` and `OFFSET` checked by `decide` |
 | `SqlCoreTest/SetOpExamples.lean` | `INTERSECT`, `EXCEPT` and `LIKE` checked by `decide` |
-| `SqlCoreTest/SqliteDiffTest.lean` | sqlite-dialect bare columns through the bridge, against sqlite |
+| `SqlCoreTest/SqliteDiffTest.lean` | sqlite-dialect bare columns and multi-row scalar subqueries through the bridge, against sqlite |
+| `SqlCoreTest/SubqueryExamples.lean` | uncorrelated subqueries (`Query.attach`) checked by `decide` |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -101,10 +102,15 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] 8d AVG and decimal `/`, exact (#326; decides #201 for the typed core)
     - [x] Core: exact `divDec`, `AggFn.avg`, typing and type soundness
     - [x] Elaboration, differential tests, Spider rate: **426/564 (75.5%)**, up from 405
-  - [ ] 8e Bare columns per dialect (registry T9)
+  - [x] 8e Bare columns per dialect (registry T9)
     - [x] Core: `AggCall.atExtreme`, typing and type soundness
     - [x] Bridge (`DialectConfig.bareColumns`), sqlite differential, Spider rate: **479/564
       (84.9%)**, up from 426
+  - [ ] 8f Uncorrelated subqueries in `WHERE` (#329)
+    - [x] Core: `Query.attach`, `SubKind`, `EvalError.cardinality`; soundness generalised to runtime
+      errors (`Query.eval_ok_or_runtimeError`); congruence; simplifier and checker
+    - [x] Bridge (nested, compound bodies, correlated rejected), differential tests, Spider rate:
+      **519/564 (92.0%)**, up from 479
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -518,6 +524,53 @@ Spider: 479/564 now elaborate. What remains:
 | Subqueries | 47 | |
 | Type errors | 37 | sqlite affinity: text columns compared with numbers, `AVG` of text, … |
 | Derived table | 1 | |
+
+**8f, uncorrelated subqueries (#329; design approved in session).** All 47 remaining Spider subquery
+failures were in `WHERE`:
+
+| Form | Queries |
+|---|---:|
+| `NOT IN (SELECT …)` | 25 |
+| Scalar | 20 |
+| `IN (SELECT …)` | 2 |
+
+**Core.** A subquery adds a column. `Query.attach kind sub q : Query S (n + 1)` evaluates `sub`
+(one column) once, first, then appends a column to every row of `q`:
+
+- `SubKind.scalar firstRow`: the subquery's value.
+  - No rows give `NULL`.
+  - Several rows give `EvalError.cardinality`, or the first row in the sqlite dialect (T17).
+- `SubKind.inSub neg e`: the truth of `e [NOT] IN (sub)`, through the three-valued `inList`.
+
+`Expr` and `Query` stay separate. The extra column is an `Expr.evalRow` of `col`s and one computed
+expression, so congruence reuses the projection lemmas:
+
+- every level in `q`;
+- the ordered level in `sub`.
+
+**Soundness.** A well-typed query now fails only with a *runtime* error (`EvalError.IsRuntime`:
+`divisionByZero` or `cardinality`), and only if it is not `divSafe`. An error-mode scalar subquery
+is never `divSafe`.
+
+**Bridge.**
+
+- The subqueries of a `WHERE` predicate are collected (`subsOf`), elaborated recursively and
+  attached. A hook maps each one to its column, and the extra columns are projected away.
+- Nesting is bounded by fuel (16 levels), so elaboration stays a total function.
+- Compound subquery bodies elaborate like compound queries.
+- A subquery that reads the outer row is `unsupported: correlated subquery`.
+
+**Tests.**
+
+- Corpus: 14 queries, against `SqlEquiv` and DuckDB.
+- sqlite: 2 multi-row scalar queries.
+- Kernel examples, including the `NOT IN (…, NULL)` rule and the strict multi-row error.
+- A mutation that swaps `IN` and `NOT IN` fails 7 queries against each oracle.
+
+The tests found a quiet `SqlEquiv` bug, #330: `NOT IN (subquery)` ignores NULLs.
+
+Spider: 519/564 now elaborate. The remaining classes are type errors under sqlite's affinity (44)
+and one derived table.
 
 ## Rules for every phase
 

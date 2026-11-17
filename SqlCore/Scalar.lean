@@ -51,10 +51,15 @@ inductive EvalError where
   | typeMismatch
   /-- A division or remainder by zero. -/
   | divisionByZero
-  /-- An operation outside the fragment: decimal division, whose result scale is
-  implementation-defined. -/
+  /-- An operation outside the fragment. -/
   | unsupported
+  /-- A scalar subquery returned more than one row (phase 8f; the standard, Postgres and DuckDB). -/
+  | cardinality
   deriving DecidableEq, Repr
+
+/-- The errors that a well-typed query can still raise: division by zero, and a scalar subquery
+with several rows. -/
+def EvalError.IsRuntime (e : EvalError) : Prop := e = .divisionByZero ∨ e = .cardinality
 
 @[simp] theorem ok_bind {ε α β : Type} (a : α) (f : α → Except ε β) :
     (Except.ok a >>= f) = f a := rfl

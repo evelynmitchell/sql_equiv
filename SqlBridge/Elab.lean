@@ -226,6 +226,40 @@ def colsOutsideAggsBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List Sql
 
 end
 
+mutual
+
+/-- The subqueries of an expression (phase 8f): scalar `(SELECT …)` and `e [NOT] IN (SELECT …)`
+nodes, outermost first, with their bodies; nodes inside a subquery are not visited. -/
+def subsOf : SqlEquiv.Expr → List (SqlEquiv.Expr × SqlEquiv.SubQuery)
+  | .subquery sq => [(.subquery sq, sq)]
+  | .inSubquery e neg sq => [(.inSubquery e neg sq, sq)]
+  | .binOp _ a b => subsOf a ++ subsOf b
+  | .unaryOp _ a => subsOf a
+  | .inList e _ vs => subsOf e ++ subsOfList vs
+  | .«case» bs els => subsOfBranches bs ++ subsOfOpt els
+  | .between a b c => subsOf a ++ subsOf b ++ subsOf c
+  | .func _ args => subsOfList args
+  | _ => []
+
+def subsOfList : List SqlEquiv.Expr → List (SqlEquiv.Expr × SqlEquiv.SubQuery)
+  | [] => []
+  | e :: es => subsOf e ++ subsOfList es
+
+def subsOfOpt : Option SqlEquiv.Expr → List (SqlEquiv.Expr × SqlEquiv.SubQuery)
+  | none => []
+  | some e => subsOf e
+
+def subsOfBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List (SqlEquiv.Expr × SqlEquiv.SubQuery)
+  | [] => []
+  | (c, a) :: bs => subsOf c ++ subsOf a ++ subsOfBranches bs
+
+end
+
+/-- Whether a branch of a compound subquery has `ORDER BY`, `LIMIT` or `OFFSET`. -/
+def subHasOrderOrLimit : SqlEquiv.SubQuery → Bool
+  | .simple (.mk _ _ _ _ _ _ o l off) => !o.isEmpty || l.isSome || off.isSome
+  | _ => false
+
 /-- Elaborate one aggregate call over the input scope. -/
 def elabAgg {n : ℕ} (cols : Fin n → Column) (fold : String → String) :
     SqlEquiv.Expr → ElabM (AggCall n)
@@ -384,12 +418,74 @@ def finishSelect {S : DbSchema} (fold : String → String) (sc : Scoped S) (dist
     | l, off => .limit l (off.getD 0) q
   pure ⟨k, q, fun i => (its[i]).2⟩
 
-def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
+mutual
+
+/-- Elaborate a subquery body. `fuel` bounds the nesting of subqueries, so that elaboration is a
+total function. -/
+def elabSubQuery (fuel : ℕ) (sq : SqlEquiv.SubQuery) : ElabM (Elaborated N.S) :=
+  match fuel, sq with
+  | 0, _ => throw (.unsupported "subqueries nested too deeply")
+  | f + 1, .simple s => elabSelectF f s
+  | f + 1, .compound l op r => do
+    if subHasOrderOrLimit l || subHasOrderOrLimit r then
+      throw (.unsupported "ORDER BY/LIMIT in a compound query")
+    let ⟨n, ql, cl⟩ ← elabSubQuery f l
+    let ⟨m, qr, _⟩ ← elabSubQuery f r
+    if h : m = n then
+      match op with
+      | .unionAll => pure ⟨n, .unionAll ql (h ▸ qr), cl⟩
+      | .union => pure ⟨n, .distinct (.unionAll ql (h ▸ qr)), cl⟩
+      | .intersect => pure ⟨n, .intersect ql (h ▸ qr), cl⟩
+      | .exceptOp => pure ⟨n, .difference ql (h ▸ qr), cl⟩
+    else throw (.typeError "set operation arity")
+termination_by fuel
+
+/-- Elaborate a `SELECT`; its subqueries are elaborated with less fuel. -/
+def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.S) :=
+  match stmt with
   | .mk distinct items (some from_) where_ groupBy having orderBy limitVal offsetVal => do
     let ⟨n, q, cols⟩ ← elabFrom N from_
     let q : Query N.S n ← match where_ with
       | none => pure q
-      | some w => do pure (Query.select (← elabExpr cols N.fold noHook w) q)
+      | some w =>
+        -- Uncorrelated subqueries (phase 8f, #329): each becomes a column of the input
+        -- (`Query.attach`), which the predicate reads; the extra columns are projected away.
+        let subs := (subsOf w).foldl
+          (fun acc x => if acc.any (·.1 == x.1) then acc else acc ++ [x]) []
+        if subs.isEmpty then do pure (Query.select (← elabExpr cols N.fold noHook w) q)
+        else do
+          let subsE ← match fuel with
+            | 0 => throw (.unsupported "subqueries nested too deeply")
+            | f + 1 => subs.mapM fun (node, sq) => do
+              let r ← match elabSubQuery f sq with
+                | .ok r => pure r
+                | .error (.unknownColumn qq c) =>
+                  match resolveColumn cols (qq.map N.fold) (N.fold c) with
+                  | .ok _ => throw (.unsupported "correlated subquery")
+                  | .error _ => throw (.unknownColumn qq c)
+                | .error err => throw err
+              if h : r.n = 1 then
+                pure (node, (h ▸ r.q : Query N.S 1), (r.cols ⟨0, by omega⟩).type)
+              else throw (.typeError "subquery arity")
+          let acc ← subsE.foldlM (init := (⟨n, q, cols⟩ : Elaborated N.S))
+            fun acc (node, sub, τ) => do
+              let (kind, ty) ← match node with
+                | .subquery _ =>
+                  pure (SubKind.scalar (N.config.scalarSubqueryRows == .firstRow), τ)
+                | .inSubquery e neg _ => do
+                  pure (SubKind.inSub neg (← elabExpr acc.cols N.fold noHook e), SqlType.bool)
+                | _ => throw (.unsupported "subquery")
+              pure ⟨acc.n + 1, .attach kind sub acc.q,
+                Fin.append acc.cols ![{ qualifier := none, name := "?subquery?", type := ty }]⟩
+          let m := acc.n
+          let hook : SqlEquiv.Expr → Option (Expr m) := fun e =>
+            match subs.findIdx? (·.1 == e) with
+            | some j => if h : n + j < m then some (.col ⟨n + j, h⟩) else none
+            | none => none
+          let p ← elabExpr acc.cols N.fold hook w
+          if h : n ≤ m then
+            pure (.project (fun i : Fin n => .col (Fin.castLE h i)) (.select p acc.q))
+          else throw (.typeError "subquery scope")
     let itemExprs := items.filterMap fun | .exprItem e _ => some e | .star _ => none
     let orderExprs := orderBy.map fun | .mk e _ _ => e
     let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having ++ aggsOfList orderExprs).eraseDups
@@ -455,6 +551,12 @@ def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
           pure (e', ({ qualifier := none, name, type := τ } : Column))
       finishSelect N.fold ⟨g + a, q', outExpr, its⟩ distinct orderBy limitVal offsetVal
   | .mk _ _ none _ _ _ _ _ _ => throw (.unsupported "SELECT without FROM")
+termination_by fuel
+
+end
+
+/-- Elaborate a `SELECT`, with subqueries nested at most 16 deep. -/
+def elabSelect (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.S) := elabSelectF N 16 stmt
 
 /-- Whether a branch of a compound query has `ORDER BY`, `LIMIT` or `OFFSET`. -/
 def hasOrderOrLimit : SqlEquiv.Query → Bool

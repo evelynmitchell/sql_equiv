@@ -343,6 +343,20 @@ theorem difference {q₁ q₁' q₂ q₂' : Query S n} (h₁ : Equiv ℓ q₁ q�
   exact (h₁ D hD).bind fun _ _ hrel₁ => (h₂ D hD).bind fun _ _ hrel₂ =>
     .some (hrel₁.setOp hrel₂ false)
 
+/-- An uncorrelated subquery column (phase 8f) is a congruence: at every level in the outer query,
+and at the ordered level in the subquery, whose value list it reads. -/
+theorem attach (kind : SubKind n) {sub sub' : Query S 1} (hs : Equiv .ordered sub sub')
+    {q q' : Query S n} (hq : Equiv ℓ q q') :
+    Equiv ℓ (Query.attach kind sub q) (Query.attach kind sub' q') := fun D hD => by
+  simp only [eval_attach, Except.toOption_bind]
+  refine (hs D hD).bind fun ss ss' hrel => ?_
+  have hss : ss = ss' := hrel
+  subst hss
+  generalize kind.extra (ss.map (· 0)) = ex
+  rcases ex with e | x
+  · exact .none
+  · exact (hq D hD).bind fun _ _ hrel => hrel.mapM_evalRow fun _ _ => rfl
+
 theorem distinct {q q' : Query S n} (h : Equiv ℓ q q') : Equiv ℓ (distinct q) (distinct q') :=
   fun D hD => by
     simp only [eval_distinct, Except.toOption_bind]

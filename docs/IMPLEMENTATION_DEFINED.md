@@ -139,6 +139,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
 | T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318); `SqlEquiv` sorts by a constant (#316) | `BridgeDiffTest`, `DuckdbDiffTest` |
 | T16 | `LIKE` letter case and wildcards, row 8 | Case-sensitive | Case-sensitive | Follows the parse: `BinOp.like false` (standard, duckdb, postgres) or `BinOp.like true` (sqlite: ASCII letters only). `%` any sequence, `_` one character, no `ESCAPE` | decided (#322); `SqlEquiv` ignores `_` and interior `%` (#323) | `SetOpExamples`, `ScalarDiffTest` (independent reference), engine sweep of 676 pairs (DuckDB and sqlite), `BridgeDiffTest` sqlite-dialect corpus |
+| T17 | Scalar subquery with several rows `WHERE x > (SELECT a FROM t)` | Error ("More than one row returned by a subquery used as an expression") | Error (same) | **Per dialect** (`DialectConfig.scalarSubqueryRows`, recorded on each `SubKind.scalar` node): standard, postgres, duckdb → `EvalError.cardinality` at evaluation (so such a node is never `divSafe`); sqlite → the first row's value. No rows is `NULL` everywhere. The subquery is evaluated strictly, once, even when the outer query has no rows, so the error is raised there too; DuckDB agrees, but Postgres is lazy (no error when the value is never needed: an empty outer query or a short-circuited `AND`), a known divergence in the error mode | decided (#329, phase 8f) | `SubqueryExamples`, `SqliteDiffTest` (first row, against sqlite) |
 
 ### Notes on individual rows
 
@@ -217,6 +218,8 @@ Rows that do not yet meet the testing requirements in §2:
 - **Row 5**: decided per dialect (#319), but `SqlEquiv`'s evaluator still
   ties an unselected key in the sqlite and duckdb dialects instead of using
   the first source row (#320); pinned in the meantime.
+- **`SqlEquiv` `NOT IN (subquery)` with NULLs** (#330): standard behaviour that
+  `SqlEquiv` gets wrong; the typed core is right (three-valued `inList`).
 - **`SqlEquiv` LIKE wildcards** (#323) and **set operations** (#324): standard
   behaviour that `SqlEquiv` gets wrong (not implementation-defined); recorded
   in both harnesses' KNOWN DIVERGENCES, and the typed core is right.
