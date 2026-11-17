@@ -76,7 +76,7 @@ def corpus : List (String × Expect) := [
   ("SELECT name, age FROM users ORDER BY age DESC", .agree),
   ("SELECT name FROM users ORDER BY department, name DESC", .agree),
   ("SELECT name AS n FROM users ORDER BY n DESC", .agree),
-  ("SELECT name, age FROM users ORDER BY 2", .sqlEquivBug "#316: positional ORDER BY"),
+  ("SELECT name, age FROM users ORDER BY 2", .agree),
   ("SELECT name FROM users ORDER BY age * -1", .agree),
   ("SELECT name FROM users WHERE age > 22 ORDER BY id LIMIT 2", .agree),
   ("SELECT name FROM users ORDER BY id LIMIT 2 OFFSET 1", .agree),
@@ -90,13 +90,15 @@ def corpus : List (String × Expect) := [
   -- no NULLS clause: the parser's dialect rule (standard: NULL largest, so first under DESC)
   ("SELECT name, staff FROM museum ORDER BY staff DESC, name", .agree),
   ("SELECT DISTINCT department FROM users ORDER BY department", .agree),
-  ("SELECT DISTINCT department FROM users ORDER BY 1 DESC LIMIT 2", .sqlEquivBug "#316: positional ORDER BY"),
+  ("SELECT DISTINCT department FROM users ORDER BY 1 DESC LIMIT 2", .agree),
   ("SELECT department, COUNT(*) FROM users GROUP BY department ORDER BY department", .agree),
   ("SELECT department FROM users GROUP BY department ORDER BY COUNT(*) DESC, department", .agree),
   ("SELECT department, SUM(age) AS total FROM users GROUP BY department ORDER BY total LIMIT 2", .agree),
   ("SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.amount DESC", .agree),
   ("SELECT name FROM users LIMIT 2", .agree),
-  ("SELECT name FROM users ORDER BY 3", .rejected "unsupported: ORDER BY position"),
+  -- `ORDER BY 3` with one item is now a parse error in SqlEquiv (#316), as in every engine; with a
+  -- `*` item the parser cannot count columns, so SqlEquiv still sorts by the constant there.
+  ("SELECT * FROM users ORDER BY 3", .sqlEquivBug "#316: positions after * are not resolved"),
   ("SELECT name FROM users ORDER BY name + 1", .rejected "typeError"),
   ("SELECT name, age AS name FROM users ORDER BY name", .rejected "ambiguousColumn"),
   -- #317: the parser binds a trailing ORDER BY/LIMIT to the last branch, so the bridge rejects it

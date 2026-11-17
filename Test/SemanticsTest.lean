@@ -517,6 +517,19 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #316: `ORDER BY k` sorts by the k-th SELECT item (sqlite, DuckDB and
+  -- Postgres); out of range is an error in all three.
+  testColumn "order_by_position"
+    "SELECT name, age FROM users ORDER BY 2" "name"
+    [.string "Eve", .string "Bob", .string "Dave", .string "Alice", .string "Carol"],
+  testColumn "order_by_position_desc_with_alias"
+    "SELECT age AS a, name FROM users ORDER BY 1 DESC" "name"
+    [.string "Carol", .string "Alice", .string "Dave", .string "Bob", .string "Eve"],
+  (match parse "SELECT name, age FROM users ORDER BY 3", parse "SELECT name FROM users ORDER BY 0" with
+   | .error e1, .error e2 =>
+     if (e1.splitOn "not in the select list").length == 2 && (e2.splitOn "not in the select list").length == 2
+     then .pass "order_by_position_out_of_range" else .fail "order_by_position_out_of_range" s!"{e1} / {e2}"
+   | _, _ => .fail "order_by_position_out_of_range" "parsed"),
   -- #315: NULLs group together whatever their static type tag (museum has an
   -- untyped and an int-typed NULL staff): one NULL group of 2, as every engine.
   testRowCount "group_by_typed_nulls_one_group"
