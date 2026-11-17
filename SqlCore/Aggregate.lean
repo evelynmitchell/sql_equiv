@@ -48,6 +48,11 @@ inductive AggCall (n : ℕ) where
   that is not selected (registry row 5, `firstRow`). Like every aggregate, it evaluates `e` on
   every row, so a failure on any row fails the group. -/
   | first (e : Expr n)
+  /-- The value of `e` on the first row of the group whose `key` is least (`pick = .lt`) or greatest
+  (`pick = .gt`), `NULL` keys skipped; on the last row if every key is `NULL`. It has no SQL syntax:
+  it is sqlite's value of a bare column next to one `MIN(key)` or `MAX(key)` (registry T9, the
+  sqlite dialect). Both expressions are evaluated on every row. -/
+  | atExtreme (pick : Ordering) (key e : Expr n)
   deriving DecidableEq, Repr
 
 namespace Value
@@ -91,6 +96,17 @@ def AggFn.apply : AggFn → List Value → Except EvalError Datum
   | .max, v :: vs => some <$> extremeFrom .gt v vs
   | .avg, v :: vs => do return some (← meanOf (← sumFrom v vs) (vs.length + 1))
 
+/-- The pair with the least (`pick = .lt`) or greatest (`pick = .gt`) non-`NULL` key, the first one
+on ties, starting from `best`. -/
+def bestAt (pick : Ordering) :
+    Option (Value × Datum) → List (Datum × Datum) → Except EvalError (Option (Value × Datum))
+  | best, [] => .ok best
+  | best, (none, _) :: ps => bestAt pick best ps
+  | none, (some k, v) :: ps => bestAt pick (some (k, v)) ps
+  | some (b, w), (some k, v) :: ps => do
+    let o ← Value.cmp k b
+    bestAt pick (if o = pick then some (k, v) else some (b, w)) ps
+
 namespace AggCall
 
 variable {n : ℕ}
@@ -105,6 +121,13 @@ def eval : AggCall n → List (Row n) → Except EvalError Datum
   | first e, rs => do
     let ds ← rs.mapM e.eval
     return ds.head?.getD none
+  | atExtreme pick key e, rs => do
+    let ks ← rs.mapM key.eval
+    let vs ← rs.mapM e.eval
+    let best ← bestAt pick none (ks.zip vs)
+    return match best with
+      | some (_, v) => v
+      | none => vs.getLast?.getD none
 
 /-- The result type of an aggregate call, if it is well-typed. -/
 def typeOf (Γ : Fin n → SqlType) : AggCall n → Option SqlType
@@ -127,12 +150,17 @@ def typeOf (Γ : Fin n → SqlType) : AggCall n → Option SqlType
     | some .text => some .text
     | _ => none
   | first e => e.typeOf Γ
+  | atExtreme _ key e =>
+    match key.typeOf Γ with
+    | some .int | some .decimal | some .text => e.typeOf Γ
+    | _ => none
 
 /-- Every division in the argument is by a nonzero numeric literal. -/
 def divSafe : AggCall n → Bool
   | countStar => true
   | call _ _ e => e.divSafe
   | first e => e.divSafe
+  | atExtreme _ key e => key.divSafe && e.divSafe
 
 /-! ### Soundness -/
 
@@ -202,6 +230,35 @@ private theorem apply_type {fn : AggFn} {τ σ : SqlType} {vs : List Value}
         exact ⟨some (.decimal (q / (vs.length + 1 : ℕ))),
           by simp [AggFn.apply, hw, meanOf, pure, Except.pure], rfl⟩
 
+private theorem bestAt_type {pick : Ordering} {κ σ : SqlType} :
+    ∀ (ps : List (Datum × Datum)) (best : Option (Value × Datum)),
+      (∀ p ∈ ps, p.1.HasType κ ∧ p.2.HasType σ) →
+      (∀ b w, best = some (b, w) → b.type = κ ∧ w.HasType σ) →
+      ∃ r, bestAt pick best ps = .ok r ∧ ∀ b w, r = some (b, w) → b.type = κ ∧ w.HasType σ
+  | [], best, _, hb => ⟨best, rfl, hb⟩
+  | (none, v) :: ps, best, hps, hb => by
+    obtain ⟨r, hr, hrt⟩ := bestAt_type (pick := pick) ps best (fun p hp => hps p (by simp [hp])) hb
+    exact ⟨r, by simpa [bestAt] using hr, hrt⟩
+  | (some k, v) :: ps, none, hps, _ => by
+    have ⟨hk, hv⟩ := hps (some k, v) (by simp)
+    have hk' : k.type = κ := by simpa using hk
+    obtain ⟨r, hr, hrt⟩ := bestAt_type (pick := pick) ps (some (k, v)) (fun p hp => hps p (by simp [hp]))
+      (fun b w h => by cases h; exact ⟨hk', hv⟩)
+    exact ⟨r, by simpa [bestAt] using hr, hrt⟩
+  | (some k, v) :: ps, some (b, w), hps, hb => by
+    have ⟨hk, hv⟩ := hps (some k, v) (by simp)
+    have hk' : k.type = κ := by simpa using hk
+    obtain ⟨hbt, hw⟩ := hb b w rfl
+    obtain ⟨o, ho⟩ := Value.exists_cmp_eq_ok_iff.mpr
+      (.inl (hk'.trans hbt.symm) : k.type.Comparable b.type)
+    obtain ⟨r, hr, hrt⟩ := bestAt_type (pick := pick) ps (if o = pick then some (k, v) else some (b, w))
+      (fun p hp => hps p (by simp [hp]))
+      (fun b' w' h => by
+        split_ifs at h <;> cases h
+        · exact ⟨hk', hv⟩
+        · exact ⟨hbt, hw⟩)
+    exact ⟨r, by simp [bestAt, ho, hr], hrt⟩
+
 /-- The argument of an aggregate over conforming rows: all values of its type, or a division by
 zero. -/
 private theorem mapM_eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
@@ -252,6 +309,26 @@ theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
       · trivial
       · exact hdτ d (by simp)
     · exact .inr ⟨by simp [eval, hds], hs⟩
+  | atExtreme pick key e =>
+    obtain ⟨κ, hk⟩ : ∃ κ, key.typeOf Γ = some κ := by
+      simp only [typeOf] at ha
+      split at ha <;> first | exact ⟨_, ‹_›⟩ | exact absurd ha (by simp)
+    have he : e.typeOf Γ = some σ := by
+      simp only [typeOf, hk] at ha
+      split at ha <;> first | exact ha | exact absurd ha (by simp)
+    rcases mapM_eval_ok_or_divisionByZero hrs hk with ⟨ks, hks, hkτ⟩ | ⟨hks, hs⟩
+    · rcases mapM_eval_ok_or_divisionByZero hrs he with ⟨vs, hvs, hvτ⟩ | ⟨hvs, hs⟩
+      · obtain ⟨r, hr, hrt⟩ := bestAt_type (pick := pick) (ks.zip vs) none
+          (fun p hp => ⟨hkτ _ (List.of_mem_zip hp).1, hvτ _ (List.of_mem_zip hp).2⟩)
+          (fun _ _ h => by cases h)
+        refine .inl ⟨_, by simp only [eval, hks, hvs, hr, ok_bind]; rfl, ?_⟩
+        rcases r with _ | ⟨b, w⟩
+        · rcases hl : vs.getLast? with _ | d
+          · trivial
+          · exact hvτ d (List.mem_of_getLast? hl)
+        · exact (hrt b w rfl).2
+      · exact .inr ⟨by simp [eval, hks, hvs], by simp [divSafe, hs]⟩
+    · exact .inr ⟨by simp [eval, hks], by simp [divSafe, hs]⟩
 
 /-- Evaluate a list of aggregate calls over a group: the row of results, or the first error. -/
 def evalAll : {a : ℕ} → (Fin a → AggCall n) → List (Row n) → Except EvalError (Row a)

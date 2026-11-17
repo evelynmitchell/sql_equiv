@@ -247,6 +247,19 @@ inductive DistinctOrderBy where
   | firstRow
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- A column that is neither grouped nor inside an aggregate, next to aggregates (`SELECT max(a), b
+    FROM t`; registry T9).
+    - `reject`: an error, as the standard, Postgres and DuckDB require.
+    - `sqlite`: accepted. With one `MIN`/`MAX` call, the bare column takes its value from the first
+      row where that aggregate's argument is extreme (the last row if every argument is NULL);
+      otherwise from the group's first row.
+    Used by the typed-core bridge (`SqlBridge`); `SqlEquiv`'s evaluator accepts bare columns in
+    every dialect and reads them from the group's first row. -/
+inductive BareColumns where
+  | reject
+  | sqlite
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- The dialect choices a MIN/MAX node records. -/
 structure MinMaxMode where
   mixed : MixedMinMax
@@ -341,6 +354,8 @@ structure DialectConfig where
   likeCase : LikeCase
   /-- DISTINCT with an unselected ORDER BY key (row 5) -/
   distinctOrderBy : DistinctOrderBy
+  /-- Bare columns next to aggregates (registry T9; typed-core bridge) -/
+  bareColumns : BareColumns := .reject
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -352,7 +367,7 @@ def Dialect.config : Dialect → DialectConfig
                    distinctOrderBy := .reject }
   | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass,
                    boolMinMax := .asInt,   likeCase := .asciiInsensitive,
-                   distinctOrderBy := .firstRow }
+                   distinctOrderBy := .firstRow, bareColumns := .sqlite }
   | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
                    boolMinMax := .ordered, likeCase := .sensitive,
                    distinctOrderBy := .firstRow }

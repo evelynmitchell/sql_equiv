@@ -48,6 +48,8 @@ structure NamedSchema where
   S : DbSchema
   tables : List (String × S.Table)
   fold : String → String := id
+  /-- The dialect's choices that elaboration follows; today only `bareColumns` (registry T9). -/
+  config : SqlEquiv.DialectConfig := SqlEquiv.Dialect.standard.config
 
 abbrev ElabM := Except ElabError
 
@@ -191,6 +193,36 @@ def aggsOfOpt : Option SqlEquiv.Expr → List SqlEquiv.Expr
 def aggsOfBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List SqlEquiv.Expr
   | [] => []
   | (c, a) :: bs => aggsOf c ++ aggsOf a ++ aggsOfBranches bs
+
+end
+
+mutual
+
+/-- The column references of an expression outside its aggregate calls: the candidates for bare
+columns (registry T9). -/
+def colsOutsideAggs : SqlEquiv.Expr → List SqlEquiv.ColumnRef
+  | .col c => [c]
+  | .agg _ _ _ => []
+  | .countStar => []
+  | .binOp _ a b => colsOutsideAggs a ++ colsOutsideAggs b
+  | .unaryOp _ a => colsOutsideAggs a
+  | .inList e _ vs => colsOutsideAggs e ++ colsOutsideAggsList vs
+  | .«case» bs els => colsOutsideAggsBranches bs ++ colsOutsideAggsOpt els
+  | .between a b c => colsOutsideAggs a ++ colsOutsideAggs b ++ colsOutsideAggs c
+  | .func _ args => colsOutsideAggsList args
+  | _ => []
+
+def colsOutsideAggsList : List SqlEquiv.Expr → List SqlEquiv.ColumnRef
+  | [] => []
+  | e :: es => colsOutsideAggs e ++ colsOutsideAggsList es
+
+def colsOutsideAggsOpt : Option SqlEquiv.Expr → List SqlEquiv.ColumnRef
+  | none => []
+  | some e => colsOutsideAggs e
+
+def colsOutsideAggsBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List SqlEquiv.ColumnRef
+  | [] => []
+  | (c, a) :: bs => colsOutsideAggs c ++ colsOutsideAggs a ++ colsOutsideAggsBranches bs
 
 end
 
@@ -369,6 +401,33 @@ def elabSelect : SqlEquiv.SelectStmt → ElabM (Elaborated N.S)
       -- GROUP BY and aggregates (phase 8a, #313)
       let keyList ← groupBy.mapM (elabExpr cols N.fold noHook)
       let aggList ← aggExprs.mapM (elabAgg cols N.fold)
+      -- Bare columns (registry T9): in the sqlite dialect, a column that is neither grouped nor
+      -- aggregated becomes an aggregate of its own: its value at the row of the one `MIN`/`MAX`
+      -- (`AggCall.atExtreme`), or on the group's first row (`AggCall.first`).
+      let bareRefs : List SqlEquiv.ColumnRef :=
+        if N.config.bareColumns == .sqlite then
+          (colsOutsideAggsList itemExprs ++ colsOutsideAggsOpt having ++
+            colsOutsideAggsList orderExprs).eraseDups
+        else []
+      let bare : List (SqlEquiv.ColumnRef × Expr n) := bareRefs.filterMap fun c =>
+        match elabExpr cols N.fold noHook (.col c) with
+        | .ok e' => if keyList.contains e' then none else some (c, e')
+        | .error _ => none
+      let extremes := aggExprs.filter fun
+        | .agg (.min _) _ _ | .agg (.max _) _ _ => true
+        | _ => false
+      if !bare.isEmpty then
+        if extremes.any (fun | .agg _ _ true => true | _ => false) then
+          throw (.unsupported "bare column with MIN/MAX DISTINCT (sqlite picks the last tie)")
+        if extremes.length > 1 then
+          throw (.unsupported "bare column with several MIN/MAX (sqlite: arbitrary row)")
+      let bareAggs ← bare.mapM fun (_, e') => do
+        match extremes with
+        | [.agg (.min _) (some k) _] => return AggCall.atExtreme .lt (← elabExpr cols N.fold noHook k) e'
+        | [.agg (.max _) (some k) _] => return AggCall.atExtreme .gt (← elabExpr cols N.fold noHook k) e'
+        | _ => pure (AggCall.first e')
+      let aggList := aggList ++ bareAggs
+      let aggExprs := aggExprs ++ bare.map fun (c, _) => SqlEquiv.Expr.col c
       let g := keyList.length
       let a := aggList.length
       let keys : Fin g → Expr n := fun i => keyList[i]
