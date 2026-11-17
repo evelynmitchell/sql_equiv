@@ -43,6 +43,7 @@ CSLib through the frontier.
 | `SqlCoreTest/AggregateExamples.lean` | `GROUP BY` and aggregates checked by `decide` |
 | `SqlCoreTest/OrderByExamples.lean` | `ORDER BY`, `LIMIT` and `OFFSET` checked by `decide` |
 | `SqlCoreTest/SetOpExamples.lean` | `INTERSECT`, `EXCEPT` and `LIKE` checked by `decide` |
+| `SqlCoreTest/SqliteDiffTest.lean` | sqlite-dialect bare columns through the bridge, against sqlite |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -97,9 +98,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Core: `Query.intersect`, `Query.difference`, `BinOp.like`, typing, type soundness,
       congruences at every level, laws, simplifier and checker
     - [x] Elaboration from SQL, differential tests, Spider rate: **405/564 (71.8%)**, up from 364
-  - [ ] 8d AVG and decimal `/`, exact (#326; decides #201 for the typed core)
+  - [x] 8d AVG and decimal `/`, exact (#326; decides #201 for the typed core)
     - [x] Core: exact `divDec`, `AggFn.avg`, typing and type soundness
     - [x] Elaboration, differential tests, Spider rate: **426/564 (75.5%)**, up from 405
+  - [ ] 8e Bare columns per dialect (registry T9)
+    - [x] Core: `AggCall.atExtreme`, typing and type soundness
+    - [x] Bridge (`DialectConfig.bareColumns`), sqlite differential, Spider rate: **479/564
+      (84.9%)**, up from 426
 - [ ] Phase 9: retire the untyped semantics (#298)
 
 ## Phase 1 differences
@@ -484,6 +489,35 @@ rationals.
   | Bare columns | 64 | T9 |
   | Subqueries | 47 | |
   | Type errors | 26 | sqlite affinity, now including six `AVG`s of text columns |
+
+**8e, bare columns (registry T9).** `SELECT max(a), b FROM t`: an error in the standard,
+Postgres and DuckDB, accepted by sqlite. It is a dialect choice, `DialectConfig.bareColumns`, which
+the bridge reads from `NamedSchema.config`. `spider_elab` uses the sqlite dialect.
+
+Rules for sqlite (3.45.1), all observed:
+
+- With one `MIN`/`MAX` call (in the select list, `HAVING` or `ORDER BY`), a bare column comes from
+  the first row where that call's argument is extreme. Ties keep the first row.
+- Otherwise it comes from the group's first row.
+- The bridge turns each bare column into an aggregate of its own: `AggCall.atExtreme pick key e`
+  (new, with typing and soundness) or `AggCall.first`.
+- Two cases stay `unsupported`, because sqlite's row is arbitrary there:
+  - several `MIN`/`MAX` calls;
+  - `MIN`/`MAX(DISTINCT …)`, which takes the last tie.
+- When every argument is NULL, the model takes the last row. sqlite's choice there depends on the
+  query plan: it takes the first row when its MAX optimisation answers `WHERE a IS NULL`. That case
+  is a documented divergence.
+
+`SqlCoreTest/SqliteDiffTest.lean` checks 15 queries against the `sqlite3` CLI and checks the
+rejections in both dialects. A mutation that swaps `MIN` and `MAX` fails 7 of them.
+
+Spider: 479/564 now elaborate. What remains:
+
+| Class | Queries | Note |
+|---|---:|---|
+| Subqueries | 47 | |
+| Type errors | 37 | sqlite affinity: text columns compared with numbers, `AVG` of text, … |
+| Derived table | 1 | |
 
 ## Rules for every phase
 

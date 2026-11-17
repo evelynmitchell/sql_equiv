@@ -58,6 +58,23 @@ example : (aggregate (g := 0) ![] ![.call .avg false (col 1)] emp).typeOf = some
   decide
 example : (aggregate (g := 0) ![] ![.call .avg false (col 0)] emp).typeOf = none := by decide
 
+-- Bare columns in the sqlite dialect (phase 8e, registry T9): the name on the row of the greatest
+-- department is the first such row, `ann` (ties keep the first); over the NULL department alone,
+-- every key is NULL and the last row is used.
+example : ((aggregate (g := 0) ![] ![.call .max false (col 1), .atExtreme .gt (col 1) (col 0)]
+    emp).eval D).toOption = some [![some (.int 1), some (.text "ann")]] := by decide +kernel
+example : ((aggregate (g := 0) ![] ![.atExtreme .lt (col 1) (col 0)]
+    (select (unary .isNull (col 1)) emp)).eval D).toOption = some [![some (.text "cy")]] := by
+  decide +kernel
+-- The least id in `dept` with its title: id 1 first occurs with `eng`.
+example : ((aggregate (g := 0) ![] ![.atExtreme .lt (col 0) (col 1)] dept).eval D).toOption =
+    some [![some (.text "eng")]] := by decide +kernel
+-- `atExtreme` has the type of its value; its key must be orderable like `MIN`/`MAX`.
+example : (aggregate (g := 0) ![] ![.atExtreme .gt (col 1) (col 0)] emp).typeOf = some ![.text] := by
+  decide
+example : (aggregate (g := 0) ![] ![.atExtreme .gt (lit (.bool true)) (col 0)] emp).typeOf = none := by
+  decide
+
 -- Typing: SUM over text and MAX over booleans are ill-typed (registry row 14).
 example : (aggregate (g := 0) ![] ![.call .sum false (col 0)] emp).typeOf = none := by decide
 example : (aggregate (g := 0) ![] ![.call .max false (lit (.bool true))] emp).typeOf = none := by

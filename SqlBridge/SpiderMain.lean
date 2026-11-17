@@ -22,7 +22,7 @@ def main (args : List String) : IO UInt32 := do
     let db ← IO.ofExcept (j.getObjValAs? String "db")
     let q ← IO.ofExcept (j.getObjValAs? String "query")
     let some ts := schemas[db]? | IO.println s!"err\tunknown database {db}"; continue
-    let N := schemaOf ts
+    let N := { schemaOf ts with config := SqlEquiv.Dialect.sqlite.config }
     match SqlEquiv.parse q (dialect := .sqlite) with
     | .error _ => IO.println "err\tparse error"
     | .ok stmt =>

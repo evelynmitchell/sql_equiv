@@ -5,7 +5,8 @@
   differential tests `SqlCoreTest.ScalarDiffTest` and `SqlCoreTest.ExprDiffTest`
   against `SqlEquiv`, and `SqlCoreTest.SchemaDiffTest` (the typed test
   database matches the original), `SqlCoreTest.BridgeDiffTest` (parsed SQL vs
-  `SqlEquiv`) and `SqlCoreTest.DuckdbDiffTest` (parsed SQL vs DuckDB).
+  `SqlEquiv`) and `SqlCoreTest.DuckdbDiffTest` (parsed SQL vs DuckDB) and `SqlCoreTest.SqliteDiffTest`
+  (bare columns vs sqlite).
 -/
 import SqlCoreTest.TrustBaseTest
 import SqlCoreTest.ScalarExamples
@@ -22,6 +23,7 @@ import SqlCoreTest.SetOpExamples
 import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest
+import SqlCoreTest.SqliteDiffTest
 
 def main : IO UInt32 := do
   IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema, expression and query examples)"
@@ -50,7 +52,16 @@ def main : IO UInt32 := do
       for line in dfails do
         IO.println s!"  FAIL: {line}"
       pure dfails
+  let sqliteFails ← match ← SqlCoreTest.SqliteDiff.run with
+    | none =>
+      IO.println "Bare columns through SqlBridge vs sqlite: SKIPPED (no sqlite3 binary)"
+      pure []
+    | some (sn, sfails) =>
+      IO.println s!"Bare columns through SqlBridge vs sqlite: {sn} queries, {sfails.length} failures"
+      for line in sfails do
+        IO.println s!"  FAIL: {line}"
+      pure sfails
   if bad.isEmpty && documented > 0 && schemaBad.isEmpty && ebad.isEmpty && en > 0 && bfails.isEmpty &&
-      duckFails.isEmpty then
+      duckFails.isEmpty && sqliteFails.isEmpty then
     return 0
   else return 1
