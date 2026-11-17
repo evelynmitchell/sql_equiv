@@ -368,8 +368,9 @@ and decimal `/` are exact rationals (#326, decided 2026-11-17; see 8d below).
   Postgres and DuckDB do; sqlite accepts it.
 
 The parsed-SQL corpus gained 15 aggregate queries. They agree with `SqlEquiv` and with DuckDB,
-except `GROUP BY staff` over two typed NULLs, where `SqlEquiv` splits the NULL group (#315). That
-query is checked against DuckDB instead.
+except `GROUP BY staff` over two typed NULLs, where `SqlEquiv` split the NULL group (#315). That
+query was checked against DuckDB instead, until #315 was fixed (grouping keys now erase the NULL
+type tag) and it agrees with `SqlEquiv` again.
 
 Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125), subqueries
 (47), bare columns (37, a sqlite extension), AVG (27), and INTERSECT/EXCEPT (37).

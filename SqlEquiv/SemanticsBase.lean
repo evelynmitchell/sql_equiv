@@ -353,6 +353,13 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   -- Everything else is a genuine error (type mismatch, missing value)
   | _, _, _ => none
 
+/-- A value with the static type of a NULL erased: all NULLs are one grouping key (#315). SQL
+    treats NULLs as "not distinct" when grouping, whatever expression produced them; the type tag
+    on `Value.null` is an artefact of the untyped representation. -/
+def Value.eraseNullType : Value → Value
+  | .null _ => .null none
+  | v => v
+
 /-- Apply a set operation to two result tables. Shared by top-level Query
     evaluation and SubQuery evaluation (#218); SQL set-op semantics:
     UNION dedups, UNION ALL concatenates, INTERSECT/EXCEPT filter by
