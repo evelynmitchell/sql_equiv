@@ -706,6 +706,21 @@ def reservedSelectKeywords : List String := [
 ]
 
 -- Expression parsing uses mutual recursion with SELECT parser (for subqueries)
+/-- `ORDER BY k`, with `k` an integer literal, sorts by the `k`-th SELECT item (1-based), as in
+    sqlite, DuckDB and Postgres (#316). The position is resolved here, at parse time, to that
+    item's expression, so evaluation and the equivalence theorems never see it. A position out of
+    range is an error, as in all three engines. With a `*` item the parser cannot count the
+    columns, so positions are left as written. -/
+def resolveOrderPositions (items : List SelectItem) (ob : List OrderByItem) :
+    Except String (List OrderByItem) :=
+  if items.any (fun | .star _ => true | _ => false) then .ok ob
+  else ob.mapM fun
+    | .mk (.lit (.int k)) dir nulls =>
+      match (if 1 ≤ k then items[(k - 1).toNat]? else none) with
+      | some (.exprItem e _) => .ok (.mk e dir nulls)
+      | _ => .error s!"ORDER BY position {k} is not in the select list (1 to {items.length})"
+    | o => .ok o
+
 /-- Whether an ORDER BY key of a `SELECT DISTINCT` appears in its select list
     (row 5): a position, an output name (alias or column name), or an
     expression equal to a selected one. The check is syntactic and lenient:
@@ -1516,6 +1531,11 @@ partial def parseSelectStmt : Parser SelectStmt := do
   let tEnd ← Parser.peek
   if isKeyword "OVER" tEnd then
     Parser.fail "OVER is only valid immediately after a window or aggregate function call"
+
+  -- #316: `ORDER BY k` names the k-th SELECT item.
+  let orderBy ← match resolveOrderPositions items orderBy with
+    | .ok ob => Parser.pure ob
+    | .error msg => Parser.fail msg
 
   -- Row 5: DISTINCT with an ORDER BY key outside the select list, per dialect.
   let dob ← fun st => .ok (st.config.distinctOrderBy, st)

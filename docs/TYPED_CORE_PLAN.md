@@ -417,7 +417,8 @@ Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125),
 
 The parsed-SQL corpus gained 28 queries (one pins the dialect's default NULL position, a documented DuckDB difference); queries with `ORDER BY` are compared as ordered lists on
 tie-free keys. They agree with DuckDB. They agree with `SqlEquiv` except two positional
-`ORDER BY` queries, where `SqlEquiv` sorts by a constant (#316).
+`ORDER BY` queries, where `SqlEquiv` sorted by a constant (#316). Since the #316 fix, which resolves
+positions at parse time, they agree too; only positions after a `*` item still differ.
 
 Spider: 364/564 now elaborate. The largest remaining classes:
 
