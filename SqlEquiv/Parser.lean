@@ -721,6 +721,31 @@ def resolveOrderPositions (items : List SelectItem) (ob : List OrderByItem) :
       | _ => .error s!"ORDER BY position {k} is not in the select list (1 to {items.length})"
     | o => .ok o
 
+/-- The SELECT items of the leftmost branch of a query: they name a compound query's output
+    columns (#317). -/
+def Query.leftmostItems : Query → List SelectItem
+  | .simple s => s.items
+  | .compound l _ _ => l.leftmostItems
+  | .withCTE _ q => q.leftmostItems
+  | .ordered q _ _ _ => q.leftmostItems
+
+/-- `ORDER BY k` after a compound query names its `k`-th output column (#317), which is named by
+    the leftmost branch: an alias, or a column's name. The key becomes that output name. An
+    out-of-range position, or one naming an unaliased expression, is an error; after a `*` item
+    positions are left as written (#316). -/
+def resolveCompoundPositions (items : List SelectItem) (ob : List OrderByItem) :
+    Except String (List OrderByItem) :=
+  if items.any (fun | .star _ => true | _ => false) then .ok ob
+  else ob.mapM fun
+    | .mk (.lit (.int k)) dir nulls =>
+      match (if 1 ≤ k then items[(k - 1).toNat]? else none) with
+      | some (.exprItem _ (some al)) => .ok (.mk (.col ⟨none, al⟩) dir nulls)
+      | some (.exprItem (.col c) none) => .ok (.mk (.col ⟨none, c.column⟩) dir nulls)
+      | some (.exprItem _ none) =>
+        .error s!"ORDER BY position {k} of a compound query names an expression without an alias"
+      | _ => .error s!"ORDER BY position {k} is not in the select list (1 to {items.length})"
+    | o => .ok o
+
 /-- Whether an ORDER BY key of a `SELECT DISTINCT` appears in its select list
     (row 5): a position, an output name (alias or column name), or an
     expression equal to a selected one. The check is syntactic and lenient:
@@ -747,7 +772,9 @@ mutual
 partial def parseSubQueryRest (left : SubQuery) : Parser SubQuery := do
   match ← parseSetOp with
   | some op =>
-    let right ← parseSelectStmt
+    -- A trailing ORDER BY/LIMIT belongs to the whole compound (#317); a subquery body has no
+    -- node for it, so it is left unparsed and the enclosing `)` reports it.
+    let right ← parseSelectStmtCore false
     parseSubQueryRest (.compound left op (.simple right))
   | none =>
     return left
@@ -1423,8 +1450,46 @@ partial def parseOrderByItem : Parser OrderByItem := do
       fun st => .ok (st.config.nullOrdering.resolve dir, st)
   return .mk expr dir nulls
 
-/-- Parse SELECT statement (implementation for mutual recursion) -/
-partial def parseSelectStmt : Parser SelectStmt := do
+/-- `ORDER BY …`, `LIMIT n` and `OFFSET n`, each optional. -/
+partial def parseOrderLimitTail : Parser (List OrderByItem × Option Nat × Option Nat) := do
+  -- ORDER BY clause (optional)
+  let t5 ← Parser.peek
+  let orderBy ←
+    if isKeyword "ORDER" t5 then
+      let _ ← Parser.advance
+      Parser.expect (.keyword "BY") "Expected BY after ORDER"
+      Parser.sepBy1 parseOrderByItem (Parser.expect .comma "")
+    else
+      Parser.pure []
+
+  -- LIMIT (optional)
+  let t6 ← Parser.peek
+  let limitVal ←
+    if isKeyword "LIMIT" t6 then
+      let _ ← Parser.advance
+      let t' ← Parser.advance
+      match t' with
+      | .intLit n => Parser.pure (some n.toNat)
+      | _ => Parser.fail "Expected integer after LIMIT"
+    else
+      Parser.pure none
+
+  -- OFFSET (optional)
+  let t7 ← Parser.peek
+  let offsetVal ←
+    if isKeyword "OFFSET" t7 then
+      let _ ← Parser.advance
+      let t' ← Parser.advance
+      match t' with
+      | .intLit n => Parser.pure (some n.toNat)
+      | _ => Parser.fail "Expected integer after OFFSET"
+    else
+      Parser.pure none
+  return (orderBy, limitVal, offsetVal)
+
+/-- Parse a SELECT statement, with its own `ORDER BY`/`LIMIT`/`OFFSET` when `tail` (#317: the
+    right-hand branches of a compound query leave them to the whole compound). -/
+partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
   Parser.expect (.keyword "SELECT") "Expected SELECT"
 
   -- DISTINCT?
@@ -1491,39 +1556,8 @@ partial def parseSelectStmt : Parser SelectStmt := do
     else
       Parser.pure none
 
-  -- ORDER BY clause (optional)
-  let t5 ← Parser.peek
-  let orderBy ←
-    if isKeyword "ORDER" t5 then
-      let _ ← Parser.advance
-      Parser.expect (.keyword "BY") "Expected BY after ORDER"
-      Parser.sepBy1 parseOrderByItem (Parser.expect .comma "")
-    else
-      Parser.pure []
-
-  -- LIMIT (optional)
-  let t6 ← Parser.peek
-  let limitVal ←
-    if isKeyword "LIMIT" t6 then
-      let _ ← Parser.advance
-      let t' ← Parser.advance
-      match t' with
-      | .intLit n => Parser.pure (some n.toNat)
-      | _ => Parser.fail "Expected integer after LIMIT"
-    else
-      Parser.pure none
-
-  -- OFFSET (optional)
-  let t7 ← Parser.peek
-  let offsetVal ←
-    if isKeyword "OFFSET" t7 then
-      let _ ← Parser.advance
-      let t' ← Parser.advance
-      match t' with
-      | .intLit n => Parser.pure (some n.toNat)
-      | _ => Parser.fail "Expected integer after OFFSET"
-    else
-      Parser.pure none
+  let (orderBy, limitVal, offsetVal) ←
+    if tail then parseOrderLimitTail else Parser.pure ([], none, none)
 
   -- Catch-all (#214): an unconsumed OVER after any clause (e.g. `FROM t
   -- OVER (...)`) must be a loud error — the top-level parser ignores
@@ -1544,6 +1578,9 @@ partial def parseSelectStmt : Parser SelectStmt := do
     Parser.fail "for SELECT DISTINCT, ORDER BY expressions must appear in select list"
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
+
+/-- Parse a SELECT statement with its own `ORDER BY`/`LIMIT`/`OFFSET`. -/
+partial def parseSelectStmt : Parser SelectStmt := parseSelectStmtCore true
 
 /-- Alias for parseSelectStmt (backwards compatibility) -/
 partial def parseSelect : Parser SelectStmt := parseSelectStmt
@@ -1572,15 +1609,30 @@ partial def parseSetOp : Parser (Option SetOp) := do
 partial def parseQueryRest (left : Query) : Parser Query := do
   match ← parseSetOp with
   | some op =>
-    let right ← parseSelectStmt
+    let right ← parseSelectStmtCore false
     parseQueryRest (.compound left op (.simple right))
   | none =>
-    return left
+    match left with
+    | .compound .. => do
+      -- #317: a trailing ORDER BY/LIMIT/OFFSET applies to the whole compound query.
+      let (ob, lim, off) ← parseOrderLimitTail
+      if ob.isEmpty && lim.isNone && off.isNone then return left
+      match resolveCompoundPositions left.leftmostItems ob with
+      | .ok ob => return .ordered left ob lim off
+      | .error msg => Parser.fail msg
+    | _ => return left
 
 /-- Parse a query body (SELECT with optional set operations, but not WITH) -/
 partial def parseQueryBody : Parser Query := do
   let first ← parseSelectStmt
-  parseQueryRest (.simple first)
+  let q ← parseQueryRest (.simple first)
+  -- #317: ORDER BY/LIMIT/OFFSET before a set operation is an error, as in sqlite and Postgres.
+  match q, first with
+  | .simple _, _ => return q
+  | _, .mk _ _ _ _ _ _ ob lim off =>
+    if !ob.isEmpty || lim.isSome || off.isSome then
+      Parser.fail "ORDER BY/LIMIT/OFFSET must come after the last branch of a compound query"
+    else return q
 
 /-- Parse a single CTE: name AS (query) -/
 partial def parseCTEDef (isRecursive : Bool) : Parser CTEDef := do

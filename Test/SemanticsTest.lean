@@ -517,6 +517,22 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #317: a trailing ORDER BY/LIMIT sorts and limits the whole compound query,
+  -- not its last branch (sqlite, DuckDB, Postgres: one row, Alice).
+  testColumn "compound_order_by_limit_whole"
+    "SELECT name FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY 1 LIMIT 1"
+    "name" [.string "Alice"],
+  testColumn "compound_order_by_name_desc"
+    "SELECT name FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY name DESC"
+    "name" [.string "Widget", .string "Gizmo", .string "Gadget", .string "Bob", .string "Alice"],
+  (match parse "SELECT name FROM users ORDER BY name UNION SELECT name FROM products",
+         parse "SELECT name FROM users UNION SELECT name FROM products ORDER BY 2",
+         parse "SELECT age + 1 FROM users UNION SELECT id FROM users ORDER BY 1" with
+   | .error e1, .error e2, .error e3 =>
+     if (e1.splitOn "after the last branch").length == 2 && (e2.splitOn "not in the select list").length == 2 &&
+        (e3.splitOn "without an alias").length == 2
+     then .pass "compound_order_by_errors" else .fail "compound_order_by_errors" s!"{e1} / {e2} / {e3}"
+   | _, _, _ => .fail "compound_order_by_errors" "parsed"),
   -- #316: `ORDER BY k` sorts by the k-th SELECT item (sqlite, DuckDB and
   -- Postgres); out of range is an error in all three.
   testColumn "order_by_position"

@@ -412,8 +412,10 @@ Spider: 268/564 now elaborate. The largest remaining classes are ORDER BY (125),
   projects the selected ones (T13).
 - `spider_elab` parses in the `sqlite` dialect, like the SqlEquiv Spider harness.
 - `LIMIT`/`OFFSET` wrap the result.
-- ORDER BY or LIMIT on a compound query is rejected. The parser binds them to the last branch
-  (#317).
+- ORDER BY or LIMIT on a compound query used to be rejected, because the parser bound them to
+  the last branch. Since #317 the parser builds `Query.ordered` over the whole compound. The
+  bridge elaborates its keys against the compound's output columns and wraps `orderBy` and
+  `limit` around it. A tail on an inner branch is a parse error, as in sqlite and Postgres.
 
 The parsed-SQL corpus gained 28 queries (one pins the dialect's default NULL position, a documented DuckDB difference); queries with `ORDER BY` are compared as ordered lists on
 tie-free keys. They agree with DuckDB. They agree with `SqlEquiv` except two positional

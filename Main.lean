@@ -174,6 +174,7 @@ where
   | .simple sel => prettySelect sel
   | .compound l op r => s!"{prettyQuery l} {op.toSql} {prettyQuery r}"
   | .withCTE ctes q => s!"WITH {ctes.length} CTEs: {prettyQuery q}"
+  | .ordered q ob _ _ => s!"{prettyQuery q} ORDER BY/LIMIT ({ob.length} keys)"
 
   prettySelect (sel : SelectStmt) : String :=
     let parts := [

@@ -232,6 +232,12 @@ partial def Query.toSql : Query → String
     let recursiveKw := if ctes.any (·.isRecursive) then "RECURSIVE " else ""
     let cteStrs := ctes.map fun cte => s!"{cte.name} AS ({Query.toSql cte.query})"
     s!"WITH {recursiveKw}{", ".intercalate cteStrs} {query.toSql}"
+  | .ordered query ob lim off =>
+    let parts := [query.toSql,
+      if ob.isEmpty then "" else s!"ORDER BY {", ".intercalate (ob.map OrderByItem.toSql)}",
+      match lim with | some n => s!"LIMIT {n}" | none => "",
+      match off with | some n => s!"OFFSET {n}" | none => ""]
+    " ".intercalate (parts.filter (· ≠ ""))
 
 end
 

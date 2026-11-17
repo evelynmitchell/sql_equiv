@@ -466,6 +466,8 @@ def evalQueryCore (db : Database)
           db' name
     ) db
     queryEval dbWithCtes query
+  -- `ORDER BY`/`LIMIT` over a compound query (#317) is delegated whole to `queryEval`.
+  | q@(.ordered ..) => queryEval db q
 
 -- ============================================================================
 -- Equational Theorems for evalQueryCore

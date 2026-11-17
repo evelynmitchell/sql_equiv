@@ -558,6 +558,9 @@ inductive Query where
   | simple : SelectStmt → Query
   | compound : Query → SetOp → Query → Query
   | withCTE : List CTEDef → Query → Query  -- WITH cte1 AS (...), cte2 AS (...) query
+  /-- `q ORDER BY … LIMIT … OFFSET …` over a whole compound query (#317): `A UNION B ORDER BY k`
+      sorts the union, not branch `B`. Keys refer to output columns. -/
+  | ordered : Query → List OrderByItem → Option Nat → Option Nat → Query
 end
 
 -- Accessor functions for CTEDef
@@ -658,6 +661,8 @@ mutual
     | .withCTE ctes q =>
       let cteStrs := ctes.map fun cte => s!"CTEDef.mk {repr cte.name} ({Query.toReprStr cte.query}) {cte.isRecursive}"
       s!"Query.withCTE [{", ".intercalate cteStrs}] ({q.toReprStr})"
+    | .ordered q ob l off =>
+      s!"Query.ordered ({q.toReprStr}) [{", ".intercalate (ob.map OrderByItem.toReprStr)}] {l} {off}"
 
   partial def InsertSource.toReprStr : InsertSource → String
     | .values rows =>
@@ -1053,6 +1058,14 @@ def Query.decEq (a b : Query) : Decidable (a = b) :=
         let _ : Decidable (a0 = b0) := CTEDef.decEqList a0 b0
       if h : a0 = b0 then by subst h; exact (let _ : Decidable (a1 = b1) := Query.decEq a1 b1
       if h : a1 = b1 then by subst h; exact (isTrue rfl) else isFalse (fun n => h (by injection n <;> assumption))) else isFalse (fun n => h (by injection n <;> assumption))
+    else isFalse (fun e => hb (by subst e; rfl))
+  | @Query.ordered a0 a1 a2 a3 =>
+    if hb : b.ctorIdx = 3 then
+      match b, hb with
+      | @Query.ordered b0 b1 b2 b3, _ =>
+        let _ : Decidable (a0 = b0) := Query.decEq a0 b0
+      if h : a0 = b0 then by subst h; exact (let _ : Decidable (a1 = b1) := OrderByItem.decEqList a1 b1
+      if h : a1 = b1 then by subst h; exact (if h : a2 = b2 then by subst h; exact (if h : a3 = b3 then by subst h; exact (isTrue rfl) else isFalse (fun n => h (by injection n <;> assumption))) else isFalse (fun n => h (by injection n <;> assumption))) else isFalse (fun n => h (by injection n <;> assumption))) else isFalse (fun n => h (by injection n <;> assumption))
     else isFalse (fun e => hb (by subst e; rfl))
 termination_by structural a
 end

@@ -208,6 +208,18 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   were restated beforehand in #269 so the fix needed no statement change.
   Spider is unchanged (553/564). Pinned by the `derived_*` unit tests and
   DiffSqlite/DiffDuckdb `derived:` cases.
+- **ORDER BY/LIMIT after a compound query sorted only its last branch**
+  (fixed, #317). The parser attached a trailing `ORDER BY`/`LIMIT`/`OFFSET` to
+  the last `SELECT`, so `A UNION ALL B ORDER BY 1 LIMIT 1` returned all of `A`
+  plus one row of `B`. The parser now builds `Query.ordered` over the whole
+  compound query (sqlite, DuckDB and Postgres agree). A tail on an inner branch is
+  a parse error, as in sqlite and Postgres. A position `k` resolves to the
+  name of the leftmost branch's `k`-th column; an unaliased expression there is a
+  parse error. Caveat: rows of a compound keep their branch's column names
+  (#324), so a key that names a column differently in another branch does not
+  find it in that branch's rows. Spider is unchanged: none of its queries has a
+  compound tail. Pinned by the `compound_order_by_*` unit tests and the
+  `BridgeDiffTest` and `DuckdbDiffTest` corpus.
 
 ---
 

@@ -573,7 +573,8 @@ def hasOrderOrLimit : SqlEquiv.Query → Bool
 def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
   | .simple s => elabSelect N s
   | .compound l op r => do
-    -- The parser attaches a trailing ORDER BY / LIMIT of a compound query to its last branch.
+    -- Since #317 the parser puts a trailing ORDER BY / LIMIT of a compound query in
+    -- `Query.ordered` and rejects one on an inner branch; this guards hand-built ASTs.
     if hasOrderOrLimit l || hasOrderOrLimit r then
       throw (.unsupported "ORDER BY/LIMIT in a compound query")
     let ⟨n, ql, cl⟩ ← elabQueryRaw l
@@ -587,6 +588,17 @@ def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
       | .exceptOp => pure ⟨n, .difference ql (h ▸ qr), cl⟩
     else throw (.typeError "set operation arity")
   | .withCTE _ _ => throw (.unsupported "WITH")
+  | .ordered q orderBy limitVal offsetVal => do
+    -- #317: ORDER BY/LIMIT over a whole compound query. Keys refer to its output columns (the
+    -- parser has already turned positions into output names).
+    let ⟨n, q, cols⟩ ← elabQueryRaw q
+    let its : List (Expr n × Column) := (List.finRange n).map fun i => (.col i, cols i)
+    let keyList ← orderBy.mapM (elabOrderKey N.fold (elabExpr cols N.fold noHook) its)
+    let k := keyList.length
+    let q : Query N.S n := if k = 0 then q else .orderBy (fun i : Fin k => keyList[i]) q
+    pure ⟨n, (match limitVal, offsetVal with
+      | none, none => q
+      | l, off => .limit l (off.getD 0) q), cols⟩
 
 /-- Elaborate a parsed query, and check that the result is well-typed. -/
 def elabQuery (q : SqlEquiv.Query) : ElabM (Elaborated N.S) := do

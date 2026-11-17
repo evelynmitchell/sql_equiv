@@ -198,7 +198,8 @@ block2 = [
     gen_type("CTEDef", [("mk", [P, "Query.decEq", P])]),
     gen_list("CTEDef.decEqList", "CTEDef", "CTEDef.decEq"),
     gen_type("Query", [("simple", [P]), ("compound", ["Query.decEq", P, "Query.decEq"]),
-                       ("withCTE", ["CTEDef.decEqList", "Query.decEq"])]),
+                       ("withCTE", ["CTEDef.decEqList", "Query.decEq"]),
+                       ("ordered", ["Query.decEq", "OrderByItem.decEqList", P, P])]),
 ]
 EXPR_TYPES = [
     ("WindowSpec", [("mk", [EL, OBL])]),
