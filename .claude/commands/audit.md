@@ -45,9 +45,16 @@ This is a thin adapter over the general **rewrite-audit** skill in
 
    When judging runtime/proof divergence, say which rewriter or decision
    procedure an override is on the path of. Since #278 no `partial def` is
-   on a proof or checker path: the 56 remaining are the parser, the SQL
-   pretty-printer and `toReprStr`. A new `partial def` reachable from the
-   evaluator, a rewriter or a checker is a finding. Since #278 there are no
+   on a proof or checker path: the remaining ones (58 on 17 Nov 2026) are
+   the parser, the SQL pretty-printer and `toReprStr`. The count grows with
+   the parser; what matters is where they are. Count declarations, not
+   comments that mention them:
+   ```bash
+   grep -rnE "^\s*(private |protected )?partial def" SqlEquiv/ | cut -d: -f1 | sort | uniq -c
+   ```
+   Every hit must be in `Parser.lean`, `Pretty.lean` or a `toReprStr`. A
+   `partial def` anywhere else, or reachable from the evaluator, a rewriter
+   or a checker, is a finding. Since #278 there are no
    overrides left in `SqlEquiv/`: the AST's `DecidableEq` is a total generated
    decider (`tools/gen_ast_deceq.py`), and `sql_equiv!` uses `decide +kernel`
    instead of `native_decide`. `Test/TrustBaseTest.lean` enforces both
