@@ -73,8 +73,14 @@ example : evalBinOp (.arith .add) (d (1/2)) (d (1/2)) = .ok (d 1) := by decide +
 example : evalBinOp (.arith .mod) (d (15/2)) (i 2) = .ok (d (3/2)) := by decide +kernel
 example : evalBinOp (.arith .mod) (d (-15/2)) (i 2) = .ok (d (-3/2)) := by decide +kernel
 example : evalBinOp (.arith .mod) (d (15/2)) (i (-2)) = .ok (d (3/2)) := by decide +kernel
--- `/` on decimals is unsupported (implementation-defined scale); zero divisor first
-example : evalBinOp (.arith .div) (d 1) (i 4) = .error .unsupported := by decide +kernel
+-- `/` with a decimal operand is exact (phase 8d, registry T3): `1.0 / 4` is `0.25`, and `1.0 / 3`
+-- is the rational `1/3`, where engines round
+example : evalBinOp (.arith .div) (d 1) (i 4) = .ok (d (1/4)) := by decide +kernel
+example : evalBinOp (.arith .div) (d 1) (i 3) = .ok (d (1/3)) := by decide +kernel
+example : evalBinOp (.arith .div) (i 7) (d (1/2)) = .ok (d 14) := by decide +kernel
+-- … and `(1.0 / 3) * 3` is exactly `1`
+example : (do evalBinOp (.arith .mul) (← evalBinOp (.arith .div) (d 1) (i 3)) (i 3)) = .ok (d 1) := by
+  decide +kernel
 example : evalBinOp (.arith .div) (d 1) (i 0) = .error .divisionByZero := by decide +kernel
 example : evalBinOp (.arith .div) null (d 0) = .ok null := by decide +kernel
 example : evalUnOp .neg (d (3/2)) = .ok (d (-3/2)) := by decide +kernel

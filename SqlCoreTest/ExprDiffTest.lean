@@ -7,8 +7,8 @@
   binary operator over atoms, then `AND`/`OR` over the boolean ones, `IN`
   lists and `CASE`. Only well-typed expressions (`Expr.typeOf`) are kept, so
   every disagreement is a difference of semantics, not of error handling.
-  Decimal `%`, a documented difference, is covered by `ScalarDiffTest`
-  and left out here. The other documented difference, boolean ordering
+  Decimal `%` and `/`, documented differences, are covered by
+  `ScalarDiffTest` (against independent references) and left out here. The other documented difference, boolean ordering
   (`TRUE < FALSE`), is counted separately (`hasBoolOrder`).
 -/
 import SqlCoreTest.SchemaDiffTest
@@ -49,14 +49,15 @@ def atoms (n : ℕ) : List (Expr n) :=
   [.lit (.int 0), .lit (.int 2), .lit (.int (-3)), .lit (.decimal (1/2)), .lit (.decimal 3),
    .lit (.text "Sales"), .lit (.text "Bolt"), .lit (.bool true), .null .int, .null .decimal]
 
-/-- Well-typed expressions over `Γ`, without decimal `%`. -/
+/-- Well-typed expressions over `Γ`, without decimal `%` and `/`. -/
 def exprs {n : ℕ} (Γ : Fin n → SqlType) : List (Expr n) :=
   let ok (e : Expr n) := (e.typeOf Γ).isSome
   let isDec (e : Expr n) := e.typeOf Γ == some .decimal
   let a := atoms n
   let bins := binOps.flatMap fun op => a.flatMap fun x => a.filterMap fun y =>
     let e := Expr.binary op x y
-    if ok e && !(op == .arith .mod && (isDec x || isDec y)) then some e else none
+    if ok e && !((op == .arith .mod || op == .arith .div) && (isDec x || isDec y)) then some e
+    else none
   let uns := unOps.flatMap fun op => a.filterMap fun x =>
     let e := Expr.unary op x
     if ok e then some e else none

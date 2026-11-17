@@ -236,8 +236,11 @@ example : ((select (binary (.cmp .eq) (col 1) (lit (.decimal 1))) emp).eval D).t
     some 3 := by
   decide +kernel
 
--- Decimal division is ill-typed, so a query using it is not safe.
-example : (project ![binary (.arith .div) (lit (.decimal 1)) (col 1)] emp).typeOf = none := by decide
+-- Decimal division is well-typed (phase 8d), but dividing by a column is not safe: the column may
+-- be zero.
+example : (project ![binary (.arith .div) (lit (.decimal 1)) (col 1)] emp).typeOf =
+    some ![.decimal] := by decide
+example : ¬ (project ![binary (.arith .div) (lit (.decimal 1)) (col 1)] emp).IsSafe := by decide
 
 end Decimal
 

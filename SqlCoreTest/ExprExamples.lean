@@ -28,10 +28,12 @@ example : (Expr.caseWhen (.binary (.cmp .gt) age (int 25)) (.lit (.text "old")) 
 example : (Expr.caseWhen (.lit (.bool true)) (int 1) (.binary (.arith .div) (int 1) (int 0))).eval
     alice = .ok (some (.int 1)) := by decide
 
--- Typing with promotion: `age + 0.5` is decimal, `age = 30.0` is boolean, `1.0 / 2` is ill-typed
+-- Typing with promotion: `age + 0.5` is decimal, `age = 30.0` is boolean, `1.0 / 2` is decimal
 example : (Expr.binary (.arith .add) age (dec (1/2))).typeOf Γu = some .decimal := by decide
 example : (Expr.binary (.cmp .eq) age (dec 30)).typeOf Γu = some .bool := by decide
-example : (Expr.binary (.arith .div) (dec 1) (int 2)).typeOf Γu = none := by decide
+example : (Expr.binary (.arith .div) (dec 1) (int 2)).typeOf Γu = some .decimal := by decide
+-- … and integer `/` stays integer (truncating, registry T1).
+example : (Expr.binary (.arith .div) age (int 2)).typeOf Γu = some .int := by decide
 example : (Expr.binary (.arith .mod) (dec 1) (int 2)).typeOf Γu = some .decimal := by decide
 example : (Expr.binary (.cmp .eq) age dept).typeOf Γu = none := by decide
 example : (Expr.inList age [some (.decimal 30), none]).typeOf Γu = some .bool := by decide

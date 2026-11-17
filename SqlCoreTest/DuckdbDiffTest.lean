@@ -47,12 +47,17 @@ def setupSql : String := String.join <| tables.map fun t =>
   s!"CREATE TABLE {tableName t} ({decl});\n" ++
     (if rows.isEmpty then "" else s!"INSERT INTO {tableName t} VALUES {", ".intercalate rows};\n")
 
-/-- A cell, normalised: numbers as exact rationals tagged int/decimal-free, so
-`3` and `3.00` compare equal only through the rational. -/
+/-- Numbers rounded to 12 decimal places: an exact rational average or quotient (`83/3`) and
+DuckDB's double (`27.666666666666668`) agree there. Finite decimals of the test data (at most 2
+places, and their exact sums and products) are unchanged. -/
+def round12 (q : ℚ) : ℚ := ((q * 10 ^ 12 + 1 / 2).floor : ℚ) / 10 ^ 12
+
+/-- A cell, normalised: numbers as rationals (rounded by `round12`), tagged so that `3` and
+`3.00` compare equal only through the rational. -/
 def normCell : Datum → String
   | none => "NULL"
-  | some (.int z) => s!"n:{(z : ℚ)}"
-  | some (.decimal q) => s!"n:{q}"
+  | some (.int z) => s!"n:{round12 z}"
+  | some (.decimal q) => s!"n:{round12 q}"
   | some (.text s) => s!"t:{s}"
   | some (.bool b) => s!"b:{b}"
 
@@ -62,12 +67,12 @@ def parseCell (s : String) : String :=
   if s == "NULL" then "NULL"
   else if s == "true" then "b:true" else if s == "false" then "b:false"
   else match s.toInt? with
-  | some z => s!"n:{(z : ℚ)}"
+  | some z => s!"n:{round12 z}"
   | none =>
     match s.splitOn "." with
     | [ip, fp] =>
       match (ip ++ fp).toInt?, fp.all Char.isDigit && !fp.isEmpty with
-      | some u, true => s!"n:{(u : ℚ) / (10 ^ fp.length : ℕ)}"
+      | some u, true => s!"n:{round12 ((u : ℚ) / (10 ^ fp.length : ℕ))}"
       | _, _ => s!"t:{s}"
     | _ => s!"t:{s}"
 
