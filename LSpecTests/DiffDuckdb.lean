@@ -26,6 +26,12 @@
     Gap (#320); the typed core agrees with DuckDB
     (`SqlCoreTest/DuckdbDiffTest.lean`). Do not add such a case here until
     #320 is fixed.
+  - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
+    treats them as literal characters; the engines (and the typed core)
+    match them as wildcards. Do not add such a case until #323 is fixed.
+  - INTERSECT/EXCEPT between columns of different names, or over typed and
+    untyped NULLs (#324): SqlEquiv compares rows by (name, value) pairs; the
+    engines (and the typed core) compare values positionally.
   - Number vs numeric-looking string (`age = '30'`, registry row 11): DuckDB
     converts the string; we treat it as a type error and drop the row (#254,
     decided: keep).

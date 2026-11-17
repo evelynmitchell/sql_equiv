@@ -197,6 +197,15 @@ theorem Rel.rowProduct {rs rs' : List (Row n)} {ss ss' : List (Row m)} (h : ℓ.
     (h' : ℓ.Rel ss ss') : ℓ.Rel (Row.product rs ss) (Row.product rs' ss') :=
   (h.product h').map _
 
+/-- `INTERSECT`/`EXCEPT` respect every level: the right input matters only through which rows it
+contains. -/
+theorem Rel.setOp {rs rs' ss ss' : List (Row n)} (h₁ : ℓ.Rel rs rs') (h₂ : ℓ.Rel ss ss')
+    (keep : Bool) : ℓ.Rel (Row.setOp keep rs ss) (Row.setOp keep rs' ss') := by
+  have hp : (fun r => decide (r ∈ ss) == keep) = (fun r => decide (r ∈ ss') == keep) :=
+    funext fun r => by rw [decide_eq_decide.mpr (h₂.mem_iff r)]
+  simp only [Row.setOp, hp]
+  exact (h₁.filter _).dedup
+
 /-- `WHERE` with predicates that agree on the members of related inputs gives related results,
 or fails on both. -/
 theorem Rel.filterRows {rs rs' : List (Row n)} (h : ℓ.Rel rs rs') {p p' : Expr n}
@@ -319,6 +328,20 @@ theorem unionAll {q₁ q₁' q₂ q₂' : Query S n} (h₁ : Equiv ℓ q₁ q₁
   simp only [eval_unionAll, Except.toOption_bind]
   exact (h₁ D hD).bind fun _ _ hrel₁ => (h₂ D hD).bind fun _ _ hrel₂ =>
     .some (hrel₁.append hrel₂)
+
+/-- `INTERSECT` is a congruence at every level (phase 8c). -/
+theorem intersect {q₁ q₁' q₂ q₂' : Query S n} (h₁ : Equiv ℓ q₁ q₁') (h₂ : Equiv ℓ q₂ q₂') :
+    Equiv ℓ (intersect q₁ q₂) (intersect q₁' q₂') := fun D hD => by
+  simp only [eval_intersect, Except.toOption_bind]
+  exact (h₁ D hD).bind fun _ _ hrel₁ => (h₂ D hD).bind fun _ _ hrel₂ =>
+    .some (hrel₁.setOp hrel₂ true)
+
+/-- `EXCEPT` is a congruence at every level (phase 8c). -/
+theorem difference {q₁ q₁' q₂ q₂' : Query S n} (h₁ : Equiv ℓ q₁ q₁') (h₂ : Equiv ℓ q₂ q₂') :
+    Equiv ℓ (difference q₁ q₂) (difference q₁' q₂') := fun D hD => by
+  simp only [eval_difference, Except.toOption_bind]
+  exact (h₁ D hD).bind fun _ _ hrel₁ => (h₂ D hD).bind fun _ _ hrel₂ =>
+    .some (hrel₁.setOp hrel₂ false)
 
 theorem distinct {q q' : Query S n} (h : Equiv ℓ q q') : Equiv ℓ (distinct q) (distinct q') :=
   fun D hD => by

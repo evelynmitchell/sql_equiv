@@ -571,6 +571,68 @@ theorem eval_limit_pages (p : ℕ) (q : Query S n) (D : Database S) :
   · rfl
   simp only [Except.ok_bind, pure, Except.pure, List.drop_zero, List.take_add]
 
+/-! ### `INTERSECT` and `EXCEPT` (phase 8c, #322) -/
+
+/-- `q EXCEPT q` is empty. -/
+theorem eval_difference_self (q : Query S n) (D : Database S) :
+    (difference q q).eval D = (q.eval D).map fun _ => [] := by
+  simp only [eval_difference]
+  rcases q.eval D with e | rs
+  · rfl
+  simp [Row.setOp, pure, Except.pure, List.filter_eq_nil_iff, Except.map]
+
+/-- `INTERSECT` with an empty right side is empty. -/
+theorem eval_intersect_of_eval_eq_nil {q₁ q₂ : Query S n} {D : Database S}
+    (h : q₂.eval D = .ok []) : (intersect q₁ q₂).eval D = (q₁.eval D).map fun _ => [] := by
+  simp only [eval_intersect, h]
+  rcases q₁.eval D with e | rs
+  · rfl
+  simp [Row.setOp, pure, Except.pure, List.filter_eq_nil_iff, Except.map]
+
+/-- `q INTERSECT q` is `SELECT DISTINCT * FROM q`. -/
+theorem intersect_self (q : Query S n) : Equiv .ordered (intersect q q) (distinct q) :=
+  Equiv.of_eval_eq fun D _ => by
+    simp only [eval_intersect, eval_distinct]
+    rcases q.eval D with e | rs
+    · rfl
+    simp only [Row.setOp, Except.ok_bind, pure, Except.pure, beq_true]
+    rw [List.filter_eq_self.mpr fun r hr => by simpa using hr]
+
+/-- `INTERSECT` is associative; both sides evaluate the inputs in the same order. -/
+theorem intersect_assoc (q₁ q₂ q₃ : Query S n) :
+    Equiv .ordered (intersect (intersect q₁ q₂) q₃) (intersect q₁ (intersect q₂ q₃)) :=
+  Equiv.of_eval_eq fun D _ => by
+    simp only [eval_intersect]
+    rcases q₁.eval D with e | rs
+    · rfl
+    rcases q₂.eval D with e | ss
+    · rfl
+    rcases q₃.eval D with e | ts
+    · rfl
+    simp only [Except.ok_bind, pure, Except.pure, Row.setOp, List.dedup_filter, List.dedup_idem,
+      List.filter_filter, List.mem_filter, List.mem_dedup]
+    congr 1
+    apply List.filter_congr
+    intro r _
+    by_cases h₂ : r ∈ ss <;> by_cases h₃ : r ∈ ts <;> simp [h₂, h₃]
+
+/-- `INTERSECT` is commutative as a bag: both results hold each common row once. -/
+theorem intersect_comm (q₁ q₂ : Query S n) :
+    Equiv .bag (intersect q₁ q₂) (intersect q₂ q₁) := fun D _ => by
+  simp only [eval_intersect]
+  rcases q₁.eval D with e | rs <;> rcases q₂.eval D with e' | ss
+  · exact .none
+  · exact .none
+  · exact .none
+  simp only [Except.ok_bind, pure, Except.pure, Except.toOption]
+  refine .some ((List.perm_ext_iff_of_nodup (List.nodup_dedup _) (List.nodup_dedup _)).mpr
+    fun r => ?_)
+  have h₁ := Row.mem_setOp (keep := true) (rs := rs) (ss := ss) (r := r)
+  have h₂ := Row.mem_setOp (keep := true) (rs := ss) (ss := rs) (r := r)
+  simp only [Row.setOp] at h₁ h₂
+  rw [h₁, h₂]
+  tauto
+
 end Query
 
 end SqlCore

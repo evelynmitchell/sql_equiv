@@ -25,6 +25,7 @@ def binOld : BinOp → SqlEquiv.BinOp
   | .cmp .eq => .eq | .cmp .ne => .ne | .cmp .lt => .lt | .cmp .le => .le
   | .cmp .gt => .gt | .cmp .ge => .ge
   | .and => .and | .or => .or | .concat => .concat
+  | .like false => .like | .like true => .likeCI
 
 /-- The same expression in `SqlEquiv`'s syntax, with columns by name. -/
 def toOldExpr {n : ℕ} (cols : Fin n → Column) : Expr n → SqlEquiv.Expr
@@ -40,7 +41,8 @@ def toOldExpr {n : ℕ} (cols : Fin n → Column) : Expr n → SqlEquiv.Expr
 def unOps : List UnOp := [.not, .neg, .isNull, .isNotNull]
 def binOps : List BinOp :=
   [.arith .add, .arith .sub, .arith .mul, .arith .div, .arith .mod,
-   .cmp .eq, .cmp .ne, .cmp .lt, .cmp .le, .cmp .gt, .cmp .ge, .and, .or, .concat]
+   .cmp .eq, .cmp .ne, .cmp .lt, .cmp .le, .cmp .gt, .cmp .ge, .and, .or, .concat,
+   .like false, .like true]
 
 def atoms (n : ℕ) : List (Expr n) :=
   (List.finRange n).map .col ++

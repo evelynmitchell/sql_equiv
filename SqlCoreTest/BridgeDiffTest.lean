@@ -102,6 +102,26 @@ def corpus : List (String × Expect) := [
   -- #317: the parser binds a trailing ORDER BY/LIMIT to the last branch, so the bridge rejects it
   ("SELECT name FROM users UNION ALL SELECT name FROM products ORDER BY 1",
     .rejected "unsupported: ORDER BY/LIMIT in a compound"),
+  -- INTERSECT, EXCEPT, LIKE (phase 8c, #322); set operations compared as bags
+  ("SELECT name FROM users INTERSECT SELECT name FROM products", .agree),
+  ("SELECT department FROM users INTERSECT SELECT department FROM users WHERE age > 26", .agree),
+  ("SELECT department FROM users EXCEPT SELECT department FROM users WHERE age > 29", .agree),
+  ("SELECT user_id FROM orders INTERSECT SELECT id FROM users", .sqlEquivBug "#324: set ops compare column names"),
+  ("SELECT id FROM users EXCEPT SELECT user_id FROM orders", .sqlEquivBug "#324: set ops compare column names"),
+  ("SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20", .sqlEquivBug "#324: typed NULLs are distinct"),
+  ("SELECT staff FROM museum EXCEPT SELECT staff FROM museum WHERE staff > 20", .sqlEquivBug "#324: typed NULLs are distinct"),
+  ("SELECT name FROM users UNION SELECT name FROM products EXCEPT SELECT name FROM users WHERE age > 26", .agree),
+  ("SELECT name FROM users WHERE name LIKE 'A%'", .agree),
+  ("SELECT name FROM users WHERE name LIKE '%e'", .agree),
+  ("SELECT name FROM users WHERE name LIKE '%a%'", .agree),
+  ("SELECT name FROM users WHERE name NOT LIKE '%a%'", .agree),
+  ("SELECT name FROM users WHERE name LIKE 'a%'", .agree),
+  ("SELECT name LIKE 'B%' FROM users", .agree),
+  ("SELECT name FROM museum WHERE name LIKE NULL", .agree),
+  ("SELECT name FROM users WHERE name LIKE '_ob'", .sqlEquivBug "#323: LIKE ignores _"),
+  ("SELECT name FROM users WHERE name LIKE 'C%l'", .sqlEquivBug "#323: LIKE ignores interior %"),
+  ("SELECT name FROM users WHERE age LIKE '3%'", .rejected "typeError"),
+  ("SELECT name FROM users INTERSECT SELECT age FROM users", .rejected "typeError"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
@@ -119,11 +139,9 @@ def corpus : List (String × Expect) := [
   ("SELECT name, COUNT(*) FROM users", .rejected "unsupported: column not in GROUP BY"),
   ("SELECT SUM(name) FROM users", .rejected "typeError"),
   ("SELECT * FROM users GROUP BY department", .rejected "unsupported: *"),
-  ("SELECT name FROM users WHERE name LIKE 'A%'", .rejected "unsupported: LIKE"),
   ("SELECT UPPER(name) FROM users", .rejected "unsupported: function"),
   ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id", .rejected "unsupported: LEFT JOIN"),
   ("SELECT name FROM users WHERE id IN (SELECT user_id FROM orders)", .rejected "unsupported: subquery"),
-  ("SELECT name FROM users INTERSECT SELECT name FROM products", .rejected "unsupported: INTERSECT"),
   ("SELECT id FROM users u JOIN orders o ON u.id = o.user_id", .rejected "ambiguousColumn"),
   ("SELECT nosuch FROM users", .rejected "unknownColumn"),
   ("SELECT NAME FROM users", .rejected "unknownColumn"),
@@ -151,9 +169,31 @@ def newRows (e : Elaborated schema) : Except EvalError (List (List SqlEquiv.Valu
   (e.q.eval db).map fun rs => rs.map fun r =>
     (List.finRange e.n).map fun i => (ScalarDiff.datumToOld (r i)).getD (.null none)
 
+/-- Queries parsed in the `sqlite` dialect: `LIKE` is ASCII case-insensitive there (registry
+row 8; `BinOp.like true`). The patterns stay within what `SqlEquiv`'s `likeCI` gets right (#323). -/
+def sqliteCorpus : List String := [
+  "SELECT name FROM users WHERE name LIKE 'a%'",
+  "SELECT name FROM users WHERE name LIKE '%E'",
+  "SELECT name FROM users WHERE name NOT LIKE '%A%'",
+  "SELECT name FROM users WHERE department LIKE 'sales'"
+]
+
 /-- (checked, failures) -/
 def run : Nat × List String := Id.run do
   let mut fails : List String := []
+  for sql in sqliteCorpus do
+    match SqlEquiv.parse sql (dialect := .sqlite) with
+    | .error err => fails := s!"{sql}: parse error {err}" :: fails
+    | .ok stmt =>
+      match elabStmt named stmt with
+      | .error err => fails := s!"{sql} (sqlite): did not elaborate: {err.category}" :: fails
+      | .ok e =>
+        let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
+        match newRows e, old with
+        | .ok nr, some or_ =>
+          if bag nr != bag or_ || nr.isEmpty then
+            fails := s!"{sql} (sqlite):\n    SqlCore {bag nr}\n    SqlEquiv {bag or_}" :: fails
+        | _, _ => fails := s!"{sql} (sqlite): evaluation failed" :: fails
   for (sql, ex) in corpus do
     match SqlEquiv.parse sql with
     | .error err => fails := s!"{sql}: parse error {err}" :: fails
@@ -175,6 +215,6 @@ def run : Nat × List String := Id.run do
             fails := s!"{sql}:\n    SqlCore {rowsFor sql nr}\n    SqlEquiv {rowsFor sql or_}" :: fails
         | .error err, _ => fails := s!"{sql}: SqlCore error {repr err}" :: fails
         | _, none => fails := s!"{sql}: SqlEquiv returned no table" :: fails
-  return (corpus.length, fails.reverse)
+  return (corpus.length + sqliteCorpus.length, fails.reverse)
 
 end SqlCoreTest.BridgeDiff

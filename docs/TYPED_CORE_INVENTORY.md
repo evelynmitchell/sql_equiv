@@ -139,14 +139,14 @@ statement checkers are phase 7 infrastructure.
 | SqlEquiv theorem | Category | Typed counterpart / reason |
 |---|---|---|
 | `union_all_length` | not carried over | Subsumed: `Query.eval_unionAll` with `List.length_append` |
-| `except_self_empty` | not carried over | Outside the fragment (`EXCEPT`); phase 8 |
-| `intersect_empty_right` | not carried over | Outside the fragment (`INTERSECT`); phase 8 |
-| `intersect_idempotent` | not carried over | Outside the fragment (`INTERSECT`); phase 8 |
+| `except_self_empty` | counterpart | `Query.eval_difference_self`: `q EXCEPT q` evaluates to no rows, or fails as `q` does |
+| `intersect_empty_right` | counterpart | `Query.eval_intersect_of_eval_eq_nil` (any empty right side, not only `WHERE FALSE`) |
+| `intersect_idempotent` | counterpart | `Query.intersect_self`: `q INTERSECT q` is `DISTINCT q` (ordered); `SqlEquiv`'s set-level form follows, since `DISTINCT q` is set-equivalent to `q` |
 | `union_all_comm` | counterpart | `Query.unionAll_comm` (bag) |
 | `union_comm` | not carried over | Outside the fragment (dedup `UNION`); phase 8. It is derivable as `DISTINCT` of `unionAll_comm` via `Query.Equiv.distinct` |
 | `union_assoc` | not carried over | Outside the fragment (dedup `UNION`); phase 8 |
-| `intersect_assoc` | not carried over | Outside the fragment (`INTERSECT`); phase 8 |
-| `intersect_comm` | not carried over | Outside the fragment (`INTERSECT`); phase 8 |
+| `intersect_assoc` | counterpart | `Query.intersect_assoc` (ordered: both sides evaluate the inputs in the same order) |
+| `intersect_comm` | counterpart | `Query.intersect_comm` (bag; `SqlEquiv` states it at the set level) |
 | `union_idempotent` | counterpart? | `Query.distinct_unionAll_self`, if `UNION` is read as `DISTINCT (UNION ALL)`. The typed law keeps the `DISTINCT` on the right (ordered), while `SqlEquiv` drops it (set level) |
 | `union_empty_right` | not carried over | Outside the fragment (dedup `UNION`); phase 8 |
 | `union_intersect_distrib` | not carried over | Outside the fragment (`UNION`/`INTERSECT`); phase 8 |
@@ -497,9 +497,9 @@ A grep for `theorem` finds 206 lines in this file. Four of them are doc-comment 
 
 | SqlEquiv theorem | Category | Typed counterpart / reason |
 |---|---|---|
-| `like_match_all` | not carried over | Outside the fragment (`LIKE`); phase 8. `isStringOrNull` would become `IsSafeText` |
-| `like_empty_pattern` | not carried over | Outside the fragment (`LIKE`); phase 8 |
-| `like_self` | not carried over | Outside the fragment (`LIKE`); phase 8 (`IsSafeText`) |
+| `like_match_all` | counterpart | `likeText_pct`: `s LIKE '%'` holds for every text; on datums `evalBinOp (.like ci)` unfolds to it, and `NULL` gives `NULL`. Typing replaces `isStringOrNull` |
+| `like_empty_pattern` | counterpart | `likeText_empty_iff`: `s LIKE ''` holds exactly for `''` |
+| `like_self` | counterpart | `likeText_self`: every text matches itself (`%` and `_` match themselves), in either case mode |
 | `concat_empty_left` | not carried over | Outside the fragment (string functions: `CONCAT`); phase 8. `isStringOrUntypedNullValued` would become `IsText` |
 | `concat_empty_right` | not carried over | Outside the fragment (`CONCAT`); phase 8 |
 | `length_concat` | not carried over | Outside the fragment (`LENGTH`, `CONCAT`); phase 8 |
@@ -534,9 +534,10 @@ All 53 private helpers are `not carried over`. They fall into these groups:
 - **Phase 8, `COALESCE`/`NULLIF` (2):** `coalesce_toUpper` and `nullif_toUpper`.
 - **Phase 8, aggregates (4):** `foldl_min_le_init`, `foldl_min_le_of_mem`, `init_le_foldl_max` and
   `le_foldl_max_of_mem`.
-- **Phase 8, `LIKE` (7):** `simpleLike_pct`, `simpleLike_empty`, `evalBinOp_like_empty_eq_eq`,
+- **Subsumed, `LIKE` (7):** `simpleLike_pct`, `simpleLike_empty`, `evalBinOp_like_empty_eq_eq`,
   `isPrefixOf_append`, `dropLast_isPrefixOf`, `stringContains_go_of_prefix_at` and
-  `simpleLike_self`.
+  `simpleLike_self`. They are helpers of `SqlEquiv`'s `simpleLike` (#323); the typed matcher's
+  laws are `likeText_pct`, `likeText_empty_iff` and `likeText_self` (phase 8c).
 - **Phase 8, string functions (18):**
   - `CONCAT`/`LENGTH`: `evalFunc_concat_empty_left`, `evalFunc_concat_empty_right` and
     `evalFunc_length_concat`.
@@ -587,18 +588,19 @@ One declaration in it states a law:
 |---|---|---|---|---|---|---|---|
 | `Defs.lean` | 21 | 17 | 0 | 0 | 0 | 3 | 1 |
 | `ExprAxioms.lean` | 60 | 28 | 0 | 9 | 11 | 8 | 4 |
-| `StatementAxioms.lean` (public) | 75 | 18 | 3 | 0 | 1 | 41 | 12 |
+| `StatementAxioms.lean` (public) | 75 | 23 | 3 | 0 | 1 | 36 | 12 |
 | `StatementAxioms.lean` (private) | 25 | 0 | 0 | 0 | 0 | 8 | 17 |
 | `SetBagLemmas.lean` | 11 | 0 | 0 | 0 | 0 | 0 | 11 |
 | `ValueLemmas.lean` (public) | 50 | 34 | 0 | 0 | 0 | 0 | 16 |
 | `ValueLemmas.lean` (private) | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
-| `Comparison.lean` (public) | 149 | 70 | 0 | 7 | 5 | 37 | 30 |
-| `Comparison.lean` (private) | 53 | 0 | 0 | 0 | 0 | 31 | 22 |
+| `Comparison.lean` (public) | 149 | 73 | 0 | 7 | 5 | 34 | 30 |
+| `Comparison.lean` (private) | 53 | 0 | 0 | 0 | 0 | 24 | 29 |
 | `Decidable.lean` (law rows only) | 1 | 0 | 0 | 0 | 1 | 0 | 0 |
-| **Total** | **446** | **167** | **3** | **16** | **18** | **128** | **114** |
+| **Total** | **446** | **175** | **3** | **16** | **18** | **113** | **121** |
 
 Phase 8b (#318) moved the 17 `ORDER BY`/`LIMIT`/`OFFSET` rows from phase 8 to counterparts in
-`SqlCore/QueryLaws.lean`.
+`SqlCore/QueryLaws.lean`. Phase 8c (#322) moved 5 `INTERSECT`/`EXCEPT` rows and 3 `LIKE` rows to
+counterparts, and the 7 private `simpleLike` helpers to "subsumed".
 
 The "other reason" column covers three kinds of row: subsumed by a general lemma or by a
 definition, artefact of the untyped representation (vacuous statements included), and false
@@ -614,7 +616,7 @@ The private helpers are counted from their grouped lists:
 | File | Phase 8 | Other |
 |---|---|---|
 | `StatementAxioms` | 8 (outer join, pagination) | 17 (lists, name lookup) |
-| `Comparison` | 31 (`COALESCE`, aggregates, `LIKE`, string functions) | 22 (subsumed comparison and `IN` helpers) |
+| `Comparison` | 24 (`COALESCE`, aggregates, string functions) | 29 (subsumed comparison, `IN` and `simpleLike` helpers) |
 | `ValueLemmas` | 0 | 1 (artefact) |
 
 The `ExprAxioms` laws for associativity, De Morgan, distributivity, idempotence and absorption

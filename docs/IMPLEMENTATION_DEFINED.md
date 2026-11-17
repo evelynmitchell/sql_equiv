@@ -138,6 +138,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts by the first source row's `b` | Error | Follows the parse (row 5): rejected in standard/postgres; in sqlite/duckdb, `aggregate` by the selected expressions with `AggCall.first b`, sorted, projected | decided (#319) | `OrderByExamples`; `DuckdbDiffTest` (duckdb-dialect corpus, ordered, agrees; also checked on sqlite) |
 | T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
 | T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318); `SqlEquiv` sorts by a constant (#316) | `BridgeDiffTest`, `DuckdbDiffTest` |
+| T16 | `LIKE` letter case and wildcards, row 8 | Case-sensitive | Case-sensitive | Follows the parse: `BinOp.like false` (standard, duckdb, postgres) or `BinOp.like true` (sqlite: ASCII letters only). `%` any sequence, `_` one character, no `ESCAPE` | decided (#322); `SqlEquiv` ignores `_` and interior `%` (#323) | `SetOpExamples`, `ScalarDiffTest` (independent reference), engine sweep of 676 pairs (DuckDB and sqlite), `BridgeDiffTest` sqlite-dialect corpus |
 
 ### Notes on individual rows
 
@@ -216,5 +217,8 @@ Rows that do not yet meet the testing requirements in §2:
 - **Row 5**: decided per dialect (#319), but `SqlEquiv`'s evaluator still
   ties an unselected key in the sqlite and duckdb dialects instead of using
   the first source row (#320); pinned in the meantime.
+- **`SqlEquiv` LIKE wildcards** (#323) and **set operations** (#324): standard
+  behaviour that `SqlEquiv` gets wrong (not implementation-defined); recorded
+  in both harnesses' KNOWN DIVERGENCES, and the typed core is right.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.

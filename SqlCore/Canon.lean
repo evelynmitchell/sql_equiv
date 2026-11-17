@@ -99,6 +99,7 @@ def BinOp.rank : BinOp → ℕ
   | .arith .add => 0 | .arith .sub => 1 | .arith .mul => 2 | .arith .div => 3
   | .arith .mod => 4 | .cmp .eq => 5 | .cmp .ne => 6 | .cmp .lt => 7 | .cmp .le => 8
   | .cmp .gt => 9 | .cmp .ge => 10 | .and => 11 | .or => 12 | .concat => 13
+  | .like false => 14 | .like true => 15
 
 def cmpValue : Value → Value → Ordering
   | .int a, .int b => compare a b
@@ -348,6 +349,8 @@ def canon : {n : ℕ} → Query S n → Query S n
   | _, aggregate keys aggs q => aggregate keys aggs q.canon
   | _, orderBy keys q => orderBy keys q.canon
   | _, limit c o q => limit c o q.canon
+  | _, intersect q₁ q₂ => intersect q₁.canon q₂.canon
+  | _, difference q₁ q₂ => difference q₁.canon q₂.canon
 
 theorem select_sexpr {p p' : Expr n} (hp : p.SEquiv p') (q : Query S n) :
     Equiv ℓ (select p q) (select p' q) := fun D _ => by
@@ -386,6 +389,8 @@ theorem equiv_canon (q : Query S n) : Equiv .ordered q q.canon := by
   | aggregate keys aggs q ih => exact Equiv.aggregate keys aggs ih
   | orderBy keys q ih => exact Equiv.orderBy keys ih
   | limit c o q ih => exact Equiv.limit c o ih
+  | intersect q₁ q₂ ih₁ ih₂ => exact Equiv.intersect ih₁ ih₂
+  | difference q₁ q₂ ih₁ ih₂ => exact Equiv.difference ih₁ ih₂
 
 end Query
 
