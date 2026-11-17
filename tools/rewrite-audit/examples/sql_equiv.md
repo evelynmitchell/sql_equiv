@@ -48,6 +48,22 @@ and the closed/ground `Decidable` instances missing from the config; they are
 now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
 (`decideGroundExprEquivInst`) is correctly labelled and unused for `≃ₑ`.
 
+**Re-audited 17 Nov 2026 (master `302d1c7`, after #336): 0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2791 theorems,
+  2397 definitions and 50 opaque constants; #315, #331 and #336 changed them since 14 Nov.
+- **Overrides:** none.
+- **`partial def`s:** 58 declarations: parser 40, `Pretty.lean` 8, `toReprStr` 10. The two
+  new ones are the #317 parser helpers `parseOrderLimitTail` and `parseSelectStmtCore`. None
+  is on-path.
+  - A plain `grep "partial def"` reports 66, because 8 comments mention the term. Count with
+    the anchored pattern in `.claude/commands/audit.md`.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **`Query.ordered` (#317):** `checkQueryEquiv` proves nothing about it beyond syntactic
+  equality.
+- **`certifiedRewrite`'s LIKE arm:** it still matches `.like` only, not the dialect operator
+  `likeCI`.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)

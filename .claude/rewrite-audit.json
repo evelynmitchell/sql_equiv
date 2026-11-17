@@ -86,7 +86,7 @@
     "checkEquivFull may conclude ≃ₑ from ground evaluation only when both sides are Expr.isClosed; Expr.isGround admits database-dependent EXISTS (SELECT 1 FROM t)",
     "Dialect operators (BinOp.likeCI, MIN/MAX modes) must not be matched by rewrite arms whose proofs cover only the default operator",
     "When a Value constructor is added, the LSpec generators and tools/definition_coverage_matrix.py must learn it in the same PR (CLAUDE.md)",
-    "No partial def, unsafe, implemented_by, extern or native_decide may be reachable from the evaluator, a rewriter, a tactic or a checker (#278); the 56 remaining partial defs are Parser.lean, Pretty.lean and toReprStr. Test/TrustBaseTest.lean (#assert_no_runtime_overrides) and Test/TacticTest.lean (#guard_msgs on axioms) enforce this",
+    "No partial def, unsafe, implemented_by, extern or native_decide may be reachable from the evaluator, a rewriter, a tactic or a checker (#278); the remaining partial defs (58 on 17 Nov 2026; count with grep -rnE \"^\\s*(private |protected )?partial def\" SqlEquiv/, since a plain grep also matches comments) are only in Parser.lean, Pretty.lean and toReprStr. Test/TrustBaseTest.lean (#assert_no_runtime_overrides) and Test/TacticTest.lean (#guard_msgs on axioms) enforce this",
     "The LSpec probe exercises only expression rewriters; statement checkers (checkSelectEquiv, checkQueryEquiv) rely on their kernel-checked proofs and the smoke tests in StatementChecker.lean"
   ]
 }
