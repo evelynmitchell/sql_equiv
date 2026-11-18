@@ -441,6 +441,11 @@ def runAllTests : IO TestSeq := do
       "SELECT * FROM users WHERE age > 25 AND department = 'Engineering'",
     diffTest "WHERE with OR (parsed)"
       "SELECT * FROM users WHERE age < 25 OR age > 30",
+    -- DISTINCT and GROUP BY: a typed and an untyped NULL are one value (#315)
+    diffTest "distinct null: typed and untyped NULL are one row"
+      "SELECT DISTINCT p FROM (SELECT price AS p FROM items WHERE price IS NULL UNION ALL SELECT NULL) AS t",
+    diffTest "distinct null: COUNT(DISTINCT) over numbers by value"
+      "SELECT COUNT(DISTINCT v) AS c FROM (SELECT 1 AS v UNION ALL SELECT 1.0) AS t",
     -- NOT IN (subquery) is three-valued (#330): a NULL in the subquery, or a NULL
     -- probe against a non-empty subquery, makes it unknown and drops the row
     diffTest "NOT IN null: NULL in the subquery"

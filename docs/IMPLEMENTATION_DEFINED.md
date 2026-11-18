@@ -135,7 +135,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T9 | Bare column with aggregates `SELECT max(a), b FROM t` | Error (binder) | Error | **Per dialect** (`DialectConfig.bareColumns`, applied by the bridge): standard, postgres, duckdb → `unsupported` at elaboration; sqlite → accepted. With one `MIN`/`MAX` call, `b` comes from the first row where its argument is extreme (`AggCall.atExtreme`; ties keep the first row); with none, from the group's first row (`AggCall.first`). Several `MIN`/`MAX` calls or `MIN`/`MAX(DISTINCT …)` stay `unsupported` (sqlite: arbitrary, and the last tie with `DISTINCT`). When every argument is NULL the last row is used. sqlite's choice there depends on the plan (last row with `GROUP BY` or a plain scan, first row when its MAX optimisation answers `WHERE a IS NULL`), so that case is a known divergence. `SqlEquiv`'s evaluator accepts bare columns in every dialect and reads the group's first row | decided (phase 8e) | `SqliteDiffTest` (15 queries vs sqlite, plus rejections in both dialects), `AggregateExamples`, `BridgeDiffTest` (standard-dialect rejection) |
 | T10 | `AVG` over integers (`AVG` of 1, 2; of 1, 1, 2), row 7 | `1.5`, `1.3333333333333333` (DOUBLE) | `1.5000…`, `1.3333333333333333` (numeric; `AVG(i) * 3` is `3.9999999999999999`) | Exact rational decimal: `3/2`, `4/3` (`AVG(i) * 3` is exactly `4`); `NULL` over no values; ill-typed over text | decided (#326, phase 8d) | `AggregateExamples`, `DuckdbDiffTest` (rounded to 12 places), `BridgeDiffTest` |
 | T11 | `MIN`/`MAX` over booleans, row 14 | Boolean result | Error | Ill-typed | decided (#313) | `AggregateExamples` |
-| T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` agrees since #315 (grouping keys erase the NULL type tag); set operations since #324 (rows compared by `Row.valueKey`); `DISTINCT` still compares tags (#315) | `AggregateExamples`, `DuckdbDiffTest`, `BridgeDiffTest`, unit pins `group_by_typed_nulls_*` |
+| T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` agrees since #315 (grouping keys erase the NULL type tag); set operations since #324 (rows compared by `Row.valueKey`); `DISTINCT` and aggregate `DISTINCT` too, and all of them compare by `Value.setKey` (NULLs equal, `1` = `1.0`) | `AggregateExamples`, `DuckdbDiffTest`, `BridgeDiffTest`, unit pins `group_by_typed_nulls_*`, `distinct_typed_nulls_one_row`, `*_numbers_by_value` |
 | T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts by the first source row's `b` | Error | Follows the parse (row 5): rejected in standard/postgres; in sqlite/duckdb, `aggregate` by the selected expressions with `AggCall.first b`, sorted, projected | decided (#319) | `OrderByExamples`; `DuckdbDiffTest` (duckdb-dialect corpus, ordered, agrees; also checked on sqlite) |
 | T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
 | T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318). `SqlEquiv` resolves positions at parse time since #316 (out of range is a parse error, as in sqlite, DuckDB and Postgres); after a `*` item it cannot count columns and still sorts by the constant | `BridgeDiffTest`, `DuckdbDiffTest`, unit pins `order_by_position*` |
@@ -209,6 +209,18 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   were restated beforehand in #269 so the fix needed no statement change.
   Spider is unchanged (553/564). Pinned by the `derived_*` unit tests and
   DiffSqlite/DiffDuckdb `derived:` cases.
+- **DISTINCT and GROUP BY told equal values apart** (fixed, #315). `GROUP BY`
+  split a typed and an untyped NULL into two groups. `SELECT DISTINCT` kept
+  them as two rows, and both kept `1` and `1.0` apart, as did
+  `COUNT(DISTINCT …)`. Every engine treats them as one value. Grouping keys,
+  `SELECT DISTINCT` rows and aggregate `DISTINCT` values are now compared by
+  `Value.setKey`, the comparison set operations use (#324): NULLs equal
+  whatever their tag, and numbers by value. Each key is kept once, as its first
+  row or value. `in_subquery_unnest_to_join` now holds on value keys (as a bag),
+  since its two DISTINCT forms may meet rows with equal keys in different
+  orders. Spider is unchanged. Pinned by `distinct_typed_nulls_one_row`,
+  `*_numbers_by_value`, `group_by_typed_nulls_*` and the `distinct null:`
+  engine cases.
 - **`[NOT] IN (subquery)` ignored NULLs** (fixed, #330). It was two-valued: a
   match gave TRUE and anything else FALSE, so `5 NOT IN (SELECT NULL)` kept the
   row. It is now three-valued, as the standard and `IN (list)` define it

@@ -545,7 +545,7 @@ def evalSelectGroupOrderKeys (db : Database)
     (orderBy : List OrderByItem) (filteredRows : Table) : Table :=
   let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
       List (List (Option Value) × Table) :=
-    let key := groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType)
+    let key := groupBy.map (fun e => (exprEval db row e).map Value.setKey)
     match groups.find? (fun (k, _) => k == key) with
     | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
     | none => groups ++ [(key, [row])]
@@ -647,7 +647,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
       -- Inline groupRowsByKey logic: rows.foldl addToGroups []
       let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
           List (List (Option Value) × Table) :=
-        let key := sel.groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType)
+        let key := sel.groupBy.map (fun e => (exprEval db row e).map Value.setKey)
         match groups.find? (fun (k, _) => k == key) with
         | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
         | none => groups ++ [(key, [row])]
@@ -685,7 +685,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
 
   -- 6. DISTINCT
   let distinctRows : Table := if sel.distinct then
-    projectedRows.eraseDups
+    dedupByKey Row.valueKey projectedRows
   else
     projectedRows
 
@@ -839,7 +839,7 @@ def evalSelectProjectDistinct (db : Database)
     if !groupBy.isEmpty then
       let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
           List (List (Option Value) × Table) :=
-        let key := groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType)
+        let key := groupBy.map (fun e => (exprEval db row e).map Value.setKey)
         match groups.find? (fun (k, _) => k == key) with
         | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
         | none => groups ++ [(key, [row])]
@@ -884,7 +884,7 @@ def evalSelectProjectDistinct (db : Database)
             exprEval db row cond == some (Value.bool true)
         | none => filteredRows
       havingRows.map fun row => items.flatMap (selectItemEval db row)
-  if distinct then projectedRows.eraseDups else projectedRows
+  if distinct then dedupByKey Row.valueKey projectedRows else projectedRows
 
 /-- In the plain and window paths without DISTINCT, projection is a 1:1 map
     over the HAVING-filtered rows, so lengths agree. This is the alignment
@@ -1053,7 +1053,7 @@ theorem evalSelectProjectDistinct_nil (db : Database)
       groupBy having [] = [] := by
   simp only [evalSelectProjectDistinct, List.foldl, List.filterMap_nil,
     hNoAgg, List.head?_nil, Option.getD]
-  cases having <;> simp [List.map_nil, List.eraseDups_nil]
+  cases having <;> simp [List.map_nil]
 
 /-- evalSelectCore decomposes into base rows + filter + afterFilter -/
 theorem evalSelectCore_eq_afterFilter (db : Database) (outerRow : Row)
@@ -1584,7 +1584,7 @@ theorem evalSelectCore_simple_project_where (db : Database) (outerRow : Row)
     hNoAgg, hNoWin]
 
 /-- For SELECT DISTINCT items FROM from_ (no WHERE, no GROUP BY, etc.),
-    the result is (projection of each base row).eraseDups -/
+    the result is (projection of each base row), deduplicated by value key (#315) -/
 theorem evalSelectCore_distinct_project (db : Database) (outerRow : Row)
     (fromEval : Database → FromClause → Table)
     (exprEval : Database → Row → Expr → Option Value)
@@ -1601,15 +1601,15 @@ theorem evalSelectCore_distinct_project (db : Database) (outerRow : Row)
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk true items (some from_) none [] none [] none none) =
-    (List.map (fun row => items.flatMap (selectItemEval db row))
-      (List.map (· ++ outerRow) (fromEval db from_))).eraseDups := by
+    dedupByKey Row.valueKey (List.map (fun row => items.flatMap (selectItemEval db row))
+      (List.map (· ++ outerRow) (fromEval db from_))) := by
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
     hNoAgg, hNoWin]
 
 /-- For SELECT DISTINCT items FROM from_ WHERE cond (no GROUP BY, etc.),
-    the result is (filter then project).eraseDups -/
+    the result is (filter then project), deduplicated by value key (#315) -/
 theorem evalSelectCore_distinct_project_where (db : Database) (outerRow : Row)
     (fromEval : Database → FromClause → Table)
     (exprEval : Database → Row → Expr → Option Value)
@@ -1626,9 +1626,9 @@ theorem evalSelectCore_distinct_project_where (db : Database) (outerRow : Row)
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
-    (List.map (fun row => items.flatMap (selectItemEval db row))
+    dedupByKey Row.valueKey (List.map (fun row => items.flatMap (selectItemEval db row))
       (List.filter (fun row => exprEval db row cond == some (Value.bool true))
-        (List.map (· ++ outerRow) (fromEval db from_)))).eraseDups := by
+        (List.map (· ++ outerRow) (fromEval db from_)))) := by
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
@@ -2197,7 +2197,7 @@ private def addToGroupsByKey
     (exprEval : Database → Row → Expr → Option Value) (db : Database) (groupBy : List Expr)
     (groups : List (List (Option Value) × Table)) (row : Row) :
     List (List (Option Value) × Table) :=
-  let key := groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType)
+  let key := groupBy.map (fun e => (exprEval db row e).map Value.setKey)
   match groups.find? (fun (k, _) => k == key) with
   | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
   | none => groups ++ [(key, [row])]
@@ -2206,14 +2206,14 @@ private def addToGroupsByKey
 private theorem foldl_addToGroupsByKey_const_key_acc
     (exprEval : Database → Row → Expr → Option Value) (db : Database) (groupBy : List Expr)
     (k0 : List (Option Value)) (acc : Table) (rows : Table)
-    (hk : ∀ row ∈ rows, groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType) = k0) :
+    (hk : ∀ row ∈ rows, groupBy.map (fun e => (exprEval db row e).map Value.setKey) = k0) :
     rows.foldl (addToGroupsByKey exprEval db groupBy) [(k0, acc)] = [(k0, acc ++ rows)] := by
   induction rows generalizing acc with
   | nil => simp [List.append_nil]
   | cons row rest ih =>
     simp only [List.foldl_cons]
-    have hk_row : groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType) = k0 := hk row List.mem_cons_self
-    have hk_rest : ∀ r ∈ rest, groupBy.map (fun e => (exprEval db r e).map Value.eraseNullType) = k0 :=
+    have hk_row : groupBy.map (fun e => (exprEval db row e).map Value.setKey) = k0 := hk row List.mem_cons_self
+    have hk_rest : ∀ r ∈ rest, groupBy.map (fun e => (exprEval db r e).map Value.setKey) = k0 :=
       fun r hr => hk r (List.mem_cons_of_mem row hr)
     simp only [addToGroupsByKey, hk_row]
     simp only [List.find?_cons, beq_self_eq_true, List.map_cons, List.map_nil,
@@ -2226,8 +2226,8 @@ private theorem foldl_addToGroupsByKey_const_key_acc
 private theorem foldl_addToGroupsByKey_const_key
     (exprEval : Database → Row → Expr → Option Value) (db : Database) (groupBy : List Expr)
     (k0 : List (Option Value)) (row : Row) (rest : Table)
-    (hk_row : groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType) = k0)
-    (hk_rest : ∀ r ∈ rest, groupBy.map (fun e => (exprEval db r e).map Value.eraseNullType) = k0) :
+    (hk_row : groupBy.map (fun e => (exprEval db row e).map Value.setKey) = k0)
+    (hk_rest : ∀ r ∈ rest, groupBy.map (fun e => (exprEval db r e).map Value.setKey) = k0) :
     (row :: rest).foldl (addToGroupsByKey exprEval db groupBy) [] = [(k0, row :: rest)] := by
   simp only [List.foldl_cons, addToGroupsByKey, hk_row, List.find?_nil, List.nil_append]
   rw [foldl_addToGroupsByKey_const_key_acc exprEval db groupBy k0 [row] rest hk_rest]
@@ -2278,7 +2278,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
   all_goals {
     split
     · -- GROUP BY branch
-      first | apply congrArg List.eraseDups | skip
+      first | apply congrArg (dedupByKey Row.valueKey) | skip
       cases fr1 with
       | nil =>
         cases fr2 with | nil => rfl | cons _ _ => simp at hlen
@@ -2287,7 +2287,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
         | nil => simp at hlen
         | cons row2 rest2 =>
           simp only [List.length_cons, Nat.add_right_cancel_iff] at hlen
-          have hk0 : ∀ row, groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType) = groupBy.map (fun e => (exprEval db row1 e).map Value.eraseNullType) :=
+          have hk0 : ∀ row, groupBy.map (fun e => (exprEval db row e).map Value.setKey) = groupBy.map (fun e => (exprEval db row1 e).map Value.setKey) :=
             fun row => List.map_congr_left fun e he => by rw [h_gb e he row row1]
           have hfold1 := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row1 rest1
             rfl (fun r _ => hk0 r)
@@ -2316,7 +2316,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
             · simp [hx]
     · split
       · -- Aggregate branch
-        first | apply congrArg List.eraseDups | skip
+        first | apply congrArg (dedupByKey Row.valueKey) | skip
         cases having with
         | none =>
           simp only [ite_true]
@@ -2334,7 +2334,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
           · rfl
       · split
         · -- Window branch
-          first | apply congrArg List.eraseDups | skip
+          first | apply congrArg (dedupByKey Row.valueKey) | skip
           cases having with
           | none =>
             rw [show fr2.length = fr1.length from hlen.symm]
@@ -2361,7 +2361,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
             simp only []
             rw [h_ew e alias_ hmem row1 row2 _ _ _ _ idx hlf]
         · -- Simple branch
-          first | apply congrArg List.eraseDups | skip
+          first | apply congrArg (dedupByKey Row.valueKey) | skip
           have hf_const : ∀ row, items.flatMap (selectItemEval db row) =
               items.flatMap (selectItemEval db (fr1.head?.getD [])) :=
             fun row => flatMap_congr_mem fun item hmem => h_si item hmem row _
@@ -2401,7 +2401,7 @@ theorem evalSelectProjectDistinct_grouped_length_le_one
   cases fr with
   | nil => simp
   | cons row rest =>
-    have hk0 : ∀ r, groupBy.map (fun e => (exprEval db r e).map Value.eraseNullType) = groupBy.map (fun e => (exprEval db row e).map Value.eraseNullType) :=
+    have hk0 : ∀ r, groupBy.map (fun e => (exprEval db r e).map Value.setKey) = groupBy.map (fun e => (exprEval db row e).map Value.setKey) :=
       fun r => List.map_congr_left fun e he => by rw [h_gb e he r row]
     have hfold := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row rest
       rfl (fun r _ => hk0 r)
@@ -2671,12 +2671,13 @@ theorem groupOrderKeyRow_congr (db : Database)
   intro x hx
   rw [h x.2 (List.of_mem_zip hx).2]
 
-/-- Equal group-by values give equal grouping keys, whose NULL tags are erased (#315). -/
+/-- Equal group-by values give equal grouping keys (`Value.setKey`: NULL tags erased and numbers
+    compared by value, #315). -/
 theorem groupKey_congr {db : Database} {eA eB : Database → Row → Expr → Option Value}
     {gb : List Expr} (hG : ∀ r, gb.map (eA db r) = gb.map (eB db r)) (r : Row) :
-    gb.map (fun e => (eA db r e).map Value.eraseNullType) =
-      gb.map (fun e => (eB db r e).map Value.eraseNullType) := by
-  have h := congrArg (List.map (Option.map Value.eraseNullType)) (hG r)
+    gb.map (fun e => (eA db r e).map Value.setKey) =
+      gb.map (fun e => (eB db r e).map Value.setKey) := by
+  have h := congrArg (List.map (Option.map Value.setKey)) (hG r)
   simpa [List.map_map, Function.comp_def] using h
 
 theorem evalSelectGroupOrderKeys_congr (db : Database)

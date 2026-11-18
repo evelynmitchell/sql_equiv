@@ -517,6 +517,16 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #315: DISTINCT, aggregate DISTINCT and GROUP BY compare values as set operations do
+  -- (`Value.setKey`): NULLs equal whatever their type tag, numbers by value
+  testColumn "distinct_typed_nulls_one_row" "SELECT DISTINCT staff FROM museum" "staff"
+    [.int 9, .int 17, .null none, .int 25, .int 41],
+  testExactRows "count_distinct_numbers_by_value"
+    "SELECT COUNT(DISTINCT v) FROM (SELECT 1 AS v UNION ALL SELECT 1.0) AS t" 1 (some (.int 1)),
+  testExactRows "distinct_numbers_by_value"
+    "SELECT DISTINCT v FROM (SELECT 1 AS v UNION ALL SELECT 1.0) AS t" 1 (some (.int 1)),
+  testExactRows "group_by_numbers_by_value"
+    "SELECT v, COUNT(*) FROM (SELECT 1 AS v UNION ALL SELECT 1.0) AS t GROUP BY v" 1 (some (.int 1)),
   -- #330: [NOT] IN (subquery) is three-valued (museum: staff 9, 17, NULL, 25, 41, NULL)
   testEmpty "not_in_subquery_null_in_subquery"
     "SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'm3')",

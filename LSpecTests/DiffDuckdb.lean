@@ -300,6 +300,11 @@ def runAllTests : IO TestSeq := do
       "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
     diffTest "derived: nested aliases"
       "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
+    -- DISTINCT and GROUP BY: a typed and an untyped NULL are one value (#315)
+    diffTest "distinct null: typed and untyped NULL are one row"
+      "SELECT DISTINCT p FROM (SELECT price AS p FROM items WHERE price IS NULL UNION ALL SELECT NULL) AS t",
+    diffTest "distinct null: COUNT(DISTINCT) over numbers by value"
+      "SELECT COUNT(DISTINCT v) AS c FROM (SELECT 1 AS v UNION ALL SELECT 1.0) AS t",
     -- NOT IN (subquery) is three-valued (#330): a NULL in the subquery, or a NULL
     -- probe against a non-empty subquery, makes it unknown and drops the row
     diffTest "NOT IN null: NULL in the subquery"
