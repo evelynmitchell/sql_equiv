@@ -453,7 +453,7 @@ def evalQueryCore (db : Database)
     (cteEval : Database → String → Query → Table) : Query → Table
   | .simple sel => selectEval db sel
   | .compound left op right =>
-    applySetOp op (queryEval db left) (queryEval db right)
+    applySetOp op (Query.outputNames? left) (queryEval db left) (queryEval db right)
   | .withCTE ctes query =>
     let dbWithCtes := ctes.foldl (fun db' cte =>
       fun name =>
@@ -487,7 +487,7 @@ theorem evalQueryCore_compound (db : Database)
     (cteEval : Database → String → Query → Table)
     (left right : Query) (op : SetOp) :
     evalQueryCore db selectEval queryEval cteEval (.compound left op right) =
-    applySetOp op (queryEval db left) (queryEval db right) := by
+    applySetOp op (Query.outputNames? left) (queryEval db left) (queryEval db right) := by
   rfl
 
 -- ============================================================================

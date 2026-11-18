@@ -329,22 +329,22 @@ theorem map_valueKey_renameTo (ns : Option (List String)) (r : Table) :
   intro row _
   exact Row.valueKey_renameTo ns row
 
-theorem map_valueKey_unionAll (l r : Table) :
-    (applySetOp .unionAll l r).map Row.valueKey = l.map Row.valueKey ++ r.map Row.valueKey := by
+theorem map_valueKey_unionAll (ns : Option (List String)) (l r : Table) :
+    (applySetOp .unionAll ns l r).map Row.valueKey = l.map Row.valueKey ++ r.map Row.valueKey := by
   simp only [applySetOp, List.map_append, map_valueKey_renameTo]
 
-theorem map_valueKey_union (l r : Table) :
-    (applySetOp .union l r).map Row.valueKey =
+theorem map_valueKey_union (ns : Option (List String)) (l r : Table) :
+    (applySetOp .union ns l r).map Row.valueKey =
       (l.map Row.valueKey ++ r.map Row.valueKey).eraseDups := by
   simp only [applySetOp, map_dedupByKey, List.map_append, map_valueKey_renameTo]
 
-theorem mem_valueKey_union {l r : Table} {k : List Value} :
-    k ∈ (applySetOp .union l r).map Row.valueKey ↔
+theorem mem_valueKey_union {ns : Option (List String)} {l r : Table} {k : List Value} :
+    k ∈ (applySetOp .union ns l r).map Row.valueKey ↔
       k ∈ l.map Row.valueKey ∨ k ∈ r.map Row.valueKey := by
   rw [map_valueKey_union, mem_eraseDups, List.mem_append]
 
-theorem mem_valueKey_intersect {l r : Table} {k : List Value} :
-    k ∈ (applySetOp .intersect l r).map Row.valueKey ↔
+theorem mem_valueKey_intersect {ns : Option (List String)} {l r : Table} {k : List Value} :
+    k ∈ (applySetOp .intersect ns l r).map Row.valueKey ↔
       k ∈ l.map Row.valueKey ∧ k ∈ r.map Row.valueKey := by
   rw [applySetOp, mem_map_dedupByKey]
   simp only [List.mem_map, List.mem_filter]
@@ -354,8 +354,8 @@ theorem mem_valueKey_intersect {l r : Table} {k : List Value} :
   · rintro ⟨⟨x, hx, rfl⟩, hr⟩
     exact ⟨x, ⟨hx, by simpa [List.mem_map] using hr⟩, rfl⟩
 
-theorem mem_valueKey_except {l r : Table} {k : List Value} :
-    k ∈ (applySetOp .exceptOp l r).map Row.valueKey ↔
+theorem mem_valueKey_except {ns : Option (List String)} {l r : Table} {k : List Value} :
+    k ∈ (applySetOp .exceptOp ns l r).map Row.valueKey ↔
       k ∈ l.map Row.valueKey ∧ k ∉ r.map Row.valueKey := by
   rw [applySetOp, mem_map_dedupByKey]
   simp only [List.mem_map, List.mem_filter]

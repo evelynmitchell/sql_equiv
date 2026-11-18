@@ -503,6 +503,11 @@ def SelectStmt.distinct : SelectStmt → Bool
 def SelectStmt.items : SelectStmt → List SelectItem
   | .mk _ i _ _ _ _ _ _ _ => i
 
+/-- The SELECT items of the leftmost branch of a subquery body (#340). -/
+def SubQuery.leftmostItems : SubQuery → List SelectItem
+  | .simple s => s.items
+  | .compound l _ _ => l.leftmostItems
+
 def SelectStmt.fromClause : SelectStmt → Option FromClause
   | .mk _ _ f _ _ _ _ _ _ => f
 
@@ -562,6 +567,14 @@ inductive Query where
       sorts the union, not branch `B`. Keys refer to output columns. -/
   | ordered : Query → List OrderByItem → Option Nat → Option Nat → Query
 end
+
+/-- The SELECT items of the leftmost branch of a query: they name a compound query's output
+    columns (#317, #340). -/
+def Query.leftmostItems : Query → List SelectItem
+  | .simple s => s.items
+  | .compound l _ _ => l.leftmostItems
+  | .withCTE _ q => q.leftmostItems
+  | .ordered q _ _ _ => q.leftmostItems
 
 -- Accessor functions for CTEDef
 def CTEDef.name : CTEDef → String
