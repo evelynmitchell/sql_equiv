@@ -1331,10 +1331,24 @@ theorem between_reflexive (e : Expr) :
 -- LIKE Pattern Theorems
 -- ============================================================================
 
-/-- simpleLike with "%" pattern always returns true -/
-private theorem simpleLike_pct (s : String) : simpleLike s "%" = true := by
-  unfold simpleLike
-  simp
+/-- With no state left, nothing is accepted. -/
+private theorem likePatRun_nil_states (s : List Char) : likePatRun [] s = false := by
+  induction s with
+  | nil => rfl
+  | cons c s ih => simpa [likePatRun] using ih
+
+/-- A run that holds the state `%` (and the empty suffix) accepts every text. -/
+private theorem likePatRun_of_pct :
+    ∀ (s : List Char) {sts : List (List Char)}, ['%'] ∈ sts → [] ∈ sts → likePatRun sts s = true
+  | [], _, _, h => by simpa [likePatRun] using h
+  | c :: s, sts, hp, _ => by
+    have hstep : likePatStep c ['%'] = [['%'], []] := rfl
+    refine likePatRun_of_pct s ?_ ?_ <;>
+      simp only [mem_eraseDups, List.mem_flatMap] <;> exact ⟨['%'], hp, by simp [hstep]⟩
+
+/-- LIKE with the pattern "%" always matches (#323: ported from `SqlCore.likeText_pct`) -/
+private theorem likeMatch_pct (s : String) : likeMatch s "%" = true :=
+  likePatRun_of_pct _ (by simp [likePatClosure]) (by simp [likePatClosure])
 
 /-- x LIKE '%' = TRUE for non-null string x (matches all strings);
     for NULL x, the result is NULL.
@@ -1358,7 +1372,7 @@ theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
         some (.bool false) := by
       rw [evalExprWithDb_unaryOp, hs]; rfl
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
-    simp [evalBinOp, simpleLike_pct]
+    simp [evalBinOp, likeMatch_pct]
   · -- Null case: e evaluates to some (.null n)
     rw [hn]
     have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =
@@ -1367,11 +1381,17 @@ theorem like_match_all (e : Expr) (h : e.isStringOrNull) :
     rw [evalCase_cons_true _ _ _ _ _ _ hcond, evalExprWithDb_lit]
     rfl
 
-/-- simpleLike with empty pattern reduces to string equality -/
-private theorem simpleLike_empty (s : String) : simpleLike s "" = (s == "") := by
-  unfold simpleLike
-  have h1 : ("" == "%") = false := by decide +kernel
-  simp [h1]
+/-- LIKE with the empty pattern reduces to string equality -/
+private theorem likeMatch_empty (s : String) : likeMatch s "" = (s == "") := by
+  have he : ("" : String).toList = [] := String.toList_eq_nil_iff.mpr rfl
+  rcases hs : s.toList with _ | ⟨c, cs⟩
+  · have : s = "" := String.toList_eq_nil_iff.mp hs
+    subst this; rfl
+  · have hne : s ≠ "" := fun h => by simp [h] at hs
+    have hcl : likePatClosure ([] : List Char) = [[]] := rfl
+    have hstep : (([[]] : List (List Char)).flatMap (likePatStep c)).eraseDups = [] := rfl
+    simp only [likeMatch, hs, he, hcl, likePatRun, hstep, likePatRun_nil_states]
+    simp [hne]
 
 /-- Value-level: LIKE '' behaves the same as = '' for all Option Value -/
 private theorem evalBinOp_like_empty_eq_eq (v : Option Value) :
@@ -1383,7 +1403,7 @@ private theorem evalBinOp_like_empty_eq_eq (v : Option Value) :
   | some (.decimal _ _) => rfl
   | some (.bool _) => rfl
   | some (.string s) =>
-    simp only [evalBinOp, Value.eq, Option.map, simpleLike_empty]
+    simp only [evalBinOp, Value.eq, Option.map, likeMatch_empty]
 
 /-- x LIKE '' = (x = '') (empty pattern matches empty string) -/
 theorem like_empty_pattern (e : Expr) :
@@ -1394,116 +1414,38 @@ theorem like_empty_pattern (e : Expr) :
   simp only [evalExprWithDb_lit]
   exact evalBinOp_like_empty_eq_eq _
 
-/-- A list is always a prefix of itself concatenated with anything -/
-private theorem isPrefixOf_append (l suffix : List Char) :
-    l.isPrefixOf (l ++ suffix) = true := by
-  induction l with
-  | nil => simp
-  | cons a as ih =>
-    simp only [List.cons_append, List.isPrefixOf_cons₂, BEq.refl, Bool.true_and, ih]
+/-- Every pattern is in its own closure. -/
+private theorem mem_likePatClosure_self (p : List Char) : p ∈ likePatClosure p := by
+  unfold likePatClosure
+  split <;> simp
 
-/-- dropLast is a prefix of the original list -/
-private theorem dropLast_isPrefixOf (l : List Char) (h : l ≠ []) :
-    l.dropLast.isPrefixOf l = true := by
-  have htmp := isPrefixOf_append l.dropLast [l.getLast h]
-  rwa [List.dropLast_concat_getLast h] at htmp
+/-- Reading a pattern's first character leads to the rest of the pattern: `%` reads `%`, `_` reads
+    `_`, and any other character itself. -/
+private theorem mem_likePatStep_self (c : Char) (p : List Char) : p ∈ likePatStep c (c :: p) := by
+  by_cases h₁ : c = '%'
+  · subst h₁
+    exact List.mem_cons_of_mem _ (mem_likePatClosure_self p)
+  by_cases h₂ : c = '_'
+  · subst h₂
+    exact mem_likePatClosure_self p
+  have hs : likePatStep c (c :: p) = if c == c then likePatClosure p else [] := by
+    unfold likePatStep
+    split <;> simp_all
+  simp [hs, mem_likePatClosure_self]
 
-/-- stringContains.go finds needle when it appears as a prefix at some offset -/
-private theorem stringContains_go_of_prefix_at
-    (pfx : List Char) {suffix needle : List Char}
-    (hp : needle.isPrefixOf suffix = true) (hne : suffix ≠ []) :
-    stringContains.go (pfx ++ suffix) needle = true := by
-  induction pfx with
-  | nil =>
-    simp only [List.nil_append]
-    cases suffix with
-    | nil => exact absurd rfl hne
-    | cons s ss => simp only [stringContains.go, hp, ite_true]
-  | cons a as ih =>
-    simp only [List.cons_append, stringContains.go]
-    split
-    · rfl
-    · exact ih
+/-- A text read from a state set holding it as a pattern is accepted. -/
+private theorem likePatRun_self :
+    ∀ (s : List Char) {sts : List (List Char)}, s ∈ sts → likePatRun sts s = true
+  | [], _, h => by simpa [likePatRun] using h
+  | c :: s, sts, h => by
+    refine likePatRun_self s ?_
+    simp only [mem_eraseDups, List.mem_flatMap]
+    exact ⟨c :: s, h, mem_likePatStep_self c s⟩
 
-/-- simpleLike s s = true for all strings -/
-private theorem simpleLike_self (s : String) : simpleLike s s = true := by
-  unfold simpleLike
-  by_cases h1 : s = "%"
-  · subst h1; simp
-  · have h1' : (s == "%") = false := beq_eq_false_iff_ne.mpr h1
-    simp only [h1']
-    cases hsc : s.toList with
-    | nil =>
-      -- Empty string: all guards false, branch 5
-      simp
-    | cons c rest =>
-      -- s.toList = c :: rest
-      cases hc_eq : (c == '%' : Bool) with
-      | false =>
-        -- Head is not '%': branches 2 and 3 impossible
-        have h2 : ((c :: rest).head? == some '%') = false := by
-          simp [List.head?, hc_eq]
-        simp only [h2, Bool.false_and]
-        cases hl : ((c :: rest).getLast? == some '%' : Bool) with
-        | false =>
-          -- Branch 5: exact match — all guards are false
-          simp
-        | true =>
-          -- Branch 4: ends with % but doesn't start with %
-          simp only [ite_true]
-          exact dropLast_isPrefixOf (c :: rest) (List.cons_ne_nil c rest)
-      | true =>
-        -- Head is '%': c = '%'
-        have hc : c = '%' := by rwa [beq_iff_eq] at hc_eq
-        subst hc
-        have h2 : (('%' :: rest).head? == some '%') = true := by simp [List.head?]
-        simp only [h2, Bool.true_and]
-        cases hl : (('%' :: rest).getLast? == some '%' : Bool) with
-        | false =>
-          -- Branch 3: starts with % but doesn't end with %
-          simp only [ite_true, List.drop]
-          -- Goal: rest.isSuffixOf ('%' :: rest) = true
-          simp only [List.isSuffixOf, List.reverse_cons]
-          exact isPrefixOf_append rest.reverse ['%']
-        | true =>
-          -- Branch 2: starts AND ends with %
-          simp only [ite_true, List.drop]
-          -- Goal: stringContains s (String.ofList rest.dropLast) = true
-          -- Unfold stringContains
-          simp only [stringContains, String.toList_ofList, hsc]
-          -- If rest.dropLast is empty, trivially true
-          cases hinner_empty : rest.dropLast.isEmpty with
-          | true => simp
-          | false =>
-            simp
-            -- rest ≠ [] (otherwise s = "%", contradicting h1)
-            have hrest_ne : rest ≠ [] := by
-              intro heq
-              exact h1 (String.toList_injective (by rw [hsc, heq]; decide +kernel))
-            -- rest has at least 2 elements (since rest.dropLast is non-empty)
-            obtain ⟨b, bs, rfl⟩ : ∃ b bs, rest = b :: bs := by
-              cases rest with
-              | nil => exact absurd rfl hrest_ne
-              | cons b bs => exact ⟨b, bs, rfl⟩
-            -- rest.getLast? = some '%' (from hl and getLast?_cons_cons)
-            have hlast : (b :: bs).getLast? = some '%' := by
-              have := beq_iff_eq.mp hl
-              rwa [List.getLast?_cons_cons] at this
-            -- (b :: bs).getLast = '%'
-            have hlast_val : (b :: bs).getLast (List.cons_ne_nil b bs) = '%' := by
-              have h_eq := List.getLast?_eq_some_getLast (List.cons_ne_nil b bs)
-              rw [h_eq] at hlast
-              exact Option.some.inj hlast
-            -- Abstract rest.dropLast to avoid rw touching both occurrences
-            generalize h_inner : (b :: bs).dropLast = inner
-            have hrest_decomp : b :: bs = inner ++ ['%'] := by
-              rw [← h_inner, ← hlast_val]
-              exact (List.dropLast_concat_getLast (List.cons_ne_nil b bs)).symm
-            rw [hrest_decomp]
-            -- Goal: stringContains.go ('%' :: inner ++ ['%']) inner = true
-            exact stringContains_go_of_prefix_at ['%']
-              (isPrefixOf_append inner ['%'])
-              (by simp)
+/-- Every string matches itself as a pattern: `%` and `_` in it match themselves (#323: ported from
+    `SqlCore.likeText_self`). -/
+private theorem likeMatch_self (s : String) : likeMatch s s = true :=
+  likePatRun_self _ (mem_likePatClosure_self _)
 
 /-- For string-typed expressions, x LIKE x evaluates to TRUE for non-null strings
     and to NULL when x is NULL.
@@ -1523,7 +1465,7 @@ theorem like_self (e : Expr) (h : e.isStringOrNull) :
         some (.bool false) := by
       rw [evalExprWithDb_unaryOp, hs]; rfl
     rw [evalCase_cons_false _ _ _ _ _ _ hcond, evalCase_nil_some, evalExprWithDb_lit]
-    simp [evalBinOp, simpleLike_self]
+    simp [evalBinOp, likeMatch_self]
   · -- Null case: e evaluates to some (.null n)
     rw [hn]
     have hcond : evalExprWithDb db row (Expr.unaryOp .isNull e) =

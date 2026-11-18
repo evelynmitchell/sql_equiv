@@ -29,9 +29,9 @@
   - (resolved by #330) `x NOT IN (subquery)` where `x` or a subquery value is
     NULL used to return the row; it is now unknown and drops it, as in the
     engines. Covered by the `NOT IN null:` cases below.
-  - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
-    treats them as literal characters; the engines (and the typed core)
-    match them as wildcards. Do not add such a case until #323 is fixed.
+  - (resolved by #323) LIKE with `_` or a `%` inside the pattern used to treat
+    them as literal characters; `likeMatch` now matches them as wildcards, as
+    the engines do. Covered by the `LIKE wildcard:` cases below.
   - (resolved by #324) INTERSECT/EXCEPT/UNION used to compare rows by
     (name, value) pairs and keep typed and untyped NULLs apart; rows are now
     compared by value in column order, NULL tags erased. Covered by the
@@ -300,6 +300,13 @@ def runAllTests : IO TestSeq := do
       "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
     diffTest "derived: nested aliases"
       "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
+    -- LIKE: `_` matches one character and `%` any sequence, anywhere (#323)
+    diffTest "LIKE wildcard: _"
+      "SELECT name FROM users WHERE name LIKE '_ob'",
+    diffTest "LIKE wildcard: interior %"
+      "SELECT name FROM users WHERE name LIKE 'C%l'",
+    diffTest "LIKE wildcard: NOT LIKE with _ and %"
+      "SELECT name FROM users WHERE name NOT LIKE '_%e'",
     -- DISTINCT and GROUP BY: a typed and an untyped NULL are one value (#315)
     diffTest "distinct null: typed and untyped NULL are one row"
       "SELECT DISTINCT p FROM (SELECT price AS p FROM items WHERE price IS NULL UNION ALL SELECT NULL) AS t",

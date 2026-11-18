@@ -26,19 +26,6 @@ abbrev Database := String → Table
 -- Helper Functions
 -- ============================================================================
 
-/-- Check if string contains substring (simple implementation) -/
-def stringContains (haystack needle : String) : Bool :=
-  let h := haystack.toList
-  let n := needle.toList
-  if n.isEmpty then true
-  else go h n
-where
-  go : List Char → List Char → Bool
-  | [], _ => false
-  | h :: hs, needle =>
-    if needle.isPrefixOf (h :: hs) then true
-    else go hs needle
-
 /-- Enumerate a list with indices -/
 def listEnumerate {α : Type} (xs : List α) : List (Nat × α) :=
   go 0 xs
@@ -241,22 +228,35 @@ def minMaxAgg (mode : MinMaxMode) (wantMax : Bool) (vs : List Value) : Option Va
 -- Expression Evaluation Helper Functions (standalone)
 -- ============================================================================
 
-/-- Simplified LIKE pattern matching.
-    Uses List Char operations for guards and body so that properties
-    (e.g., `simpleLike s s = true`) are provable without unfolding
-    opaque String.startsWith / String.endsWith (which go through memcmpSlice). -/
-def simpleLike (s pat : String) : Bool :=
-  let sc := s.toList
-  let pc := pat.toList
-  if pat == "%" then true
-  else if pc.head? == some '%' && pc.getLast? == some '%' then
-    stringContains s (String.ofList (pc.drop 1 |>.dropLast))
-  else if pc.head? == some '%' then
-    (pc.drop 1).isSuffixOf sc
-  else if pc.getLast? == some '%' then
-    pc.dropLast.isPrefixOf sc
-  else
-    s == pat
+/-! ### LIKE (#323)
+
+`s LIKE p`: `%` matches any sequence of characters, `_` exactly one, and any other character
+itself. The matcher is an automaton whose states are the pattern suffixes still to match; it is
+structural, so it reduces under `decide`. It is the typed core's (`SqlCore.likeText`), ported. -/
+
+/-- The pattern suffixes reachable without reading a character: a leading `%` may match the empty
+    string. -/
+def likePatClosure : List Char → List (List Char)
+  | '%' :: p => ('%' :: p) :: likePatClosure p
+  | p => [p]
+
+/-- The pattern suffixes after reading `c` from the state `p`. -/
+def likePatStep (c : Char) : List Char → List (List Char)
+  | '%' :: p => likePatClosure ('%' :: p)
+  | '_' :: p => likePatClosure p
+  | d :: p => if d == c then likePatClosure p else []
+  | [] => []
+
+/-- Run the automaton over the text from a set of states; the text matches if the empty suffix
+    (the whole pattern used) is reachable at its end. -/
+def likePatRun : List (List Char) → List Char → Bool
+  | sts, [] => sts.contains []
+  | sts, c :: s => likePatRun ((sts.flatMap (likePatStep c)).eraseDups) s
+
+/-- `s LIKE pat`, characters compared exactly (#323). The sqlite dialect's `likeCI` lowercases
+    both sides first. -/
+def likeMatch (s pat : String) : Bool :=
+  likePatRun (likePatClosure pat.toList) s.toList
 
 /-- Evaluate binary operator.
     NULL SEMANTICS (Option 3): When either operand is a SQL NULL (`some (.null _)`),
@@ -344,12 +344,12 @@ def evalBinOp (op : BinOp) (l r : Option Value) : Option Value :=
   | .like, some (.null _), some _ => some (.null none)
   | .like, some _, some (.null _) => some (.null none)
   | .like, some (.string s), some (.string pat) =>
-    some (.bool (simpleLike s pat))
+    some (.bool (likeMatch s pat))
   -- ASCII case-insensitive LIKE (sqlite dialect): Char.toLower only maps A-Z
   | .likeCI, some (.null _), some _ => some (.null none)
   | .likeCI, some _, some (.null _) => some (.null none)
   | .likeCI, some (.string s), some (.string pat) =>
-    some (.bool (simpleLike (s.map Char.toLower) (pat.map Char.toLower)))
+    some (.bool (likeMatch (s.map Char.toLower) (pat.map Char.toLower)))
   -- Everything else is a genuine error (type mismatch, missing value)
   | _, _, _ => none
 
