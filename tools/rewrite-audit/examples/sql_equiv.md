@@ -64,6 +64,24 @@ now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
 - **`certifiedRewrite`'s LIKE arm:** it still matches `.like` only, not the dialect operator
   `likeCI`.
 
+**Re-audited 18 Nov 2026 (master `67349b5`, after #341–#345): 0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2848 theorems,
+  2440 definitions and 50 opaque constants.
+- **`partial def`s:** 58 declarations, unchanged and none on-path. The new LIKE matcher
+  `likeMatch` (#323) and its `likePat*` automaton are structural.
+- **Overrides:** none.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **What changed and why it stays sound:**
+  - `[NOT] IN (subquery)` is three-valued (#330). The rewriter's and `normalizeExpr`'s
+    `inSubquery` arms are congruence only, so they hold whatever `IN` evaluates to.
+  - The LIKE arm (`like_empty_pattern`) now rests on `likeMatch_empty` and still matches
+    `.like` only, not `likeCI`.
+  - `checkQueryEquiv`'s compound case also requires equal `outputNames?` of the left
+    branches (#340): output column names now depend on the query's syntax.
+  - The set-operation and DISTINCT changes (#324, #315) are statement-level. Their laws
+    moved to the value-level relations `≃ᵇᵛ`/`≃ˢᵛ`; no expression rewriter is affected.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
