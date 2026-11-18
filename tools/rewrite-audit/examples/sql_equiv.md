@@ -82,6 +82,17 @@ now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
   - The set-operation and DISTINCT changes (#324, #315) are statement-level. Their laws
     moved to the value-level relations `≃ᵇᵛ`/`≃ˢᵛ`; no expression rewriter is affected.
 
+**Re-audited 18 Nov 2026, evening (master after #347): 0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2857 theorems,
+  2442 definitions and 50 opaque constants.
+- **`partial def`s:** 58, none on-path.
+- **Overrides:** none.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **#320 (DISTINCT sorts by each value's first source row):** confined to statement-level
+  SELECT evaluation. No theorem statement changed. The ground-SELECT row-independence lemma
+  that `checkSelectEquiv`/`checkQueryEquiv` rely on gained cases for the new sort sources.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
