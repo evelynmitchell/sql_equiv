@@ -575,7 +575,8 @@ is never `divSafe`.
 - Kernel examples, including the `NOT IN (…, NULL)` rule and the strict multi-row error.
 - A mutation that swaps `IN` and `NOT IN` fails 7 queries against each oracle.
 
-The tests found a quiet `SqlEquiv` bug, #330: `NOT IN (subquery)` ignores NULLs.
+The tests found a quiet `SqlEquiv` bug, #330: `NOT IN (subquery)` ignores NULLs. It is fixed:
+`SqlEquiv` now evaluates `[NOT] IN (subquery)` three-valued too.
 
 Spider: 519/564 now elaborate. The remaining classes are type errors under sqlite's affinity (44)
 and one derived table.

@@ -541,13 +541,7 @@ theorem evalExprWithDb_inSubquery (db : Database) (row : Row) (e : Expr) (neg : 
     evalExprWithDb db row (.inSubquery e neg sq) =
     (match evalExprWithDb db row e with
      | none => none
-     | some v =>
-       let subResult := evalSubQueryWithContext db row sq
-       let hasMatch := subResult.any fun subRow =>
-         match subRow.head? with
-         | some (_, subVal) => v.eq subVal == some true
-         | none => false
-       some (Value.bool (if neg then !hasMatch else hasMatch))) := by
+     | some v => some (inSubqueryResult neg v (evalSubQueryWithContext db row sq))) := by
   simp only [evalExprWithDb_eq_evalExprCore]; exact evalExprCore_inSubquery ..
 
 /-- evalExprWithDb unfolds for IN over a simple SELECT subquery -/
@@ -555,13 +549,7 @@ theorem evalExprWithDb_inSubquery_simple (db : Database) (row : Row) (e : Expr) 
     evalExprWithDb db row (.inSubquery e neg (.simple sel)) =
     (match evalExprWithDb db row e with
      | none => none
-     | some v =>
-       let subResult := evalSelectWithContext db row sel
-       let hasMatch := subResult.any fun subRow =>
-         match subRow.head? with
-         | some (_, subVal) => v.eq subVal == some true
-         | none => false
-       some (Value.bool (if neg then !hasMatch else hasMatch))) := by
+     | some v => some (inSubqueryResult neg v (evalSelectWithContext db row sel))) := by
   rw [evalExprWithDb_inSubquery, evalSubQuery_simple]
 
 /-- evalExprWithDb unfolds for case expressions -/

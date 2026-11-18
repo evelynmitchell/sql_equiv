@@ -713,8 +713,8 @@ All distributivity theorems require `isBoolValued` on all operands.
 | `scalar_subquery_empty_null` | Scalar subquery on empty = NULL |
 | `exists_as_count_gt_zero` | `EXISTS = (COUNT(*) > 0)` |
 | `not_exists_as_count_eq_zero` | `NOT EXISTS = (COUNT(*) = 0)` |
-| `in_subquery_as_exists` | `x IN (SELECT col FROM t) = EXISTS (SELECT 1 FROM t WHERE col = x)` |
-| `not_in_subquery_as_not_exists` | `x NOT IN (...) = NOT EXISTS (...)` |
+| `in_subquery_as_exists` | `x IN (SELECT col FROM t) = EXISTS (SELECT 1 FROM t WHERE col = x)`, when `x` and `col` are never NULL |
+| `not_in_subquery_as_not_exists` | `x NOT IN (...) = NOT EXISTS (...)`, when `x` and `col` are never NULL |
 | `subquery_limit_one` | Subquery with LIMIT 1 returns at most 1 row |
 | `scalar_subquery_is_first` | Scalar subquery = first column of first row |
 | `exists_monotonic` | EXISTS is monotonic (superset preserves TRUE) |
@@ -722,7 +722,7 @@ All distributivity theorems require `isBoolValued` on all operands.
 | `subquery_where_false` | Adding WHERE FALSE makes subquery empty |
 | `in_singleton_subquery` | `x IN (single value v) = (x = v)` |
 | `in_subquery_unnest_to_join` | IN subquery unnested to semi-join |
-| `not_in_subquery_unnest_to_antijoin` | NOT IN subquery unnested to anti-join |
+| `not_in_subquery_unnest_to_antijoin` | NOT IN subquery unnested to anti-join, when `t.x` and `s.y` are never NULL |
 
 ### ORDER BY Theorems
 

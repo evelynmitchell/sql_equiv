@@ -26,9 +26,9 @@
     Gap (#320); the typed core agrees with DuckDB
     (`SqlCoreTest/DuckdbDiffTest.lean`). Do not add such a case here until
     #320 is fixed.
-  - `x NOT IN (subquery)` where `x` or a subquery value is NULL (#330):
-    SqlEquiv returns the row; the engines (and the typed core) treat the
-    comparison as unknown and drop it.
+  - (resolved by #330) `x NOT IN (subquery)` where `x` or a subquery value is
+    NULL used to return the row; it is now unknown and drops it, as in the
+    engines. Covered by the `NOT IN null:` cases below.
   - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
     treats them as literal characters; the engines (and the typed core)
     match them as wildcards. Do not add such a case until #323 is fixed.
@@ -300,6 +300,14 @@ def runAllTests : IO TestSeq := do
       "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
     diffTest "derived: nested aliases"
       "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
+    -- NOT IN (subquery) is three-valued (#330): a NULL in the subquery, or a NULL
+    -- probe against a non-empty subquery, makes it unknown and drops the row
+    diffTest "NOT IN null: NULL in the subquery"
+      "SELECT name FROM items WHERE id NOT IN (SELECT price FROM items)",
+    diffTest "NOT IN null: NULL probe"
+      "SELECT name FROM items WHERE price NOT IN (SELECT id FROM users)",
+    diffTest "NOT IN null: empty subquery keeps a NULL probe"
+      "SELECT name FROM items WHERE price NOT IN (SELECT id FROM users WHERE id > 100)",
     -- Set operations match rows by position and value, NULL tags erased (#324)
     diffTest "set op: INTERSECT across column names"
       "SELECT x AS a FROM dups INTERSECT SELECT x AS b FROM other",

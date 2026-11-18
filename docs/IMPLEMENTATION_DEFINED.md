@@ -209,6 +209,20 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   were restated beforehand in #269 so the fix needed no statement change.
   Spider is unchanged (553/564). Pinned by the `derived_*` unit tests and
   DiffSqlite/DiffDuckdb `derived:` cases.
+- **`[NOT] IN (subquery)` ignored NULLs** (fixed, #330). It was two-valued: a
+  match gave TRUE and anything else FALSE, so `5 NOT IN (SELECT NULL)` kept the
+  row. It is now three-valued, as the standard and `IN (list)` define it
+  (`inSubqueryResult`). A match gives TRUE. With no match, a NULL in the
+  subquery, or a NULL probe against a non-empty subquery, gives unknown.
+  Otherwise the result is FALSE, and an empty subquery gives FALSE even for a
+  NULL probe. `NOT IN` negates, and unknown drops the row in a WHERE clause.
+  `in_subquery_as_exists`, `not_in_subquery_as_not_exists` and
+  `not_in_subquery_unnest_to_antijoin` now assume the probe and the subquery
+  column are never NULL. That is the guard optimizers check before turning
+  `NOT IN` into an anti-join. The theorems that use only "a match gives TRUE"
+  keep their statements. Spider is unchanged (556): none of its `NOT IN`
+  queries meet a NULL. Pinned by the `not_in_subquery_*`/`in_subquery_*` unit
+  tests, the `NOT IN null:` engine cases and the `BridgeDiffTest` corpus.
 - **Set operations compared column names and NULL type tags** (fixed,
   #324). `INTERSECT`, `EXCEPT` and `UNION` compared whole rows, names
   included, so `SELECT user_id FROM orders INTERSECT SELECT id FROM users`
@@ -252,8 +266,6 @@ Rows that do not yet meet the testing requirements in §2:
 - **Row 5**: decided per dialect (#319), but `SqlEquiv`'s evaluator still
   ties an unselected key in the sqlite and duckdb dialects instead of using
   the first source row (#320); pinned in the meantime.
-- **`SqlEquiv` `NOT IN (subquery)` with NULLs** (#330): standard behaviour that
-  `SqlEquiv` gets wrong; the typed core is right (three-valued `inList`).
 - **`SqlEquiv` LIKE wildcards** (#323): standard behaviour that `SqlEquiv`
   gets wrong (not implementation-defined); recorded in both harnesses' KNOWN
   DIVERGENCES, and the typed core is right.

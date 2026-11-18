@@ -517,6 +517,17 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #330: [NOT] IN (subquery) is three-valued (museum: staff 9, 17, NULL, 25, 41, NULL)
+  testEmpty "not_in_subquery_null_in_subquery"
+    "SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'm3')",
+  testColumn "not_in_subquery_null_probe_dropped"
+    "SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'm1')"
+    "name" [.string "m2", .string "m4", .string "m5"],
+  testRowCount "not_in_empty_subquery_keeps_null_probe"
+    "SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'zz')" 6,
+  testExactRows "in_subquery_null_is_unknown" "SELECT 5 IN (SELECT NULL)" 1 (some (.null none)),
+  testExactRows "in_subquery_match_beats_null" "SELECT 5 IN (SELECT 5 UNION SELECT NULL)" 1
+    (some (.bool true)),
   -- #324: set operations match rows by position and value (sqlite, DuckDB, Postgres agree)
   testColumn "set_op_intersect_by_position"
     "SELECT user_id FROM orders INTERSECT SELECT id FROM users" "user_id"

@@ -139,7 +139,7 @@ Multiple times across the project:
 | `coalesce_null_left` | False when second arg is NULL | Deleted; replaced with `coalesce_null_left_nonnull` |
 | `join_comm_full` | False for non-disjoint column names | Deleted (Batch 22) |
 | `join_comm` | Unprovable without column disjointness | Needs precondition (pending) |
-| `not_in_subquery_unnest_to_antijoin` | False when subquery has NULL values | Needs NULL-freeness precondition (pending) |
+| `not_in_subquery_unnest_to_antijoin` | False when subquery has NULL values | NULL-freeness preconditions `hxNotNull`/`hyNotNull` added once the evaluator made `NOT IN` three-valued (#330); `in_subquery_as_exists` and `not_in_subquery_as_not_exists` gained `hvNotNull`/`hcolNotNull` |
 | `eq_reflexive` | Failed for error-producing expressions | Added `Expr.evaluable` precondition (PR #92) |
 | Arithmetic identities | Failed for non-integer expressions | Added `Expr.isIntValued` precondition (PR #93) |
 | Boolean identities | Failed for non-boolean expressions | Added `Expr.isBoolValued` precondition (PR #104) |
