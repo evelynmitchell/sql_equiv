@@ -109,8 +109,9 @@ def corpus : List (String × Expect) := [
   ("SELECT name AS n FROM users INTERSECT SELECT name FROM users WHERE age > 25 ORDER BY n", .agree),
   ("SELECT name FROM users EXCEPT SELECT name FROM users WHERE age > 29 ORDER BY 1 LIMIT 2 OFFSET 1", .agree),
   ("SELECT name AS n FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY n DESC", .agree),
-  ("SELECT name AS n FROM users WHERE id > 100 UNION ALL SELECT name FROM products ORDER BY n DESC",
-    .sqlEquivBug "#340: an empty first branch leaves the later rows' names"),
+  -- #340: an empty first branch still names the columns
+  ("SELECT name AS n FROM users WHERE id > 100 UNION ALL SELECT name FROM products ORDER BY n DESC", .agree),
+  ("SELECT n FROM (SELECT name AS n FROM users WHERE id > 100 UNION SELECT name FROM products) AS t", .agree),
   -- INTERSECT, EXCEPT, LIKE (phase 8c, #322); set operations compared as bags. Since #324
   -- SqlEquiv matches set-operation rows by position and value, NULLs equal whatever their tag
   ("SELECT name FROM users INTERSECT SELECT name FROM products", .agree),

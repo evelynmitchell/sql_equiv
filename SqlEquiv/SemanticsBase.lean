@@ -395,14 +395,18 @@ def Row.renameTo : Option (List String) → Row → Row
 /-- Apply a set operation to two result tables. Shared by top-level Query
     evaluation and SubQuery evaluation (#218). Rows are compared by `Row.valueKey`
     (position and value; NULLs equal whatever their type tag, #324), and the right
-    branch's rows take the left branch's column names. When the left branch has no rows
-    its names are unknown and the right rows keep theirs.
+    branch's rows take the left branch's column names: `names`, the names the caller reads
+    from the leftmost branch's SELECT list (`Query.outputNames?`, #340), or, when that has a
+    `*`, the names of the left table's first row.
     UNION dedups, UNION ALL concatenates, INTERSECT/EXCEPT filter by membership and
     dedup (#223); dedup keeps the first row of each key. -/
-def applySetOp (op : SetOp) (l r : Table) : Table :=
+def applySetOp (op : SetOp) (names : Option (List String)) (l r : Table) : Table :=
+  let ns := match names with
+    | some ns => some ns
+    | none => Table.columnNames l
   match op with
-  | .union => dedupByKey Row.valueKey (l ++ r.map (Row.renameTo (Table.columnNames l)))
-  | .unionAll => l ++ r.map (Row.renameTo (Table.columnNames l))
+  | .union => dedupByKey Row.valueKey (l ++ r.map (Row.renameTo ns))
+  | .unionAll => l ++ r.map (Row.renameTo ns)
   | .intersect =>
     dedupByKey Row.valueKey (l.filter fun row => (r.map Row.valueKey).contains (Row.valueKey row))
   | .exceptOp =>
@@ -458,6 +462,23 @@ def exprToName : Expr → String
   | .agg (.max _) _ _ => "max"
   | .countStar => "count"
   | _ => "expr"
+
+/-- The output column names of a SELECT list when they do not depend on the data (#340): each
+    item is an expression, named by its alias or `exprToName` exactly as the evaluator names it
+    (`evalSelectItemParam`). A `*` item's columns come from the rows, so then `none`. -/
+def SelectItem.outputNames? (items : List SelectItem) : Option (List String) :=
+  items.mapM fun
+    | .exprItem e al => some (al.getD (exprToName e))
+    | .star _ => none
+
+/-- A query's output column names, read from its leftmost branch (#340): a set operation's
+    columns are named by its first branch even when that branch has no rows. -/
+def Query.outputNames? (q : Query) : Option (List String) :=
+  SelectItem.outputNames? q.leftmostItems
+
+/-- A subquery body's output column names, read from its leftmost branch (#340). -/
+def SubQuery.outputNames? (sq : SubQuery) : Option (List String) :=
+  SelectItem.outputNames? sq.leftmostItems
 
 -- ============================================================================
 -- evalBinOp Lemmas

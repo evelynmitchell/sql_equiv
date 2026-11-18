@@ -373,7 +373,7 @@ def evalSubQueryWithContext (db : Database) (outerRow : Row) (sq : SubQuery) : T
   match sq with
   | .simple sel => evalSelectWithContext db outerRow sel
   | .compound l op r =>
-    applySetOp op (evalSubQueryWithContext db outerRow l)
+    applySetOp op (SubQuery.outputNames? l) (evalSubQueryWithContext db outerRow l)
                   (evalSubQueryWithContext db outerRow r)
 termination_by sq.size
 decreasing_by all_goals (simp_wf; first | omega | (simp only [SubQuery.size]; omega))
@@ -447,7 +447,8 @@ theorem evalSubQuery_simple (db : Database) (r : Row) (sel : SelectStmt) :
 /-- Bridge: evalSubQueryWithContext unfolds on .compound to applySetOp (#218) -/
 theorem evalSubQuery_compound (db : Database) (r : Row) (l : SubQuery) (op : SetOp) (rq : SubQuery) :
     evalSubQueryWithContext db r (.compound l op rq) =
-    applySetOp op (evalSubQueryWithContext db r l) (evalSubQueryWithContext db r rq) := by
+    applySetOp op (SubQuery.outputNames? l) (evalSubQueryWithContext db r l)
+      (evalSubQueryWithContext db r rq) := by
   rw [evalSubQueryWithContext]
 
 /-- Bridge: evalExprWithDb equals evalExprCore instantiated with evalSubQueryWithContext -/
@@ -826,7 +827,7 @@ def evalQuery (db : Database) (q : Query) : Table :=
   match q with
   | .simple sel => evalSelect db sel
   | .compound left op right =>
-    applySetOp op (evalQuery db left) (evalQuery db right)
+    applySetOp op (Query.outputNames? left) (evalQuery db left) (evalQuery db right)
   | .withCTE [] query => evalQuery db query
   | .withCTE (cte :: rest) query =>
     let cteResult :=
@@ -1265,7 +1266,7 @@ theorem evalQuery_simple (db : Database) (sel : SelectStmt) :
     Proved via evalQueryCore bridge. -/
 theorem evalQuery_compound (db : Database) (left right : Query) (op : SetOp) :
     evalQuery db (.compound left op right) =
-    applySetOp op (evalQuery db left) (evalQuery db right) :=
+    applySetOp op (Query.outputNames? left) (evalQuery db left) (evalQuery db right) :=
   (evalQuery_eq_evalQueryCore_compound db left right op).trans (evalQueryCore_compound ..)
 
 -- ============================================================================

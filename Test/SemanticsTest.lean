@@ -535,6 +535,14 @@ def registryPinTests : List TestResult := [
   testColumn "set_op_rows_take_first_branch_names"
     "SELECT name AS n FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY n DESC"
     "n" [.string "Widget", .string "Gizmo", .string "Gadget", .string "Bob", .string "Alice"],
+  -- #340: the first branch names the columns from its SELECT list, even when it has no rows
+  testColumn "set_op_empty_first_branch_names"
+    "SELECT name AS n FROM users WHERE id > 100 UNION ALL SELECT name FROM products ORDER BY n DESC"
+    "n" [.string "Widget", .string "Gizmo", .string "Gadget"],
+  -- the same through a derived table (a subquery body): the outer query reads `n`
+  testColumn "set_op_empty_first_branch_derived"
+    "SELECT n FROM (SELECT name AS n FROM users WHERE id > 100 UNION ALL SELECT name FROM products) AS t"
+    "n" [.string "Widget", .string "Gadget", .string "Gizmo"],
   -- #317: a trailing ORDER BY/LIMIT sorts and limits the whole compound query,
   -- not its last branch (sqlite, DuckDB, Postgres: one row, Alice).
   testColumn "compound_order_by_limit_whole"

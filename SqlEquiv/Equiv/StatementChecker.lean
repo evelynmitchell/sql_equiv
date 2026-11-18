@@ -8,8 +8,9 @@
   - syntactically equal statements (via the generated `DecidableEq`);
   - SELECTs equal except for their WHERE clauses, when `checkEquivFull` proves
     the two predicates `≃ₑ` (lifted by `select_where_congr`, #238);
-  - queries built from such SELECTs with the same set operations
-    (congruence through `evalQuery_simple` / `evalQuery_compound`).
+  - queries built from such SELECTs with the same set operations, when the left
+    branches name their columns alike (congruence through `evalQuery_simple` /
+    `evalQuery_compound`; the names matter since #340).
 
   This replaces the note in `Decidable.lean` that statement checkers were
   blocked on the `partial def` statement deciders.
@@ -57,11 +58,14 @@ def checkQueryEquiv (q1 q2 : Query) : StmtCheckResult (q1 ≃ᵩ q2) :=
           rw [evalQuery_simple, evalQuery_simple]; exact hs db)
       | .unknown => .unknown
     | .compound l1 op1 r1, .compound l2 op2 r2 =>
-      if hop : op1 = op2 then
+      -- Equal results are not enough for the left branches: a set operation names its
+      -- columns by its left branch's SELECT list (#340), and two empty results can come
+      -- from lists with different names.
+      if hop : op1 = op2 ∧ l1.outputNames? = l2.outputNames? then
         match checkQueryEquiv l1 l2, checkQueryEquiv r1 r2 with
         | .proved hl, .proved hr => .proved (fun db => by
-            subst hop
-            rw [evalQuery_compound, evalQuery_compound, hl db, hr db])
+            obtain ⟨rfl, hn⟩ := hop
+            rw [evalQuery_compound, evalQuery_compound, hl db, hr db, hn])
         | _, _ => .unknown
       else .unknown
     | _, _ => .unknown

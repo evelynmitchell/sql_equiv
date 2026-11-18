@@ -721,14 +721,6 @@ def resolveOrderPositions (items : List SelectItem) (ob : List OrderByItem) :
       | _ => .error s!"ORDER BY position {k} is not in the select list (1 to {items.length})"
     | o => .ok o
 
-/-- The SELECT items of the leftmost branch of a query: they name a compound query's output
-    columns (#317). -/
-def Query.leftmostItems : Query → List SelectItem
-  | .simple s => s.items
-  | .compound l _ _ => l.leftmostItems
-  | .withCTE _ q => q.leftmostItems
-  | .ordered q _ _ _ => q.leftmostItems
-
 /-- The keys of an `ORDER BY` after a compound query (#317) name its output columns, which the
     leftmost branch names: an alias, or a column's name.
     - A position `k` becomes the `k`-th output name. Out of range, or naming an unaliased

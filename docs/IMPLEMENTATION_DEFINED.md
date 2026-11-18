@@ -220,7 +220,8 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   sqlite does). DuckDB types the column as the common supertype and prints
   `1.0`. The later branches' rows take the
   first branch's column names, which an `ORDER BY` over the compound relies
-  on. If the first branch is empty the names are unknown (#340).
+  on. Since #340 the names come from the first branch's SELECT list, so an
+  empty first branch still names them (with a `*` there, from its first row).
   Laws that swap or merge branches now hold on values (`≃ᵇᵛ`, `≃ˢᵛ`), since
   the two sides name their columns differently. Spider evaluate 553 → 556:
   the EXCEPT, INTERSECT and UNION+EXCEPT failures. Pinned by the `set_op_*`
@@ -237,7 +238,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   evaluated on the compound's rows they would quietly sort by NULL (a name
   that only a later branch uses: registry row 15, the name of a result column
   whose branches name it differently). Since #324 the later branches' rows
-  take the first branch's column names, so such a key finds them too, except
+  take the first branch's column names, so such a key finds them too, even
   when the first branch has no rows (#340). Spider is unchanged: none of its queries has a
   compound tail. Pinned by the `compound_order_by_*` unit tests and the
   `BridgeDiffTest` and `DuckdbDiffTest` corpus.
@@ -256,8 +257,10 @@ Rows that do not yet meet the testing requirements in §2:
 - **`SqlEquiv` LIKE wildcards** (#323): standard behaviour that `SqlEquiv`
   gets wrong (not implementation-defined); recorded in both harnesses' KNOWN
   DIVERGENCES, and the typed core is right.
-- **`SqlEquiv` set operations with an empty first branch** (#340): the later
-  branches' rows keep their own column names, because a `Table` has no schema
-  to read the first branch's names from.
+- **`SqlEquiv` set operations whose first branch has a `*`**: the column names
+  come from the first branch's first row, so if that branch is empty the
+  later branches' rows keep their own names. Without a `*`, the names come
+  from the SELECT list (#340). This is the same limit as positions after `*`
+  (#316).
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.
