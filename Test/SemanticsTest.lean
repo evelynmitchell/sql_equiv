@@ -527,6 +527,10 @@ def registryPinTests : List TestResult := [
   testColumn "set_op_typed_nulls_one_row"
     "SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20"
     "staff" [.null none, .int 25, .int 41],
+  -- numbers compare by value, as `=` does: 1 and 1.0 are one row (sqlite, DuckDB: one row)
+  testExactRows "set_op_union_numbers_by_value" "SELECT 1 UNION SELECT 1.0" 1 (some (.int 1)),
+  testExactRows "set_op_intersect_numbers_by_value" "SELECT 1 INTERSECT SELECT 1.0" 1 (some (.int 1)),
+  testExactRows "set_op_except_numbers_by_value" "SELECT 1.50 EXCEPT SELECT 1.5" 0,
   -- the later branch's rows take the first branch's column names, so `n` sorts them too
   testColumn "set_op_rows_take_first_branch_names"
     "SELECT name AS n FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY n DESC"

@@ -212,9 +212,13 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 - **Set operations compared column names and NULL type tags** (fixed,
   #324). `INTERSECT`, `EXCEPT` and `UNION` compared whole rows, names
   included, so `SELECT user_id FROM orders INTERSECT SELECT id FROM users`
-  was empty. A typed and an untyped NULL were also two rows. Rows are now
-  compared by `Row.valueKey`: values in column order, NULL tags erased. Each
-  value key is kept once, as its first row. The later branches' rows take the
+  was empty. A typed and an untyped NULL were also two rows, and so were `1`
+  and `1.0`. Rows are now compared by `Row.valueKey`: values in column
+  order, NULL tags erased, numbers by value as `=` compares them (an integer
+  as the equal decimal). Each value key is kept once, as its first row. That
+  row keeps its own representation (`SELECT 1 UNION SELECT 1.0` gives `1`, as
+  sqlite does). DuckDB types the column as the common supertype and prints
+  `1.0`. The later branches' rows take the
   first branch's column names, which an `ORDER BY` over the compound relies
   on. If the first branch is empty the names are unknown (#340).
   Laws that swap or merge branches now hold on values (`≃ᵇᵛ`, `≃ˢᵛ`), since

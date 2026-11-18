@@ -448,6 +448,8 @@ def runAllTests : IO TestSeq := do
       "SELECT id FROM users EXCEPT SELECT user_id FROM orders",
     diffTest "set op: typed and untyped NULL are one row"
       "SELECT price FROM items WHERE price IS NULL UNION SELECT NULL",
+    diffTest "set op: numbers compare by value"
+      "SELECT id FROM users WHERE id < 3 INTERSECT SELECT 1.0",
     -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
     -- sides; both engines (and now our semantics) return set results
     diffTest "INTERSECT dedups duplicate-bearing inputs"

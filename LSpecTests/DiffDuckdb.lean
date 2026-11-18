@@ -307,6 +307,10 @@ def runAllTests : IO TestSeq := do
       "SELECT id FROM users EXCEPT SELECT x FROM dups",
     diffTest "set op: typed and untyped NULL are one row"
       "SELECT price FROM items WHERE price IS NULL UNION SELECT NULL",
+    -- (an EXCEPT that empties: DuckDB types a set operation's column as the
+    -- common supertype, so a surviving row would print as 1.0 where we keep 1)
+    diffTest "set op: numbers compare by value"
+      "SELECT id FROM users WHERE id = 1 EXCEPT SELECT 1.0",
     -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
     -- sides; both engines (and now our semantics) return set results
     diffTest "INTERSECT dedups duplicate-bearing inputs"

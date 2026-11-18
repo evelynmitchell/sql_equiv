@@ -360,10 +360,19 @@ def Value.eraseNullType : Value → Value
   | .null _ => .null none
   | v => v
 
-/-- A row's values in column order, with the NULL type tag erased (#324). Set operations match
-    rows by position and value, as the standard does: column names and the static type of a
-    NULL take no part. -/
-def Row.valueKey (row : Row) : List Value := (row.map Prod.snd).map Value.eraseNullType
+/-- A value as a set operation compares it (#324): NULLs are one value whatever their type tag,
+    and numbers compare by value, as `=` does (`1 = 1.0`): an integer becomes the equal decimal
+    and a decimal its canonical form, so `1`, `1.0` and `1.00` share a key. -/
+def Value.setKey : Value → Value
+  | .null _ => .null none
+  | .int n => .decimal n 0
+  | .decimal u s => Value.mkDecimal u s
+  | v => v
+
+/-- A row's values in column order, as set operations compare them (`Value.setKey`, #324).
+    Set operations match rows by position and value, as the standard does: column names, the
+    static type of a NULL and the representation of a number take no part. -/
+def Row.valueKey (row : Row) : List Value := (row.map Prod.snd).map Value.setKey
 
 /-- Keep the first element of each class of elements with equal `f`, in order (#324). -/
 def dedupByKey {α β : Type} [BEq β] (f : α → β) : List α → List α

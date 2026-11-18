@@ -35,7 +35,8 @@ This repository could become a basis for SQL support in
   - `≃ᵇ`: bag equality (`List.Perm`);
   - `≃ˢ`: set equality;
   - `≃ᵇᵛ` and `≃ˢᵛ`: bag and set equality of the rows' values in column
-    order, with NULL type tags erased (`Row.valueKey`, #324). Set operations
+    order, with NULL type tags erased and numbers compared by value
+    (`Row.valueKey`, #324). Set operations
     match rows by position and name their columns after the first branch, so
     laws that swap or merge branches hold at this level.
 
