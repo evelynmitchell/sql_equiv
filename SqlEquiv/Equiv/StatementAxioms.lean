@@ -1567,6 +1567,9 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
 -- ============================================================================
 
 /-- Subquery unnesting: IN subquery can be rewritten as a semi-join with DISTINCT.
+    The results agree on values, as a bag (the `≃ᵇᵛ` level): DISTINCT keeps the first row of
+    each value key (#315), and the two forms may meet rows with equal keys in different
+    orders.
     SELECT DISTINCT t.* FROM t WHERE t.x IN (SELECT s.y FROM s)
     ≡ SELECT DISTINCT t.* FROM t JOIN s ON t.x = s.y
 
@@ -1619,7 +1622,8 @@ theorem in_subquery_unnest_to_join (db : Database)
             (.col ⟨some tName, xCol⟩)
             (.col ⟨some sName, yCol⟩)))))  -- FROM t JOIN s ON t.x = s.y
         none [] none [] none none
-    (evalSelect db inSubqueryForm).Perm (evalSelect db joinForm) := by
+    ((evalSelect db inSubqueryForm).map Row.valueKey).Perm
+      ((evalSelect db joinForm).map Row.valueKey) := by
   simp only []
   -- Abbreviations for readability
   let tRows := evalFrom db (.table ⟨tName, some tName⟩)
@@ -1639,10 +1643,14 @@ theorem in_subquery_unnest_to_join (db : Database)
     (selectHasAggregate_qualified_star tName) (selectHasWindowFn_qualified_star tName)]
   -- Simplify: [.star (some tName)].flatMap (evalSelectItem db row) = proj row
   simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem_qualified_star]
-  -- Both sides are now (...).eraseDups, use Perm on nodup lists with same membership
+  -- Both sides deduplicate by value key; their keys are `eraseDups` of the keys, so it is
+  -- enough that the undeduplicated sides hold the same rows
+  rw [map_dedupByKey, map_dedupByKey]
   apply (perm_ext_iff_of_nodup (nodup_eraseDups _) (nodup_eraseDups _)).mpr
-  intro v
+  intro k
   rw [mem_eraseDups, mem_eraseDups]
+  simp only [List.mem_map (f := Row.valueKey)]
+  apply exists_congr; intro v; apply and_congr_left; intro _
   -- Need: v ∈ (tRows.filter IN).map proj ↔ v ∈ (evalFrom db (.join ...)).map proj
   constructor
   · -- Forward: IN subquery → join match

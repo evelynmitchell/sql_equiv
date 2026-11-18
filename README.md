@@ -721,7 +721,7 @@ All distributivity theorems require `isBoolValued` on all operands.
 | `subquery_where_true` | Adding WHERE TRUE doesn't change subquery |
 | `subquery_where_false` | Adding WHERE FALSE makes subquery empty |
 | `in_singleton_subquery` | `x IN (single value v) = (x = v)` |
-| `in_subquery_unnest_to_join` | IN subquery unnested to semi-join |
+| `in_subquery_unnest_to_join` | IN subquery unnested to semi-join (equal on values, as a bag) |
 | `not_in_subquery_unnest_to_antijoin` | NOT IN subquery unnested to anti-join, when `t.x` and `s.y` are never NULL |
 
 ### ORDER BY Theorems

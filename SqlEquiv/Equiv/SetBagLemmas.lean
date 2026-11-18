@@ -205,13 +205,6 @@ theorem mem_eraseDups_append [BEq α] [LawfulBEq α] {a : α} {l₁ l₂ : List 
 section DedupByKey
 variable {α β : Type} [BEq β]
 
-theorem dedupByKey_nil (f : α → β) : dedupByKey f ([] : List α) = [] := by
-  rw [dedupByKey]
-
-theorem dedupByKey_cons (f : α → β) (x : α) (xs : List α) :
-    dedupByKey f (x :: xs) = x :: dedupByKey f (xs.filter fun y => !(f y == f x)) := by
-  rw [dedupByKey]
-
 variable [LawfulBEq β]
 
 omit [LawfulBEq β] in

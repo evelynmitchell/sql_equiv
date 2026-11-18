@@ -383,6 +383,14 @@ decreasing_by
   simp only [List.length_cons, List.length_unattach]
   exact Nat.lt_succ_of_le (Nat.le_trans (List.length_filter_le _ _) (Nat.le_of_eq (List.length_attach ..)))
 
+@[simp] theorem dedupByKey_nil {α β : Type} [BEq β] (f : α → β) :
+    dedupByKey f ([] : List α) = [] := by
+  rw [dedupByKey]
+
+theorem dedupByKey_cons {α β : Type} [BEq β] (f : α → β) (x : α) (xs : List α) :
+    dedupByKey f (x :: xs) = x :: dedupByKey f (xs.filter fun y => !(f y == f x)) := by
+  rw [dedupByKey]
+
 /-- The column names of a table, read from its first row (#324). -/
 def Table.columnNames (t : Table) : Option (List String) := t.head?.map (·.map Prod.fst)
 

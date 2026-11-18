@@ -100,7 +100,7 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
   let values : List Value := match argExpr with
     | none => []
     | some e => rows.filterMap fun row => exprEval db row e
-  let distinctValues := if distinct then values.eraseDups else values
+  let distinctValues := if distinct then dedupByKey Value.setKey values else values
   match fn with
   -- COUNT(col) skips NULLs per the SQL standard (COUNT(*) is Expr.countStar,
   -- which doesn't go through here); the window-fn COUNT already does this.
@@ -179,7 +179,7 @@ def compareByOrderItemsParam (exprEval : Database → Row → Expr → Option Va
 /-- Parameterized GROUP BY key -/
 def evalGroupKeyParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (row : Row) (groupExprs : List Expr) : List (Option Value) :=
-  groupExprs.map (fun e => (exprEval db row e).map Value.eraseNullType)
+  groupExprs.map (fun e => (exprEval db row e).map Value.setKey)
 
 /-- Parameterized group rows by key -/
 def groupRowsByKeyParam (exprEval : Database → Row → Expr → Option Value)
@@ -1321,32 +1321,34 @@ private theorem list_map_nil_append_eq (l : Table) : l.map (· ++ []) = l := by
   | nil => rfl
   | cons h t ih => simp only [List.map_cons, List.append_nil] at ih ⊢; exact congrArg _ ih
 
-/-- SELECT DISTINCT items FROM from_ = (project base rows).eraseDups -/
+/-- SELECT DISTINCT items FROM from_ = (project base rows), deduplicated by value key (#315) -/
 theorem evalSelect_distinct_project (db : Database)
     (items : List SelectItem) (from_ : FromClause)
     (hNoAgg : selectHasAggregate items = false)
     (hNoWin : selectHasWindowFn items = false) :
     evalSelect db (SelectStmt.mk true items (some from_) none [] none [] none none) =
-    ((evalFrom db from_).map (fun row => items.flatMap (evalSelectItem db row))).eraseDups := by
+    dedupByKey Row.valueKey ((evalFrom db from_).map (fun row => items.flatMap (evalSelectItem db row))) := by
   have raw : evalSelect db (SelectStmt.mk true items (some from_) none [] none [] none none) =
-    (List.map (fun row => items.flatMap (evalSelectItem db row))
-      (List.map (· ++ []) (evalFrom db from_))).eraseDups := by
+    dedupByKey Row.valueKey (List.map (fun row => items.flatMap (evalSelectItem db row))
+      (List.map (· ++ []) (evalFrom db from_))) := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_distinct_project _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
 
-/-- SELECT DISTINCT items FROM from_ WHERE cond = (filter then project).eraseDups -/
+/-- SELECT DISTINCT items FROM from_ WHERE cond = (filter then project), deduplicated by value
+    key (#315) -/
 theorem evalSelect_distinct_project_where (db : Database)
     (items : List SelectItem) (from_ : FromClause) (cond : Expr)
     (hNoAgg : selectHasAggregate items = false)
     (hNoWin : selectHasWindowFn items = false) :
     evalSelect db (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
-    ((evalFrom db from_).filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
-      |>.map (fun row => items.flatMap (evalSelectItem db row))).eraseDups := by
+    dedupByKey Row.valueKey
+      ((evalFrom db from_).filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
+        |>.map (fun row => items.flatMap (evalSelectItem db row))) := by
   have raw : evalSelect db (SelectStmt.mk true items (some from_) (some cond) [] none [] none none) =
-    (List.map (fun row => items.flatMap (evalSelectItem db row))
+    dedupByKey Row.valueKey (List.map (fun row => items.flatMap (evalSelectItem db row))
       (List.filter (fun row => evalExprWithDb db row cond == some (Value.bool true))
-        (List.map (· ++ []) (evalFrom db from_)))).eraseDups := by
+        (List.map (· ++ []) (evalFrom db from_)))) := by
     rw [evalSelect_eq_evalSelectCore]
     exact evalSelectCore_distinct_project_where _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWin
   rw [raw, list_map_nil_append_eq]
