@@ -45,9 +45,10 @@
   - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
     treats them as literal characters; the engines (and the typed core)
     match them as wildcards. Do not add such a case until #323 is fixed.
-  - INTERSECT/EXCEPT between columns of different names, or over typed and
-    untyped NULLs (#324): SqlEquiv compares rows by (name, value) pairs; the
-    engines (and the typed core) compare values positionally.
+  - (resolved by #324) INTERSECT/EXCEPT/UNION used to compare rows by
+    (name, value) pairs and keep typed and untyped NULLs apart; rows are now
+    compared by value in column order, NULL tags erased. Covered by the
+    `set op:` cases below.
   (Row 8, LIKE letter case, is per dialect: this harness parses in the
   sqlite dialect, so LIKE is ASCII case-insensitive here and has cases below.)
 
@@ -202,9 +203,10 @@ private def stripQualifier (name : String) : String :=
   let parts := name.splitOn "."
   parts.getLastD name
 
-/-- Normalize a row by stripping qualifiers from column names. -/
+/-- Normalize a row: strip qualifiers from column names, and erase the type tag of a NULL,
+    which an engine's printed `NULL` does not carry (#324). -/
 private def normalizeRow (row : Row) : Row :=
-  row.map fun (k, v) => (stripQualifier k, v)
+  row.map fun (k, v) => (stripQualifier k, v.eraseNullType)
 
 /-- Convert a row to a sortable string key. -/
 private def rowSortKey (row : Row) : String :=
@@ -439,6 +441,13 @@ def runAllTests : IO TestSeq := do
       "SELECT * FROM users WHERE age > 25 AND department = 'Engineering'",
     diffTest "WHERE with OR (parsed)"
       "SELECT * FROM users WHERE age < 25 OR age > 30",
+    -- Set operations match rows by position and value, NULL tags erased (#324)
+    diffTest "set op: INTERSECT across column names"
+      "SELECT user_id FROM orders INTERSECT SELECT id FROM users",
+    diffTest "set op: EXCEPT across column names"
+      "SELECT id FROM users EXCEPT SELECT user_id FROM orders",
+    diffTest "set op: typed and untyped NULL are one row"
+      "SELECT price FROM items WHERE price IS NULL UNION SELECT NULL",
     -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
     -- sides; both engines (and now our semantics) return set results
     diffTest "INTERSECT dedups duplicate-bearing inputs"

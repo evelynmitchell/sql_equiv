@@ -106,17 +106,20 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY 1 LIMIT 1", .agree),
   ("SELECT name FROM users UNION SELECT name FROM products ORDER BY name DESC LIMIT 3", .agree),
   ("SELECT name AS n FROM users INTERSECT SELECT name AS n FROM users WHERE age > 25 ORDER BY n", .agree),
-  ("SELECT name AS n FROM users INTERSECT SELECT name FROM users WHERE age > 25 ORDER BY n",
-    .sqlEquivBug "#324: set ops compare column names"),
+  ("SELECT name AS n FROM users INTERSECT SELECT name FROM users WHERE age > 25 ORDER BY n", .agree),
   ("SELECT name FROM users EXCEPT SELECT name FROM users WHERE age > 29 ORDER BY 1 LIMIT 2 OFFSET 1", .agree),
-  -- INTERSECT, EXCEPT, LIKE (phase 8c, #322); set operations compared as bags
+  ("SELECT name AS n FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY n DESC", .agree),
+  ("SELECT name AS n FROM users WHERE id > 100 UNION ALL SELECT name FROM products ORDER BY n DESC",
+    .sqlEquivBug "#340: an empty first branch leaves the later rows' names"),
+  -- INTERSECT, EXCEPT, LIKE (phase 8c, #322); set operations compared as bags. Since #324
+  -- SqlEquiv matches set-operation rows by position and value, NULLs equal whatever their tag
   ("SELECT name FROM users INTERSECT SELECT name FROM products", .agree),
   ("SELECT department FROM users INTERSECT SELECT department FROM users WHERE age > 26", .agree),
   ("SELECT department FROM users EXCEPT SELECT department FROM users WHERE age > 29", .agree),
-  ("SELECT user_id FROM orders INTERSECT SELECT id FROM users", .sqlEquivBug "#324: set ops compare column names"),
-  ("SELECT id FROM users EXCEPT SELECT user_id FROM orders", .sqlEquivBug "#324: set ops compare column names"),
-  ("SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20", .sqlEquivBug "#324: typed NULLs are distinct"),
-  ("SELECT staff FROM museum EXCEPT SELECT staff FROM museum WHERE staff > 20", .sqlEquivBug "#324: typed NULLs are distinct"),
+  ("SELECT user_id FROM orders INTERSECT SELECT id FROM users", .agree),
+  ("SELECT id FROM users EXCEPT SELECT user_id FROM orders", .agree),
+  ("SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20", .agree),
+  ("SELECT staff FROM museum EXCEPT SELECT staff FROM museum WHERE staff > 20", .agree),
   ("SELECT name FROM users UNION SELECT name FROM products EXCEPT SELECT name FROM users WHERE age > 26", .agree),
   ("SELECT name FROM users WHERE name LIKE 'A%'", .agree),
   ("SELECT name FROM users WHERE name LIKE '%e'", .agree),
@@ -151,8 +154,7 @@ def corpus : List (String × Expect) := [
   ("SELECT COUNT(*) FROM (SELECT name FROM users WHERE age > 25) AS t", .agree),
   ("SELECT t.n FROM (SELECT name AS n, age FROM users) AS t WHERE t.age > 28", .agree),
   ("SELECT u.name, t.total FROM users u JOIN (SELECT user_id, SUM(amount) AS total FROM orders GROUP BY user_id) AS t ON u.id = t.user_id", .agree),
-  ("SELECT name FROM (SELECT name, age FROM users UNION ALL SELECT name, price FROM products) AS t WHERE age > 30",
-    .sqlEquivBug "#324: set-operation rows keep their branch's column names (price, not age)"),
+  ("SELECT name FROM (SELECT name, age FROM users UNION ALL SELECT name, price FROM products) AS t WHERE age > 30", .agree),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

@@ -135,7 +135,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T9 | Bare column with aggregates `SELECT max(a), b FROM t` | Error (binder) | Error | **Per dialect** (`DialectConfig.bareColumns`, applied by the bridge): standard, postgres, duckdb → `unsupported` at elaboration; sqlite → accepted. With one `MIN`/`MAX` call, `b` comes from the first row where its argument is extreme (`AggCall.atExtreme`; ties keep the first row); with none, from the group's first row (`AggCall.first`). Several `MIN`/`MAX` calls or `MIN`/`MAX(DISTINCT …)` stay `unsupported` (sqlite: arbitrary, and the last tie with `DISTINCT`). When every argument is NULL the last row is used. sqlite's choice there depends on the plan (last row with `GROUP BY` or a plain scan, first row when its MAX optimisation answers `WHERE a IS NULL`), so that case is a known divergence. `SqlEquiv`'s evaluator accepts bare columns in every dialect and reads the group's first row | decided (phase 8e) | `SqliteDiffTest` (15 queries vs sqlite, plus rejections in both dialects), `AggregateExamples`, `BridgeDiffTest` (standard-dialect rejection) |
 | T10 | `AVG` over integers (`AVG` of 1, 2; of 1, 1, 2), row 7 | `1.5`, `1.3333333333333333` (DOUBLE) | `1.5000…`, `1.3333333333333333` (numeric; `AVG(i) * 3` is `3.9999999999999999`) | Exact rational decimal: `3/2`, `4/3` (`AVG(i) * 3` is exactly `4`); `NULL` over no values; ill-typed over text | decided (#326, phase 8d) | `AggregateExamples`, `DuckdbDiffTest` (rounded to 12 places), `BridgeDiffTest` |
 | T11 | `MIN`/`MAX` over booleans, row 14 | Boolean result | Error | Ill-typed | decided (#313) | `AggregateExamples` |
-| T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` agrees since #315 (grouping keys erase the NULL type tag; `DISTINCT` and set operations still compare tags, #324) | `AggregateExamples`, `DuckdbDiffTest`, `BridgeDiffTest`, unit pins `group_by_typed_nulls_*` |
+| T12 | `NULL` keys in `GROUP BY` | One group | One group | One group (`NULL` is `none`) | decided; `SqlEquiv` agrees since #315 (grouping keys erase the NULL type tag); set operations since #324 (rows compared by `Row.valueKey`); `DISTINCT` still compares tags (#315) | `AggregateExamples`, `DuckdbDiffTest`, `BridgeDiffTest`, unit pins `group_by_typed_nulls_*` |
 | T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts by the first source row's `b` | Error | Follows the parse (row 5): rejected in standard/postgres; in sqlite/duckdb, `aggregate` by the selected expressions with `AggCall.first b`, sorted, projected | decided (#319) | `OrderByExamples`; `DuckdbDiffTest` (duckdb-dialect corpus, ordered, agrees; also checked on sqlite) |
 | T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
 | T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318). `SqlEquiv` resolves positions at parse time since #316 (out of range is a parse error, as in sqlite, DuckDB and Postgres); after a `*` item it cannot count columns and still sorts by the constant | `BridgeDiffTest`, `DuckdbDiffTest`, unit pins `order_by_position*` |
@@ -209,6 +209,18 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   were restated beforehand in #269 so the fix needed no statement change.
   Spider is unchanged (553/564). Pinned by the `derived_*` unit tests and
   DiffSqlite/DiffDuckdb `derived:` cases.
+- **Set operations compared column names and NULL type tags** (fixed,
+  #324). `INTERSECT`, `EXCEPT` and `UNION` compared whole rows, names
+  included, so `SELECT user_id FROM orders INTERSECT SELECT id FROM users`
+  was empty. A typed and an untyped NULL were also two rows. Rows are now
+  compared by `Row.valueKey`: values in column order, NULL tags erased. Each
+  value key is kept once, as its first row. The later branches' rows take the
+  first branch's column names, which an `ORDER BY` over the compound relies
+  on. If the first branch is empty the names are unknown (#340).
+  Laws that swap or merge branches now hold on values (`≃ᵇᵛ`, `≃ˢᵛ`), since
+  the two sides name their columns differently. Spider evaluate 553 → 556:
+  the EXCEPT, INTERSECT and UNION+EXCEPT failures. Pinned by the `set_op_*`
+  unit tests and the `BridgeDiffTest` corpus.
 - **ORDER BY/LIMIT after a compound query sorted only its last branch**
   (fixed, #317). The parser attached a trailing `ORDER BY`/`LIMIT`/`OFFSET` to
   the last `SELECT`, so `A UNION ALL B ORDER BY 1 LIMIT 1` returned all of `A`
@@ -220,10 +232,9 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   qualified names and expressions are errors, as in every engine, because
   evaluated on the compound's rows they would quietly sort by NULL (a name
   that only a later branch uses: registry row 15, the name of a result column
-  whose branches name it differently). Caveat: rows of a compound
-  keep their branch's column names
-  (#324), so a key that names a column differently in another branch does not
-  find it in that branch's rows. Spider is unchanged: none of its queries has a
+  whose branches name it differently). Since #324 the later branches' rows
+  take the first branch's column names, so such a key finds them too, except
+  when the first branch has no rows (#340). Spider is unchanged: none of its queries has a
   compound tail. Pinned by the `compound_order_by_*` unit tests and the
   `BridgeDiffTest` and `DuckdbDiffTest` corpus.
 
@@ -238,8 +249,11 @@ Rows that do not yet meet the testing requirements in §2:
   the first source row (#320); pinned in the meantime.
 - **`SqlEquiv` `NOT IN (subquery)` with NULLs** (#330): standard behaviour that
   `SqlEquiv` gets wrong; the typed core is right (three-valued `inList`).
-- **`SqlEquiv` LIKE wildcards** (#323) and **set operations** (#324): standard
-  behaviour that `SqlEquiv` gets wrong (not implementation-defined); recorded
-  in both harnesses' KNOWN DIVERGENCES, and the typed core is right.
+- **`SqlEquiv` LIKE wildcards** (#323): standard behaviour that `SqlEquiv`
+  gets wrong (not implementation-defined); recorded in both harnesses' KNOWN
+  DIVERGENCES, and the typed core is right.
+- **`SqlEquiv` set operations with an empty first branch** (#340): the later
+  branches' rows keep their own column names, because a `Table` has no schema
+  to read the first branch's names from.
 - **Postgres harness** (#224): Postgres is installed in the dev environment,
   so its standards-tiebreaker role can be implemented.

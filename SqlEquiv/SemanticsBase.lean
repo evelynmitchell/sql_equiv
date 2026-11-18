@@ -360,18 +360,44 @@ def Value.eraseNullType : Value → Value
   | .null _ => .null none
   | v => v
 
+/-- A row's values in column order, with the NULL type tag erased (#324). Set operations match
+    rows by position and value, as the standard does: column names and the static type of a
+    NULL take no part. -/
+def Row.valueKey (row : Row) : List Value := (row.map Prod.snd).map Value.eraseNullType
+
+/-- Keep the first element of each class of elements with equal `f`, in order (#324). -/
+def dedupByKey {α β : Type} [BEq β] (f : α → β) : List α → List α
+  | [] => []
+  | x :: xs => x :: dedupByKey f (xs.filter fun y => !(f y == f x))
+termination_by l => l.length
+decreasing_by
+  simp only [List.length_cons, List.length_unattach]
+  exact Nat.lt_succ_of_le (Nat.le_trans (List.length_filter_le _ _) (Nat.le_of_eq (List.length_attach ..)))
+
+/-- The column names of a table, read from its first row (#324). -/
+def Table.columnNames (t : Table) : Option (List String) := t.head?.map (·.map Prod.fst)
+
+/-- Rename a row's columns positionally to `names` when the arities agree (#324): the columns
+    of a set operation are named by its first branch. -/
+def Row.renameTo : Option (List String) → Row → Row
+  | some ns, row => if ns.length = row.length then ns.zip (row.map Prod.snd) else row
+  | none, row => row
+
 /-- Apply a set operation to two result tables. Shared by top-level Query
-    evaluation and SubQuery evaluation (#218); SQL set-op semantics:
-    UNION dedups, UNION ALL concatenates, INTERSECT/EXCEPT filter by
-    membership. -/
+    evaluation and SubQuery evaluation (#218). Rows are compared by `Row.valueKey`
+    (position and value; NULLs equal whatever their type tag, #324), and the right
+    branch's rows take the left branch's column names. When the left branch has no rows
+    its names are unknown and the right rows keep theirs.
+    UNION dedups, UNION ALL concatenates, INTERSECT/EXCEPT filter by membership and
+    dedup (#223); dedup keeps the first row of each key. -/
 def applySetOp (op : SetOp) (l r : Table) : Table :=
   match op with
-  | .union => (l ++ r).eraseDups
-  | .unionAll => l ++ r
-  -- INTERSECT/EXCEPT are set operations per the SQL standard: duplicates are
-  -- eliminated (#223). The ALL variants (kept duplicates) are not parsed yet.
-  | .intersect => (l.filter fun row => r.contains row).eraseDups
-  | .exceptOp => (l.filter fun row => !r.contains row).eraseDups
+  | .union => dedupByKey Row.valueKey (l ++ r.map (Row.renameTo (Table.columnNames l)))
+  | .unionAll => l ++ r.map (Row.renameTo (Table.columnNames l))
+  | .intersect =>
+    dedupByKey Row.valueKey (l.filter fun row => (r.map Row.valueKey).contains (Row.valueKey row))
+  | .exceptOp =>
+    dedupByKey Row.valueKey (l.filter fun row => !(r.map Row.valueKey).contains (Row.valueKey row))
 
 /-- Check if Option Value is NULL (none or some null) -/
 def isNullValue : Option Value → Bool
