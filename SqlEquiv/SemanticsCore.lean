@@ -65,13 +65,7 @@ def evalExprCore (db : Database) (row : Row)
   | .inSubquery e neg sel =>
     match evalExprCore db row subqueryEval e with
     | none => none
-    | some v =>
-      let subResult := subqueryEval db row sel
-      let hasMatch := subResult.any fun subRow =>
-        match subRow.head? with
-        | some (_, subVal) => v.eq subVal == some true
-        | none => false
-      some (Value.bool (if neg then !hasMatch else hasMatch))
+    | some v => some (inSubqueryResult neg v (subqueryEval db row sel))
   | .exists neg sel =>
     let subResult := subqueryEval db row sel
     let hasExists := !subResult.isEmpty
@@ -264,13 +258,7 @@ theorem evalExprCore_inSubquery (db : Database) (row : Row)
     evalExprCore db row sqe (.inSubquery e neg sel) =
     (match evalExprCore db row sqe e with
      | none => none
-     | some v =>
-       let subResult := sqe db row sel
-       let hasMatch := subResult.any fun subRow =>
-         match subRow.head? with
-         | some (_, subVal) => v.eq subVal == some true
-         | none => false
-       some (Value.bool (if neg then !hasMatch else hasMatch))) := by
+     | some v => some (inSubqueryResult neg v (sqe db row sel))) := by
   simp [evalExprCore]
 
 -- ============================================================================

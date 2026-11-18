@@ -712,7 +712,7 @@ theorem in_empty_subquery_false (e : Expr) (sel : SelectStmt)
     rw [evalExprWithDb_inSubquery_simple, hsel]
     cases hev : evalExprWithDb db row e with
     | none => exact absurd hev (hE db row)
-    | some v => simp [List.any]
+    | some v => simp [inSubqueryResult, inSubqueryMatch, inSubqueryHasNull]
   | cons hd tl =>
     -- Subquery non-empty: NOT EXISTS = false → falls to ELSE = IN(e, sel)
     have hcond : evalExprWithDb db row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
@@ -741,7 +741,7 @@ theorem not_in_empty_subquery_true (e : Expr) (sel : SelectStmt)
     rw [evalExprWithDb_inSubquery_simple, hsel]
     cases hev : evalExprWithDb db row e with
     | none => exact absurd hev (hE db row)
-    | some v => simp [List.any]
+    | some v => simp [inSubqueryResult, inSubqueryMatch, inSubqueryHasNull]
   | cons hd tl =>
     -- Subquery non-empty: NOT EXISTS = false → falls to ELSE = NOT IN(e, sel)
     have hcond : evalExprWithDb db row (Expr.unaryOp .not (Expr.exists false (.simple sel))) = some (.bool false) := by
@@ -798,6 +798,23 @@ private theorem List.any_map {α β : Type} (f : α → β) (p : β → Bool) (l
   | nil => rfl
   | cons a rest ih => simp [List.any_cons, ih]
 
+/-- No NULL takes part in `v IN (SELECT t.c FROM t)` when `v` and every `t.c` are non-NULL
+    (#330). A column that fails to evaluate projects as NULL, so `hcol` also asks for a value. -/
+private theorem hasNull_col_project (db : Database) (row : Row) (fc : FromClause)
+    (tableName colName : String) (v : Value) (hv : v.isNull = false)
+    (hcol : ∀ extra ∈ evalFrom db fc, ∃ c,
+      evalExprWithDb db (extra ++ row) (.col ⟨some tableName, colName⟩) = some c ∧
+        c.isNull = false) :
+    inSubqueryHasNull v (List.map
+      (fun r => [SelectItem.exprItem (.col ⟨some tableName, colName⟩) none].flatMap
+        (evalSelectItem db r))
+      (List.map (· ++ row) (evalFrom db fc))) = false := by
+  simp only [inSubqueryHasNull, hv, Bool.false_and, Bool.false_or, List.any_eq_false,
+    List.mem_map]
+  rintro _ ⟨r, ⟨extra, hmem, rfl⟩, rfl⟩
+  obtain ⟨c, hc, hcn⟩ := hcol extra hmem
+  simp [evalSelectItem, hc, hcn]
+
 /-- IN subquery is equivalent to EXISTS with equality condition.
     x IN (SELECT tableName.col FROM t) ≡ EXISTS (SELECT 1 FROM t WHERE t.col = x)
     Requires that e evaluates to a value, and to the same value when the subquery's
@@ -811,6 +828,10 @@ theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
     (heval : evalExprWithDb db row e = some v)
     (hstable : ∀ extra ∈ evalFrom db (.table ⟨tableName, none⟩),
       evalExprWithDb db (extra ++ row) e = some v)
+    (hvNotNull : v.isNull = false)
+    (hcolNotNull : ∀ extra ∈ evalFrom db (.table ⟨tableName, none⟩), ∃ c,
+      evalExprWithDb db (extra ++ row) (.col ⟨some tableName, colName⟩) = some c ∧
+        c.isNull = false)
     (hNoAggCol : selectHasAggregate [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoWinCol : selectHasWindowFn [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
@@ -829,10 +850,14 @@ theorem in_subquery_as_exists (db : Database) (row : Row) (e : Expr)
   rw [evalExprWithDb_inSubquery_simple, evalExprWithDb_exists_simple]
   -- Substitute heval into the IN side
   rw [heval]
-  simp only [Bool.false_eq_true, ↓reduceIte]
   -- Simplify both evalSelectWithContext calls
   rw [evalSelectWithContext_simple_project db row _ _ hNoAggCol hNoWinCol]
   rw [evalSelectWithContext_simple_project_where db row _ _ _ hNoAggLit hNoWinLit]
+  -- Without NULLs, IN is the two-valued membership test (#330)
+  dsimp only
+  rw [inSubqueryResult_of_not_hasNull
+    (hasNull_col_project db row _ tableName colName v hvNotNull hcolNotNull)]
+  simp only [inSubqueryMatch, Bool.false_eq_true, ↓reduceIte]
   -- LHS: (contextRows.map project_col).any matchPred
   -- RHS: !(contextRows.filter filterPred |>.map project_lit).isEmpty
   congr 1
@@ -868,6 +893,10 @@ theorem not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
     (heval : evalExprWithDb db row e = some v)
     (hstable : ∀ extra ∈ evalFrom db (.table ⟨tableName, none⟩),
       evalExprWithDb db (extra ++ row) e = some v)
+    (hvNotNull : v.isNull = false)
+    (hcolNotNull : ∀ extra ∈ evalFrom db (.table ⟨tableName, none⟩), ∃ c,
+      evalExprWithDb db (extra ++ row) (.col ⟨some tableName, colName⟩) = some c ∧
+        c.isNull = false)
     (hNoAggCol : selectHasAggregate [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoWinCol : selectHasWindowFn [.exprItem (.col ⟨some tableName, colName⟩) none] = false)
     (hNoAggLit : selectHasAggregate [.exprItem (.lit (.int 1)) none] = false)
@@ -884,9 +913,13 @@ theorem not_in_subquery_as_not_exists (db : Database) (row : Row) (e : Expr)
   simp only []
   rw [evalExprWithDb_inSubquery_simple, evalExprWithDb_exists_simple]
   rw [heval]
-  simp only [↓reduceIte]
   rw [evalSelectWithContext_simple_project db row _ _ hNoAggCol hNoWinCol]
   rw [evalSelectWithContext_simple_project_where db row _ _ _ hNoAggLit hNoWinLit]
+  -- Without NULLs, NOT IN is the two-valued non-membership test (#330)
+  dsimp only
+  rw [inSubqueryResult_of_not_hasNull
+    (hasNull_col_project db row _ tableName colName v hvNotNull hcolNotNull)]
+  simp only [inSubqueryMatch, ↓reduceIte]
   congr 1  -- strip some
   -- List algebra transformations
   rw [List.any_map, List.isEmpty_map, List.any_eq_not_isEmpty_filter]
@@ -983,13 +1016,13 @@ theorem in_singleton_subquery (db : Database) (row : Row) (e : Expr) (sel : Sele
     evalExprWithDb db row (Expr.inSubquery e false (.simple sel)) =
     evalExprWithDb db row (Expr.binOp .eq e (Expr.lit v)) := by
   rw [evalExprWithDb_inSubquery_simple, h]
-  simp [List.any, List.head?]
+  simp [List.any, List.head?, inSubqueryResult, inSubqueryMatch, inSubqueryHasNull]
   rw [evalExprWithDb_binOp, evalExprWithDb_lit]
   cases hev : evalExprWithDb db row e with
   | none => rfl
   | some val =>
     obtain ⟨b, hb⟩ := hCompat val hev
-    cases val <;> cases v <;> simp_all [evalBinOp, Value.eq]
+    cases val <;> cases v <;> cases b <;> simp_all [evalBinOp, Value.eq, Value.isNull]
 
 -- ============================================================================
 -- Helper lemmas for anti-join proof
@@ -1055,6 +1088,13 @@ theorem evalExprWithDb_qcol_append_comm (db : Database) (a b : Row) (t c : Strin
     evalExprWithDb db (a ++ b) (.col ⟨some t, c⟩) := by
   simp only [evalExprWithDb_col, Row.getQualified] at h ⊢
   rw [lookupCI_append_none_left _ _ _ h, lookupCI_append_none_right _ _ _ h]
+
+/-- A qualified column absent from `b` reads the same in `a ++ b` as in `a`. -/
+private theorem evalExprWithDb_qcol_append_none_right (db : Database) (a b : Row) (t c : String)
+    (h : b.getQualified (some t) c = none) :
+    evalExprWithDb db (a ++ b) (.col ⟨some t, c⟩) = evalExprWithDb db a (.col ⟨some t, c⟩) := by
+  simp only [evalExprWithDb_col, Row.getQualified] at h ⊢
+  rw [lookupCI_append_none_right _ _ _ h]
 
 /-- isNullValue of any lookupCI on a null-padded list is true -/
 private theorem isNullValue_lookupCI_nullPad :
@@ -1123,10 +1163,13 @@ theorem join_match_implies_in_subquery (db : Database) (row : Row)
     | some w =>
       have heq := eq_true_of_evalBinOp_eq hMatch
       rw [evalExprWithDb_inSubquery_simple, hv]
-      simp only [Bool.false_eq_true, ↓reduceIte]
+      dsimp only
       rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin]
+      -- a match makes IN TRUE whatever NULLs the subquery has (#330)
+      rw [inSubqueryResult_of_match]
+      · rfl
+      unfold inSubqueryMatch
       rw [List.any_map, List.any_map]
-      congr 1; congr 1
       rw [List.any_eq_true]
       refine ⟨sRow, hMem, ?_⟩
       simp only [List.flatMap_cons, List.flatMap_nil, List.append_nil, evalSelectItem,
@@ -1143,6 +1186,9 @@ theorem join_match_implies_in_subquery (db : Database) (row : Row)
     Preconditions:
     - hStable: t.xCol eval is stable when extra columns are appended
     - hEvalSome: t.xCol always evaluates to some value (not none/error)
+    - hxNotNull/hyNotNull: t.xCol and s.yCol are never NULL (#330). With a NULL, NOT IN is
+      unknown and drops the row, while the anti-join keeps it: this is the classic reason
+      optimizers only unnest NOT IN over NOT NULL columns
     - hNoAgg/hNoWin: subquery items have no aggregates/window functions
     - hProjT: t.* projection on combined row equals projection on t row alone
     - hNotInLeft: s.yCol is not present in left table rows -/
@@ -1153,6 +1199,10 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
       evalExprWithDb db (row ++ extra) (.col ⟨some tName, xCol⟩))
     (hEvalSome : ∀ row ∈ evalFrom db (.table ⟨tName, some tName⟩),
       ∃ v, evalExprWithDb db row (.col ⟨some tName, xCol⟩) = some v)
+    (hxNotNull : ∀ row ∈ evalFrom db (.table ⟨tName, some tName⟩), ∀ v,
+      evalExprWithDb db row (.col ⟨some tName, xCol⟩) = some v → v.isNull = false)
+    (hyNotNull : ∀ sRow ∈ evalFrom db (.table ⟨sName, some sName⟩), ∃ c,
+      evalExprWithDb db sRow (.col ⟨some sName, yCol⟩) = some c ∧ c.isNull = false)
     (hNoAgg : selectHasAggregate [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hNoWin : selectHasWindowFn [.exprItem (.col ⟨some sName, yCol⟩) none] = false)
     (hProjT : ∀ tRow ∈ evalFrom db (.table ⟨tName, some tName⟩),
@@ -1256,11 +1306,17 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
       rw [evalExprWithDb_inSubquery_simple]
       obtain ⟨v, hv⟩ := hEvalSome lr hlr
       rw [hv]
-      simp only [↓reduceIte]
+      dsimp only
+      rw [evalSelectWithContext_simple_project db lr _ _ hNoAgg hNoWin]
+      -- Without NULLs, NOT IN is the two-valued non-membership test (#330)
+      rw [inSubqueryResult_of_not_hasNull (hasNull_col_project db lr _ sName yCol v
+        (hxNotNull lr hlr v hv) (fun sRow hs => by
+          rw [evalExprWithDb_qcol_append_none_right db sRow lr sName yCol (hNotInLeft lr hlr)]
+          exact hyNotNull sRow hs))]
+      simp only [↓reduceIte, inSubqueryMatch]
       congr 1; congr 1
       rw [Bool.not_eq_true']
       -- Show hasMatch = false by contradiction
-      rw [evalSelectWithContext_simple_project db lr _ _ hNoAgg hNoWin]
       rw [List.any_map, List.any_map]
       -- Goal: (sRows.any f) = false — prove via cases
       cases hAny : (evalFrom db (.table ⟨sName, some sName⟩)).any _ with
@@ -1370,13 +1426,12 @@ theorem not_in_subquery_unnest_to_antijoin (db : Database)
         = some (.bool false) := by
       rw [evalExprWithDb_inSubquery_simple]
       obtain ⟨v, hv⟩ := hEvalSome lr hlr
-      rw [hv]; simp only [↓reduceIte]
-      rw [evalExprWithDb_inSubquery_simple] at hINTrue
-      rw [hv] at hINTrue
-      simp only [Bool.false_eq_true, ↓reduceIte] at hINTrue
-      have := Option.some.inj hINTrue
-      have := Value.bool.inj this
-      rw [this]; decide
+      rw [hv]
+      rw [evalExprWithDb_inSubquery_simple, hv] at hINTrue
+      dsimp only at hINTrue ⊢
+      -- IN is TRUE only on a match, and a match makes NOT IN FALSE
+      rw [inSubqueryResult_of_match (inSubqueryMatch_of_result_true (Option.some.inj hINTrue))]
+      rfl
     -- LHS: if false then [proj lr] else [] = []
     rw [show (evalExprWithDb db lr
         (.inSubquery (.col ⟨some tName, xCol⟩) true
@@ -1476,22 +1531,19 @@ theorem in_subquery_implies_join_match (db : Database) (row : Row)
   cases val with
   | none => simp at h
   | some v =>
-    -- Now h : some (.bool (if false then ... else hasMatch)) = some (.bool true)
-    simp only [Bool.false_eq_true, ↓reduceIte] at h
-    -- h : some (.bool (any ...)) = some (.bool true)
+    dsimp only at h
     -- Decompose evalSelectWithContext using simple_project
     rw [evalSelectWithContext_simple_project db row _ _ hNoAgg hNoWin] at h
+    -- IN is TRUE only on a match (#330)
+    have hm := inSubqueryMatch_of_result_true (Option.some.inj h)
+    unfold inSubqueryMatch at hm
     -- Push through the two List.map layers
-    rw [List.any_map, List.any_map] at h
-    -- h : some (.bool (baseRows.any f)) = some (.bool true)
-    -- Extract the boolean equality
+    rw [List.any_map, List.any_map] at hm
     have hAny : (evalFrom db (.table ⟨sName, some sName⟩)).any
       (fun qRow => match (([.exprItem (.col ⟨some sName, yCol⟩) none].flatMap
         (evalSelectItem db (qRow ++ row))).head?) with
         | some (_, subVal) => v.eq subVal == some true
-        | none => false) = true := by
-      have hinj := Option.some.inj h
-      exact Value.bool.inj hinj
+        | none => false) = true := hm
     rw [List.any_eq_true] at hAny
     obtain ⟨qRow, hqMem, hqMatch⟩ := hAny
     refine ⟨qRow, hqMem, ?_⟩

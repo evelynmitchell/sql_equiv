@@ -418,6 +418,53 @@ def isNullValue : Option Value → Bool
   | some (.null _) => true
   | _ => false
 
+/-- Whether some row's first value equals `v` (`x IN (subquery)` found a match). -/
+def inSubqueryMatch (v : Value) (rows : Table) : Bool :=
+  rows.any fun subRow =>
+    match subRow.head? with
+    | some (_, subVal) => v.eq subVal == some true
+    | none => false
+
+/-- Whether a NULL takes part in `v IN (subquery)` (#330): `v` is NULL and the subquery has a
+    row, or some row's first value is NULL. -/
+def inSubqueryHasNull (v : Value) (rows : Table) : Bool :=
+  (v.isNull && !rows.isEmpty) ||
+    rows.any fun subRow =>
+      match subRow.head? with
+      | some (_, subVal) => subVal.isNull
+      | none => false
+
+/-- `v IN (subquery)` (or `NOT IN` when `neg`), three-valued as the standard defines it (#330),
+    and as `IN (list)` already is: TRUE if some row's first value equals `v`, otherwise unknown
+    (NULL) if a NULL takes part, otherwise FALSE. `NOT IN` negates, and unknown stays unknown, so
+    `5 NOT IN (SELECT NULL)` drops the row in a WHERE clause. An empty subquery gives FALSE
+    (`NOT IN`: TRUE), even for a NULL `v`. -/
+def inSubqueryResult (neg : Bool) (v : Value) (rows : Table) : Value :=
+  if inSubqueryMatch v rows then .bool (!neg)
+  else if inSubqueryHasNull v rows then .null none
+  else .bool neg
+
+/-- A match makes `IN (subquery)` TRUE (`NOT IN`: FALSE), NULLs or not. -/
+theorem inSubqueryResult_of_match {neg : Bool} {v : Value} {rows : Table}
+    (h : inSubqueryMatch v rows = true) : inSubqueryResult neg v rows = .bool (!neg) := by
+  simp [inSubqueryResult, h]
+
+/-- `IN (subquery)` is TRUE only on a match. -/
+theorem inSubqueryMatch_of_result_true {v : Value} {rows : Table}
+    (h : inSubqueryResult false v rows = .bool true) : inSubqueryMatch v rows = true := by
+  unfold inSubqueryResult at h
+  cases hm : inSubqueryMatch v rows
+  · cases hn : inSubqueryHasNull v rows <;> simp [hm, hn] at h
+  · rfl
+
+/-- Without NULLs, `IN (subquery)` is two-valued: the membership test. -/
+theorem inSubqueryResult_of_not_hasNull {neg : Bool} {v : Value} {rows : Table}
+    (h : inSubqueryHasNull v rows = false) :
+    inSubqueryResult neg v rows =
+      .bool (if neg then !inSubqueryMatch v rows else inSubqueryMatch v rows) := by
+  unfold inSubqueryResult
+  cases hm : inSubqueryMatch v rows <;> cases neg <;> simp [h]
+
 /-- Evaluate unary operator.
     NULL SEMANTICS (Option 3): NOT/NEG on null returns `some (.null none)` instead of `none`. -/
 def evalUnaryOp (op : UnaryOp) (e : Option Value) : Option Value :=

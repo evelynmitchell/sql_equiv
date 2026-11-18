@@ -139,8 +139,10 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM users WHERE age > (SELECT AVG(age) FROM users)", .agree),
   ("SELECT name FROM users WHERE age = (SELECT MAX(age) FROM users)", .agree),
   ("SELECT name FROM users WHERE department = 'Engineering' AND age > (SELECT MIN(age) FROM users WHERE department = 'Sales')", .agree),
-  ("SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'm3')",
-    .sqlEquivBug "#330: NOT IN (subquery) ignores NULLs"),
+  -- #330: NOT IN (subquery) is unknown when a NULL takes part
+  ("SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'm3')", .agree),
+  ("SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'm1')", .agree),
+  ("SELECT name FROM museum WHERE staff NOT IN (SELECT staff FROM museum WHERE name = 'zz')", .agree),
   ("SELECT name FROM museum WHERE staff IN (SELECT staff FROM museum WHERE name = 'm3' OR name = 'm1')", .agree),
   ("SELECT name FROM users WHERE age > (SELECT age FROM users WHERE id > 99)", .agree),
   ("SELECT name FROM users WHERE id IN (SELECT user_id FROM orders WHERE amount > (SELECT AVG(amount) FROM orders))", .agree),
