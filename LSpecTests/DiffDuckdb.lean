@@ -20,12 +20,11 @@
     same #201 policy decision; DuckDB computes it.
   - (resolved) ORDER BY on non-projected columns used to no-op (#206); now
     fixed and covered by the ORDER BY agreement case below.
-  - DISTINCT + ORDER BY on a non-projected column (registry row 5): accepted
-    in the duckdb dialect (`firstRow`); DuckDB sorts by each value's first
-    source row (`first(key)`), but SqlEquiv's evaluator still ties the key.
-    Gap (#320); the typed core agrees with DuckDB
-    (`SqlCoreTest/DuckdbDiffTest.lean`). Do not add such a case here until
-    #320 is fixed.
+  - (resolved by #320) DISTINCT + ORDER BY on a non-projected column
+    (registry row 5): in the duckdb dialect each distinct row now sorts by
+    its first source row's key, as DuckDB does. This harness compares bags,
+    so the order is checked in `SqlCoreTest/DuckdbDiffTest.lean`, which runs
+    SqlEquiv, the typed core and DuckDB on the same queries.
   - (resolved by #330) `x NOT IN (subquery)` where `x` or a subquery value is
     NULL used to return the row; it is now unknown and drops it, as in the
     engines. Covered by the `NOT IN null:` cases below.

@@ -138,6 +138,13 @@ def run : IO (Option (Nat × Nat × List String)) := do
     let .ok rs := e.q.eval db | fails := s!"{sql}: SqlCore error" :: fails
     let ours := bagOf sql (rs.map fun r => (List.finRange e.n).map fun i => normCell (r i))
     n := n + 1
+    -- SqlEquiv in the duckdb dialect sorts the same way since #320
+    let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
+    match newRows e, old with
+    | .ok nr, some or_ =>
+      if rowsFor sql nr != rowsFor sql or_ then
+        fails := s!"{sql}:\n    SqlCore  {rowsFor sql nr}\n    SqlEquiv {rowsFor sql or_}" :: fails
+    | _, _ => fails := s!"{sql}: SqlEquiv returned no table" :: fails
     match ← runDuckdb sql with
     | .error err => fails := s!"{sql}: DuckDB error {err}" :: fails
     | .ok theirs =>

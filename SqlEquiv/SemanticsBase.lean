@@ -391,6 +391,61 @@ theorem dedupByKey_cons {α β : Type} [BEq β] (f : α → β) (x : α) (xs : L
     dedupByKey f (x :: xs) = x :: dedupByKey f (xs.filter fun y => !(f y == f x)) := by
   rw [dedupByKey]
 
+/-- Deduplicating pairs by a key on their first component, then keeping the first components, is
+    deduplicating the first components (#320): the pairs' second components stay aligned with
+    the deduplicated firsts. -/
+theorem map_fst_dedupByKey {α γ β : Type} [BEq β] (f : α → β) (L : List (α × γ)) :
+    (dedupByKey (fun p => f p.1) L).map Prod.fst = dedupByKey f (L.map Prod.fst) := by
+  suffices ∀ (n : Nat) (L : List (α × γ)), L.length ≤ n →
+      (dedupByKey (fun p => f p.1) L).map Prod.fst = dedupByKey f (L.map Prod.fst) from
+    this L.length L (Nat.le_refl _)
+  intro n
+  induction n with
+  | zero =>
+    intro L hL
+    cases L with
+    | nil => simp
+    | cons _ _ => simp at hL
+  | succ k ih =>
+    intro L hL
+    match L with
+    | [] => simp
+    | p :: ps =>
+      have hlen : (ps.filter fun q => !(f q.1 == f p.1)).length ≤ k :=
+        Nat.le_trans (List.length_filter_le _ _) (by simp at hL; omega)
+      rw [dedupByKey_cons, List.map_cons, ih _ hlen, List.map_cons, dedupByKey_cons, List.filter_map]
+      rfl
+
+/-- Deduplicating aligned pairs by their first components keeps as many pairs as deduplicating
+    the first components alone (#320). -/
+theorem length_dedupByKey_zip {α γ β : Type} [BEq β] (f : α → β) (P : List α) (S : List γ)
+    (h : P.length = S.length) :
+    (dedupByKey (fun p => f p.1) (P.zip S)).length = (dedupByKey f P).length := by
+  have := congrArg List.length (map_fst_dedupByKey f (P.zip S))
+  rwa [List.length_map, List.map_fst_zip (by omega)] at this
+
+/-- Deduplication never lengthens a list. -/
+theorem length_dedupByKey_le {α β : Type} [BEq β] (f : α → β) (l : List α) :
+    (dedupByKey f l).length ≤ l.length := by
+  suffices ∀ (n : Nat) (l : List α), l.length ≤ n → (dedupByKey f l).length ≤ l.length from
+    this l.length l (Nat.le_refl _)
+  intro n
+  induction n with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil => simp
+    | cons _ _ => simp at hl
+  | succ k ih =>
+    intro l hl
+    match l with
+    | [] => simp
+    | x :: xs =>
+      have hf := List.length_filter_le (fun y => !(f y == f x)) xs
+      have := ih (xs.filter fun y => !(f y == f x)) (by simp at hl; omega)
+      rw [dedupByKey_cons, List.length_cons, List.length_cons]
+      omega
+
 /-- The column names of a table, read from its first row (#324). -/
 def Table.columnNames (t : Table) : Option (List String) := t.head?.map (·.map Prod.fst)
 

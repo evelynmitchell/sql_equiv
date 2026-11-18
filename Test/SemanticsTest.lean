@@ -507,16 +507,32 @@ def registryPinTests : List TestResult := [
    match ok.filter (fun q => (parse q).toOption.isNone) with
    | [] => .pass "distinct_order_by_selected_accepted"
    | bad => .fail "distinct_order_by_selected_accepted" s!"rejected: {bad}"),
-  -- In the sqlite and duckdb dialects SqlEquiv still ties the key, so output
-  -- keeps input order; the engines sort by each value's first source row
-  -- (Sales, Marketing, Engineering). Gap, #320; SqlCore implements it.
+  -- In the sqlite and duckdb dialects each distinct row sorts by the key of its first source
+  -- row, as the engines do (#320): Sales, Marketing, Engineering.
   (match evalQueryIn .sqlite "SELECT DISTINCT department FROM users ORDER BY age" with
    | .ok t =>
      let col := t.map fun row => ((row.find? (·.1 == "department")).map (·.2)).getD (.null none)
-     if col == [.string "Engineering", .string "Sales", .string "Marketing"]
-     then .pass "distinct_order_by_unselected_keeps_input_order"
-     else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
-   | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+     if col == [.string "Sales", .string "Marketing", .string "Engineering"]
+     then .pass "distinct_order_by_unselected_first_row"
+     else .fail "distinct_order_by_unselected_first_row" s!"{col.map (·.toSql)}"
+   | .error e => .fail "distinct_order_by_unselected_first_row" e),
+  -- The issue's example: `a = 1` sorts by its first row's `b = 5`, not MIN 1 (sqlite: 2 3 1)
+  (match evalQueryIn .sqlite ("SELECT DISTINCT a FROM (SELECT 1 AS a, 5 AS b UNION ALL " ++
+      "SELECT 2, 3 UNION ALL SELECT 1, 1 UNION ALL SELECT 3, 4) AS t ORDER BY b") with
+   | .ok t =>
+     let col := t.map fun row => ((row.find? (·.1 == "a")).map (·.2)).getD (.null none)
+     if col == [.int 2, .int 3, .int 1] then .pass "distinct_order_by_first_row_not_min"
+     else .fail "distinct_order_by_first_row_not_min" s!"{col.map (·.toSql)}"
+   | .error e => .fail "distinct_order_by_first_row_not_min" e),
+  -- DISTINCT over GROUP BY sorts by the first group's key (duckdb: Sales, Marketing, Engineering)
+  (match evalQueryIn .duckdb
+      "SELECT DISTINCT department FROM users GROUP BY department, age ORDER BY age" with
+   | .ok t =>
+     let col := t.map fun row => ((row.find? (·.1 == "department")).map (·.2)).getD (.null none)
+     if col == [.string "Sales", .string "Marketing", .string "Engineering"]
+     then .pass "distinct_group_by_order_by_first_group"
+     else .fail "distinct_group_by_order_by_first_group" s!"{col.map (·.toSql)}"
+   | .error e => .fail "distinct_group_by_order_by_first_group" e),
   -- #323: LIKE wildcards anywhere in the pattern (sqlite, DuckDB agree)
   testExactRows "like_underscore" "SELECT 'ab' LIKE '_b'" 1 (some (.bool true)),
   testExactRows "like_interior_percent" "SELECT 'abc' LIKE 'a%c'" 1 (some (.bool true)),
