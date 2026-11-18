@@ -47,6 +47,22 @@ def QuerySetEquiv (q1 q2 : Query) : Prop :=
   ∀ db : Database, ∀ row : Row, row ∈ evalQuery db q1 ↔ row ∈ evalQuery db q2
 scoped infix:50 " ≃ˢ " => QuerySetEquiv
 
+/-- Value-level bag equivalence (#324): the results hold the same rows with the same
+    multiplicities, compared by `Row.valueKey`, i.e. by position and value, ignoring column
+    names and the static type of a NULL. This is what engines guarantee for set operations,
+    whose output columns are named by their first branch, so `A INTERSECT B` and
+    `B INTERSECT A` name their columns differently. -/
+def QueryBagEquivV (q1 q2 : Query) : Prop :=
+  ∀ db : Database, ((evalQuery db q1).map Row.valueKey).Perm ((evalQuery db q2).map Row.valueKey)
+scoped infix:50 " ≃ᵇᵛ " => QueryBagEquivV
+
+/-- Value-level set equivalence (#324): the results hold the same rows, compared by
+    `Row.valueKey`, ignoring order, multiplicities, column names and NULL type tags. -/
+def QuerySetEquivV (q1 q2 : Query) : Prop :=
+  ∀ db : Database, ∀ k : List Value,
+    k ∈ (evalQuery db q1).map Row.valueKey ↔ k ∈ (evalQuery db q2).map Row.valueKey
+scoped infix:50 " ≃ˢᵛ " => QuerySetEquivV
+
 def StmtEquiv (s1 s2 : Stmt) : Prop :=
   ∀ db : Database, evalStmt db s1 = evalStmt db s2
 scoped infix:50 " ≃ " => StmtEquiv
@@ -120,6 +136,27 @@ theorem QueryEquiv.toBagEquiv {q1 q2 : Query} (h : q1 ≃ᵩ q2) : q1 ≃ᵇ q2 
 /-- Bag equivalence implies set equivalence -/
 theorem QueryBagEquiv.toSetEquiv {q1 q2 : Query} (h : q1 ≃ᵇ q2) : q1 ≃ˢ q2 := by
   intro db row; exact (h db).mem_iff
+
+theorem query_bag_equiv_v_refl (q : Query) : q ≃ᵇᵛ q := by intro db; exact List.Perm.refl _
+theorem query_bag_equiv_v_symm {q1 q2 : Query} (h : q1 ≃ᵇᵛ q2) : q2 ≃ᵇᵛ q1 := by intro db; exact (h db).symm
+theorem query_bag_equiv_v_trans {q1 q2 q3 : Query} (h12 : q1 ≃ᵇᵛ q2) (h23 : q2 ≃ᵇᵛ q3) : q1 ≃ᵇᵛ q3 := by intro db; exact (h12 db).trans (h23 db)
+
+theorem query_set_equiv_v_refl (q : Query) : q ≃ˢᵛ q := by intro db k; exact Iff.rfl
+theorem query_set_equiv_v_symm {q1 q2 : Query} (h : q1 ≃ˢᵛ q2) : q2 ≃ˢᵛ q1 := by intro db k; exact (h db k).symm
+theorem query_set_equiv_v_trans {q1 q2 q3 : Query} (h12 : q1 ≃ˢᵛ q2) (h23 : q2 ≃ˢᵛ q3) : q1 ≃ˢᵛ q3 := by intro db k; exact (h12 db k).trans (h23 db k)
+
+/-- Bag equivalence implies value-level bag equivalence -/
+theorem QueryBagEquiv.toBagEquivV {q1 q2 : Query} (h : q1 ≃ᵇ q2) : q1 ≃ᵇᵛ q2 := by
+  intro db; exact (h db).map _
+
+/-- Set equivalence implies value-level set equivalence -/
+theorem QuerySetEquiv.toSetEquivV {q1 q2 : Query} (h : q1 ≃ˢ q2) : q1 ≃ˢᵛ q2 := by
+  intro db k; simp only [List.mem_map]
+  exact ⟨fun ⟨r, hr, hk⟩ => ⟨r, (h db r).mp hr, hk⟩, fun ⟨r, hr, hk⟩ => ⟨r, (h db r).mpr hr, hk⟩⟩
+
+/-- Value-level bag equivalence implies value-level set equivalence -/
+theorem QueryBagEquivV.toSetEquivV {q1 q2 : Query} (h : q1 ≃ᵇᵛ q2) : q1 ≃ˢᵛ q2 := by
+  intro db k; exact (h db).mem_iff
 
 theorem stmt_equiv_refl (s : Stmt) : s ≃ s := by intro db; rfl
 theorem stmt_equiv_symm {s1 s2 : Stmt} (h : s1 ≃ s2) : s2 ≃ s1 := by intro db; exact (h db).symm

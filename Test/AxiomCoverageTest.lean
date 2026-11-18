@@ -115,6 +115,23 @@ def testQueryBagEquiv (name : String) (q1 q2 : Query) (db : Database) : TestResu
     if countsMatch then .pass name
     else .fail name s!"Bag equiv failed: differing row multiplicities with {r1.length} rows"
 
+/-- Test value-level bag equivalence (≃ᵇᵛ, #324): the results' value keys (`Row.valueKey`:
+    position and value, NULL type tags erased) agree with multiplicities. -/
+def testQueryBagEquivV (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
+  let k1 := (evalQuery db q1).map Row.valueKey
+  let k2 := (evalQuery db q2).map Row.valueKey
+  if k1.length != k2.length then
+    .fail name s!"Value bag equiv failed: {k1.length} vs {k2.length} rows"
+  else if (k1 ++ k2).eraseDups.all (fun k => k1.count k == k2.count k) then .pass name
+  else .fail name s!"Value bag equiv failed: differing key multiplicities with {k1.length} rows"
+
+/-- Test value-level set equivalence (≃ˢᵛ, #324): the results hold the same value keys. -/
+def testQuerySetEquivV (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
+  let k1 := (evalQuery db q1).map Row.valueKey
+  let k2 := (evalQuery db q2).map Row.valueKey
+  if k1.all (k2.contains ·) && k2.all (k1.contains ·) then .pass name
+  else .fail name s!"Value set equiv failed: membership differs"
+
 /-- Test set equivalence: two queries produce results with the same membership.
     Compares deduplicated results via membership. -/
 def testQuerySetEquiv (name : String) (q1 q2 : Query) (db : Database) : TestResult :=
@@ -542,20 +559,20 @@ def setOpTests : List TestResult :=
   let selYoung : SelectStmt := .mk false [.star none] (some (.table ⟨"users", none⟩))
     (some (.binOp .lt (.col ⟨none, "age"⟩) (.lit (.int 35)))) [] none [] none none
   [
-    -- union_comm: A UNION B ≃ᵇ B UNION A (bag equiv)
-    testQueryBagEquiv "union_comm"
+    -- union_comm: A UNION B ≃ᵇᵛ B UNION A (bag equiv on values, #324)
+    testQueryBagEquivV "union_comm"
       (.compound (.simple selUsers) .union (.simple selOrders))
       (.compound (.simple selOrders) .union (.simple selUsers))
       testDb,
 
-    -- union_all_comm: A UNION ALL B ≃ᵇ B UNION ALL A (bag equiv)
-    testQueryBagEquiv "union_all_comm"
+    -- union_all_comm: A UNION ALL B ≃ᵇᵛ B UNION ALL A (bag equiv on values, #324)
+    testQueryBagEquivV "union_all_comm"
       (.compound (.simple selUsers) .unionAll (.simple selOrders))
       (.compound (.simple selOrders) .unionAll (.simple selUsers))
       testDb,
 
-    -- intersect_comm: A INTERSECT B ≃ˢ B INTERSECT A (set equiv)
-    testQuerySetEquiv "intersect_comm"
+    -- intersect_comm: A INTERSECT B ≃ˢᵛ B INTERSECT A (set equiv on values, #324)
+    testQuerySetEquivV "intersect_comm"
       (.compound (.simple selOld) .intersect (.simple selYoung))
       (.compound (.simple selYoung) .intersect (.simple selOld))
       testDb,
@@ -563,8 +580,8 @@ def setOpTests : List TestResult :=
     testLengthGe "intersect_comm_nonempty"
       (evalQuery testDb (.compound (.simple selOld) .intersect (.simple selYoung))).length 1,
 
-    -- union_assoc: (A UNION B) UNION C ≃ᵇ A UNION (B UNION C) (bag equiv)
-    testQueryBagEquiv "union_assoc"
+    -- union_assoc: (A UNION B) UNION C ≃ᵇᵛ A UNION (B UNION C) (bag equiv on values)
+    testQueryBagEquivV "union_assoc"
       (.compound (.compound (.simple selUsers) .union (.simple selOrders)) .union (.simple selEmpty))
       (.compound (.simple selUsers) .union (.compound (.simple selOrders) .union (.simple selEmpty)))
       testDb,
@@ -579,16 +596,15 @@ def setOpTests : List TestResult :=
       (evalQuery testDb (.compound (.compound (.simple selUsers) .intersect (.simple selOld))
         .intersect (.simple selYoung))).length 1,
 
-    -- union_idempotent: A UNION A ≃ˢ A (set equiv)
-    testQuerySetEquiv "union_idempotent"
+    -- union_idempotent: A UNION A ≃ˢᵛ A (set equiv on values)
+    testQuerySetEquivV "union_idempotent"
       (.compound (.simple selUsers) .union (.simple selUsers))
       (.simple selUsers)
       testDb,
 
-    -- intersect_idempotent: A INTERSECT A ≃ˢ A (set equiv; downgraded from ≃ᵩ
-    -- by #223 — INTERSECT now deduplicates, so exact equality fails on
-    -- duplicate-bearing inputs)
-    testQuerySetEquiv "intersect_idempotent"
+    -- intersect_idempotent: A INTERSECT A ≃ˢᵛ A (set equiv on values; downgraded from ≃ᵩ
+    -- by #223 — INTERSECT deduplicates — and from ≃ˢ by #324, dedup by value key)
+    testQuerySetEquivV "intersect_idempotent"
       (.compound (.simple selUsers) .intersect (.simple selUsers))
       (.simple selUsers)
       testDb,
@@ -598,8 +614,8 @@ def setOpTests : List TestResult :=
       (evalQuery testDb (.compound (.simple selUsers) .exceptOp (.simple selUsers))).length
       0,
 
-    -- union_empty_right: A UNION empty ≃ˢ A (set equiv)
-    testQuerySetEquiv "union_empty_right"
+    -- union_empty_right: A UNION empty ≃ˢᵛ A (set equiv on values)
+    testQuerySetEquivV "union_empty_right"
       (.compound (.simple selUsers) .union (.simple selEmpty))
       (.simple selUsers)
       testDb,
@@ -615,8 +631,8 @@ def setOpTests : List TestResult :=
       ((evalQuery testDb (.simple selUsers)).length +
        (evalQuery testDb (.simple selOrders)).length),
 
-    -- union_intersect_distrib: A UNION (B ∩ C) ≃ˢ (A ∪ B) ∩ (A ∪ C) (set equiv)
-    testQuerySetEquiv "union_intersect_distrib"
+    -- union_intersect_distrib: A UNION (B ∩ C) ≃ˢᵛ (A ∪ B) ∩ (A ∪ C) (set equiv on values)
+    testQuerySetEquivV "union_intersect_distrib"
       (.compound (.simple selUsers) .union
         (.compound (.simple selOrders) .intersect (.simple selUsers)))
       (.compound
@@ -625,8 +641,8 @@ def setOpTests : List TestResult :=
         (.compound (.simple selUsers) .union (.simple selUsers)))
       testDb,
 
-    -- intersect_union_distrib: A ∩ (B ∪ C) ≃ˢ (A ∩ B) ∪ (A ∩ C) (set equiv)
-    testQuerySetEquiv "intersect_union_distrib"
+    -- intersect_union_distrib: A ∩ (B ∪ C) ≃ˢᵛ (A ∩ B) ∪ (A ∩ C) (set equiv on values)
+    testQuerySetEquivV "intersect_union_distrib"
       (.compound (.simple selUsers) .intersect
         (.compound (.simple selOrders) .union (.simple selUsers)))
       (.compound
@@ -1765,43 +1781,48 @@ def infrastructureAxiomTests : List TestResult :=
     if queryResult == selectResult then .pass "evalQuery_simple (users)"
     else .fail "evalQuery_simple (users)" s!"Results differ: {queryResult.length} vs {selectResult.length} rows",
 
-    -- evalQuery_compound: UNION ALL decomposes to append
+    -- evalQuery_compound: UNION ALL decomposes to append, right rows renamed (#324)
     let selUsers := mkSimpleSelect "users"
     let selOrders := mkSimpleSelect "orders"
     let compoundResult := evalQuery testDb (.compound (.simple selUsers) .unionAll (.simple selOrders))
-    let expectedResult := evalQuery testDb (.simple selUsers) ++ evalQuery testDb (.simple selOrders)
-    if compoundResult == expectedResult then .pass "evalQuery_compound (UNION ALL = append)"
-    else .fail "evalQuery_compound (UNION ALL = append)" s!"Results differ: {compoundResult.length} vs {expectedResult.length} rows",
+    let usersResult := evalQuery testDb (.simple selUsers)
+    let expectedResult := usersResult ++
+      (evalQuery testDb (.simple selOrders)).map (Row.renameTo (Table.columnNames usersResult))
+    if compoundResult == expectedResult then .pass "evalQuery_compound (UNION ALL = append, renamed)"
+    else .fail "evalQuery_compound (UNION ALL = append, renamed)" s!"Results differ: {compoundResult.length} vs {expectedResult.length} rows",
 
-    -- evalQuery_compound: INTERSECT decomposes to filter+contains+eraseDups (#223)
+    -- evalQuery_compound: INTERSECT decomposes to filter+contains+dedup by value key (#223, #324)
     let selUsers := mkSimpleSelect "users"
     let selOrders := mkSimpleSelect "orders"
     let intersectResult := evalQuery testDb (.compound (.simple selUsers) .intersect (.simple selOrders))
     let usersResult := evalQuery testDb (.simple selUsers)
     let ordersResult := evalQuery testDb (.simple selOrders)
-    let expectedIntersect := (usersResult.filter (ordersResult.contains ·)).eraseDups
-    if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains+eraseDups)"
-    else .fail "evalQuery_compound (INTERSECT = filter+contains+eraseDups)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows",
+    let expectedIntersect := dedupByKey Row.valueKey (usersResult.filter fun row =>
+      (ordersResult.map Row.valueKey).contains (Row.valueKey row))
+    if intersectResult == expectedIntersect then .pass "evalQuery_compound (INTERSECT = filter+contains+dedup by key)"
+    else .fail "evalQuery_compound (INTERSECT = filter+contains+dedup by key)" s!"Results differ: {intersectResult.length} vs {expectedIntersect.length} rows",
 
-    -- evalQuery_compound: UNION decomposes to append+eraseDups
+    -- evalQuery_compound: UNION decomposes to append (renamed) + dedup by value key (#324)
     let selUsers := mkSimpleSelect "users"
     let selOrders := mkSimpleSelect "orders"
     let unionResult := evalQuery testDb (.compound (.simple selUsers) .union (.simple selOrders))
     let usersResult := evalQuery testDb (.simple selUsers)
     let ordersResult := evalQuery testDb (.simple selOrders)
-    let expectedUnion := (usersResult ++ ordersResult).eraseDups
-    if unionResult == expectedUnion then .pass "evalQuery_compound (UNION = append+eraseDups)"
-    else .fail "evalQuery_compound (UNION = append+eraseDups)" s!"Results differ: {unionResult.length} vs {expectedUnion.length} rows",
+    let expectedUnion := dedupByKey Row.valueKey
+      (usersResult ++ ordersResult.map (Row.renameTo (Table.columnNames usersResult)))
+    if unionResult == expectedUnion then .pass "evalQuery_compound (UNION = append+dedup by key)"
+    else .fail "evalQuery_compound (UNION = append+dedup by key)" s!"Results differ: {unionResult.length} vs {expectedUnion.length} rows",
 
-    -- evalQuery_compound: EXCEPT decomposes to filter+!contains+eraseDups (#223)
+    -- evalQuery_compound: EXCEPT decomposes to filter+!contains+dedup by value key (#223, #324)
     let selUsers := mkSimpleSelect "users"
     let selOrders := mkSimpleSelect "orders"
     let exceptResult := evalQuery testDb (.compound (.simple selUsers) .exceptOp (.simple selOrders))
     let usersResult := evalQuery testDb (.simple selUsers)
     let ordersResult := evalQuery testDb (.simple selOrders)
-    let expectedExcept := (usersResult.filter (!ordersResult.contains ·)).eraseDups
-    if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains+eraseDups)"
-    else .fail "evalQuery_compound (EXCEPT = filter+!contains+eraseDups)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows",
+    let expectedExcept := dedupByKey Row.valueKey (usersResult.filter fun row =>
+      !(ordersResult.map Row.valueKey).contains (Row.valueKey row))
+    if exceptResult == expectedExcept then .pass "evalQuery_compound (EXCEPT = filter+!contains+dedup by key)"
+    else .fail "evalQuery_compound (EXCEPT = filter+!contains+dedup by key)" s!"Results differ: {exceptResult.length} vs {expectedExcept.length} rows",
 
     -- evalFrom_cross_join: CROSS JOIN = flatMap/map
     let tU := FromClause.table ⟨"users", none⟩

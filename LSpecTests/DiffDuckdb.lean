@@ -32,9 +32,10 @@
   - LIKE with `_` or a `%` inside the pattern (#323): SqlEquiv's `simpleLike`
     treats them as literal characters; the engines (and the typed core)
     match them as wildcards. Do not add such a case until #323 is fixed.
-  - INTERSECT/EXCEPT between columns of different names, or over typed and
-    untyped NULLs (#324): SqlEquiv compares rows by (name, value) pairs; the
-    engines (and the typed core) compare values positionally.
+  - (resolved by #324) INTERSECT/EXCEPT/UNION used to compare rows by
+    (name, value) pairs and keep typed and untyped NULLs apart; rows are now
+    compared by value in column order, NULL tags erased. Covered by the
+    `set op:` cases below.
   - Number vs numeric-looking string (`age = '30'`, registry row 11): DuckDB
     converts the string; we treat it as a type error and drop the row (#254,
     decided: keep).
@@ -166,8 +167,10 @@ private def parseDuckdbOutput (output : String) : Table :=
 private def stripQualifier (name : String) : String :=
   (name.splitOn ".").getLastD name
 
+/-- Normalize a row: strip qualifiers from column names, and erase the type tag of a NULL,
+    which an engine's printed `NULL` does not carry (#324). -/
 private def normalizeRow (row : Row) : Row :=
-  row.map fun (k, v) => (stripQualifier k, v)
+  row.map fun (k, v) => (stripQualifier k, v.eraseNullType)
 
 private def rowSortKey (row : Row) : String :=
   row.map (fun (k, v) => s!"{k}={repr v}") |> String.intercalate ","
@@ -297,6 +300,17 @@ def runAllTests : IO TestSeq := do
       "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
     diffTest "derived: nested aliases"
       "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
+    -- Set operations match rows by position and value, NULL tags erased (#324)
+    diffTest "set op: INTERSECT across column names"
+      "SELECT x AS a FROM dups INTERSECT SELECT x AS b FROM other",
+    diffTest "set op: EXCEPT across column names"
+      "SELECT id FROM users EXCEPT SELECT x FROM dups",
+    diffTest "set op: typed and untyped NULL are one row"
+      "SELECT price FROM items WHERE price IS NULL UNION SELECT NULL",
+    -- (an EXCEPT that empties: DuckDB types a set operation's column as the
+    -- common supertype, so a surviving row would print as 1.0 where we keep 1)
+    diffTest "set op: numbers compare by value"
+      "SELECT id FROM users WHERE id = 1 EXCEPT SELECT 1.0",
     -- INTERSECT/EXCEPT deduplicate (#223): duplicate-bearing inputs on both
     -- sides; both engines (and now our semantics) return set results
     diffTest "INTERSECT dedups duplicate-bearing inputs"

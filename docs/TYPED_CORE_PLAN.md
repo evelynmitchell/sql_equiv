@@ -466,8 +466,8 @@ They found three `SqlEquiv` bugs, all confirmed by DuckDB, and the affected quer
 against DuckDB instead:
 
 - #323: `LIKE` treats `_` and interior `%` as literals.
-- #324: `INTERSECT`/`EXCEPT` compare column names.
-- #324: `INTERSECT`/`EXCEPT` keep typed `NULL`s apart.
+- #324: `INTERSECT`/`EXCEPT` compare column names (fixed).
+- #324: `INTERSECT`/`EXCEPT` keep typed `NULL`s apart (fixed).
 
 Spider: 405/564 now elaborate. The largest remaining classes are bare columns (64, T9),
 subqueries (47), `AVG` (27, #201) and type errors under sqlite's affinity (20).
@@ -584,6 +584,7 @@ and one derived table.
 output columns are requalified by the alias, as in `SqlEquiv` (#257). The corpus gained 4 queries.
 They agree with DuckDB. They agree with `SqlEquiv` except a `UNION ALL` body whose branches name a
 column differently: `SqlEquiv` reads it by the first branch's name, which is the #324 root cause.
+Since the #324 fix, the later branch's rows take the first branch's names, and it agrees.
 
 **Phase 8 result.** 520/564 Spider dev queries elaborate, up from 129 after phase 6. All 44 that
 remain are type errors that sqlite accepts through *type affinity*. The Spider schemas declare a

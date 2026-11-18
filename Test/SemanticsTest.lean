@@ -517,6 +517,24 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #324: set operations match rows by position and value (sqlite, DuckDB, Postgres agree)
+  testColumn "set_op_intersect_by_position"
+    "SELECT user_id FROM orders INTERSECT SELECT id FROM users" "user_id"
+    [.int 1, .int 2, .int 3],
+  testColumn "set_op_except_by_position"
+    "SELECT id FROM users EXCEPT SELECT user_id FROM orders" "id" [.int 4, .int 5],
+  -- a typed and an untyped NULL are one row (museum holds one of each)
+  testColumn "set_op_typed_nulls_one_row"
+    "SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20"
+    "staff" [.null none, .int 25, .int 41],
+  -- numbers compare by value, as `=` does: 1 and 1.0 are one row (sqlite, DuckDB: one row)
+  testExactRows "set_op_union_numbers_by_value" "SELECT 1 UNION SELECT 1.0" 1 (some (.int 1)),
+  testExactRows "set_op_intersect_numbers_by_value" "SELECT 1 INTERSECT SELECT 1.0" 1 (some (.int 1)),
+  testExactRows "set_op_except_numbers_by_value" "SELECT 1.50 EXCEPT SELECT 1.5" 0,
+  -- the later branch's rows take the first branch's column names, so `n` sorts them too
+  testColumn "set_op_rows_take_first_branch_names"
+    "SELECT name AS n FROM users WHERE id < 3 UNION ALL SELECT name FROM products ORDER BY n DESC"
+    "n" [.string "Widget", .string "Gizmo", .string "Gadget", .string "Bob", .string "Alice"],
   -- #317: a trailing ORDER BY/LIMIT sorts and limits the whole compound query,
   -- not its last branch (sqlite, DuckDB, Postgres: one row, Alice).
   testColumn "compound_order_by_limit_whole"

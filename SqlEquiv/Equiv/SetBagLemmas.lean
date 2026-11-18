@@ -198,4 +198,171 @@ theorem mem_eraseDups_append [BEq α] [LawfulBEq α] {a : α} {l₁ l₂ : List 
     a ∈ (l₁ ++ l₂).eraseDups ↔ a ∈ l₁ ∨ a ∈ l₂ := by
   rw [mem_eraseDups, List.mem_append]
 
+-- ============================================================================
+-- Key-based dedup and value keys of set operations (#324)
+-- ============================================================================
+
+section DedupByKey
+variable {α β : Type} [BEq β]
+
+theorem dedupByKey_nil (f : α → β) : dedupByKey f ([] : List α) = [] := by
+  rw [dedupByKey]
+
+theorem dedupByKey_cons (f : α → β) (x : α) (xs : List α) :
+    dedupByKey f (x :: xs) = x :: dedupByKey f (xs.filter fun y => !(f y == f x)) := by
+  rw [dedupByKey]
+
+variable [LawfulBEq β]
+
+omit [LawfulBEq β] in
+/-- The keys of `dedupByKey f l` are the keys of `l` without duplicates. -/
+theorem map_dedupByKey (f : α → β) (l : List α) :
+    (dedupByKey f l).map f = (l.map f).eraseDups := by
+  suffices ∀ (n : Nat) (l : List α), l.length ≤ n →
+      (dedupByKey f l).map f = (l.map f).eraseDups from this l.length l (Nat.le_refl _)
+  intro n
+  induction n with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil => simp [dedupByKey_nil]
+    | cons _ _ => simp at hl
+  | succ k ih =>
+    intro l hl
+    match l with
+    | [] => simp [dedupByKey_nil]
+    | x :: xs =>
+      have hlen : (xs.filter fun y => !(f y == f x)).length ≤ k :=
+        Nat.le_trans (List.length_filter_le _ _) (by simp at hl; omega)
+      rw [dedupByKey_cons, List.map_cons, ih _ hlen, List.map_cons, List.eraseDups_cons,
+        List.filter_map]
+      rfl
+
+theorem mem_map_dedupByKey {f : α → β} {l : List α} {k : β} :
+    k ∈ (dedupByKey f l).map f ↔ k ∈ l.map f := by
+  rw [map_dedupByKey, mem_eraseDups]
+
+/-- Filtering by a predicate that only looks at the key commutes with `dedupByKey`. -/
+theorem filter_dedupByKey (f : α → β) (p : α → Bool)
+    (hp : ∀ x y, f x = f y → p x = p y) (l : List α) :
+    (dedupByKey f l).filter p = dedupByKey f (l.filter p) := by
+  suffices ∀ (n : Nat) (l : List α), l.length ≤ n →
+      (dedupByKey f l).filter p = dedupByKey f (l.filter p) from this l.length l (Nat.le_refl _)
+  intro n
+  induction n with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil => simp [dedupByKey_nil]
+    | cons _ _ => simp at hl
+  | succ k ih =>
+    intro l hl
+    match l with
+    | [] => simp [dedupByKey_nil]
+    | x :: xs =>
+      have hlen : (xs.filter fun y => !(f y == f x)).length ≤ k :=
+        Nat.le_trans (List.length_filter_le _ _) (by simp at hl; omega)
+      rw [dedupByKey_cons]
+      cases hpx : p x with
+      | true =>
+        rw [List.filter_cons_of_pos hpx, List.filter_cons_of_pos hpx, dedupByKey_cons, ih _ hlen,
+          List.filter_filter, List.filter_filter]
+        congr 2
+        apply List.filter_congr
+        intro y _
+        exact Bool.and_comm ..
+      | false =>
+        rw [List.filter_cons_of_neg (by simp [hpx]), List.filter_cons_of_neg (by simp [hpx]),
+          ih _ hlen, List.filter_filter]
+        congr 1
+        apply List.filter_congr
+        intro y _
+        by_cases hy : f y = f x
+        · simp [hy, hp y x hy, hpx]
+        · simp [hy]
+
+theorem dedupByKey_dedupByKey (f : α → β) (l : List α) :
+    dedupByKey f (dedupByKey f l) = dedupByKey f l := by
+  suffices ∀ (n : Nat) (l : List α), l.length ≤ n →
+      dedupByKey f (dedupByKey f l) = dedupByKey f l from this l.length l (Nat.le_refl _)
+  intro n
+  induction n with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil => simp [dedupByKey_nil]
+    | cons _ _ => simp at hl
+  | succ k ih =>
+    intro l hl
+    match l with
+    | [] => simp [dedupByKey_nil]
+    | x :: xs =>
+      have hlen : (xs.filter fun y => !(f y == f x)).length ≤ k :=
+        Nat.le_trans (List.length_filter_le _ _) (by simp at hl; omega)
+      rw [dedupByKey_cons, dedupByKey_cons,
+        filter_dedupByKey f (fun y => !(f y == f x)) (fun a b h => by simp [h]),
+        List.filter_filter]
+      have hq : (xs.filter fun y => !(f y == f x) && !(f y == f x)) =
+          xs.filter fun y => !(f y == f x) := by
+        apply List.filter_congr; intro y _; simp
+      rw [hq, ih _ hlen]
+
+end DedupByKey
+
+/-- Renaming a row's columns does not change its value key. -/
+theorem Row.valueKey_renameTo (ns : Option (List String)) (row : Row) :
+    Row.valueKey (Row.renameTo ns row) = Row.valueKey row := by
+  cases ns with
+  | none => rfl
+  | some ns =>
+    simp only [Row.renameTo]
+    split
+    · next h =>
+      simp only [Row.valueKey]
+      rw [List.map_snd_zip (by simp [h])]
+    · rfl
+
+theorem map_valueKey_renameTo (ns : Option (List String)) (r : Table) :
+    (r.map (Row.renameTo ns)).map Row.valueKey = r.map Row.valueKey := by
+  rw [List.map_map]
+  apply List.map_congr_left
+  intro row _
+  exact Row.valueKey_renameTo ns row
+
+theorem map_valueKey_unionAll (l r : Table) :
+    (applySetOp .unionAll l r).map Row.valueKey = l.map Row.valueKey ++ r.map Row.valueKey := by
+  simp only [applySetOp, List.map_append, map_valueKey_renameTo]
+
+theorem map_valueKey_union (l r : Table) :
+    (applySetOp .union l r).map Row.valueKey =
+      (l.map Row.valueKey ++ r.map Row.valueKey).eraseDups := by
+  simp only [applySetOp, map_dedupByKey, List.map_append, map_valueKey_renameTo]
+
+theorem mem_valueKey_union {l r : Table} {k : List Value} :
+    k ∈ (applySetOp .union l r).map Row.valueKey ↔
+      k ∈ l.map Row.valueKey ∨ k ∈ r.map Row.valueKey := by
+  rw [map_valueKey_union, mem_eraseDups, List.mem_append]
+
+theorem mem_valueKey_intersect {l r : Table} {k : List Value} :
+    k ∈ (applySetOp .intersect l r).map Row.valueKey ↔
+      k ∈ l.map Row.valueKey ∧ k ∈ r.map Row.valueKey := by
+  rw [applySetOp, mem_map_dedupByKey]
+  simp only [List.mem_map, List.mem_filter]
+  constructor
+  · rintro ⟨x, ⟨hx, hc⟩, rfl⟩
+    exact ⟨⟨x, hx, rfl⟩, by simpa [List.mem_map] using hc⟩
+  · rintro ⟨⟨x, hx, rfl⟩, hr⟩
+    exact ⟨x, ⟨hx, by simpa [List.mem_map] using hr⟩, rfl⟩
+
+theorem mem_valueKey_except {l r : Table} {k : List Value} :
+    k ∈ (applySetOp .exceptOp l r).map Row.valueKey ↔
+      k ∈ l.map Row.valueKey ∧ k ∉ r.map Row.valueKey := by
+  rw [applySetOp, mem_map_dedupByKey]
+  simp only [List.mem_map, List.mem_filter]
+  constructor
+  · rintro ⟨x, ⟨hx, hc⟩, rfl⟩
+    exact ⟨⟨x, hx, rfl⟩, by simpa [List.mem_map] using hc⟩
+  · rintro ⟨⟨x, hx, rfl⟩, hr⟩
+    exact ⟨x, ⟨hx, by simpa [List.mem_map] using hr⟩, rfl⟩
+
 end SqlEquiv

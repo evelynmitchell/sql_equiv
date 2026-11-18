@@ -33,7 +33,12 @@ This repository could become a basis for SQL support in
   database**. For queries there are three strengths:
   - `≃ᵩ`: equal result lists;
   - `≃ᵇ`: bag equality (`List.Perm`);
-  - `≃ˢ`: set equality.
+  - `≃ˢ`: set equality;
+  - `≃ᵇᵛ` and `≃ˢᵛ`: bag and set equality of the rows' values in column
+    order, with NULL type tags erased and numbers compared by value
+    (`Row.valueKey`, #324). Set operations
+    match rows by position and name their columns after the first branch, so
+    laws that swap or merge branches hold at this level.
 
   Expressions use `≃ₑ` (every database and row) and statements use `≃`.
 - **Validated against real engines.** sqlite3 and DuckDB serve as
@@ -652,19 +657,19 @@ All distributivity theorems require `isBoolValued` on all operands.
 
 | Theorem | Description |
 |---------|-------------|
-| `union_comm` | `A UNION B = B UNION A` |
-| `union_all_comm` | `A UNION ALL B = B UNION ALL A` |
-| `intersect_comm` | `A INTERSECT B = B INTERSECT A` |
-| `union_assoc` | `(A UNION B) UNION C = A UNION (B UNION C)` |
-| `intersect_assoc` | `(A INTERSECT B) INTERSECT C = A INTERSECT (B INTERSECT C)` |
-| `union_idempotent` | `A UNION A = A` |
-| `intersect_idempotent` | `A INTERSECT A = A` |
+| `union_comm` | `A UNION B ≃ᵇᵛ B UNION A` |
+| `union_all_comm` | `A UNION ALL B ≃ᵇᵛ B UNION ALL A` |
+| `intersect_comm` | `A INTERSECT B ≃ˢᵛ B INTERSECT A` |
+| `union_assoc` | `(A UNION B) UNION C ≃ᵇᵛ A UNION (B UNION C)` |
+| `intersect_assoc` | `(A INTERSECT B) INTERSECT C ≃ᵩ A INTERSECT (B INTERSECT C)` |
+| `union_idempotent` | `A UNION A ≃ˢᵛ A` |
+| `intersect_idempotent` | `A INTERSECT A ≃ˢᵛ A` |
 | `except_self_empty` | `A EXCEPT A = ∅` |
-| `union_empty_right` | `A UNION ∅ = A` |
+| `union_empty_right` | `A UNION ∅ ≃ˢᵛ A` |
 | `intersect_empty_right` | `A INTERSECT ∅ = ∅` |
 | `union_all_length` | `|A UNION ALL B| = |A| + |B|` |
-| `union_intersect_distrib` | `A UNION (B INTERSECT C) = (A UNION B) INTERSECT (A UNION C)` |
-| `intersect_union_distrib` | `A INTERSECT (B UNION C) = (A INTERSECT B) UNION (A INTERSECT C)` |
+| `union_intersect_distrib` | `A UNION (B INTERSECT C) ≃ˢᵛ (A UNION B) INTERSECT (A UNION C)` |
+| `intersect_union_distrib` | `A INTERSECT (B UNION C) ≃ˢᵛ (A INTERSECT B) UNION (A INTERSECT C)` |
 
 ### JOIN Theorems
 
