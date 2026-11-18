@@ -139,7 +139,7 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T13 | `SELECT DISTINCT a … ORDER BY b` with `b` not selected, row 5 | Sorts by the first source row's `b` | Error | Follows the parse (row 5): rejected in standard/postgres; in sqlite/duckdb, `aggregate` by the selected expressions with `AggCall.first b`, sorted, projected | decided (#319) | `OrderByExamples`; `DuckdbDiffTest` (duckdb-dialect corpus, ordered, agrees; also checked on sqlite) |
 | T14 | Order of rows tied on every `ORDER BY` key | Unspecified | Unspecified | Input order (stable insertion sort) | decided (#318); the differential tests use tie-free keys | `OrderByExamples` |
 | T15 | `ORDER BY 2` (integer literal) | Position | Position | Position; out of range is `unsupported` | decided (#318). `SqlEquiv` resolves positions at parse time since #316 (out of range is a parse error, as in sqlite, DuckDB and Postgres); after a `*` item it cannot count columns and still sorts by the constant | `BridgeDiffTest`, `DuckdbDiffTest`, unit pins `order_by_position*` |
-| T16 | `LIKE` letter case and wildcards, row 8 | Case-sensitive | Case-sensitive | Follows the parse: `BinOp.like false` (standard, duckdb, postgres) or `BinOp.like true` (sqlite: ASCII letters only). `%` any sequence, `_` one character, no `ESCAPE` | decided (#322); `SqlEquiv` ignores `_` and interior `%` (#323) | `SetOpExamples`, `ScalarDiffTest` (independent reference), engine sweep of 676 pairs (DuckDB and sqlite), `BridgeDiffTest` sqlite-dialect corpus |
+| T16 | `LIKE` letter case and wildcards, row 8 | Case-sensitive | Case-sensitive | Follows the parse: `BinOp.like false` (standard, duckdb, postgres) or `BinOp.like true` (sqlite: ASCII letters only). `%` any sequence, `_` one character, no `ESCAPE` | decided (#322); `SqlEquiv` agrees since #323 (`likeMatch`, a port of the typed core's matcher) | `SetOpExamples`, `ScalarDiffTest` (independent reference), engine sweep of 676 pairs (DuckDB and sqlite), `BridgeDiffTest` sqlite-dialect corpus |
 | T17 | Scalar subquery with several rows `WHERE x > (SELECT a FROM t)` | Error ("More than one row returned by a subquery used as an expression") | Error (same) | **Per dialect** (`DialectConfig.scalarSubqueryRows`, recorded on each `SubKind.scalar` node): standard, postgres, duckdb → `EvalError.cardinality` at evaluation (so such a node is never `divSafe`); sqlite → the first row's value. No rows is `NULL` everywhere. The subquery is evaluated strictly, once, even when the outer query has no rows, so the error is raised there too; DuckDB agrees, but Postgres is lazy (no error when the value is never needed: an empty outer query or a short-circuited `AND`), a known divergence in the error mode | decided (#329, phase 8f) | `SubqueryExamples`, `SqliteDiffTest` (first row, against sqlite) |
 
 ### Notes on individual rows
@@ -209,6 +209,16 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   were restated beforehand in #269 so the fix needed no statement change.
   Spider is unchanged (553/564). Pinned by the `derived_*` unit tests and
   DiffSqlite/DiffDuckdb `derived:` cases.
+- **LIKE ignored `_` and interior `%`** (fixed, #323). `simpleLike`
+  handled only `%` at either end of the pattern, so `'ab' LIKE '_b'` and
+  `'abc' LIKE 'a%c'` were FALSE. `likeMatch` is now a full matcher: `%` matches
+  any sequence and `_` one character, anywhere in the pattern. It is the
+  typed core's automaton over pattern suffixes, ported. The laws
+  `like_match_all`, `like_empty_pattern` and `like_self` keep their statements,
+  with their helper lemmas ported from `SqlCore` too. The scalar differential
+  now checks every `LIKE` case against an independent backtracking matcher.
+  Spider is unchanged. Pinned by the `like_*` unit tests, the `LIKE wildcard:`
+  engine cases and the `BridgeDiffTest` corpus (both dialects).
 - **DISTINCT and GROUP BY told equal values apart** (fixed, #315). `GROUP BY`
   split a typed and an untyped NULL into two groups. `SELECT DISTINCT` kept
   them as two rows, and both kept `1` and `1.0` apart, as did
@@ -278,9 +288,6 @@ Rows that do not yet meet the testing requirements in §2:
 - **Row 5**: decided per dialect (#319), but `SqlEquiv`'s evaluator still
   ties an unselected key in the sqlite and duckdb dialects instead of using
   the first source row (#320); pinned in the meantime.
-- **`SqlEquiv` LIKE wildcards** (#323): standard behaviour that `SqlEquiv`
-  gets wrong (not implementation-defined); recorded in both harnesses' KNOWN
-  DIVERGENCES, and the typed core is right.
 - **`SqlEquiv` set operations whose first branch has a `*`**: the column names
   come from the first branch's first row, so if that branch is empty the
   later branches' rows keep their own names. Without a `*`, the names come

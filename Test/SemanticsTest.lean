@@ -517,6 +517,15 @@ def registryPinTests : List TestResult := [
      then .pass "distinct_order_by_unselected_keeps_input_order"
      else .fail "distinct_order_by_unselected_keeps_input_order" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_keeps_input_order" e),
+  -- #323: LIKE wildcards anywhere in the pattern (sqlite, DuckDB agree)
+  testExactRows "like_underscore" "SELECT 'ab' LIKE '_b'" 1 (some (.bool true)),
+  testExactRows "like_interior_percent" "SELECT 'abc' LIKE 'a%c'" 1 (some (.bool true)),
+  testExactRows "like_double_percent" "SELECT 'ab' LIKE 'a%%b'" 1 (some (.bool true)),
+  testExactRows "like_percent_underscore_percent" "SELECT 'a' LIKE '%_%'" 1 (some (.bool true)),
+  testExactRows "like_underscore_needs_a_character" "SELECT '' LIKE '_'" 1 (some (.bool false)),
+  testExactRows "like_literal_mismatch" "SELECT 'abd' LIKE 'a%c'" 1 (some (.bool false)),
+  testColumn "like_underscore_in_where" "SELECT name FROM users WHERE name LIKE '_ob'" "name"
+    [.string "Bob"],
   -- #315: DISTINCT, aggregate DISTINCT and GROUP BY compare values as set operations do
   -- (`Value.setKey`): NULLs equal whatever their type tag, numbers by value
   testColumn "distinct_typed_nulls_one_row" "SELECT DISTINCT staff FROM museum" "staff"

@@ -536,8 +536,10 @@ All 53 private helpers are `not carried over`. They fall into these groups:
   `le_foldl_max_of_mem`.
 - **Subsumed, `LIKE` (7):** `simpleLike_pct`, `simpleLike_empty`, `evalBinOp_like_empty_eq_eq`,
   `isPrefixOf_append`, `dropLast_isPrefixOf`, `stringContains_go_of_prefix_at` and
-  `simpleLike_self`. They are helpers of `SqlEquiv`'s `simpleLike` (#323); the typed matcher's
-  laws are `likeText_pct`, `likeText_empty_iff` and `likeText_self` (phase 8c).
+  `simpleLike_self`. They were helpers of `SqlEquiv`'s `simpleLike`; the typed matcher's
+  laws are `likeText_pct`, `likeText_empty_iff` and `likeText_self` (phase 8c). Since #323
+  `SqlEquiv` uses a port of that matcher (`likeMatch`), and its helpers are ports of the typed
+  ones (`likeMatch_pct`, `likeMatch_empty`, `likeMatch_self` and their `likePat*` lemmas).
 - **Phase 8, string functions (18):**
   - `CONCAT`/`LENGTH`: `evalFunc_concat_empty_left`, `evalFunc_concat_empty_right` and
     `evalFunc_length_concat`.

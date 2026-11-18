@@ -22,10 +22,10 @@
     `SqlEquiv` leaves decimal `/` unimplemented (#201), an error. These cases
     are checked by multiplying back: the quotient times the divisor is the
     dividend.
-  * `LIKE` (and sqlite's `likeCI`) with `_` or a `%` inside the pattern:
-    `SqlEquiv`'s `simpleLike` treats them as literal characters (#323);
-    sqlite and DuckDB agree with `SqlCore`. These cases are checked against
-    `refLike`, a backtracking matcher written independently of `likeText`.
+  `LIKE` (and sqlite's `likeCI`) used to differ when the pattern has `_` or a
+  `%` inside it, until #323 replaced `SqlEquiv`'s `simpleLike` with a port of
+  `likeText`. Both now share one algorithm, so every `LIKE` case is also checked
+  against `refLike`, a backtracking matcher written independently of it.
   Ill-typed operands are out of scope: `SqlCore` makes them `typeMismatch`,
   while `SqlEquiv` short-circuits `FALSE AND 1` to `FALSE`.
 -/
@@ -139,14 +139,7 @@ def refLike (ci : Bool) (s p : String) : Bool :=
   refLikeAux (if ci then fun a b => a.toLower == b.toLower else (· == ·)) (p.length + 1) p.toList
     s.toList
 
-/-- The pattern uses `_` or a `%` that is not at either end: outside `simpleLike` (#323). -/
-def beyondSimpleLike : SqlCore.Datum → Bool
-  | some (.text p) =>
-    let cs := p.toList
-    cs.contains '_' || ((cs.drop 1).dropLast.contains '%')
-  | _ => false
-
-/-- A documented `LIKE` difference must still match the reference. -/
+/-- A `LIKE` on two texts must match the independent reference (#323). -/
 def likeMatchesRef (ci : Bool) (a b : SqlCore.Datum) : Bool :=
   match a, b with
   | some (.text s), some (.text p) =>
@@ -157,9 +150,15 @@ def likeMatchesRef (ci : Bool) (a b : SqlCore.Datum) : Bool :=
 def expectedDifference (name : String) (a b : SqlCore.Datum) : Bool :=
   (["<", "<=", ">", ">="].contains name && isBool a && isBool b) ||
   (name == "%" && (isDecimal a || isDecimal b) && modMatchesRef a b) ||
-  (name == "/" && (isDecimal a || isDecimal b) && divMatchesRef a b) ||
-  (name == "LIKE" && beyondSimpleLike b && likeMatchesRef false a b) ||
-  (name == "LIKE (sqlite)" && beyondSimpleLike b && likeMatchesRef true a b)
+  (name == "/" && (isDecimal a || isDecimal b) && divMatchesRef a b)
+
+/-- Whether `a LIKE b` (two texts) disagrees with the independent reference. -/
+def likeRefMismatch (name : String) (a b : SqlCore.Datum) : Bool :=
+  match a, b with
+  | some (.text _), some (.text _) =>
+    (name == "LIKE" && !likeMatchesRef false a b) ||
+      (name == "LIKE (sqlite)" && !likeMatchesRef true a b)
+  | _, _ => false
 
 /-- Returns (cases checked, documented differences seen, unexpected disagreements). -/
 def run : Nat × Nat × List String := Id.run do
@@ -173,6 +172,8 @@ def run : Nat × Nat × List String := Id.run do
           n := n + 1
           let new := resToOld (SqlCore.evalBinOp newOp a b)
           let old := SqlEquiv.evalBinOp oldOp (datumToOld a) (datumToOld b)
+          if likeRefMismatch name a b then
+            bad := s!"{repr a} {name} {repr b}: differs from refLike" :: bad
           if new != old then
             if expectedDifference name a b then
               documented := documented + 1

@@ -465,7 +465,8 @@ sqlite's `likeCI` map to `BinOp.like false` and `BinOp.like true`. The corpus ga
 They found three `SqlEquiv` bugs, all confirmed by DuckDB, and the affected queries are checked
 against DuckDB instead:
 
-- #323: `LIKE` treats `_` and interior `%` as literals.
+- #323: `LIKE` treats `_` and interior `%` as literals (fixed: `SqlEquiv` now uses a port of
+  the typed matcher).
 - #324: `INTERSECT`/`EXCEPT` compare column names (fixed).
 - #324: `INTERSECT`/`EXCEPT` keep typed `NULL`s apart (fixed).
 

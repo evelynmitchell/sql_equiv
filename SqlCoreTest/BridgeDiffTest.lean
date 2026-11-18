@@ -129,8 +129,8 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM users WHERE name LIKE 'a%'", .agree),
   ("SELECT name LIKE 'B%' FROM users", .agree),
   ("SELECT name FROM museum WHERE name LIKE NULL", .agree),
-  ("SELECT name FROM users WHERE name LIKE '_ob'", .sqlEquivBug "#323: LIKE ignores _"),
-  ("SELECT name FROM users WHERE name LIKE 'C%l'", .sqlEquivBug "#323: LIKE ignores interior %"),
+  ("SELECT name FROM users WHERE name LIKE '_ob'", .agree),
+  ("SELECT name FROM users WHERE name LIKE 'C%l'", .agree),
   ("SELECT name FROM users WHERE age LIKE '3%'", .rejected "typeError"),
   ("SELECT name FROM users INTERSECT SELECT age FROM users", .rejected "typeError"),
   -- uncorrelated subqueries in WHERE (phase 8f, #329)
@@ -215,8 +215,10 @@ def newRows (e : Elaborated schema) : Except EvalError (List (List SqlEquiv.Valu
     (List.finRange e.n).map fun i => (ScalarDiff.datumToOld (r i)).getD (.null none)
 
 /-- Queries parsed in the `sqlite` dialect: `LIKE` is ASCII case-insensitive there (registry
-row 8; `BinOp.like true`). The patterns stay within what `SqlEquiv`'s `likeCI` gets right (#323). -/
+row 8; `BinOp.like true`). -/
 def sqliteCorpus : List String := [
+  "SELECT name FROM users WHERE name LIKE '_OB'",
+  "SELECT name FROM users WHERE name LIKE 'c%L'",
   "SELECT name FROM users WHERE name LIKE 'a%'",
   "SELECT name FROM users WHERE name LIKE '%E'",
   "SELECT name FROM users WHERE name NOT LIKE '%A%'",
