@@ -490,6 +490,19 @@ def registryPinTests : List TestResult := [
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 5,
   testRowCountIn "not_like_ascii_ci_sqlite" .sqlite
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 4,
+  -- Bare columns next to one MIN/MAX of a column (registry T9): sqlite reads the row where the
+  -- argument is extreme; other dialects, or several MIN/MAX calls, read the first row.
+  -- Ages: Alice 30, Bob 25, Carol 35, Dave 28, Eve 22.
+  testContainsValueIn "bare_column_max_sqlite" .sqlite
+    "SELECT name, MAX(age) FROM users" (.string "Carol"),
+  testContainsValueIn "bare_column_min_sqlite" .sqlite
+    "SELECT name, MIN(age) FROM users" (.string "Eve"),
+  testContainsValueIn "bare_column_max_standard_first_row" .standard
+    "SELECT name, MAX(age) FROM users" (.string "Alice"),
+  testContainsValueIn "bare_column_two_minmax_sqlite_first_row" .sqlite
+    "SELECT name, MAX(age), MIN(age) FROM users" (.string "Alice"),
+  testContainsValueIn "bare_column_max_grouped_sqlite" .sqlite
+    "SELECT name, MAX(age) FROM users GROUP BY department ORDER BY department" (.string "Carol"),
   -- AVG/SUM over a TEXT column: no sqlite-style coercion; strings are skipped, so only
   -- strings give NULL (registry row 17)
   testContainsValue "avg_text_column_null" "SELECT AVG(name) FROM users" (.null none),

@@ -427,6 +427,11 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE department LIKE 'SALES'",
     diffTest "LIKE suffix case-insensitive"
       "SELECT name FROM users WHERE name LIKE '%E'",
+    -- Bare column next to one MIN/MAX of a column reads the extreme row (registry T9)
+    diffTest "bare column next to MAX"
+      "SELECT name, MAX(age) AS m FROM users",
+    diffTest "bare column next to MIN, grouped"
+      "SELECT department, name, MIN(age) AS m FROM users GROUP BY department",
     diffTest "NOT LIKE case-insensitive"
       "SELECT name FROM users WHERE name NOT LIKE 'al%'",
     -- NOT BETWEEN (#354), including a NULL bound

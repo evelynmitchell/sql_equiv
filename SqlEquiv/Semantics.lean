@@ -1157,6 +1157,15 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
     have := OrderByItem.expr_size_lt o
     omega
   apply evalSelectCore_callbacks_congr
+  case hB =>
+    intro rs
+    apply bareSampleRow_congr
+    intro r c
+    show (if _h : (Expr.col c).size < N then evalExprWithDb db r (.col c)
+      else evalExprCore db r (fun _ _ _ => []) (.col c)) = evalExprWithDb db r (.col c)
+    split
+    · rfl
+    · rw [evalExprWithDb_col, evalExprCore_col]
   case hF =>
     intro f hf
     simp only [SelectStmt.fromClause] at hf
