@@ -422,6 +422,11 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE name LIKE '%E'",
     diffTest "NOT LIKE case-insensitive"
       "SELECT name FROM users WHERE name NOT LIKE 'al%'",
+    -- NOT BETWEEN (#354), including a NULL bound
+    diffTest "NOT BETWEEN"
+      "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30",
+    diffTest "NOT BETWEEN with a NULL bound"
+      "SELECT name FROM users WHERE age NOT BETWEEN NULL AND 30",
     -- Integer division/modulo truncate toward zero (row 6)
     diffTest "integer division and modulo, negatives"
       "SELECT (0 - age) / 7 AS q, (0 - age) % 7 AS r FROM users",

@@ -70,6 +70,8 @@ def whereTests : List TestResult := [
   testRoundTrip "where_is_null" "SELECT * FROM users WHERE email IS NULL",
   testRoundTrip "where_is_not_null" "SELECT * FROM users WHERE email IS NOT NULL",
   testRoundTrip "where_between" "SELECT * FROM users WHERE age BETWEEN 18 AND 65",
+  -- NOT BETWEEN parses as NOT (x BETWEEN a AND b) (#354)
+  testRoundTrip "where_not_between" "SELECT * FROM users WHERE age NOT BETWEEN 18 AND 65",
   testRoundTrip "where_in" "SELECT * FROM users WHERE status IN ('active', 'pending')",
   testRoundTrip "where_like" "SELECT * FROM users WHERE name LIKE 'A%'",
   testRoundTrip "where_complex" "SELECT * FROM users WHERE (age > 18 AND status = 'active') OR admin = TRUE"

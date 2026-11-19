@@ -1031,8 +1031,15 @@ partial def parsePostfix (e : Expr) : Parser Expr := do
         | .sensitive => .like
         | .asciiInsensitive => .likeCI
       parsePostfix (.unaryOp .not (.binOp op e pattern))
+    else if isKeyword "BETWEEN" t2 then
+      -- x NOT BETWEEN a AND b  ≡  NOT (x BETWEEN a AND b) (#354)
+      let _ ← Parser.advance
+      let lo ← parseAddSub  -- as for BETWEEN: stop before the AND
+      Parser.expect (.keyword "AND") "Expected AND in NOT BETWEEN"
+      let hi ← parseAddSub
+      parsePostfix (.unaryOp .not (.between e lo hi))
     else
-      Parser.fail "Expected IN or LIKE after NOT"
+      Parser.fail "Expected IN, LIKE or BETWEEN after NOT"
   else if isKeyword "IN" t then
     let _ ← Parser.advance
     Parser.expect .lparen "Expected ("

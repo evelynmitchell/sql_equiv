@@ -40,6 +40,7 @@ def corpus : List (String × Expect) := [
   ("SELECT -age FROM users", .agree),
   ("SELECT name || '!' FROM users", .agree),
   ("SELECT name FROM users WHERE age BETWEEN 25 AND 30", .agree),
+  ("SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30", .agree),
   ("SELECT name FROM users WHERE department IN ('Sales', 'Marketing')", .agree),
   ("SELECT name FROM users WHERE department NOT IN ('Sales', 'Marketing')", .agree),
   ("SELECT name FROM users WHERE age IN (25, NULL)", .agree),

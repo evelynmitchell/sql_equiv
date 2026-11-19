@@ -79,7 +79,7 @@ This repository could become a basis for SQL support in
 ### Full SQL DML Support
 
 - **SELECT statements**: `*`, column lists, aliases, DISTINCT
-- **Expressions**: arithmetic, comparisons, boolean logic, CASE/WHEN, BETWEEN, IN, LIKE / NOT LIKE
+- **Expressions**: arithmetic, comparisons, boolean logic, CASE/WHEN, BETWEEN / NOT BETWEEN, IN, LIKE / NOT LIKE
 - **Types**: INTEGER, TEXT, BOOLEAN, and exact **DECIMAL/NUMERIC** (scaled-integer arithmetic with int↔decimal promotion — `0.1 + 0.2 = 0.3` exactly)
 - **NULL handling**: Typed NULLs, IS NULL/IS NOT NULL, three-valued logic, NULL propagation
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
