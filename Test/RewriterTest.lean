@@ -397,8 +397,8 @@ private def leafTests : List TestResult := [
     (.func "UPPER" [col "x"]),
 
   testRewrite "leaf_agg (agg unchanged)"
-    (.agg .sum (some (col "x")) false)
-    (.agg .sum (some (col "x")) false),
+    (.agg (.sum .error) (some (col "x")) false)
+    (.agg (.sum .error) (some (col "x")) false),
 
   let sel : SubQuery := .simple ⟨false, [SelectItem.star none], none, none, [], none, [], none, none⟩
   testRewrite "leaf_subquery (subquery unchanged)"
@@ -428,13 +428,13 @@ private def subexprRecursionTests : List TestResult := [
 
   -- Agg: recurse into arg
   testRewrite "agg_recursion (SUM(x BETWEEN 1 AND 10) → SUM(x >= 1 AND x <= 10))"
-    (.agg .sum (some (.between (col "x") (intLit 1) (intLit 10))) false)
-    (.agg .sum (some (.binOp .and (.binOp .ge (col "x") (intLit 1)) (.binOp .le (col "x") (intLit 10)))) false),
+    (.agg (.sum .error) (some (.between (col "x") (intLit 1) (intLit 10))) false)
+    (.agg (.sum .error) (some (.binOp .and (.binOp .ge (col "x") (intLit 1)) (.binOp .le (col "x") (intLit 10)))) false),
 
   -- Agg: none arg unchanged
   testRewrite "agg_no_arg (COUNT(*) style SUM(none) unchanged)"
-    (.agg .sum none false)
-    (.agg .sum none false),
+    (.agg (.sum .error) none false)
+    (.agg (.sum .error) none false),
 
   -- WindowFn: recurse into arg
   let spec : WindowSpec := .mk [] []

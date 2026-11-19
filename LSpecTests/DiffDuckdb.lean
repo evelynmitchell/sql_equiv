@@ -235,6 +235,8 @@ def runAllTests : IO TestSeq := do
     -- Aggregates over the DECIMAL column (NULL skipped per standard)
     diffTest "SUM over decimal column" "SELECT SUM(price) AS s FROM items",
     diffTest "AVG over decimal column" "SELECT AVG(price) AS a FROM items",
+    -- SUM over booleans reads them as 1/0 in DuckDB (registry row 18; AVG is an error there)
+    diffTest "SUM over booleans" "SELECT SUM(age > 26) AS s FROM users",
     -- AVG over integers is exact (registry row 7; it used to truncate)
     diffTest "AVG over integers" "SELECT AVG(age) AS a FROM users",
     diffTest "AVG over integers, grouped"

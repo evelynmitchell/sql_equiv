@@ -310,8 +310,8 @@ private def normFuncCheck : Bool :=
   | _ => false
 
 private def normAggCheck : Bool :=
-  match normalizeExpr (.agg .sum (some (.lit (.int 1))) false) with
-  | .agg .sum (some _) false => true
+  match normalizeExpr (.agg (.sum .error) (some (.lit (.int 1))) false) with
+  | .agg (.sum .error) (some _) false => true
   | _ => false
 
 private def normCaseCheck : Bool :=

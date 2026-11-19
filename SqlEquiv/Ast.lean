@@ -213,6 +213,14 @@ inductive MixedMinMax where
   | typeClass
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- SUM/AVG over booleans (registry row 18), chosen per dialect and per function at parse time.
+    - `error`: a boolean input is a type error (standard, Postgres; DuckDB's AVG).
+    - `asInt`: booleans are the integers 1/0 (sqlite; DuckDB's SUM). -/
+inductive BoolSumAvg where
+  | error
+  | asInt
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- How MIN/MAX treat boolean inputs. Implementation-defined
     (docs/IMPLEMENTATION_DEFINED.md, row 14); chosen by the dialect at parse
     time.
@@ -283,8 +291,8 @@ structure MinMaxMode where
 /-- Aggregate functions (MIN/MAX carry the dialect's mixed-type mode) -/
 inductive AggFunc where
   | count
-  | sum
-  | avg
+  | sum (bools : BoolSumAvg)
+  | avg (bools : BoolSumAvg)
   | min (mode : MinMaxMode)
   | max (mode : MinMaxMode)
   deriving Repr, BEq, Inhabited, DecidableEq
@@ -372,6 +380,10 @@ structure DialectConfig where
   bareColumns : BareColumns := .reject
   /-- A scalar subquery with several rows (registry T17; typed-core bridge) -/
   scalarSubqueryRows : ScalarSubqueryRows := .error
+  /-- SUM over booleans (row 18) -/
+  boolSum : BoolSumAvg := .error
+  /-- AVG over booleans (row 18) -/
+  boolAvg : BoolSumAvg := .error
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -384,10 +396,10 @@ def Dialect.config : Dialect → DialectConfig
   | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass,
                    boolMinMax := .asInt,   likeCase := .asciiInsensitive,
                    distinctOrderBy := .firstRow, bareColumns := .sqlite,
-                   scalarSubqueryRows := .firstRow }
+                   scalarSubqueryRows := .firstRow, boolSum := .asInt, boolAvg := .asInt }
   | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
                    boolMinMax := .ordered, likeCase := .sensitive,
-                   distinctOrderBy := .firstRow }
+                   distinctOrderBy := .firstRow, boolSum := .asInt }
   | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
                    boolMinMax := .error,   likeCase := .sensitive,
                    distinctOrderBy := .reject }
@@ -427,8 +439,8 @@ inductive WindowFunc where
   | rowNumber
   | rank
   | denseRank
-  | sum
-  | avg
+  | sum (bools : BoolSumAvg)
+  | avg (bools : BoolSumAvg)
   | min (mode : MinMaxMode)
   | max (mode : MinMaxMode)
   | count
@@ -742,7 +754,7 @@ instance : Repr CTEDef where
 -- `*.cmp` below (canonical operand order in `normalizeExpr`). `Value` gets no
 -- `Ord` instance on purpose: SQL ordering is `Value.compare`, and a structural
 -- `compare` on values would be easy to pick up by mistake.
-deriving instance Ord for SqlType, ColumnRef, BinOp, UnaryOp, MixedMinMax, BoolMinMax,
+deriving instance Ord for SqlType, ColumnRef, BinOp, UnaryOp, MixedMinMax, BoolMinMax, BoolSumAvg,
   MinMaxMode, AggFunc, TableRef, JoinType, OrderDir, NullsOrder, SetOp, WindowFunc
 
 /-- Structural total order on values (by constructor, then fields). Not SQL
