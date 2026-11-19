@@ -70,3 +70,15 @@ A failure that is a decided implementation-defined difference stays a failure
 but is reported under its own label naming the registry row (e.g. **known
 divergence: AVG/SUM over a TEXT column (registry row 17)**), so the remaining
 unlabelled classes are the ones still to investigate.
+
+**Stress variants** (`--stress=K`). The fixed data (5 rows per table, NULLs only on
+row 3, foreign keys cycling 1–5) can hide bugs: the grouped-aggregate bug of #353
+passed most queries by luck of the data. `python3 tools/spider_eval_baseline.py
+--stress=40` re-runs the corpus on 40 seeded variants (0–8 rows per table; NULLs
+anywhere outside primary keys; duplicate, zero and negative numbers; dangling or
+NULL foreign keys) and writes `stress_report.md`: the queries that agree with
+sqlite on the fixed data but not on some variant. It is not ratcheted; its classes
+are issue candidates. The variants are deterministic (seeded by database, table and
+variant number). Known noise: a query whose *subquery* sorts with `LIMIT` on a tie
+(e.g. `ORDER BY count(*) LIMIT 1` with equal counts) can pick a different row in
+any engine; the tie-valid check covers only a top-level `ORDER BY … LIMIT`.

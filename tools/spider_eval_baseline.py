@@ -18,6 +18,7 @@ Usage:
     python3 tools/spider_eval_baseline.py            # report + ratchet check
     python3 tools/spider_eval_baseline.py --check    # ratchet check only (CI)
     python3 tools/spider_eval_baseline.py --update-ratchet
+    python3 tools/spider_eval_baseline.py --stress=8   # also: seeded data variants, report only
 
 Stdlib only (CI runs plain python3; sqlite3 is stdlib).
 """
@@ -25,6 +26,7 @@ Stdlib only (CI runs plain python3; sqlite3 is stdlib).
 from __future__ import annotations
 
 import json
+import random
 import re
 import sqlite3
 import subprocess
@@ -61,8 +63,28 @@ def gen_value(ti: int, ci: int, r: int, ctype: str, is_pk: bool, is_fk: bool):
     return f"t{ti}c{ci}r{r % 3}"  # text/others; repeats every 3 rows for GROUP BY
 
 
-def build_db(schema: dict):
-    """Returns (tables, rows): tables = [(name, [colnames])], rows[name] = [[cells]]"""
+def gen_value_varied(rng, ctype: str, is_pk_row: int | None, is_fk: bool):
+    """A stress-variant cell (`--stress`): duplicates, negatives, zeros and NULLs anywhere
+    outside primary keys; foreign keys may dangle or be NULL."""
+    if is_pk_row is not None:
+        return is_pk_row + 1
+    if is_fk:
+        return None if rng.random() < 0.1 else rng.randint(1, 7)
+    if rng.random() < 0.2:
+        return None
+    if ctype == "number":
+        return rng.choice([0, 1, 1, 2, -3, 5, 5, 8, 13, 40, -1, 100])
+    if ctype == "boolean":
+        return rng.randint(0, 1)
+    if ctype == "time":
+        return f"202{rng.randint(0, 3)}-0{rng.randint(1, 9)}-1{rng.randint(0, 9)}"
+    return f"v{rng.randint(0, 3)}"  # small pool: many duplicates for GROUP BY / DISTINCT
+
+
+def build_db(schema: dict, variant: int = 0):
+    """Returns (tables, rows): tables = [(name, [colnames])], rows[name] = [[cells]].
+    Variant 0 is the fixed, ratcheted data. Variants 1.. (`--stress`) are seeded by
+    (db_id, variant): each table gets 0–8 rows and `gen_value_varied` cells."""
     names = schema["table_names_original"]
     cols = schema["column_names_original"]  # [table_idx, name], idx 0 is (-1, '*')
     types = schema["column_types"]
@@ -78,11 +100,20 @@ def build_db(schema: dict):
             continue  # AUTOINCREMENT artifact leaked into tables.json; reserved in sqlite
         tcols = per_table[ti]
         tables.append((tname, [c for _, c, _ in tcols]))
-        rows[tname] = [
-            [gen_value(ti, idx, r, ctype, idx in pks, idx in fks)
-             for idx, _, ctype in tcols]
-            for r in range(N_ROWS)
-        ]
+        if variant == 0:
+            rows[tname] = [
+                [gen_value(ti, idx, r, ctype, idx in pks, idx in fks)
+                 for idx, _, ctype in tcols]
+                for r in range(N_ROWS)
+            ]
+        else:
+            rng = random.Random(f"{schema['db_id']}:{tname}:{variant}")
+            n = rng.choice([0, 1, 2, 3, 5, 8])
+            rows[tname] = [
+                [gen_value_varied(rng, ctype, r if idx in pks else None, idx in fks)
+                 for idx, _, ctype in tcols]
+                for r in range(n)
+            ]
     return tables, rows
 
 
@@ -339,24 +370,18 @@ def classify_query(sql: str) -> str:
     return "+".join(feats[:3]) if feats else "plain SELECT"
 
 
-def main() -> None:
-    check_only = "--check" in sys.argv
-    update = "--update-ratchet" in sys.argv
-    _self_test_tie_valid()
-    _self_test_text_affinity()
-    _self_test_aggregates_text()
-    if not EXE.exists():
-        sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
-
-    schemas = {s["db_id"]: s for s in json.load(open(TABLES))}
-    pairs = [json.loads(l) for l in open(QUERIES)]
+def run_corpus(schemas: dict, pairs: list, variant: int):
+    """Evaluate every corpus query on one data variant, with us and with sqlite. Returns
+    (agree, tie_ok, affinity_ok, failures, oracle_err, accepted): `accepted[i]` is "agree" for an
+    accepted answer; failures are grouped by class as (query, detail)."""
+    accepted: dict[int, str] = {}
 
     # Build manifest for our engine + sqlite connections
     manifest_lines = []
     conns: dict[str, sqlite3.Connection] = {}
     text_cols: dict[str, set[str]] = {}
     for db_id, schema in schemas.items():
-        tables, rows = build_db(schema)
+        tables, rows = build_db(schema, variant)
         conns[db_id] = sqlite_for(schema, tables, rows)
         text_cols[db_id] = text_affinity_columns(schema, tables, rows)
         manifest_lines.append(f"#DB {db_id}")
@@ -429,13 +454,17 @@ def main() -> None:
             continue
         if normalize(payload) == normalize(sq_rows):
             agree += 1
+            accepted[i] = "agree"
+            continue
         elif (i in rewritten
               and ours.get(rewritten[i], ("err", ""))[0] == "ok"
               and (normalize(ours[rewritten[i]][1]) == normalize(sq_rows)
                    or tie_valid(conns[p["db"]], p["query"], ours[rewritten[i]][1], sq_rows))):
             affinity_ok.append(p["query"])
+            accepted[i] = "agree"
         elif tie_valid(conns[p["db"]], p["query"], payload, sq_rows):
             tie_ok.append(p["query"])
+            accepted[i] = "agree"
         elif aggregates_text(p["query"], text_declared_columns(schemas[p["db"]])):
             # A known divergence, reported under its own label and still counted as a
             # failure: sqlite coerces TEXT inside AVG/SUM (registry row 17, decided).
@@ -445,6 +474,62 @@ def main() -> None:
             failures[f"mismatch: {classify_query(p['query'])}"].append(
                 (p["query"], f"ours {len(payload)} rows vs sqlite {len(sq_rows)} rows"))
 
+    return agree, tie_ok, affinity_ok, failures, oracle_err, accepted
+
+
+STRESS_REPORT = ROOT / "benchmarks" / "spider" / "stress_report.md"
+
+
+def run_stress(schemas: dict, pairs: list, status0: dict, k: int) -> None:
+    """`--stress=K`: re-run the corpus on K seeded data variants (`build_db`, variants 1..K)
+    and report the queries that the fixed data accepts but some variant does not, grouped by
+    failure class. Not ratcheted: a backlog of issue candidates the fixed 5-row data hides."""
+    hidden: dict[str, dict[str, tuple[int, str]]] = defaultdict(dict)  # class -> query -> example
+    for v in range(1, k + 1):
+        _, _, _, failures, _, status = run_corpus(schemas, pairs, v)
+        cls_of = {q: (cls, d) for cls, items in failures.items() for q, d in items}
+        for i, p in enumerate(pairs, start=1):
+            if status0.get(i) == "agree" and status.get(i) != "agree":
+                cls, detail = cls_of.get(p["query"], ("unknown", ""))
+                hidden[cls].setdefault(p["query"], (v, detail))
+    n = len({q for qs in hidden.values() for q in qs})
+    lines = [
+        "# Spider Dev-Set Stress Report",
+        "",
+        "Generated by `tools/spider_eval_baseline.py --stress=K` — do not edit by hand.",
+        "",
+        f"**{n} queries agree with sqlite on the fixed data but not on at least one of {k} "
+        "seeded data variants** (0–8 rows per table; NULLs anywhere outside primary keys; "
+        "duplicate, zero and negative numbers; dangling or NULL foreign keys). Not ratcheted: "
+        "issue candidates the fixed 5-row data hides (#225).",
+        "",
+        "| Count | Class | Example query | Variant | Detail |",
+        "|------:|-------|---------------|--------:|--------|",
+    ]
+    for cls, qs in sorted(hidden.items(), key=lambda kv: -len(kv[1])):
+        q, (v, d) = next(iter(qs.items()))
+        q = (q[:70] + "…") if len(q) > 70 else q
+        d = d.replace("|", "\\|")[:80]
+        lines.append(f"| {len(qs)} | {cls} | `{q}` | {v} | {d} |")
+    STRESS_REPORT.write_text("\n".join(lines) + "\n")
+    print(f"Stress: {n} queries hidden by the fixed data across {k} variants — report: {STRESS_REPORT}")
+
+
+def main() -> None:
+    check_only = "--check" in sys.argv
+    update = "--update-ratchet" in sys.argv
+    _self_test_tie_valid()
+    _self_test_text_affinity()
+    _self_test_aggregates_text()
+    if not EXE.exists():
+        sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
+
+    schemas = {s["db_id"]: s for s in json.load(open(TABLES))}
+    pairs = [json.loads(l) for l in open(QUERIES)]
+    stress = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--stress=")), 0)
+    agree, tie_ok, affinity_ok, failures, oracle_err, status0 = run_corpus(schemas, pairs, 0)
+    if stress:
+        run_stress(schemas, pairs, status0, stress)
     total = len(pairs) - oracle_err
     accepted = agree + len(tie_ok) + len(affinity_ok)
     rate = 100.0 * accepted / total if total else 0.0
