@@ -135,11 +135,18 @@ def sqlite_for(schema: dict, tables, rows) -> sqlite3.Connection:
     return conn
 
 
+_DEC = re.compile(r"-?\d+\.\d+")
+
+
 def cell_str(v) -> str:
+    """A cell as compared: sqlite floats and our decimals (`AVG` is exact or rounded to 16
+    places, registry row 7) both to 10 significant digits."""
     if v is None:
         return "NULL"
     if isinstance(v, float):
         return f"{v:.10g}"
+    if isinstance(v, str) and _DEC.fullmatch(v):
+        return f"{float(v):.10g}"
     return str(v)
 
 

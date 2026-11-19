@@ -13,9 +13,9 @@
   KNOWN DIVERGENCES (do not add cases that hit these without resolving them;
   the full registry of implementation-defined behaviour, with sqlite and
   Postgres results and our decisions, is docs/IMPLEMENTATION_DEFINED.md):
-  - AVG over decimals: we truncate at the sum's scale; DuckDB returns a
-    DOUBLE. Test data below is curated so the average is exact. Blocked on
-    the decimal division/scale policy (#201).
+  - AVG that does not terminate (1/3): DuckDB returns a DOUBLE with 17
+    significant digits; we round to 16 places (registry row 7). Cases below
+    use averages that terminate, where the two agree exactly.
   - Decimal division/modulo: ours is intentionally an error pending the
     same #201 policy decision; DuckDB computes it.
   - (resolved) ORDER BY on non-projected columns used to no-op (#206); now
@@ -235,6 +235,10 @@ def runAllTests : IO TestSeq := do
     -- Aggregates over the DECIMAL column (NULL skipped per standard)
     diffTest "SUM over decimal column" "SELECT SUM(price) AS s FROM items",
     diffTest "AVG over decimal column" "SELECT AVG(price) AS a FROM items",
+    -- AVG over integers is exact (registry row 7; it used to truncate)
+    diffTest "AVG over integers" "SELECT AVG(age) AS a FROM users",
+    diffTest "AVG over integers, grouped"
+      "SELECT department, AVG(age) AS a FROM users GROUP BY department",
     diffTest "MIN/MAX over decimal column" "SELECT MIN(price) AS lo, MAX(price) AS hi FROM items",
     -- COUNT(col) skips NULLs (regression for the bug this oracle found)
     diffTest "COUNT skips NULLs" "SELECT COUNT(price) AS c FROM items",
@@ -350,8 +354,9 @@ def runAllTests : IO TestSeq := do
       "SELECT x FROM dups INTERSECT SELECT x FROM other",
     diffTest "EXCEPT dedups duplicate-bearing inputs"
       "SELECT x FROM dups EXCEPT SELECT x FROM other",
-    -- Window functions (#214). AVG window cases are omitted: DuckDB returns
-    -- DOUBLE while we truncate (same known divergence as plain AVG).
+    -- Window functions (#214), including AVG over integers (exact, registry row 7)
+    diffTest "AVG over PARTITION BY"
+      "SELECT name, AVG(age) OVER (PARTITION BY department) AS a FROM users",
     diffTest "ROW_NUMBER over ORDER BY"
       "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
     diffTest "RANK with ties"

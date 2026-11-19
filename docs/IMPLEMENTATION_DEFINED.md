@@ -105,7 +105,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 4 | ON-less JOIN `A JOIN B WHERE …` | Join condition required | Cross product + WHERE | Syntax error | Syntax error | Cross product (sqlite) | decided | `ParserTest`, `DiffSqlite` case; DuckDB KNOWN DIVERGENCES |
 | 5 | `SELECT DISTINCT name … ORDER BY price` (sort key not selected) | Not allowed | Sorts by the key of each value's **first** source row | Same (plans it as `first(price)`) | Error ("ORDER BY expressions must appear in select list") | **Per dialect** (`DialectConfig.distinctOrderBy`): standard, postgres → parse error (`reject`); sqlite, duckdb → accepted (`firstRow`). Both evaluators implement `firstRow`: `SqlCore` with `AggCall.first` (T13), `SqlEquiv` by sorting each distinct row with its first source row (or, over GROUP BY, its first group's key row) as context (#320) | decided (#319); `SqlEquiv` since #320 | Unit pins `distinct_order_by_unselected_per_dialect`, `distinct_order_by_selected_accepted`, `distinct_order_by_unselected_first_row`, `distinct_order_by_first_row_not_min`, `distinct_group_by_order_by_first_group`; `DuckdbDiffTest` (SqlEquiv, `SqlCore` and DuckDB on the first-row cases, ordered) |
 | 6 | Integer division `7 / 2`, `-7 / 2`, `-7 % 2` | Implementation-defined precision/scale | 3, -3, -1 (truncate toward zero) | 3.5 (`/` is float division); `//` gives 3, -3; `%` gives -1 | 3, -3, -1 | 3, -3, -1 (truncate toward zero; was Euclidean -4 / 1 before #262) | decided (#262) | Unit pins `int_division_*`, `int_mod_sign_of_dividend`; DiffSqlite agreement; DiffDuckdb `%` agreement + KNOWN DIVERGENCES for `/` |
-| 7 | AVG over integers (`AVG` of 1, 2) | Implementation-defined precision/scale | 1.5 | 1.5 | 1.5 | **1** (truncates; no fractional result type for integer AVG) | **open**: diverges from all three; tied to #201 (decimal division policy) and #202 (floats). *Not* the main cause of the AVG-in-subquery Spider failures (see "Bugs found" below) | Unit pin `avg` (750/4 → 187); DuckDB KNOWN DIVERGENCES (AVG over decimals) |
+| 7 | AVG over integers (`AVG` of 1, 2) | Implementation-defined precision/scale | 1.5 | 1.5 | 1.5 | **1.5**: a decimal, the exact quotient when it terminates within `max(16, input scale)` places, otherwise rounded half away from zero to them (`AVG` of 1, 1, 2 is `1.3333333333333333`, as DuckDB and Postgres show it). Always a decimal (`AVG` of 10, 12 is decimal `11`), as Postgres and the typed core (T10) | decided (was truncation; found hiding 17 Spider queries by the `--stress` variants). Settles the scale rule for AVG only; general decimal `/` is still #201 | Unit pins `avg` (750/4 → 187.5), `avg_negative_exact`, `avg_rounded_16_places`, `window_avg_partition_by`; DiffDuckdb (terminating averages, plain, grouped and window); BridgeDiffTest (terminating averages agree with the typed core's rationals) |
 | 8 | LIKE case sensitivity `'abc' LIKE 'ABC'` | Collation-dependent | true (ASCII case-insensitive by default) | false | false | **Per dialect** (`DialectConfig.likeCase`): sqlite → ASCII case-insensitive (`BinOp.likeCI`); standard, duckdb, postgres → case-sensitive (`BinOp.like`) | decided (#262) | Unit pins `like_*` (every dialect, non-ASCII, NULL, AST); DiffSqlite and DiffDuckdb cases in each dialect |
 | 9 | String ordering `'a' < 'B'` | Collation-dependent | false (binary) | false | false (`C.UTF-8` here; an `en_US` collation gives true) | false (code point), every dialect | decided (#262) | Unit pins `string_order_code_point*`; DiffSqlite and DiffDuckdb agreement |
 | 10 | Cross-type comparison `1 = 'a'` | Error (types not comparable) | false (numbers sort before text) | Error (conversion) | Error (conversion) | Error (row dropped / NULL) | **decided** (#127, closed): keep the error; matches DuckDB/Postgres | Unit drift guards for `mismatched_types_error` (`SemanticsTest`); lemma `mismatched_types_error`; DiffSqlite KNOWN DIVERGENCES |
@@ -150,17 +150,18 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
   item, a `DialectConfig` field, and each differential harness running in its
   engine's dialect. Parsing the DuckDB cases with sqlite's rule makes the ASC case
   fail, which shows those tests check the NULL position.
-- **Row 7**: changing AVG means choosing a fractional result type (DECIMAL with
-  a scale rule, or floats). That is the #201 / #202 design decision, not a
-  local fix.
+- **Row 7**: AVG needed a fractional result type. The choice: an exact decimal
+  when the quotient terminates, else rounded to 16 places (`avgNumeric`). No floats
+  (#202), and the rule covers AVG only: decimal `/` stays unimplemented (#201). The
+  typed core keeps exact rationals (T10), so a repeating average is the one place the
+  two evaluators differ (BridgeDiffTest records it).
 - **Row 8**: the certified rewriter's LIKE rules (`x LIKE '%'`, `x LIKE ''`,
   `x LIKE x`) are stated for the case-sensitive `BinOp.like` only; the
   sqlite dialect's `BinOp.likeCI` is not rewritten, so those rules stay sound
   in every dialect.
 - **Row 6**: integer `/` and `%` used Lean's Euclidean division (`-7 / 2 =
   -4`, `-7 % 2 = 1`), matching no engine; found while pinning (#262) and fixed
-  to truncate toward zero, as all three engines do. Integer AVG's truncation
-  (row 7) uses the same rounding.
+  to truncate toward zero, as all three engines do.
 - **Rows 10–12** are related: they are all about comparing values of different
   types. Rows 10 and 12 were decided together: keep the core's type error
   (matching DuckDB/Postgres), and emulate sqlite's TEXT affinity only in the
