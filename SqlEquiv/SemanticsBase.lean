@@ -297,19 +297,17 @@ def selectMinMaxCalls (items : List SelectItem) (having : Option Expr) :
     minMaxCalls.minMaxCallsOpt having
 
 /-- The row a group's bare columns read (registry T9). With exactly one MIN/MAX call, not
-    DISTINCT, over a column, whose mode has `bareRow` (the sqlite dialect): the first row where
-    the column equals the extreme, or the last row when there is no extreme (every value NULL),
-    as sqlite does. Otherwise the group's first row (also for MIN/MAX of a non-column
-    expression, where the typed core follows sqlite and `SqlEquiv` does not). `none` exactly for
-    an empty group. -/
+    DISTINCT, whose mode has `bareRow` (the sqlite dialect): the first row where its argument
+    equals the extreme, or the last row when there is no extreme (every value NULL), as sqlite
+    does. Otherwise the group's first row. `none` exactly for an empty group. -/
 def bareSampleRow (argEval : Row → Expr → Option Value)
     (calls : List (Bool × MinMaxMode × Option Expr × Bool)) (rows : Table) : Option Row :=
   match calls with
-  | [(wantMax, m, some (.col c), false)] =>
+  | [(wantMax, m, some arg, false)] =>
     if m.bareRow then
-      match minMaxAgg m wantMax (rows.filterMap fun r => argEval r (.col c)) with
+      match minMaxAgg m wantMax (rows.filterMap fun r => argEval r arg) with
       | some (.null _) | none => rows.getLast?
-      | some v => (rows.find? fun r => argEval r (.col c) == some v).or rows.head?
+      | some v => (rows.find? fun r => argEval r arg == some v).or rows.head?
     else rows.head?
   | _ => rows.head?
 
@@ -328,11 +326,15 @@ theorem bareSampleRow_eq_none_iff (argEval : Row → Expr → Option Value)
 
 /-- `bareSampleRow` reads its argument evaluator only on column references. -/
 theorem bareSampleRow_congr {argA argB : Row → Expr → Option Value}
-    (h : ∀ r c, argA r (.col c) = argB r (.col c))
-    (calls : List (Bool × MinMaxMode × Option Expr × Bool)) (rows : Table) :
+    {calls : List (Bool × MinMaxMode × Option Expr × Bool)}
+    (h : ∀ w m a d, (w, m, some a, d) ∈ calls → ∀ r, argA r a = argB r a) (rows : Table) :
     bareSampleRow argA calls rows = bareSampleRow argB calls rows := by
   unfold bareSampleRow
-  split <;> simp only [h]
+  split
+  · rename_i w m a
+    have ha := h w m a false (List.mem_singleton_self _)
+    simp only [ha]
+  · rfl
 
 -- ============================================================================
 -- Expression Evaluation Helper Functions (standalone)

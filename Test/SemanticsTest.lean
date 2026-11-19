@@ -501,6 +501,11 @@ def registryPinTests : List TestResult := [
     "SELECT name, MAX(age) FROM users" (.string "Alice"),
   testContainsValueIn "bare_column_two_minmax_sqlite_first_row" .sqlite
     "SELECT name, MAX(age), MIN(age) FROM users" (.string "Alice"),
+  -- …and for MIN/MAX of any expression, not only a column
+  testContainsValueIn "bare_column_max_expr_sqlite" .sqlite
+    "SELECT name, MAX(age + 0) FROM users" (.string "Carol"),
+  testContainsValueIn "bare_column_min_negated_sqlite" .sqlite
+    "SELECT name, MIN(0 - age) FROM users" (.string "Carol"),
   testContainsValueIn "bare_column_max_grouped_sqlite" .sqlite
     "SELECT name, MAX(age) FROM users GROUP BY department ORDER BY department" (.string "Carol"),
   -- AVG/SUM over a string is a type error, as in DuckDB and Postgres; sqlite converts it to a
