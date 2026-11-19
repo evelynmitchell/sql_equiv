@@ -515,6 +515,20 @@ def registryPinTests : List TestResult := [
     "SELECT COUNT(*) FROM users HAVING AVG(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" 0,
   -- numbers only: unchanged
   testRowCount "avg_numbers_in_having" "SELECT COUNT(*) FROM users HAVING AVG(age) > 20" 1,
+  -- SUM/AVG over booleans per dialect (registry row 18): sqlite reads them as 1/0; DuckDB too for
+  -- SUM but rejects AVG; standard and Postgres reject both. Ages over 26: Alice, Carol, Dave.
+  testRowCountIn "sum_bool_sqlite" .sqlite
+    "SELECT COUNT(*) FROM users HAVING SUM(age > 26) = 3" 1,
+  testContainsValueIn "avg_bool_sqlite" .sqlite
+    "SELECT AVG(age > 26) FROM users" (.decimal 6 1),
+  testRowCountIn "sum_bool_duckdb" .duckdb
+    "SELECT COUNT(*) FROM users HAVING SUM(age > 26) = 3" 1,
+  testRowCountIn "avg_bool_duckdb_error" .duckdb
+    "SELECT COUNT(*) FROM users HAVING AVG(age > 26) IS NULL" 0,
+  testRowCount "sum_bool_standard_error"
+    "SELECT COUNT(*) FROM users HAVING SUM(age > 26) IS NULL" 0,
+  testRowCountIn "avg_bool_postgres_error" .postgres
+    "SELECT COUNT(*) FROM users HAVING AVG(age > 26) IS NULL" 0,
   -- ROUND keeps the input type and rounds half away from zero (registry row 16, #355)
   testContainsValue "round_int_unchanged" "SELECT ROUND(age) FROM users WHERE id = 1" (.int 30),
   testContainsValue "round_int_negative_places" "SELECT ROUND(25, -1) FROM users WHERE id = 1" (.int 30),

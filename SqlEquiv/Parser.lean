@@ -290,24 +290,24 @@ def sqlKeywords : List String := [
   "WITH", "RECURSIVE", "OVER", "PARTITION", "ROW_NUMBER", "RANK", "DENSE_RANK"
 ]
 
-/-- Check if string is an aggregate function name. MIN/MAX record the
-    dialect's MIN/MAX mode (`mixed`). -/
-def isAggFunc (s : String) (mixed : MinMaxMode := defaultDialect.config.minMaxMode) :
+/-- Check if string is an aggregate function name. MIN/MAX record the dialect's MIN/MAX mode,
+    SUM/AVG its rule for booleans (row 18). -/
+def isAggFunc (s : String) (c : DialectConfig := defaultDialect.config) :
     Option AggFunc :=
   match s.toUpper with
   | "COUNT" => some .count
-  | "SUM"   => some .sum
-  | "AVG"   => some .avg
-  | "MIN"   => some (.min mixed)
-  | "MAX"   => some (.max mixed)
+  | "SUM"   => some (.sum c.boolSum)
+  | "AVG"   => some (.avg c.boolAvg)
+  | "MIN"   => some (.min c.minMaxMode)
+  | "MAX"   => some (.max c.minMaxMode)
   | _       => none
 
 /-- Map an aggregate function to its window-function counterpart
     (used when an aggregate call is followed by OVER, #214). -/
 def aggToWindowFunc : AggFunc → WindowFunc
   | .count => .count
-  | .sum   => .sum
-  | .avg   => .avg
+  | .sum b  => .sum b
+  | .avg b  => .avg b
   | .min m => .min m
   | .max m => .max m
 
@@ -911,8 +911,8 @@ partial def parsePrimary : Parser Expr := do
     let t' ← Parser.peek
     if t' == .lparen then
       -- Check if it's an aggregate function
-      let mixed ← fun st => .ok (st.config.minMaxMode, st)
-      match isAggFunc first mixed with
+      let cfg ← fun st => .ok (st.config, st)
+      match isAggFunc first cfg with
       | some aggFn =>
         let _ ← Parser.advance
         -- Check for COUNT(*)
@@ -1228,8 +1228,8 @@ partial def parseSelectItem : Parser SelectItem := do
         return .exprItem e'' alias
     else if t' == .lparen then
       -- Function call or aggregate — check for aggregate first
-      let mixed ← fun st => .ok (st.config.minMaxMode, st)
-      match isAggFunc name mixed with
+      let cfg ← fun st => .ok (st.config, st)
+      match isAggFunc name cfg with
       | some aggFn =>
         let _ ← Parser.advance
         let t'' ← Parser.peek

@@ -266,10 +266,10 @@ def elabAgg {n : ℕ} (cols : Fin n → Column) (fold : String → String) :
   | .countStar => pure .countStar
   | .agg .count none _ => pure .countStar
   | .agg .count (some e) d => return .call .count d (← elabExpr cols fold noHook e)
-  | .agg .sum (some e) d => return .call .sum d (← elabExpr cols fold noHook e)
+  | .agg (.sum _) (some e) d => return .call .sum d (← elabExpr cols fold noHook e)
   | .agg (.min _) (some e) d => return .call .min d (← elabExpr cols fold noHook e)
   | .agg (.max _) (some e) d => return .call .max d (← elabExpr cols fold noHook e)
-  | .agg .avg (some e) d => return .call .avg d (← elabExpr cols fold noHook e)
+  | .agg (.avg _) (some e) d => return .call .avg d (← elabExpr cols fold noHook e)
   | _ => throw (.unsupported "aggregate")
 
 /-- An elaborated query: its arity, the query, and the names and types of its columns. -/

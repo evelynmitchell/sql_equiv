@@ -427,6 +427,11 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE department LIKE 'SALES'",
     diffTest "LIKE suffix case-insensitive"
       "SELECT name FROM users WHERE name LIKE '%E'",
+    -- SUM over booleans reads them as 1/0 in the sqlite dialect (registry row 18). AVG's
+    -- fractional result is pinned by the unit test `avg_bool_sqlite`: this harness reads
+    -- sqlite's REAL output as text.
+    diffTest "SUM over booleans"
+      "SELECT SUM(age > 26) AS s FROM users",
     -- Bare column next to one MIN/MAX of a column reads the extreme row (registry T9)
     diffTest "bare column next to MAX"
       "SELECT name, MAX(age) AS m FROM users",

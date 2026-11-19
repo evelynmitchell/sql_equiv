@@ -31,7 +31,7 @@ example : Expr.countStar ≠ Expr.subquery (.simple (sel none)) := by decide
 -- Nested fields: List Expr, Option Expr, List (Expr × Expr)
 example : Expr.func "f" [one, x] = Expr.func "f" [one, x] := by decide
 example : Expr.func "f" [one, x] ≠ Expr.func "f" [one] := by decide
-example : Expr.agg .sum (some x) false ≠ Expr.agg .sum none false := by decide
+example : Expr.agg (.sum .error) (some x) false ≠ Expr.agg (.sum .error) none false := by decide
 example : Expr.«case» [(x, one)] none ≠ Expr.«case» [(one, one)] none := by decide
 example : Expr.«case» [(x, one)] (some x) = Expr.«case» [(x, one)] (some x) := by decide
 

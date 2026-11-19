@@ -64,8 +64,8 @@ def UnaryOp.toSql : UnaryOp → String
 
 def AggFunc.toSql : AggFunc → String
   | .count => "COUNT"
-  | .sum   => "SUM"
-  | .avg   => "AVG"
+  | .sum _ => "SUM"
+  | .avg _ => "AVG"
   | .min _ => "MIN"
   | .max _ => "MAX"
 
@@ -135,8 +135,8 @@ partial def Expr.toSql : Expr → String
       | .rowNumber => "ROW_NUMBER"
       | .rank => "RANK"
       | .denseRank => "DENSE_RANK"
-      | .sum => "SUM"
-      | .avg => "AVG"
+      | .sum _ => "SUM"
+      | .avg _ => "AVG"
       | .min _ => "MIN"
       | .max _ => "MAX"
       | .count => "COUNT"

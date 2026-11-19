@@ -157,8 +157,8 @@ def sumScaled (vs : List Value) : Int × Nat :=
     (0, 0)
 
 /-- Whether a list holds a string: AVG/SUM of one is a type error, as in DuckDB and Postgres;
-    sqlite converts it to a number instead (registry row 17). Booleans are not covered here:
-    they are skipped, pending their own per-dialect decision (sqlite reads them as 1/0). -/
+    sqlite converts it to a number instead (registry row 17). Booleans are handled before this,
+    per dialect (`boolsForSumAvg`, row 18). -/
 def hasNonNumeric (vs : List Value) : Bool :=
   vs.any fun v => match v with | .string _ => true | _ => false
 
@@ -194,6 +194,28 @@ def avgNumeric (vs : List Value) : Option Value :=
     let s := (sumScaled vs).2
     let p := max avgPlaces s
     some (Value.mkDecimal (divRoundHalfAway (u * 10 ^ (p - s)) n) p)
+
+/-- Booleans among SUM/AVG inputs, by the node's rule (registry row 18): `asInt` reads them as
+    1/0 (sqlite, DuckDB's SUM); `error` makes any boolean an error (`none`). -/
+def boolsForSumAvg (b : BoolSumAvg) (vs : List Value) : Option (List Value) :=
+  match b with
+  | .asInt => some (vs.map fun v => match v with | .bool x => .int (if x then 1 else 0) | v => v)
+  | .error => if vs.any (fun v => match v with | .bool _ => true | _ => false) then none
+              else some vs
+
+/-- SUM: booleans by `b` (row 18); a string is an error (row 17); no numeric input is NULL. -/
+def sumAgg (b : BoolSumAvg) (vs : List Value) : Option Value :=
+  (boolsForSumAvg b vs).bind fun vs =>
+    if hasNonNumeric vs then none
+    else if countNumeric vs == 0 then some (.null none)
+    else some (sumNumeric vs)
+
+/-- AVG: booleans by `b` (row 18); a string is an error (row 17); exact or rounded (row 7);
+    no numeric input is NULL. -/
+def avgAgg (b : BoolSumAvg) (vs : List Value) : Option Value :=
+  (boolsForSumAvg b vs).bind fun vs =>
+    if hasNonNumeric vs then none
+    else some ((avgNumeric vs).getD (.null none))
 
 /-- Least (`wantMax = false`) or greatest value of a list under `Value.compare`;
     returns the original value (canonical form preserved). -/
@@ -683,8 +705,8 @@ def exprToName : Expr → String
   | .col c => c.column
   | .func name _ => name
   | .agg .count _ _ => "count"
-  | .agg .sum _ _ => "sum"
-  | .agg .avg _ _ => "avg"
+  | .agg (.sum _) _ _ => "sum"
+  | .agg (.avg _) _ _ => "avg"
   | .agg (.min _) _ _ => "min"
   | .agg (.max _) _ _ => "max"
   | .countStar => "count"
