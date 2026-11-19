@@ -23,5 +23,5 @@ schemas; multiset comparison of result rows.
 
 | Count | Class | Example query | Detail |
 |------:|-------|---------------|--------|
-| 5 | mismatch: AVG | `SELECT avg(horsepower) FROM CARS_DATA WHERE YEAR < 1980;` | ours 1 rows vs sqlite 1 rows |
+| 5 | known divergence: AVG/SUM over a TEXT column (registry row 17) | `SELECT avg(horsepower) FROM CARS_DATA WHERE YEAR < 1980;` | ours [['NULL']] vs sqlite [(0.0,)] |
 | 2 | mismatch: plain SELECT | `select max(capacity), average from stadium` | ours 1 rows vs sqlite 1 rows |

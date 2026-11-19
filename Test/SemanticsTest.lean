@@ -490,6 +490,10 @@ def registryPinTests : List TestResult := [
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 5,
   testRowCountIn "not_like_ascii_ci_sqlite" .sqlite
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 4,
+  -- AVG/SUM over a TEXT column: no sqlite-style coercion; strings are skipped, so only
+  -- strings give NULL (registry row 17)
+  testContainsValue "avg_text_column_null" "SELECT AVG(name) FROM users" (.null none),
+  testContainsValue "sum_text_column_null" "SELECT SUM(name) FROM users" (.null none),
   -- ROUND keeps the input type and rounds half away from zero (registry row 16, #355)
   testContainsValue "round_int_unchanged" "SELECT ROUND(age) FROM users WHERE id = 1" (.int 30),
   testContainsValue "round_int_negative_places" "SELECT ROUND(25, -1) FROM users WHERE id = 1" (.int 30),
