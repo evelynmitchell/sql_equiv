@@ -156,6 +156,21 @@ observation.**
   - A future SELECT-item congruence theorem would have to exclude MIN/MAX arguments, or
     `bareSampleRow` would have to accept any argument, as the typed core's T9 does.
 
+**Re-audited 19 Nov 2026, night (`bf75ac6`, PR #361 on master `13b6a09`): 0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2944 theorems,
+  2484 definitions and 50 opaque constants.
+- **`partial def`s:** 58, none on-path.
+- **Overrides:** none.
+- **Vacuous theorems:** none.
+- **Discovery:** no new rewriter or decision procedure.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **#361 (AVG/SUM over a string is an error, registry row 17):**
+  - It changes only `evalAggOverTableParam` and the window SUM/AVG, through
+    `hasNonNumeric`. `≃ₑ` treats aggregates as errors, so no expression rewriter is affected.
+  - The one proof that reads aggregate evaluation, `evalAggOverTableParam_ground_eq`, is
+    stated over the whole value list, so it needed no change.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)

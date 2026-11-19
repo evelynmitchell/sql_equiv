@@ -503,10 +503,18 @@ def registryPinTests : List TestResult := [
     "SELECT name, MAX(age), MIN(age) FROM users" (.string "Alice"),
   testContainsValueIn "bare_column_max_grouped_sqlite" .sqlite
     "SELECT name, MAX(age) FROM users GROUP BY department ORDER BY department" (.string "Carol"),
-  -- AVG/SUM over a TEXT column: no sqlite-style coercion; strings are skipped, so only
-  -- strings give NULL (registry row 17)
-  testContainsValue "avg_text_column_null" "SELECT AVG(name) FROM users" (.null none),
-  testContainsValue "sum_text_column_null" "SELECT SUM(name) FROM users" (.null none),
+  -- AVG/SUM over a string is a type error, as in DuckDB and Postgres; sqlite converts it to a
+  -- number (registry row 17). In a SELECT item the error shows as NULL; in HAVING it drops the
+  -- group, which tells it apart from a NULL result.
+  testRowCount "avg_text_column_error_in_having"
+    "SELECT COUNT(*) FROM users HAVING AVG(name) IS NULL" 0,
+  testRowCount "sum_text_column_error_in_having"
+    "SELECT COUNT(*) FROM users HAVING SUM(name) IS NULL" 0,
+  -- a mix of numbers and strings is an error too (strings used to be skipped)
+  testRowCount "avg_mixed_text_error_in_having"
+    "SELECT COUNT(*) FROM users HAVING AVG(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" 0,
+  -- numbers only: unchanged
+  testRowCount "avg_numbers_in_having" "SELECT COUNT(*) FROM users HAVING AVG(age) > 20" 1,
   -- ROUND keeps the input type and rounds half away from zero (registry row 16, #355)
   testContainsValue "round_int_unchanged" "SELECT ROUND(age) FROM users WHERE id = 1" (.int 30),
   testContainsValue "round_int_negative_places" "SELECT ROUND(25, -1) FROM users WHERE id = 1" (.int 30),
