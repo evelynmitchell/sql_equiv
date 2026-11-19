@@ -349,15 +349,15 @@ A grep for `theorem` finds 206 lines in this file. Four of them are doc-comment 
 | `cross_join_assoc` | not carried over | Phase 7: as `join_assoc` (cross join is `join (lit true)`) |
 | `join_comm` | counterpart | `Query.join_comm` (bag); the semantic condition hypothesis becomes explicit renaming `θ.rename finAddFlip` |
 | `cross_join_comm` | counterpart | `Query.join_comm` with `θ = lit true` (bag, which is stronger than the membership up to column permutation stated here) |
-| `project_join` | not carried over | Vacuous: both sides are syntactically identical; there is no typed law to match |
-| `project_star_identity` | not carried over | Vacuous: both sides are identical; the intended law is `Query.project_col` |
+| `project_join` | deleted (#307) | Vacuous: both sides are syntactically identical; there is no typed law to match |
+| `project_star_identity` | deleted (#307) | Vacuous: both sides are identical; the intended law is `Query.project_col` |
 | `filter_and` | counterpart | `Query.select_select`; it gains `IsSafePredicate` of the outer predicate (strict errors) |
 | `filter_commute` | counterpart | `Query.select_comm`; it gains `IsSafePredicate` of both predicates |
 | `filter_idempotent` | counterpart | `Query.select_select` composed with `Query.Equiv.select_expr` and `Expr.Equiv.and_self` (`IsSafePredicate p`) |
 | `filter_true_elim'` | counterpart | `Query.select_true` |
 | `filter_false_empty'` | not carried over | Phase 7: as `where_false_empty` |
-| `filter_project_commute` | not carried over | Vacuous: both sides are identical; the intended law is `Query.select_project` |
-| `push_filter_project_through_join` | not carried over | Vacuous: both sides are identical; the intended laws are `Query.select_join_left` and `Query.select_project` |
+| `filter_project_commute` | deleted (#307) | Vacuous: both sides are identical; the intended law is `Query.select_project` |
+| `push_filter_project_through_join` | deleted (#307) | Vacuous: both sides are identical; the intended laws are `Query.select_join_left` and `Query.select_project` |
 
 ### NULL laws
 

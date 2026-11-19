@@ -212,7 +212,7 @@ private def filterAlgTests : TestSeq :=
     (rows.filter p).filter q == (rows.filter q).filter p)
 
 -- ============================================================================
--- SELECT-level: filter_true_elim', project/join theorems
+-- SELECT-level: filter_true_elim', plus SELECT * and join smoke tests
 -- ============================================================================
 
 private def selectLevelTests : TestSeq :=
@@ -224,26 +224,15 @@ private def selectLevelTests : TestSeq :=
     evalSelect singleRowDb
       (.mk false [.star none] (some (.table ⟨"users", none⟩))
         none [] none [] none none)) $
-  -- covers: project_star_identity
-  test "SELECT * is identity" (
+  test "SELECT * returns the one row of the table" (
     let result := evalSelect singleRowDb
       (.mk false [.star none] (some (.table ⟨"users", none⟩))
         none [] none [] none none)
     result.length == 1) $
-  -- covers: project_join
-  test "project join returns rows" (
+  test "inner join returns rows" (
     let result := evalSelect dupKeyDb (mkJoinQuery .inner 20)
     result.length > 0) $
-  -- covers: filter_project_commute
-  test "filter and project commute" (
-    evalSelect singleRowDb
-      (.mk false [.star none] (some (.table ⟨"users", none⟩))
-        (some (.binOp .gt (qcol "users" "age") (.lit (.int 25)))) [] none [] none none) ==
-    evalSelect singleRowDb
-      (.mk false [.star none] (some (.table ⟨"users", none⟩))
-        (some (.binOp .gt (qcol "users" "age") (.lit (.int 25)))) [] none [] none none)) $
-  -- covers: push_filter_project_through_join
-  test "push filter/project through join" (
+  test "filtered inner join returns rows" (
     let result := evalSelect dupKeyDb
       (.mk false [.star none]
         (some (.join (.table ⟨"users", none⟩) .inner (.table ⟨"orders", none⟩)

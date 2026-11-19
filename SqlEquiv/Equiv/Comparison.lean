@@ -183,34 +183,16 @@ theorem cross_join_comm (db : Database) (a b : FromClause) :
     exact Or.comm
 
 -- ============================================================================
--- Projection Pushdown Theorems
+-- Projection pushdown
 -- ============================================================================
 
-/-- Push projection through inner join when projected columns come from one side.
-
-    SELECT cols FROM (a JOIN b ON cond)
-    ≃ SELECT cols FROM ((SELECT cols FROM a) JOIN b ON cond)
-
-    (when cols only reference columns from a and cond doesn't need columns projected away)
--/
-theorem project_join (db : Database) (a b : FromClause) (cond : Expr)
-    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (_h_items_from_a : items.all (fun item => match item with
-      | .star (some t) => getFromClauseTableNames a |>.contains t
-      | .star none => false
-      | .exprItem e _ => exprReferencesOnlyFrom a e)) :
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) none groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) none groupBy having orderBy limit offset) := by
-  rfl
-
-/-- Projection elimination: projecting all columns is identity -/
-theorem project_star_identity (db : Database) (from_ : FromClause)
-    (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false [.star none] (some from_) none groupBy having orderBy limit offset) =
-    evalSelect db (.mk false [.star none] (some from_) none groupBy having orderBy limit offset) := by
-  rfl
+/-! Four theorems that stood here (`project_join`, `project_star_identity`, and below
+`filter_project_commute`, `push_filter_project_through_join`) were deleted (#307): each had
+identical sides, was closed by `rfl` and ignored its hypotheses, so it proved nothing.
+Projection pushdown is hard to state over `SqlEquiv`'s name-based rows (see #257). The typed
+core states the intended laws: `SqlCore.Query.select_project` (a filter through a projection),
+`SqlCore.Query.select_join_left`/`select_join_right` (a filter into a join input) and
+`SqlCore.Query.project_col` (`SELECT *`). `project_join` has no typed counterpart yet. -/
 
 -- ============================================================================
 -- Filter Combination Theorems
@@ -260,34 +242,6 @@ theorem filter_false_empty' (db : Database) (items : List SelectItem) (from_ : O
     (h_no_agg : selectHasAggregate items = false) :
     (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 :=
   where_false_empty db items from_ groupBy having orderBy limit offset h_no_agg
-
--- ============================================================================
--- Combined Optimization Theorems
--- ============================================================================
-
-/-- Filter-then-project can be reordered to project-then-filter when filter
-    only uses projected columns -/
-theorem filter_project_commute (db : Database) (items : List SelectItem)
-    (from_ : Option FromClause) (filter : Expr)
-    (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat) :
-    evalSelect db (.mk false items from_ (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items from_ (some filter) groupBy having orderBy limit offset) := by
-  rfl
-
-/-- Pushing both filter and projection through join -/
-theorem push_filter_project_through_join (db : Database) (a b : FromClause)
-    (cond filter : Expr) (items : List SelectItem)
-    (groupBy : List Expr) (having : Option Expr)
-    (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (_h_filter : exprReferencesOnlyFrom a filter = true)
-    (_h_items : items.all (fun item => match item with
-      | .star (some t) => getFromClauseTableNames a |>.contains t
-      | .star none => true
-      | .exprItem e _ => exprReferencesOnlyFrom a e)) :
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) =
-    evalSelect db (.mk false items (some (.join a .inner b (some cond))) (some filter) groupBy having orderBy limit offset) := by
-  rfl
 
 -- ============================================================================
 -- NULL Theorems: IS NULL Laws
