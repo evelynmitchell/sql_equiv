@@ -321,7 +321,7 @@ When we add float, decimal, date, time, timestamp, interval, binary:
 
 ### What Breaks
 
-1. **Every `match` on `Value`** in Semantics.lean, Optimizer.lean, etc.
+1. **Every `match` on `Value`** in Semantics.lean, Rewriter.lean, etc.
    Lean flags these immediately.
 
 2. **Every case-analysis proof** in Equiv.lean. Each theorem that matches
