@@ -172,13 +172,14 @@ def corpus : List (String × Expect) := [
   ("SELECT SUM(price), MIN(price), COUNT(price) FROM items", .agree),
   ("SELECT u.name, COUNT(*) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.name", .agree),
   ("SELECT COUNT(*) FROM users WHERE age > 100", .agree),
-  -- AVG and decimal `/` (phase 8d): exact rationals (registry T3, T10). `SqlEquiv` truncates AVG
-  -- (registry row 7) and leaves decimal `/` unimplemented (#201), so fractional results are
-  -- checked against DuckDB instead.
-  ("SELECT AVG(age) FROM users", .sqlEquivBug "registry row 7: AVG is an integer there"),
-  ("SELECT department, AVG(age) FROM users GROUP BY department", .sqlEquivBug "registry row 7: AVG truncates"),
-  ("SELECT AVG(age) FROM users WHERE id IN (1, 2, 4)", .sqlEquivBug "registry row 7: AVG truncates"),
-  ("SELECT AVG(price), AVG(DISTINCT id) FROM items", .sqlEquivBug "registry row 7: AVG truncates"),
+  -- AVG and decimal `/` (phase 8d): exact rationals (registry T3, T10). `SqlEquiv`'s AVG is exact
+  -- when the quotient terminates within 16 places and rounded to 16 otherwise (registry row 7), so
+  -- terminating averages agree and a repeating one is checked against DuckDB instead; decimal `/`
+  -- is unimplemented there (#201).
+  ("SELECT AVG(age) FROM users", .agree),
+  ("SELECT department, AVG(age) FROM users GROUP BY department", .agree),
+  ("SELECT AVG(age) FROM users WHERE id IN (1, 2, 4)", .sqlEquivBug "registry row 7: 83/3 is rounded to 16 places there"),
+  ("SELECT AVG(price), AVG(DISTINCT id) FROM items", .agree),
   ("SELECT department FROM users GROUP BY department HAVING AVG(age) > 26", .agree),
   ("SELECT AVG(staff) FROM museum WHERE staff > 100", .agree),
   ("SELECT price / 2, age / 2.0 FROM items, users WHERE items.id = users.id", .sqlEquivBug "#201: decimal / unimplemented"),

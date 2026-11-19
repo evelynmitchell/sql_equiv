@@ -172,14 +172,28 @@ def sumNumeric (vs : List Value) : Value :=
   if anyDecimal vs then Value.mkDecimal (sumScaled vs).1 (sumScaled vs).2
   else .int (sumScaled vs).1
 
-/-- AVG over numerics (truncating division, consistent with the existing
-    integer AVG); none when there are no numeric inputs. -/
+/-- `a / b` rounded to an integer, half away from zero (`b > 0`). -/
+def divRoundHalfAway (a : Int) (b : Nat) : Int :=
+  let q := a.natAbs / b
+  let q' := if 2 * (a.natAbs % b) ≥ b then q + 1 else q
+  if a < 0 then -(q' : Int) else (q' : Int)
+
+/-- Places an AVG result is rounded to when the exact quotient does not terminate sooner. -/
+def avgPlaces : Nat := 16
+
+/-- AVG over numerics (registry row 7): the exact quotient of the sum by the count, rounded half
+    away from zero to `max avgPlaces s` places (`s` the inputs' scale), so exact whenever the
+    quotient terminates within them (`AVG` of 10, 11 is 10.5) and otherwise rounded
+    (`AVG` of 1, 1, 2 is 1.3333333333333333). Always a decimal, as in Postgres and the typed core
+    (registry T10); `none` when there are no numeric inputs. -/
 def avgNumeric (vs : List Value) : Option Value :=
   let n := countNumeric vs
   if n == 0 then none
-  else if anyDecimal vs then
-    some (Value.mkDecimal ((sumScaled vs).1.tdiv (Int.ofNat n)) (sumScaled vs).2)
-  else some (.int ((sumScaled vs).1.tdiv (Int.ofNat n)))
+  else
+    let u := (sumScaled vs).1
+    let s := (sumScaled vs).2
+    let p := max avgPlaces s
+    some (Value.mkDecimal (divRoundHalfAway (u * 10 ^ (p - s)) n) p)
 
 /-- Least (`wantMax = false`) or greatest value of a list under `Value.compare`;
     returns the original value (canonical form preserved). -/

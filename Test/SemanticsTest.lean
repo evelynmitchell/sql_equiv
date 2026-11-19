@@ -713,7 +713,8 @@ def registryPinTests : List TestResult := [
   testContainsValue "int_division_truncates_negative" "SELECT -7 / 2 FROM users LIMIT 1" (.int (-3)),
   testContainsValue "int_mod_sign_of_dividend" "SELECT -7 % 2 FROM users LIMIT 1" (.int (-1)),
   testContainsValue "int_division_negative_divisor" "SELECT 7 / (0 - 2) FROM users LIMIT 1" (.int (-3)),
-  testContainsValue "avg_truncates_toward_zero" "SELECT AVG(0 - age) FROM users WHERE id < 3" (.int (-27)),
+  -- AVG is exact (registry row 7): (-30 - 25) / 2 = -27.5
+  testContainsValue "avg_negative_exact" "SELECT AVG(0 - age) FROM users WHERE id < 3" (.decimal (-275) 1),
   -- Row 9: strings order by code point ('B' = 66 < 'a' = 97), in every dialect
   testRowCount "string_order_code_point" "SELECT name FROM users WHERE 'a' < 'B'" 0,
   testRowCount "string_order_code_point_upper_first" "SELECT name FROM users WHERE 'B' < 'a'" 5
@@ -799,8 +800,8 @@ def aggregateTests : List TestResult := [
   testContainsValue "count_col" "SELECT COUNT(amount) FROM orders" (.int 4),
   -- SUM - sum of all order amounts (100 + 200 + 150 + 300 = 750)
   testContainsValue "sum" "SELECT SUM(amount) FROM orders" (.int 750),
-  -- AVG - average order amount (750 / 4 = 187 integer division)
-  testContainsValue "avg" "SELECT AVG(amount) FROM orders" (.int 187),
+  -- AVG - average order amount: 750 / 4 = 187.5, exact (registry row 7)
+  testContainsValue "avg" "SELECT AVG(amount) FROM orders" (.decimal 1875 1),
   -- MIN - minimum order amount
   testContainsValue "min" "SELECT MIN(amount) FROM orders" (.int 100),
   -- MAX - maximum order amount
@@ -829,7 +830,7 @@ def distinctAggTests : List TestResult := [
   -- Verify non-distinct SUM is different: 1+1+2+3 = 7
   testContainsValue "sum_user_nodistinct" "SELECT SUM(user_id) FROM orders" (.int 7),
   -- AVG(DISTINCT user_id): (1+2+3)/3 = 2
-  testContainsValue "avg_distinct_user" "SELECT AVG(DISTINCT user_id) FROM orders" (.int 2),
+  testContainsValue "avg_distinct_user" "SELECT AVG(DISTINCT user_id) FROM orders" (.decimal 2 0),
   -- MIN/MAX with DISTINCT (should be same as without)
   testContainsValue "min_distinct" "SELECT MIN(DISTINCT amount) FROM orders" (.int 100),
   testContainsValue "max_distinct" "SELECT MAX(DISTINCT amount) FROM orders" (.int 300),
@@ -1307,10 +1308,14 @@ def windowTests : List TestResult := [
   testColumn "window_sum_partition_by"
     "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users"
     "s" [.int 65, .int 47, .int 65, .int 28, .int 47],
-  -- AVG over PARTITION BY (truncating int division: 65/2=32, 47/2=23)
+  -- AVG over PARTITION BY, exact (registry row 7): 65/2 = 32.5, 47/2 = 23.5, 28
   testColumn "window_avg_partition_by"
     "SELECT name, AVG(age) OVER (PARTITION BY department) AS a FROM users"
-    "a" [.int 32, .int 23, .int 32, .int 28, .int 23],
+    "a" [.decimal 325 1, .decimal 235 1, .decimal 325 1, .decimal 28 0, .decimal 235 1],
+  -- a non-terminating average is rounded half away from zero to 16 places:
+  -- (30 + 25 + 28) / 3 = 27.666… (ids 1, 2, 4)
+  testContainsValue "avg_rounded_16_places"
+    "SELECT AVG(age) FROM users WHERE id IN (1, 2, 4)" (.decimal 276666666666666667 16),
   -- MIN/MAX over PARTITION BY
   testColumn "window_min_partition_by"
     "SELECT name, MIN(age) OVER (PARTITION BY department) AS lo FROM users"
