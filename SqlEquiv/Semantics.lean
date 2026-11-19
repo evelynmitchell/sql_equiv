@@ -106,9 +106,12 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
   -- which doesn't go through here); the window-fn COUNT already does this.
   | .count => some (.int (distinctValues.filter (fun v => !v.isNull)).length)
   | .sum =>
-    if countNumeric distinctValues == 0 then some (.null none)
+    if hasNonNumeric distinctValues then none  -- type error (registry row 17)
+    else if countNumeric distinctValues == 0 then some (.null none)
     else some (sumNumeric distinctValues)
-  | .avg => some ((avgNumeric distinctValues).getD (.null none))
+  | .avg =>
+    if hasNonNumeric distinctValues then none  -- type error (registry row 17)
+    else some ((avgNumeric distinctValues).getD (.null none))
   | .min m => minMaxAgg m false distinctValues
   | .max m => minMaxAgg m true distinctValues
 
@@ -321,15 +324,18 @@ def evalWindowFnParam (exprEval : Database → Row → Expr → Option Value)
     | none => none
     | some e =>
       let vals := frame.filterMap fun r => exprEval db r e
-      -- SUM over no numeric inputs is NULL (matches evalAggOverTableParam)
-      if countNumeric vals == 0 then some (.null none)
+      -- as evalAggOverTableParam: a string is a type error (registry row 17),
+      -- SUM over no numeric inputs is NULL
+      if hasNonNumeric vals then none
+      else if countNumeric vals == 0 then some (.null none)
       else some (sumNumeric vals)
   | .avg =>
     match arg with
     | none => none
     | some e =>
       let vals := frame.filterMap fun r => exprEval db r e
-      some ((avgNumeric vals).getD (.null none))
+      if hasNonNumeric vals then none  -- type error (registry row 17)
+      else some ((avgNumeric vals).getD (.null none))
   | .min m =>
     match arg with
     | none => none

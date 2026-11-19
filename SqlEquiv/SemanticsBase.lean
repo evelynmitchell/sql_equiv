@@ -156,6 +156,12 @@ def sumScaled (vs : List Value) : Int × Nat :=
                  max a.2 b.2))
     (0, 0)
 
+/-- Whether a list holds a string: AVG/SUM of one is a type error, as in DuckDB and Postgres;
+    sqlite converts it to a number instead (registry row 17). Booleans are not covered here:
+    they are skipped, pending their own per-dialect decision (sqlite reads them as 1/0). -/
+def hasNonNumeric (vs : List Value) : Bool :=
+  vs.any fun v => match v with | .string _ => true | _ => false
+
 /-- Number of numeric values (the AVG denominator). -/
 def countNumeric (vs : List Value) : Nat :=
   (vs.filterMap Value.toScaled?).length
