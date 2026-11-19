@@ -1,5 +1,6 @@
 // Axiom Dependency Graph for sql_equiv
-// Updated 2026-02-13
+// Updated 2026-02-13. Historical: every axiom shown here has since been proved (0 axioms),
+// and the optimizer nodes refer to a module removed in PR #156.
 //
 // Render with:  dot -Tpng axiom_dependencies.dot -o axiom_dependencies.png
 //           or: dot -Tsvg axiom_dependencies.dot -o axiom_dependencies.svg

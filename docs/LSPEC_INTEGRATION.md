@@ -2,6 +2,10 @@
 
 This document describes how to incorporate LSpec property-based testing alongside the existing test suite, with a workflow for capturing shrunk counterexamples as permanent unit tests.
 
+> **Historical design note.** The file tree below is the original plan. The optimizer and its
+> tests (`OptimizerTest.lean`, `OptimizerProperties.lean`) were removed in PR #156; the current
+> suites are in `Test/` and `LSpecTests/` (e.g. `RewriterProperties.lean`, `NullSemantics.lean`).
+
 ## Overview
 
 ### Goals

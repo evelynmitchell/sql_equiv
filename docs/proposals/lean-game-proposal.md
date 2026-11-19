@@ -1,6 +1,6 @@
 # Proposal: SQL Equiv Interactive Learning Game
 
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **622 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **691 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
 
 **Date:** 2026-02-04
 **Status:** Proposal

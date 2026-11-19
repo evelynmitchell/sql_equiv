@@ -2,7 +2,7 @@
 
 > **Note (Nov 2026):** the legacy `evalAggOverTable` / `groupRowsByKey` named below were removed in #278 step 3; the live functions are `evalAggOverTableParam` / `groupRowsByKeyParam` in `Semantics.lean`.
 >
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **622 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **691 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
 
 **Date:** 2026-02-18
 
