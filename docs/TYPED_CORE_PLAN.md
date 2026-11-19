@@ -77,7 +77,16 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] Schema from Spider's `tables.json`, and the Spider elaboration rate: **129/564 (22.9%)**,
     [`elab_report.md`](../benchmarks/spider/elab_report.md), ratcheted in CI
   - [x] Differential test against DuckDB; differences registered (`IMPLEMENTATION_DEFINED.md`, rows T1–T8)
-  - [ ] Stretch, split out: elaborator correctness for single-table `WHERE` and column lists
+  - [x] Elaborator correctness for single-table `WHERE` and column lists (#309):
+    `SqlBridge/Correct.lean`, `elabStmt_correct`. For `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`
+    with literals, columns, comparisons, `AND`, `OR` and `NOT`: when the statement elaborates,
+    the typed query evaluates, and its rows relate, in order, to `SqlEquiv`'s (values by `ValRel`:
+    a typed decimal is the rational of an untyped scaled integer; a typed `NULL` is an untyped
+    `NULL` of any tag; column names are dropped). Hypotheses: the untyped database relates to
+    the typed one (`DbRel`), case folding is off (`fold = id`), column names have no dots and
+    are distinct ignoring case (`WellNamed`), and no ordering comparison has two boolean
+    operands (`QNoBoolOrder`: the typed core orders `false < true`, `SqlEquiv` does not order
+    booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
   - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)

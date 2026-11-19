@@ -6,7 +6,8 @@
   against `SqlEquiv`, and `SqlCoreTest.SchemaDiffTest` (the typed test
   database matches the original), `SqlCoreTest.BridgeDiffTest` (parsed SQL vs
   `SqlEquiv`) and `SqlCoreTest.DuckdbDiffTest` (parsed SQL vs DuckDB) and `SqlCoreTest.SqliteDiffTest`
-  (bare columns vs sqlite).
+  (bare columns vs sqlite). `SqlCoreTest.CorrectExamples`: the hypotheses of the elaborator
+  correctness theorem (#309) hold on the bridge test schema.
 -/
 import SqlCoreTest.TrustBaseTest
 import SqlCoreTest.ScalarExamples
@@ -25,6 +26,7 @@ import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest
 import SqlCoreTest.SqliteDiffTest
+import SqlCoreTest.CorrectExamples
 
 def main : IO UInt32 := do
   IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema, expression and query examples)"
