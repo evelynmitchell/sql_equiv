@@ -69,7 +69,9 @@ This repository could become a basis for SQL support in
   and the features beyond the frontier: GROUP BY and aggregates, ORDER BY/LIMIT,
   INTERSECT/EXCEPT, LIKE, exact AVG and division, and uncorrelated subqueries. 520 of the
   564 Spider dev queries elaborate into it. The other 44 are sqlite type-affinity cases,
-  which a typed core rejects by design. Phase 9 retires the untyped semantics. These are
+  which a typed core rejects by design. For `SELECT … FROM t WHERE p` with comparisons and
+  boolean connectives, the elaborator is proved correct against SqlEquiv (#309,
+  `SqlBridge/Correct.lean`). Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features

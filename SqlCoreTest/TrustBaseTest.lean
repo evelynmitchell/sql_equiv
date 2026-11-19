@@ -6,12 +6,14 @@
 -/
 import SqlCore
 import SqlBridge.Elab
+import SqlBridge.Correct
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore
 
 #assert_no_runtime_overrides SqlCore
 
--- The bridge from parsed SQL (#295): the elaborator (definitions; the theorems are generated).
+-- The bridge from parsed SQL (#295): the elaborator, and its correctness theorem for
+-- `SELECT … FROM t WHERE p` (#309, `SqlBridge.Correct`).
 #assert_trust_base SqlBridge
 #assert_no_runtime_overrides SqlBridge
