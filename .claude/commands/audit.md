@@ -60,6 +60,12 @@ This is a thin adapter over the general **rewrite-audit** skill in
    instead of `native_decide`. `Test/TrustBaseTest.lean` enforces both
    (`#assert_no_runtime_overrides`, and `Test/TacticTest.lean` pins the
    tactic's axioms). Report any reappearance as a finding.
+
+   Also check for vacuous theorems, whose two sides are the same text (#307):
+   ```bash
+   python3 tools/rewrite-audit/scripts/lean/find_identical_sides.py SqlEquiv SqlCore SqlBridge
+   ```
+   Expected: "OK". CI runs it too.
 3. **Run the repo-only checks** listed in `projectSpecificChecks` of the
    config. In particular, `checkEquivFull` may conclude `≃ₑ` from ground
    evaluation only for `Expr.isClosed` operands; `Expr.isGround` admits

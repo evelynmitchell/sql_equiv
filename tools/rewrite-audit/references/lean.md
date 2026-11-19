@@ -31,6 +31,13 @@ kernel does **not** check.
     proof-carrying definition with `sorry`, and requires all three to be
     named.
 
+- **Vacuous theorems.** A theorem whose two sides are the same text proves
+  nothing, whatever its name promises: it closes by `rfl` and ignores its
+  hypotheses. `scripts/lean/find_identical_sides.py DIR…` flags them
+  (reflexivity lemmas named `*_refl` are allowed) and exits non-zero. Report
+  each hit as a finding: the library claims a law it does not prove. It is a
+  text heuristic, so it can miss one written differently.
+
 ## 2. Runtime/proof divergence
 
 The compiled code is not the proved code when any of these sit on the

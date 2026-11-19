@@ -1,6 +1,6 @@
 # Refactoring sql_equiv with QED Prover as Oracle
 
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **691 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. The optimizer specs it mentions under `docs/specs/` were removed (#179).
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **689 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. The optimizer specs it mentions under `docs/specs/` were removed (#179).
 
 **Date:** 2026-02-18
 **Status:** Proposal

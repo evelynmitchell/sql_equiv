@@ -54,6 +54,9 @@ jobs:
       - name: Check definition coverage matrix
         run: python3 tools/definition_coverage_matrix.py --check
 
+      - name: Check no theorem has identical sides (#307)
+        run: python3 tools/rewrite-audit/scripts/lean/find_identical_sides.py SqlEquiv SqlCore SqlBridge
+
       - name: Check generated AST DecidableEq block is current
         run: python3 tools/gen_ast_deceq.py --check
 

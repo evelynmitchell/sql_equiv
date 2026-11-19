@@ -1,6 +1,6 @@
 # Impact of Removing the Optimizer on Equivalence Proving
 
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **691 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. This is the *pre-removal* analysis: the optimizer it discusses was removed in PR #156, with the predicted zero impact on the equivalence proofs.
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **689 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. This is the *pre-removal* analysis: the optimizer it discusses was removed in PR #156, with the predicted zero impact on the equivalence proofs.
 
 ## Summary
 
