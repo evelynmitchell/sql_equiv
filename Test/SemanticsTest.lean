@@ -490,6 +490,18 @@ def registryPinTests : List TestResult := [
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 5,
   testRowCountIn "not_like_ascii_ci_sqlite" .sqlite
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 4,
+  -- ROUND keeps the input type and rounds half away from zero (registry row 16, #355)
+  testContainsValue "round_int_unchanged" "SELECT ROUND(age) FROM users WHERE id = 1" (.int 30),
+  testContainsValue "round_int_negative_places" "SELECT ROUND(25, -1) FROM users WHERE id = 1" (.int 30),
+  testContainsValue "round_int_negative_places_neg" "SELECT ROUND(-25, -1) FROM users WHERE id = 1" (.int (-30)),
+  testContainsValue "round_decimal_half_away" "SELECT ROUND(2.5) FROM users WHERE id = 1" (.decimal 3 0),
+  testContainsValue "round_decimal_half_away_neg" "SELECT ROUND(-2.5) FROM users WHERE id = 1" (.decimal (-3) 0),
+  testContainsValue "round_decimal_places" "SELECT ROUND(7.45, 1) FROM users WHERE id = 1" (.decimal 75 1),
+  testContainsValue "round_decimal_more_places_unchanged" "SELECT ROUND(1.25, 5) FROM users WHERE id = 1" (.decimal 125 2),
+  testContainsValue "round_decimal_negative_places" "SELECT ROUND(123.456, -1) FROM users WHERE id = 1" (.decimal 120 0),
+  testContainsValue "round_null" "SELECT ROUND(NULL) FROM users WHERE id = 1" (.null none),
+  testContainsValue "round_null_places" "SELECT ROUND(2.5, NULL) FROM users WHERE id = 1" (.null none),
+  testContainsValue "abs_decimal" "SELECT ABS(-2.50) FROM users WHERE id = 1" (.decimal 25 1),
   -- NOT BETWEEN (#354): ages 30, 25, 35, 28, 22, so Carol (35) and Eve (22)
   testRowCount "not_between" "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30" 2,
   -- three-valued: NOT (age >= NULL AND age <= 30) is TRUE only where age > 30 (sqlite, DuckDB)
