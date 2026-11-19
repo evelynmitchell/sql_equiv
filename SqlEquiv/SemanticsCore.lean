@@ -551,7 +551,7 @@ def evalSelectGroupOrderKeys (db : Database)
     | none => groups ++ [(key, [row])]
   let groups := filteredRows.foldl addToGroups []
   groups.filterMap fun (_key, groupRows) =>
-    match groupRows.head? with
+    match bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
     | none => none
     | some sampleRow =>
       let passesHaving := match having with
@@ -653,7 +653,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
         | none => groups ++ [(key, [row])]
       let groups := filteredRows.foldl addToGroups []
       let groupResults := groups.filterMap fun (_key, groupRows) =>
-        match groupRows.head? with
+        match bareSampleRow (exprEval db) (selectMinMaxCalls sel.items sel.having) groupRows with
         | none => none
         | some sampleRow =>
           let passesHaving := match sel.having with
@@ -666,7 +666,8 @@ def evalSelectCore (db : Database) (outerRow : Row)
             none
       groupResults
     else if hasAgg sel.items then
-      let sampleRow := filteredRows.head?.getD []
+      let sampleRow :=
+        (bareSampleRow (exprEval db) (selectMinMaxCalls sel.items sel.having) filteredRows).getD []
       let passesHaving := match sel.having with
         | none => true
         | some cond =>
@@ -859,7 +860,7 @@ def evalSelectProjectDistinct (db : Database)
         | none => groups ++ [(key, [row])]
       let groups := filteredRows.foldl addToGroups []
       let groupResults := groups.filterMap fun (_key, groupRows) =>
-        match groupRows.head? with
+        match bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
         | none => none
         | some sampleRow =>
           let passesHaving := match having with
@@ -872,7 +873,8 @@ def evalSelectProjectDistinct (db : Database)
             none
       groupResults
     else if hasAgg items then
-      let sampleRow := filteredRows.head?.getD []
+      let sampleRow :=
+        (bareSampleRow (exprEval db) (selectMinMaxCalls items having) filteredRows).getD []
       let passesHaving := match having with
         | none => true
         | some cond =>
@@ -989,7 +991,8 @@ theorem evalSelectGroupOrderKeys_length_aligned (db : Database)
     Bool.false_eq_true, if_false]
   apply List.length_filterMap_congr_isSome
   intro ⟨_k, groupRows⟩ _
-  cases groupRows.head? with
+  dsimp only
+  cases bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
   | none => rfl
   | some sampleRow =>
     dsimp only
@@ -2369,8 +2372,16 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
             (hk0 row2) (fun r _ => hk0 r)
           unfold addToGroupsByKey at hfold1 hfold2
           rw [hfold1, hfold2]
-          simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons]
+          simp only [List.filterMap_cons, List.filterMap_nil]
           have hlen' : (row1 :: rest1).length = (row2 :: rest2).length := by simp [hlen]
+          -- a non-empty group has a sample row (the first, or sqlite's extreme row)
+          obtain ⟨s1, hs1⟩ : ∃ r, bareSampleRow (exprEval db) (selectMinMaxCalls items having)
+              (row1 :: rest1) = some r :=
+            Option.ne_none_iff_exists'.mp (by rw [Ne, bareSampleRow_eq_none_iff]; simp)
+          obtain ⟨s2, hs2⟩ : ∃ r, bareSampleRow (exprEval db) (selectMinMaxCalls items having)
+              (row2 :: rest2) = some r :=
+            Option.ne_none_iff_exists'.mp (by rw [Ne, bareSampleRow_eq_none_iff]; simp)
+          rw [hs1, hs2]
           cases having with
           | none =>
             dsimp only []
@@ -2379,11 +2390,11 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
               h_sia item hmem (row1 :: rest1) (row2 :: rest2) _ _ hlen')
           | some hcond =>
             dsimp only []
-            have hph : (exprWithAggEval db (row1 :: rest1) row1 hcond == some (Value.bool true)) =
-                (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) := by
+            have hph : (exprWithAggEval db (row1 :: rest1) s1 hcond == some (Value.bool true)) =
+                (exprWithAggEval db (row2 :: rest2) s2 hcond == some (Value.bool true)) := by
               congr 1; exact h_ea hcond rfl (row1 :: rest1) (row2 :: rest2) _ _ hlen'
             simp only [hph]
-            by_cases hx : (exprWithAggEval db (row2 :: rest2) row2 hcond == some (Value.bool true)) = true
+            by_cases hx : (exprWithAggEval db (row2 :: rest2) s2 hcond == some (Value.bool true)) = true
             · simp only [hx, ite_true]
               exact congrArg (fun x => [x]) (flatMap_congr_mem fun item hmem =>
                 h_sia item hmem (row1 :: rest1) (row2 :: rest2) _ _ hlen')
@@ -2398,8 +2409,12 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
             h_sia item hmem fr1 fr2 _ _ hlen)
         | some hcond =>
           simp only []
-          have hph : (exprWithAggEval db fr1 (fr1.head?.getD []) hcond == some (Value.bool true)) =
-              (exprWithAggEval db fr2 (fr2.head?.getD []) hcond == some (Value.bool true)) := by
+          have hph : (exprWithAggEval db fr1
+                ((bareSampleRow (exprEval db) (selectMinMaxCalls items (some hcond)) fr1).getD [])
+                hcond == some (Value.bool true)) =
+              (exprWithAggEval db fr2
+                ((bareSampleRow (exprEval db) (selectMinMaxCalls items (some hcond)) fr2).getD [])
+                hcond == some (Value.bool true)) := by
             congr 1; exact h_ea hcond rfl fr1 fr2 _ _ hlen
           simp only [hph]
           split
@@ -2820,16 +2835,18 @@ theorem evalSelectGroupOrderKeys_congr (db : Database)
     (hG : ∀ r, gb.map (eA db r) = gb.map (eB db r))
     (hSIA : ∀ rs r, items.flatMap (siaA db rs r) = items.flatMap (siaB db rs r))
     (hHa : ∀ c, hv = some c → ∀ rs r, aA db rs r c = aB db rs r c)
-    (hOK : ∀ o ∈ ob, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr) :
+    (hOK : ∀ o ∈ ob, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr)
+    (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls items hv) rs =
+      bareSampleRow (eB db) (selectMinMaxCalls items hv) rs) :
     evalSelectGroupOrderKeys db eA siaA aA items gb hv ob rows =
     evalSelectGroupOrderKeys db eB siaB aB items gb hv ob rows := by
   have hK := groupOrderKeyRow_congr db aA aB ob hOK
   have hG' := groupKey_congr hG
   cases hv with
-  | none => simp only [evalSelectGroupOrderKeys, hG', hSIA, hK]
+  | none => simp only [evalSelectGroupOrderKeys, hG', hSIA, hK, hB]
   | some c =>
     have hc := hHa c rfl
-    simp only [evalSelectGroupOrderKeys, hG', hSIA, hK, hc]
+    simp only [evalSelectGroupOrderKeys, hG', hSIA, hK, hc, hB]
 
 
 /-- `evalSelectCore` congruence over its callbacks: two callback tuples that
@@ -2855,7 +2872,9 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     (hC1 : ∀ r1 r2, cA db r1 r2 sel.orderBy = cB db r1 r2 sel.orderBy)
     (hC2 : ∀ r1 r2, cA db r1 r2 (groupOrderByItems sel.orderBy) =
       cB db r1 r2 (groupOrderByItems sel.orderBy))
-    (hOK : ∀ o ∈ sel.orderBy, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr) :
+    (hOK : ∀ o ∈ sel.orderBy, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr)
+    (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls sel.items sel.having) rs =
+      bareSampleRow (eB db) (selectMinMaxCalls sel.items sel.having) rs) :
     evalSelectCore db outerRow fA eA siA siaA aA cA wA hasWindowFn hasAgg sel =
     evalSelectCore db outerRow fB eB siB siaB aB cB wB hasWindowFn hasAgg sel := by
   obtain ⟨d, items, from_, w, gb, hv, ob, lim, off⟩ := sel
@@ -2864,7 +2883,7 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
   have hGK : ∀ rows, evalSelectGroupOrderKeys db eA siaA aA items gb hv ob rows =
       evalSelectGroupOrderKeys db eB siaB aB items gb hv ob rows :=
     fun rows => evalSelectGroupOrderKeys_congr db eA eB siaA siaB aA aB items gb hv ob rows
-      hG hSIA hHa hOK
+      hG hSIA hHa hOK hB
   have hWin : ∀ r p sp i, projectWindowItems wA db r p sp i items =
       projectWindowItems wB db r p sp i items :=
     fun r p sp i => projectWindowItems_congr wA wB db r p sp i items
@@ -2887,7 +2906,7 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     | some f => exact hF f rfl
   simp only [evalSelectCore, SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
     SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having, SelectStmt.orderBy,
-    SelectStmt.limitVal, SelectStmt.offsetVal, groupKey_congr hG, hSI, hSIA, hWin, hGK]
+    SelectStmt.limitVal, SelectStmt.offsetVal, groupKey_congr hG, hSI, hSIA, hWin, hGK, hB]
   erw [hOrd]
   cases from_ <;> cases w <;> cases hv <;>
     (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>

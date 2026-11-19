@@ -288,6 +288,48 @@ def _self_test_text_affinity() -> None:
             sys.exit(f"FAIL: text-affinity self-test: {src!r} -> {got!r}, expected {want!r}")
 
 
+def text_declared_columns(schema: dict) -> set[str]:
+    """Lower-cased column names that `sqlite_for` declares TEXT (any Spider type but `number`
+    and `boolean`, so `time` too: we have no date type, #211) in every table of the database
+    that has a column of that name (registry row 17)."""
+    ok: dict[str, bool] = {}
+    for (_ti, cname), ctype in zip(schema["column_names_original"], schema["column_types"]):
+        if cname == "*":
+            continue
+        key = cname.lower()
+        ok[key] = ok.get(key, True) and ctype not in ("number", "boolean")
+    return {k for k, v in ok.items() if v}
+
+
+_AGG_COL = re.compile(r"\b(avg|sum)\s*\(\s*(?:distinct\s+)?(?:\w+\.)?(\w+)\s*\)", re.I)
+
+
+def aggregates_text(sql: str, text_cols: set[str]) -> bool:
+    """Whether the query takes AVG or SUM of a TEXT-declared column. sqlite converts the text
+    to numbers there (a numeric prefix, else 0); we, DuckDB and Postgres treat it as a type
+    error (registry row 17)."""
+    spans = _string_spans(sql)
+    return any(m.group(2).lower() in text_cols and not any(a <= m.start() < b for a, b in spans)
+               for m in _AGG_COL.finditer(sql))
+
+
+def _self_test_aggregates_text() -> None:
+    """Guards the row-17 label: AVG/SUM of a TEXT column only, never of a numeric column,
+    another aggregate, or text inside a string literal."""
+    cols = {"horsepower", "age"}
+    cases = [
+        ("SELECT avg(horsepower) FROM cars_data", True),
+        ("SELECT AVG(T1.Horsepower) FROM cars_data AS T1", True),
+        ("SELECT sum(DISTINCT age) FROM dogs", True),
+        ("SELECT avg(weight) FROM cars_data", False),
+        ("SELECT max(horsepower) FROM cars_data", False),
+        ("SELECT count(*) FROM t WHERE name = 'avg(age)'", False),
+    ]
+    for src, want in cases:
+        if aggregates_text(src, cols) != want:
+            sys.exit(f"FAIL: aggregates-text self-test: {src!r} -> {not want}, expected {want}")
+
+
 def classify_query(sql: str) -> str:
     """Feature signature for failure grouping."""
     u = sql.upper()
@@ -302,6 +344,7 @@ def main() -> None:
     update = "--update-ratchet" in sys.argv
     _self_test_tie_valid()
     _self_test_text_affinity()
+    _self_test_aggregates_text()
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
 
@@ -393,6 +436,11 @@ def main() -> None:
             affinity_ok.append(p["query"])
         elif tie_valid(conns[p["db"]], p["query"], payload, sq_rows):
             tie_ok.append(p["query"])
+        elif aggregates_text(p["query"], text_declared_columns(schemas[p["db"]])):
+            # A known divergence, reported under its own label and still counted as a
+            # failure: sqlite coerces TEXT inside AVG/SUM (registry row 17, decided).
+            failures["known divergence: AVG/SUM over a TEXT column (registry row 17)"].append(
+                (p["query"], f"ours {payload} vs sqlite {sq_rows}"))
         else:
             failures[f"mismatch: {classify_query(p['query'])}"].append(
                 (p["query"], f"ours {len(payload)} rows vs sqlite {len(sq_rows)} rows"))

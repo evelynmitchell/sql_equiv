@@ -24,6 +24,9 @@
 
   KNOWN DIVERGENCES from sqlite (registry rows; do not add cases that hit
   them, the registry records the decision and the pinning unit test):
+  - Row 17, AVG/SUM over TEXT: sqlite converts each string to a number (its
+    numeric prefix, else 0); we skip strings, so only strings give NULL. The
+    Spider harness reports these as a labelled known divergence.
   - Row 16, ROUND: sqlite always returns a float (`ROUND(7)` is `7.0`) and
     treats negative places as 0; we keep the input type and round to tens
     for negative places, as DuckDB and Postgres do (#355). Values agree for
@@ -424,6 +427,11 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE department LIKE 'SALES'",
     diffTest "LIKE suffix case-insensitive"
       "SELECT name FROM users WHERE name LIKE '%E'",
+    -- Bare column next to one MIN/MAX of a column reads the extreme row (registry T9)
+    diffTest "bare column next to MAX"
+      "SELECT name, MAX(age) AS m FROM users",
+    diffTest "bare column next to MIN, grouped"
+      "SELECT department, name, MIN(age) AS m FROM users GROUP BY department",
     diffTest "NOT LIKE case-insensitive"
       "SELECT name FROM users WHERE name NOT LIKE 'al%'",
     -- NOT BETWEEN (#354), including a NULL bound

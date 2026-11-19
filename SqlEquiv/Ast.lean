@@ -274,6 +274,10 @@ inductive ScalarSubqueryRows where
 structure MinMaxMode where
   mixed : MixedMinMax
   bools : BoolMinMax
+  /-- A bare column next to this MIN/MAX, when it is the statement's only one, reads the row
+      where its argument is extreme (sqlite; registry T9). Otherwise bare columns read the
+      group's first row. -/
+  bareRow : Bool := false
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Aggregate functions (MIN/MAX carry the dialect's mixed-type mode) -/
@@ -390,7 +394,7 @@ def Dialect.config : Dialect → DialectConfig
 
 /-- The MIN/MAX mode a dialect configuration records on each MIN/MAX node. -/
 def DialectConfig.minMaxMode (c : DialectConfig) : MinMaxMode :=
-  { mixed := c.mixedMinMax, bools := c.boolMinMax }
+  { mixed := c.mixedMinMax, bools := c.boolMinMax, bareRow := c.bareColumns == .sqlite }
 
 /-- Parse a dialect name (case-insensitive): standard, sqlite, duckdb, postgres
     (or postgresql). -/

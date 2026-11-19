@@ -224,6 +224,74 @@ def minMaxAgg (mode : MinMaxMode) (wantMax : Bool) (vs : List Value) : Option Va
           | .typeClass => some (if wantMax then strs else nums)
       pool.map fun p => (extremeValue wantMax p).getD (.null none)
 
+
+/-- The MIN/MAX calls of an expression outside subqueries and window functions, as
+    `(wantMax, mode, argument, distinct)`: the positions `hasAggregate` looks at. -/
+def minMaxCalls : Expr → List (Bool × MinMaxMode × Option Expr × Bool)
+  | .agg (.min m) a d => [(false, m, a, d)]
+  | .agg (.max m) a d => [(true, m, a, d)]
+  | .binOp _ l r => minMaxCalls l ++ minMaxCalls r
+  | .unaryOp _ e => minMaxCalls e
+  | .func _ args => minMaxCallsList args
+  | .case branches else_ => minMaxCallsPairs branches ++ minMaxCallsOpt else_
+  | .inList e _ vals => minMaxCalls e ++ minMaxCallsList vals
+  | .between e lo hi => minMaxCalls e ++ minMaxCalls lo ++ minMaxCalls hi
+  | _ => []
+where
+  minMaxCallsList : List Expr → List (Bool × MinMaxMode × Option Expr × Bool)
+    | [] => []
+    | e :: es => minMaxCalls e ++ minMaxCallsList es
+  minMaxCallsPairs : List (Expr × Expr) → List (Bool × MinMaxMode × Option Expr × Bool)
+    | [] => []
+    | (c, r) :: ps => minMaxCalls c ++ minMaxCalls r ++ minMaxCallsPairs ps
+  minMaxCallsOpt : Option Expr → List (Bool × MinMaxMode × Option Expr × Bool)
+    | none => []
+    | some e => minMaxCalls e
+
+/-- The MIN/MAX calls of a SELECT list and its HAVING clause. -/
+def selectMinMaxCalls (items : List SelectItem) (having : Option Expr) :
+    List (Bool × MinMaxMode × Option Expr × Bool) :=
+  items.flatMap (fun | .exprItem e _ => minMaxCalls e | .star _ => []) ++
+    minMaxCalls.minMaxCallsOpt having
+
+/-- The row a group's bare columns read (registry T9). With exactly one MIN/MAX call, not
+    DISTINCT, over a column, whose mode has `bareRow` (the sqlite dialect): the first row where
+    the column equals the extreme, or the last row when there is no extreme (every value NULL),
+    as sqlite does. Otherwise the group's first row (also for MIN/MAX of a non-column
+    expression, where the typed core follows sqlite and `SqlEquiv` does not). `none` exactly for
+    an empty group. -/
+def bareSampleRow (argEval : Row → Expr → Option Value)
+    (calls : List (Bool × MinMaxMode × Option Expr × Bool)) (rows : Table) : Option Row :=
+  match calls with
+  | [(wantMax, m, some (.col c), false)] =>
+    if m.bareRow then
+      match minMaxAgg m wantMax (rows.filterMap fun r => argEval r (.col c)) with
+      | some (.null _) | none => rows.getLast?
+      | some v => (rows.find? fun r => argEval r (.col c) == some v).or rows.head?
+    else rows.head?
+  | _ => rows.head?
+
+theorem bareSampleRow_eq_none_iff (argEval : Row → Expr → Option Value)
+    (calls : List (Bool × MinMaxMode × Option Expr × Bool)) (rows : Table) :
+    bareSampleRow argEval calls rows = none ↔ rows = [] := by
+  unfold bareSampleRow
+  split
+  · split
+    · split
+      · simp
+      · simp
+      · cases rows <;> simp
+    · simp
+  · simp
+
+/-- `bareSampleRow` reads its argument evaluator only on column references. -/
+theorem bareSampleRow_congr {argA argB : Row → Expr → Option Value}
+    (h : ∀ r c, argA r (.col c) = argB r (.col c))
+    (calls : List (Bool × MinMaxMode × Option Expr × Bool)) (rows : Table) :
+    bareSampleRow argA calls rows = bareSampleRow argB calls rows := by
+  unfold bareSampleRow
+  split <;> simp only [h]
+
 -- ============================================================================
 -- Expression Evaluation Helper Functions (standalone)
 -- ============================================================================

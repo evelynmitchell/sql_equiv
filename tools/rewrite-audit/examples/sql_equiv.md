@@ -128,6 +128,34 @@ now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
     guards `isDefinitelyInt`/`isDefinitelyBool` have no `.func` case, so a decimal-valued
     `ABS` or `ROUND` cannot satisfy a guard a proof relies on.
 
+**Re-audited 19 Nov 2026, evening (`248370d`, PR #360 on master `f683664`): 0 issues, 1 new
+observation.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2944 theorems,
+  2483 definitions and 50 opaque constants.
+- **`partial def`s:** 58, none on-path.
+- **Overrides:** none.
+- **Vacuous theorems:** none.
+- **Discovery:** no new rewriter or decision procedure.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **#360 (sqlite bare columns, `MinMaxMode.bareRow`):**
+  - It changes only the grouped SELECT evaluator's sample row (`bareSampleRow`). No expression
+    rewriter matches on `AggFunc` or `MinMaxMode`: aggregates go through `agg_congr` and
+    `normalizeExpr_agg`, which are congruences.
+  - The statement checkers' ground row-independence lemma takes the new sample row, with its
+    statement unchanged. The callback-congruence lemmas gained a hypothesis, discharged at
+    their one caller.
+- **Observation (not a soundness issue today):** in the sqlite dialect a SELECT's result now
+  depends on whether the one MIN/MAX's argument is syntactically a column. `bareSampleRow`
+  reads the extreme row for `MAX(x)` but the first row for `MAX(x + 0)`, although
+  `x ≃ₑ x + 0`.
+  - `agg_congr` already lets expression rewrites change aggregate arguments freely, because
+    `≃ₑ` treats aggregates as errors.
+  - No proved law lifts `≃ₑ` into SELECT items (only WHERE, `select_where_congr`), so nothing
+    proved is affected.
+  - A future SELECT-item congruence theorem would have to exclude MIN/MAX arguments, or
+    `bareSampleRow` would have to accept any argument, as the typed core's T9 does.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)

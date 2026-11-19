@@ -66,3 +66,7 @@ Spider databases — see Download above.
 with in-process sqlite3 (the Spider-fidelity oracle), and compares result
 multisets. Report: `eval_report.md`; ratchet: `tools/spider_eval_minimum.txt`
 (CI-checked). Failure classes are issue candidates, per the operating loop.
+A failure that is a decided implementation-defined difference stays a failure
+but is reported under its own label naming the registry row (e.g. **known
+divergence: AVG/SUM over a TEXT column (registry row 17)**), so the remaining
+unlabelled classes are the ones still to investigate.
