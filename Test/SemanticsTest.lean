@@ -375,7 +375,26 @@ def groupedOrderByTests : List TestResult := [
   -- With HAVING: Sales (avg 23) before Engineering (avg 32)
   testColumn "group_order_having_avg"
     "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 ORDER BY AVG(age) ASC"
-    "department" [.string "Sales", .string "Engineering"]
+    "department" [.string "Sales", .string "Engineering"],
+  -- Aggregates under BETWEEN, CASE, IN (list) and function calls are evaluated over the group
+  -- (Spider `HAVING count(*) BETWEEN 1 AND 2`; these were NULL, and CASE fell to ELSE).
+  -- Group sizes: Engineering 2, Marketing 1, Sales 2. sqlite and DuckDB agree.
+  testColumn "group_having_agg_between"
+    "SELECT department FROM users GROUP BY department HAVING COUNT(*) BETWEEN 1 AND 1"
+    "department" [.string "Marketing"],
+  testColumn "group_case_on_agg"
+    "SELECT department, CASE WHEN COUNT(*) > 1 THEN 'many' ELSE 'one' END AS k FROM users GROUP BY department ORDER BY department"
+    "k" [.string "many", .string "one", .string "many"],
+  testColumn "group_in_list_on_agg"
+    "SELECT department, COUNT(*) IN (1, 3) AS k FROM users GROUP BY department ORDER BY department"
+    "k" [.bool false, .bool true, .bool false],
+  testColumn "group_func_on_agg"
+    "SELECT department, ABS(COUNT(*) - 3) AS k FROM users GROUP BY department ORDER BY department"
+    "k" [.int 1, .int 2, .int 1],
+  -- Without an aggregate inside, BETWEEN in HAVING goes to the row evaluator as before
+  testColumn "group_having_between_no_agg"
+    "SELECT department FROM users GROUP BY department HAVING department BETWEEN 'A' AND 'N' ORDER BY department"
+    "department" [.string "Engineering", .string "Marketing"]
 ]
 
 -- NULL ordering (configurable): NULLs sort together, placed by the item's
