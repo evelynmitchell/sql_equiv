@@ -93,6 +93,23 @@ now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
   SELECT evaluation. No theorem statement changed. The ground-SELECT row-independence lemma
   that `checkSelectEquiv`/`checkQueryEquiv` rely on gained cases for the new sort sources.
 
+**Re-audited 19 Nov 2026 (`0e4e807`, PR #353 on master `194f7b7`): 0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2923 theorems,
+  2449 definitions and 50 opaque constants. The diff against master touches only
+  `Semantics.lean` and `Equiv/Decidable.lean`: the new grouped-evaluator cases, `evalCasePicked`
+  and two `foldl` helpers, plus the equation and termination lemmas Lean generates for them.
+- **`partial def`s:** 58 (parser 40, `Pretty.lean` 8, `toReprStr` 10), none on-path.
+- **Overrides:** none.
+- **Discovery:** no new rewriter or decision procedure.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **#353 (aggregates under BETWEEN, CASE, IN (list) and function calls in grouped queries):**
+  - It changes only the grouped evaluator `evalExprWithAggParam`. `≃ₑ` is defined over
+    `evalExprWithDb`, which is unchanged, so no expression rewriter is affected.
+  - The statement checkers rest on the ground-SELECT row-independence lemma
+    (`evalExprWithAggParam_ground_eq`). It gained cases for the new arms, with its
+    statement unchanged.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)

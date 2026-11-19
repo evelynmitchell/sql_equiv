@@ -112,6 +112,15 @@ def evalAggOverTableParam (exprEval : Database → Row → Expr → Option Value
   | .min m => minMaxAgg m false distinctValues
   | .max m => minMaxAgg m true distinctValues
 
+/-- CASE over evaluated branches: the result of the first branch whose condition is `TRUE`,
+    else the ELSE value. -/
+def evalCasePicked : List (Option Value × Option Value) → Option Value → Option Value
+  | [], elseVal => elseVal
+  | (c, r) :: rest, elseVal =>
+    match c with
+    | some (.bool true) => r
+    | _ => evalCasePicked rest elseVal
+
 /-- Parameterized expression evaluator with aggregate support -/
 def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (rows : Table) (row : Row) : Expr → Option Value
@@ -125,9 +134,49 @@ def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
     match evalExprWithAggParam exprEval db rows row e with
     | some v => evalUnaryOp op v
     | none => none
+  -- An aggregate under a function call, CASE, IN (list) or BETWEEN is evaluated over the
+  -- group, then combined as `evalExprCore` combines values. Without an aggregate inside,
+  -- these go to the row evaluator unchanged.
+  | .func name args =>
+    if hasAggregate (.func name args) then
+      evalFunc name (args.map fun a => evalExprWithAggParam exprEval db rows row a)
+    else exprEval db row (.func name args)
+  | .case branches else_ =>
+    if hasAggregate (.case branches else_) then
+      evalCasePicked
+        (branches.map fun pair =>
+          (evalExprWithAggParam exprEval db rows row pair.1,
+            evalExprWithAggParam exprEval db rows row pair.2))
+        (match else_ with
+          | some e => evalExprWithAggParam exprEval db rows row e
+          | none => some (.null none))
+    else exprEval db row (.case branches else_)
+  | .inList e neg vals =>
+    if hasAggregate (.inList e neg vals) then
+      let ev := evalExprWithAggParam exprEval db rows row e
+      let result := vals.foldl (fun acc vi =>
+        evalBinOp .or acc (evalBinOp .eq ev (evalExprWithAggParam exprEval db rows row vi))
+      ) (some (.bool false))
+      if neg then evalUnaryOp .not result else result
+    else exprEval db row (.inList e neg vals)
+  | .between e lo hi =>
+    if hasAggregate (.between e lo hi) then
+      let ev := evalExprWithAggParam exprEval db rows row e
+      let evlo := evalExprWithAggParam exprEval db rows row lo
+      let evhi := evalExprWithAggParam exprEval db rows row hi
+      evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
+    else exprEval db row (.between e lo hi)
   | e => exprEval db row e
 termination_by e => sizeOf e
-decreasing_by all_goals simp_wf; omega
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
 
 /-- Parameterized SELECT item evaluator with aggregate support -/
 def evalSelectItemWithAggParam (exprEval : Database → Row → Expr → Option Value)
@@ -899,6 +948,58 @@ theorem evalExprWithAggParam_congr (db : Database) (rows : Table) (r : Row) :
       simp only [evalExprWithAggParam]
       simp only [Expr.size] at hn hN
       rw [ih x (by omega) (by omega)]
+    | func nm args =>
+      have hargs : ∀ a ∈ args,
+          evalExprWithAggParam e1 db rows r a = evalExprWithAggParam e2 db rows r a :=
+        fun a ha => by
+          have := Expr.size_le_sizeList_of_mem ha
+          simp only [Expr.size] at hn hN
+          exact ih a (by omega) (by omega)
+      simp only [evalExprWithAggParam, List.map_congr_left hargs, hE _ hN db r]
+    | «case» branches else_ =>
+      have hsz := hN; have hsn := hn
+      simp only [Expr.size] at hsz hsn
+      have hpair : ∀ p ∈ branches,
+          evalExprWithAggParam e1 db rows r p.1 = evalExprWithAggParam e2 db rows r p.1 ∧
+          evalExprWithAggParam e1 db rows r p.2 = evalExprWithAggParam e2 db rows r p.2 :=
+        fun p hp => by
+          obtain ⟨a, b⟩ := p
+          have := Expr.size_le_sizePairs_of_mem hp
+          exact ⟨ih a (by omega) (by omega), ih b (by omega) (by omega)⟩
+      have hmap : branches.map (fun pair =>
+            (evalExprWithAggParam e1 db rows r pair.1, evalExprWithAggParam e1 db rows r pair.2)) =
+          branches.map (fun pair =>
+            (evalExprWithAggParam e2 db rows r pair.1, evalExprWithAggParam e2 db rows r pair.2)) :=
+        List.map_congr_left fun p hp => by rw [(hpair p hp).1, (hpair p hp).2]
+      cases else_ with
+      | none =>
+        simp only [evalExprWithAggParam, hmap, hE _ hN db r]
+      | some e =>
+        simp only [Expr.sizeOpt] at hsz hsn
+        simp only [evalExprWithAggParam, hmap, hE _ hN db r, ih e (by omega) (by omega)]
+    | inList x neg vals =>
+      have hsz := hN; have hsn := hn
+      simp only [Expr.size] at hsz hsn
+      have hx := ih x (by omega) (by omega)
+      have hvals : ∀ (ev : Option Value) (l : List Expr), (∀ v ∈ l, v ∈ vals) →
+          ∀ (acc : Option Value),
+          l.foldl (fun acc vi => evalBinOp .or acc
+            (evalBinOp .eq ev (evalExprWithAggParam e1 db rows r vi))) acc =
+          l.foldl (fun acc vi => evalBinOp .or acc
+            (evalBinOp .eq ev (evalExprWithAggParam e2 db rows r vi))) acc := by
+        intro ev l hl
+        induction l with
+        | nil => intro acc; rfl
+        | cons v vs ihl =>
+          intro acc
+          have hv := Expr.size_le_sizeList_of_mem (hl v List.mem_cons_self)
+          simp only [List.foldl_cons, ih v (by omega) (by omega)]
+          exact ihl (fun q hq => hl q (List.mem_cons_of_mem _ hq)) _
+      simp only [evalExprWithAggParam, hvals _ vals (fun _ h => h), hx, hE _ hN db r]
+    | between x lo hi =>
+      simp only [evalExprWithAggParam, hE _ hN db r]
+      simp only [Expr.size] at hn hN
+      rw [ih x (by omega) (by omega), ih lo (by omega) (by omega), ih hi (by omega) (by omega)]
     | _ => simp only [evalExprWithAggParam]; exact hE _ hN db r
 
 include hE in
