@@ -58,6 +58,8 @@ FUNC_DEFS = {
     "UPPER":    {"arity": 1, "arg_desc": "[Option Value]"},
     "LOWER":    {"arity": 1, "arg_desc": "[Option Value]"},
     "CONCAT":   {"arity": 2, "arg_desc": "[Option Value, Option Value]"},
+    # ROUND(x) and ROUND(x, d) (#355): both arities are checked
+    "ROUND":    {"arity": (1, 2), "arg_desc": "[Option Value] or [Option Value, Option Value]"},
 }
 
 # ---------------------------------------------------------------------------
@@ -663,7 +665,9 @@ def build_evalfunc_matrix(source: str, func_arms: list[ParsedArm]) -> list[Cover
             matrices.append(matrix)
             continue
 
-        if fdef["arity"] == 1:
+        arities = fdef["arity"] if isinstance(fdef["arity"], tuple) else (fdef["arity"],)
+
+        if 1 in arities:
             for vt in OPTION_VALUE_TYPES:
                 cell = _resolve_func_cell(func_name, [vt], func_arms)
                 matrix.cells.append(cell)
@@ -673,7 +677,7 @@ def build_evalfunc_matrix(source: str, func_arms: list[ParsedArm]) -> list[Cover
                     matrix.wildcard_count += 1
                 matrix.total_count += 1
 
-        elif fdef["arity"] == 2:
+        if 2 in arities:
             for lt in OPTION_VALUE_TYPES:
                 for rt in OPTION_VALUE_TYPES:
                     cell = _resolve_func_cell(func_name, [lt, rt], func_arms)
@@ -797,10 +801,6 @@ KNOWN_GAPS: list[dict] = [
      "types": [("decimal", "decimal"), ("int", "decimal"), ("decimal", "int")],
      "severity": "LOW",
      "desc": "Decimal modulo falls to error catch-all — result-scale policy deferred (issue #201)"},
-    # No decimal arms in evalFunc yet — decimal scalar functions pending #201.
-    {"function": "evalFunc", "op": "ABS", "types": [("decimal",)],
-     "severity": "LOW",
-     "desc": "ABS(decimal) falls to error catch-all — decimal scalar functions pending #201"},
 ]
 
 # Numeric coverage gate: numeric×numeric cells of these ops that fall to the

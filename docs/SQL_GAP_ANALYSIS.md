@@ -200,8 +200,8 @@ The sql_equiv project implements approximately **80-85% of SQL features** needed
 
 | Function | SQL-92 | SQL-99 | SQL:2003 | Status | Notes |
 |----------|:------:|:------:|:--------:|:------:|-------|
-| ABS | ✓ | ✓ | ✓ | ❌ Missing | |
-| ROUND | - | ✓ | ✓ | ❌ Missing | |
+| ABS | ✓ | ✓ | ✓ | ✅ Full | integers and decimals |
+| ROUND | - | ✓ | ✓ | ✅ Full | keeps the input type, half away from zero (registry row 16, #355) |
 | TRUNC / TRUNCATE | - | ✓ | ✓ | ❌ Missing | |
 | FLOOR | - | ✓ | ✓ | ❌ Missing | |
 | CEIL / CEILING | - | ✓ | ✓ | ❌ Missing | |

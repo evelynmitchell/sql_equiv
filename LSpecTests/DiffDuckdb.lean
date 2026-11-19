@@ -166,10 +166,14 @@ private def parseDuckdbOutput (output : String) : Table :=
 private def stripQualifier (name : String) : String :=
   (name.splitOn ".").getLastD name
 
-/-- Normalize a row: strip qualifiers from column names, and erase the type tag of a NULL,
-    which an engine's printed `NULL` does not carry (#324). -/
+/-- Normalize a row: strip qualifiers from column names, and erase what DuckDB's printed text
+    does not carry: the type tag of a NULL (#324), and the difference between an integer and a
+    decimal with no places (`ROUND(-2.5)` is a `DECIMAL(2,0)` printed `-3`, #355). The unit tests
+    pin our types; this differential compares values. -/
 private def normalizeRow (row : Row) : Row :=
-  row.map fun (k, v) => (stripQualifier k, v.eraseNullType)
+  row.map fun (k, v) => (stripQualifier k, match v.eraseNullType with
+    | .decimal u 0 => .int u
+    | v' => v')
 
 private def rowSortKey (row : Row) : String :=
   row.map (fun (k, v) => s!"{k}={repr v}") |> String.intercalate ","
@@ -271,6 +275,11 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE name LIKE 'Al%'",
     diffTest "NOT LIKE"
       "SELECT name FROM users WHERE name NOT LIKE 'Al%'",
+    -- ROUND keeps the input type, half away from zero; ABS on decimals (registry row 16, #355)
+    diffTest "ROUND of an integer column, negative places"
+      "SELECT ROUND(age, -1) AS r FROM users",
+    diffTest "ROUND of decimals"
+      "SELECT ROUND(7.45, 1) AS a, ROUND(-2.5) AS b, ROUND(123.456, -1) AS c, ABS(-2.50) AS d FROM users WHERE id = 1",
     -- NOT BETWEEN (#354), including a NULL bound
     diffTest "NOT BETWEEN"
       "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30",

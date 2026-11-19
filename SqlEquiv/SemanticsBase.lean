@@ -541,6 +541,25 @@ def evalUnaryOp (op : UnaryOp) (e : Option Value) : Option Value :=
   | .isNotNull, v => some (.bool (!isNullValue v))
   | _, _ => none
 
+/-- `u / 10^k` rounded to an integer, half away from zero (`ROUND`, #355). -/
+def roundHalfAway (u : Int) (k : Nat) : Int :=
+  let p := 10 ^ k
+  let q := u.natAbs / p
+  let q' := if 2 * (u.natAbs % p) ≥ p then q + 1 else q
+  if u < 0 then -(q' : Int) else (q' : Int)
+
+/-- `ROUND(n, d)` of an integer: unchanged for `d ≥ 0`; for `d < 0`, rounded to a multiple of
+    `10^-d`, half away from zero (DuckDB, Postgres; registry row 16). -/
+def roundInt (n d : Int) : Int :=
+  if d ≥ 0 then n else roundHalfAway n d.natAbs * 10 ^ d.natAbs
+
+/-- `ROUND(u / 10^s, d)` of a decimal, exactly, half away from zero; the result is a decimal
+    with at most `max d 0` places (registry row 16). -/
+def roundDecimal (u : Int) (s : Nat) (d : Int) : Value :=
+  if (s : Int) ≤ d then .decimal u s
+  else if 0 ≤ d then Value.mkDecimal (roundHalfAway u (s - d.toNat)) d.toNat
+  else Value.mkDecimal (roundHalfAway u (s + d.natAbs) * 10 ^ d.natAbs) 0
+
 /-- Evaluate scalar function -/
 def evalFunc (name : String) (args : List (Option Value)) : Option Value :=
   match name.toUpper, args with
@@ -550,6 +569,16 @@ def evalFunc (name : String) (args : List (Option Value)) : Option Value :=
     if a.eq b == some true then some (.null none) else some a
   | "ABS", [some (.null _)] => some (.null none)
   | "ABS", [some (.int n)] => some (.int n.natAbs)
+  | "ABS", [some (.decimal u sc)] => some (.decimal u.natAbs sc)  -- canonical form preserved
+  -- ROUND keeps the input type: an integer stays an integer, a decimal is rounded exactly
+  -- (registry row 16, #355). NULL in either argument gives NULL.
+  | "ROUND", [some (.null _)] => some (.null none)
+  | "ROUND", [some (.null _), some _] => some (.null none)
+  | "ROUND", [some _, some (.null _)] => some (.null none)
+  | "ROUND", [some (.int n)] => some (.int n)
+  | "ROUND", [some (.int n), some (.int d)] => some (.int (roundInt n d))
+  | "ROUND", [some (.decimal u sc)] => some (roundDecimal u sc 0)
+  | "ROUND", [some (.decimal u sc), some (.int d)] => some (roundDecimal u sc d)
   | "LENGTH", [some (.null _)] => some (.null none)
   | "LENGTH", [some (.string s)] => some (.int s.length)
   | "UPPER", [some (.null _)] => some (.null none)

@@ -24,6 +24,10 @@
 
   KNOWN DIVERGENCES from sqlite (registry rows; do not add cases that hit
   them, the registry records the decision and the pinning unit test):
+  - Row 16, ROUND: sqlite always returns a float (`ROUND(7)` is `7.0`) and
+    treats negative places as 0; we keep the input type and round to tens
+    for negative places, as DuckDB and Postgres do (#355). Values agree for
+    places >= 0. Pinned by the `round_*` unit tests; DiffDuckdb checks it.
   - Row 10, cross-type comparison (`1 = 'a'`): sqlite returns false; we
     treat it as a type error (#127, decided: matches DuckDB/Postgres).
   - Row 12, TEXT column vs number (`year >= 2014`): sqlite compares as text
