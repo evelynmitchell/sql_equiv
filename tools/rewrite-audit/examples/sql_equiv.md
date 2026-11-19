@@ -110,6 +110,24 @@ now listed (`.claude/rewrite-audit.json`). The `≃ₑ₀` decider
     (`evalExprWithAggParam_ground_eq`). It gained cases for the new arms, with its
     statement unchanged.
 
+**Re-audited 19 Nov 2026, afternoon (master `7470b9a`, after #356–#358): 0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 2935 theorems,
+  2452 definitions and 50 opaque constants.
+- **`partial def`s:** 58, none on-path. #357 changed only a parser body.
+- **Overrides:** none.
+- **Vacuous theorems:** none. The identical-sides check that #356 added reports OK.
+- **Discovery:** no new rewriter or decision procedure.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **What changed and why it stays sound:**
+  - #356 deleted four vacuous theorems (`x = x` by `rfl`); nothing used them.
+  - #357 desugars `x NOT BETWEEN a AND b` to `NOT (x BETWEEN a AND b)`. No new node;
+    `not_between_expansion` already covers it.
+  - #358 adds `ROUND` arms and `ABS` of decimals to `evalFunc`. No rewriter, normalizer or
+    checker matches on a function name, so calls are handled by congruence only. The type
+    guards `isDefinitelyInt`/`isDefinitelyBool` have no `.func` case, so a decimal-valued
+    `ABS` or `ROUND` cannot satisfy a guard a proof relies on.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
