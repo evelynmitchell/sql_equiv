@@ -161,7 +161,7 @@ The sql_equiv project implements approximately **80-85% of SQL features** needed
 | IS NULL / IS NOT NULL | ✓ | ✓ | ✓ | ✅ Full | |
 | IS TRUE / FALSE / UNKNOWN | - | ✓ | ✓ | ❌ Missing | |
 | IS DISTINCT FROM | - | ✓ | ✓ | ❌ Missing | NULL-safe equality |
-| BETWEEN | ✓ | ✓ | ✓ | ✅ Full | |
+| BETWEEN, NOT BETWEEN | ✓ | ✓ | ✓ | ✅ Full | `NOT BETWEEN` parses as `NOT (x BETWEEN a AND b)` (#354) |
 | IN (value list) | ✓ | ✓ | ✓ | ✅ Full | |
 | LIKE | ✓ | ✓ | ✓ | ✅ Full | |
 | SIMILAR TO | - | ✓ | ✓ | ❌ Missing | Regex-like patterns |

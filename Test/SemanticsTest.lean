@@ -490,6 +490,13 @@ def registryPinTests : List TestResult := [
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 5,
   testRowCountIn "not_like_ascii_ci_sqlite" .sqlite
     "SELECT name FROM users WHERE name NOT LIKE 'al%'" 4,
+  -- NOT BETWEEN (#354): ages 30, 25, 35, 28, 22, so Carol (35) and Eve (22)
+  testRowCount "not_between" "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30" 2,
+  -- three-valued: NOT (age >= NULL AND age <= 30) is TRUE only where age > 30 (sqlite, DuckDB)
+  testRowCount "not_between_null_bound" "SELECT name FROM users WHERE age NOT BETWEEN NULL AND 30" 1,
+  -- the AND after the upper bound belongs to the WHERE, not to NOT BETWEEN
+  testRowCount "not_between_then_and"
+    "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30 AND name <> 'Eve'" 1,
   testRowCountIn "like_ci_null_pattern_sqlite" .sqlite
     "SELECT name FROM users WHERE name LIKE NULL" 0,
   -- the dialect's choice is recorded on the AST (BinOp.likeCI)

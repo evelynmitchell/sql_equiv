@@ -271,6 +271,11 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE name LIKE 'Al%'",
     diffTest "NOT LIKE"
       "SELECT name FROM users WHERE name NOT LIKE 'Al%'",
+    -- NOT BETWEEN (#354), including a NULL bound
+    diffTest "NOT BETWEEN"
+      "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30",
+    diffTest "NOT BETWEEN with a NULL bound"
+      "SELECT name FROM users WHERE age NOT BETWEEN NULL AND 30",
     -- Modulo truncates toward zero (row 6; `/` differs, see KNOWN DIVERGENCES)
     diffTest "modulo of negatives"
       "SELECT (0 - age) % 7 AS r FROM users",
