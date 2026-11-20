@@ -435,6 +435,8 @@ def runAllTests : IO TestSeq := do
     -- Bare column next to one MIN/MAX of a column reads the extreme row (registry T9)
     diffTest "bare column next to MAX"
       "SELECT name, MAX(age) AS m FROM users",
+    diffTest "bare column next to MAX of an expression"
+      "SELECT name, MAX(age * 2) AS m FROM users",
     diffTest "bare column next to MIN, grouped"
       "SELECT department, name, MIN(age) AS m FROM users GROUP BY department",
     diffTest "NOT LIKE case-insensitive"

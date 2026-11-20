@@ -155,6 +155,9 @@ observation.**
     proved is affected.
   - A future SELECT-item congruence theorem would have to exclude MIN/MAX arguments, or
     `bareSampleRow` would have to accept any argument, as the typed core's T9 does.
+  - **Resolved since:** `bareSampleRow` accepts any argument. The guarded and unguarded
+    evaluators agree on it by `minMaxCalls_arg_size` (an argument is smaller than its
+    expression), so `MAX(x)` and `MAX(x + 0)` now read the same row.
 
 **Re-audited 19 Nov 2026, night (`bf75ac6`, PR #361 on master `13b6a09`): 0 issues.**
 - **Trust base:** standard for the same seven entry points. Guard counts are 2944 theorems,

@@ -1110,6 +1110,75 @@ theorem evalExprWithWindowParam_congr (db : Database) (r : Row) (p sp : Table) (
 
 end HelperCongr
 
+-- A MIN/MAX call's argument is smaller than the expression it occurs in (used to show the
+-- guarded and unguarded evaluators agree on it, for `bareSampleRow`).
+mutual
+theorem minMaxCalls_arg_size : ∀ (e : Expr) {w : Bool} {m : MinMaxMode} {a : Expr} {d : Bool},
+    (w, m, some a, d) ∈ minMaxCalls e → a.size < e.size
+  | .agg (.min _) arg _, _, _, _, _, h => by
+    simp only [minMaxCalls, List.mem_singleton, Prod.mk.injEq] at h
+    obtain ⟨-, -, rfl, -⟩ := h; simp [Expr.size, Expr.sizeOpt]
+  | .agg (.max _) arg _, _, _, _, _, h => by
+    simp only [minMaxCalls, List.mem_singleton, Prod.mk.injEq] at h
+    obtain ⟨-, -, rfl, -⟩ := h; simp [Expr.size, Expr.sizeOpt]
+  | .agg .count _ _, _, _, _, _, h | .agg (.sum _) _ _, _, _, _, _, h
+  | .agg (.avg _) _ _, _, _, _, _, h => by simp [minMaxCalls] at h
+  | .binOp _ l r, _, _, _, _, h => by
+    simp only [minMaxCalls, List.mem_append] at h
+    rcases h with h | h
+    · have := minMaxCalls_arg_size l h; simp [Expr.size]; omega
+    · have := minMaxCalls_arg_size r h; simp [Expr.size]; omega
+  | .unaryOp _ x, _, _, _, _, h => by
+    simp only [minMaxCalls] at h
+    have := minMaxCalls_arg_size x h; simp [Expr.size]; omega
+  | .func _ args, _, _, _, _, h => by
+    simp only [minMaxCalls] at h
+    have := minMaxCallsList_arg_size args h; simp [Expr.size]; omega
+  | .case bs els, _, _, _, _, h => by
+    simp only [minMaxCalls, List.mem_append] at h
+    rcases h with h | h
+    · have := minMaxCallsPairs_arg_size bs h; simp [Expr.size]; omega
+    · have := minMaxCallsOpt_arg_size els h; simp [Expr.size]; omega
+  | .inList x _ vs, _, _, _, _, h => by
+    simp only [minMaxCalls, List.mem_append] at h
+    rcases h with h | h
+    · have := minMaxCalls_arg_size x h; simp [Expr.size]; omega
+    · have := minMaxCallsList_arg_size vs h; simp [Expr.size]; omega
+  | .between x lo hi, _, _, _, _, h => by
+    simp only [minMaxCalls, List.mem_append] at h
+    rcases h with (h | h) | h
+    · have := minMaxCalls_arg_size x h; simp [Expr.size]; omega
+    · have := minMaxCalls_arg_size lo h; simp [Expr.size]; omega
+    · have := minMaxCalls_arg_size hi h; simp [Expr.size]; omega
+  | .lit _, _, _, _, _, h | .col _, _, _, _, _, h | .countStar, _, _, _, _, h
+  | .inSubquery .., _, _, _, _, h | .exists .., _, _, _, _, h | .subquery _, _, _, _, _, h
+  | .windowFn .., _, _, _, _, h => by simp [minMaxCalls] at h
+theorem minMaxCallsList_arg_size : ∀ (es : List Expr) {w : Bool} {m : MinMaxMode} {a : Expr}
+    {d : Bool}, (w, m, some a, d) ∈ minMaxCalls.minMaxCallsList es → a.size < Expr.sizeList es
+  | [], _, _, _, _, h => by simp [minMaxCalls.minMaxCallsList] at h
+  | e :: es, _, _, _, _, h => by
+    simp only [minMaxCalls.minMaxCallsList, List.mem_append] at h
+    rcases h with h | h
+    · have := minMaxCalls_arg_size e h; simp [Expr.sizeList]; omega
+    · have := minMaxCallsList_arg_size es h; simp [Expr.sizeList]; omega
+theorem minMaxCallsPairs_arg_size : ∀ (ps : List (Expr × Expr)) {w : Bool} {m : MinMaxMode}
+    {a : Expr} {d : Bool},
+    (w, m, some a, d) ∈ minMaxCalls.minMaxCallsPairs ps → a.size < Expr.sizePairs ps
+  | [], _, _, _, _, h => by simp [minMaxCalls.minMaxCallsPairs] at h
+  | (c, r) :: ps, _, _, _, _, h => by
+    simp only [minMaxCalls.minMaxCallsPairs, List.mem_append] at h
+    rcases h with (h | h) | h
+    · have := minMaxCalls_arg_size c h; simp [Expr.sizePairs]; omega
+    · have := minMaxCalls_arg_size r h; simp [Expr.sizePairs]; omega
+    · have := minMaxCallsPairs_arg_size ps h; simp [Expr.sizePairs]; omega
+theorem minMaxCallsOpt_arg_size : ∀ (o : Option Expr) {w : Bool} {m : MinMaxMode} {a : Expr}
+    {d : Bool}, (w, m, some a, d) ∈ minMaxCalls.minMaxCallsOpt o → a.size < Expr.sizeOpt o
+  | none, _, _, _, _, h => by simp [minMaxCalls.minMaxCallsOpt] at h
+  | some e, _, _, _, _, h => by
+    simp only [minMaxCalls.minMaxCallsOpt] at h
+    have := minMaxCalls_arg_size e h; simp [Expr.sizeOpt]; omega
+end
+
 private abbrev ee := fun db' (r : Row) e => @evalExprWithDb db' r e
 
 /-- Bridge: evalSelectWithContext equals evalSelectCore instantiated with all eval callbacks -/
@@ -1152,12 +1221,20 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
   case hB =>
     intro rs
     apply bareSampleRow_congr
-    intro r c
-    show (if _h : (Expr.col c).size < N then evalExprWithDb db r (.col c)
-      else evalExprCore db r (fun _ _ _ => []) (.col c)) = evalExprWithDb db r (.col c)
-    split
-    · rfl
-    · rw [evalExprWithDb_col, evalExprCore_col]
+    intro w' m' a d' hmem r
+    have ha : a.size < N := by
+      simp only [SelectStmt.items, SelectStmt.having, selectMinMaxCalls, List.mem_append,
+        List.mem_flatMap] at hmem
+      rcases hmem with ⟨item, hitem, hin⟩ | hin
+      · cases item with
+        | star t => simp at hin
+        | exprItem e al =>
+          have := minMaxCalls_arg_size e hin
+          have := hItem e al hitem
+          omega
+      · have := minMaxCallsOpt_arg_size hv hin
+        omega
+    exact hE a ha db r
   case hF =>
     intro f hf
     simp only [SelectStmt.fromClause] at hf
