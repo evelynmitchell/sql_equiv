@@ -579,3 +579,124 @@ theorem minmax_agree {τ : SqlType} (hτ : τ ≠ .bool) (mode : SqlEquiv.MinMax
     exact hrw
 
 end SqlBridge.CorrectAgg
+
+namespace SqlBridge.CorrectAgg
+open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder
+
+/-! ### Aggregates over related rows -/
+
+/-- The aggregates of step 3a: `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)` of a
+    fragment expression (`AVG` and `DISTINCT` other than in `COUNT` are left out). -/
+def aggFragment : SqlEquiv.Expr → Bool
+  | .countStar => true
+  | .agg .count (some e) _ => isFragment e
+  | .agg (.sum _) (some e) false => isFragment e
+  | .agg (.min _) (some e) false => isFragment e
+  | .agg (.max _) (some e) false => isFragment e
+  | _ => false
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String) (db : SqlEquiv.Database)
+
+/-- An argument evaluated over related rows: the typed values against the untyped ones. -/
+theorem eval_rows_rel {Γ : Fin n → SqlType} {w : SqlEquiv.Expr} {e : Expr n}
+    (ht : Translates cols fold w e) (hnb : NoBoolOrder Γ e) {τ : SqlType}
+    (hty : e.typeOf Γ = some τ) : ∀ {R : List (Row n)} {U : List SqlEquiv.Row} {ds : List Datum},
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U →
+      List.Forall₂ (fun r d => e.eval r = .ok d) R ds →
+      List.Forall₂ (TRel τ) ds (U.filterMap fun u => SqlEquiv.evalExprWithDb db u w)
+  | _, _, _, .nil, .nil => .nil
+  | _, _, _, .cons hru hrows, .cons hd hds => by
+    obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols fold db hru.1 hru.2 ht hnb hd
+    rw [List.filterMap_cons_some (f := fun u => SqlEquiv.evalExprWithDb db u w) hv]
+    exact .cons ⟨hrel, Expr.hasType_of_eval_eq_ok hru.2 hty hd⟩ (eval_rows_rel ht hnb hty hrows hds)
+/-- `SqlEquiv`'s expression evaluator, as `evalSelect` passes it to the aggregate evaluator. -/
+abbrev ee : SqlEquiv.Database → SqlEquiv.Row → SqlEquiv.Expr → Option SqlEquiv.Value :=
+  fun db' r e => SqlEquiv.evalExprWithDb db' r e
+
+theorem call_eval {fn : AggFn} {dist : Bool} {e : Expr n} {R : List (Row n)} {d : Datum}
+    (h : (AggCall.call fn dist e).eval R = .ok d) :
+    ∃ ds, R.mapM e.eval = .ok ds ∧
+      fn.apply (if dist then (ds.filterMap id).dedup else ds.filterMap id) = .ok d := by
+  simp only [AggCall.eval, bind, Except.bind] at h
+  split at h
+  · cases h
+  · exact ⟨_, by assumption, h⟩
+
+/-- An aggregate of step 3a over related rows: the typed value against `SqlEquiv`'s. -/
+theorem agg_rel {Γ : Fin n → SqlType} {R : List (Row n)} {U : List SqlEquiv.Row}
+    (hrows : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U)
+    (row : SqlEquiv.Row) : ∀ (a : SqlEquiv.Expr), aggFragment a = true →
+      ∀ {c : AggCall n}, elabAgg cols fold a = .ok c → AggNoBool Γ c →
+      ∀ {σ : SqlType}, c.typeOf Γ = some σ → ∀ {d : Datum}, c.eval R = .ok d →
+      ∃ v, SqlEquiv.evalExprWithAggParam ee db U row a = some v ∧ DatumRel d v
+  | .countStar, _, c, hel, _, σ, _, d, hd => by
+    simp only [elabAgg, pure, Except.pure, Except.ok.injEq] at hel
+    subst hel
+    simp only [AggCall.eval, Except.ok.injEq] at hd
+    subst hd
+    simp only [SqlEquiv.evalExprWithAggParam, Option.some.injEq, exists_eq_left']
+    rw [hrows.length_eq]; exact .int _
+  | .agg .count (some w) dist, hf, c, hel, hnb, σ, hty, d, hd => by
+    simp only [elabAgg] at hel
+    obtain ⟨e, he, rfl⟩ := bind_pure_ok hel
+    have ht := translates_of_elab cols fold w hf he
+    obtain ⟨τ, hτ⟩ : ∃ τ, e.typeOf Γ = some τ := by
+      simp only [AggCall.typeOf, Option.map_eq_some_iff] at hty
+      obtain ⟨τ, hτ, -⟩ := hty; exact ⟨τ, hτ⟩
+    obtain ⟨ds, hds, happ⟩ := call_eval hd
+    have hrel := eval_rows_rel cols fold db ht hnb hτ hrows (mapM_forall₂ hds)
+    simp only [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalAggOverTableParam, ee,
+      Option.some.injEq, exists_eq_left']
+    cases dist
+    · simp only [AggFn.apply, Bool.false_eq_true, ↓reduceIte, Except.ok.injEq] at happ
+      subst happ
+      rw [count_agree (hrel.imp fun _ _ h => h.1)]
+      exact .int _
+    · simp only [AggFn.apply, ↓reduceIte, Except.ok.injEq] at happ
+      subst happ
+      rw [count_distinct_agree hrel]
+      exact .int _
+  | .agg (.sum b) (some w) false, hf, c, hel, hnb, σ, hty, d, hd => by
+    simp only [elabAgg] at hel
+    obtain ⟨e, he, rfl⟩ := bind_pure_ok hel
+    have ht := translates_of_elab cols fold w hf he
+    obtain ⟨τ, hτ, hτn⟩ : ∃ τ, e.typeOf Γ = some τ ∧ (τ = .int ∨ τ = .decimal) := by
+      simp only [AggCall.typeOf] at hty
+      split at hty <;> simp_all
+    obtain ⟨ds, hds, happ⟩ := call_eval hd
+    have hrel := eval_rows_rel cols fold db ht hnb hτ hrows (mapM_forall₂ hds)
+    simp only [Bool.false_eq_true, ↓reduceIte] at happ
+    obtain ⟨v, hv, hvr⟩ := sum_agree hτn b hrel happ
+    simp only [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalAggOverTableParam, ee, Bool.false_eq_true,
+      ↓reduceIte]
+    exact ⟨v, hv, hvr⟩
+  | .agg (.min m) (some w) false, hf, c, hel, hnb, σ, hty, d, hd => by
+    simp only [elabAgg] at hel
+    obtain ⟨e, he, rfl⟩ := bind_pure_ok hel
+    have ht := translates_of_elab cols fold w hf he
+    obtain ⟨τ, hτ, hτn⟩ : ∃ τ, e.typeOf Γ = some τ ∧ τ ≠ .bool := by
+      simp only [AggCall.typeOf] at hty
+      split at hty <;> simp_all <;> (subst_vars; decide)
+    obtain ⟨ds, hds, happ⟩ := call_eval hd
+    have hrel := eval_rows_rel cols fold db ht hnb hτ hrows (mapM_forall₂ hds)
+    simp only [Bool.false_eq_true, ↓reduceIte] at happ
+    obtain ⟨v, hv, hvr⟩ := minmax_agree hτn m false hrel (by simpa using happ)
+    simp only [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalAggOverTableParam, ee, Bool.false_eq_true,
+      ↓reduceIte]
+    exact ⟨v, hv, hvr⟩
+  | .agg (.max m) (some w) false, hf, c, hel, hnb, σ, hty, d, hd => by
+    simp only [elabAgg] at hel
+    obtain ⟨e, he, rfl⟩ := bind_pure_ok hel
+    have ht := translates_of_elab cols fold w hf he
+    obtain ⟨τ, hτ, hτn⟩ : ∃ τ, e.typeOf Γ = some τ ∧ τ ≠ .bool := by
+      simp only [AggCall.typeOf] at hty
+      split at hty <;> simp_all <;> (subst_vars; decide)
+    obtain ⟨ds, hds, happ⟩ := call_eval hd
+    have hrel := eval_rows_rel cols fold db ht hnb hτ hrows (mapM_forall₂ hds)
+    simp only [Bool.false_eq_true, ↓reduceIte] at happ
+    obtain ⟨v, hv, hvr⟩ := minmax_agree hτn m true hrel (by simpa using happ)
+    simp only [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalAggOverTableParam, ee, Bool.false_eq_true,
+      ↓reduceIte]
+    exact ⟨v, hv, hvr⟩
+
+end SqlBridge.CorrectAgg
