@@ -292,3 +292,313 @@ theorem keyed_total_trans {n k : ℕ} {β : Type _} (keys : Fin k → SortKey n)
     simpa [c] using this
 
 end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+/-! ### `ORDER BY` keys: output names, then the input -/
+
+/-- An item's output column name in `SqlEquiv` (`evalSelectItem`). -/
+def outName : SqlEquiv.SelectItem → String
+  | .exprItem e al => al.getD (SqlEquiv.exprToName e)
+  | .star _ => ""
+
+/-- SELECT items whose output names are the same in both evaluators and contain no dot: a column
+    without an alias, or any expression with an alias. (Unaliased non-column items are named
+    `expr` by `SqlEquiv` and `?column?` by the elaborator.) -/
+def itemsNamed : List SqlEquiv.SelectItem → Bool
+  | [] => true
+  | .exprItem (.col c) none :: rest => decide ('.' ∉ c.column.toList) && itemsNamed rest
+  | .exprItem _ (some a) :: rest => decide ('.' ∉ a.toList) && itemsNamed rest
+  | _ :: _ => false
+
+theorem outName_noDot : ∀ items : List SqlEquiv.SelectItem, itemsNamed items = true →
+    ∀ it ∈ items, '.' ∉ (outName it).toList
+  | [], _ => by simp
+  | .exprItem (.col c) none :: rest, h => by
+    simp only [itemsNamed, Bool.and_eq_true, decide_eq_true_eq] at h
+    intro it hit
+    rcases List.mem_cons.mp hit with rfl | hit
+    · simpa [outName, SqlEquiv.exprToName] using h.1
+    · exact outName_noDot rest h.2 it hit
+  | .exprItem (.lit _) none :: _, h | .exprItem (.binOp ..) none :: _, h
+  | .exprItem (.unaryOp ..) none :: _, h | .exprItem (.func ..) none :: _, h
+  | .exprItem (.agg ..) none :: _, h | .exprItem .countStar none :: _, h
+  | .exprItem (.case ..) none :: _, h | .exprItem (.inList ..) none :: _, h
+  | .exprItem (.inSubquery ..) none :: _, h | .exprItem (.exists ..) none :: _, h
+  | .exprItem (.subquery ..) none :: _, h | .exprItem (.between ..) none :: _, h
+  | .exprItem (.windowFn ..) none :: _, h | .star _ :: _, h => by simp [itemsNamed] at h
+  | .exprItem e (some a) :: rest, h => by
+    have h' : decide ('.' ∉ a.toList) && itemsNamed rest = true := by
+      cases e <;> simpa [itemsNamed] using h
+    simp only [Bool.and_eq_true, decide_eq_true_eq] at h'
+    intro it hit
+    rcases List.mem_cons.mp hit with rfl | hit
+    · simpa [outName] using h'.1
+    · exact outName_noDot rest h'.2 it hit
+
+/-- Fragment items project to one `(name, value)` entry each. -/
+theorem flatMap_items (db : SqlEquiv.Database) (u : SqlEquiv.Row) :
+    ∀ items : List SqlEquiv.SelectItem, itemsFragment items = true →
+      items.flatMap (SqlEquiv.evalSelectItem db u) = items.map fun it => (outName it, itemValue db u it)
+  | [], _ => rfl
+  | .exprItem e al :: rest, h => by
+    simp only [itemsFragment, Bool.and_eq_true] at h
+    simp only [List.flatMap_cons, List.map_cons, flatMap_items db u rest h.2, SqlEquiv.evalSelectItem,
+      outName, itemValue]
+    split <;> simp_all
+  | .star _ :: _, h => by simp [itemsFragment] at h
+
+theorem find?_congr' {α : Type _} {p q : α → Bool} :
+    ∀ {l : List α}, (∀ x ∈ l, p x = q x) → l.find? p = l.find? q
+  | [], _ => rfl
+  | x :: l, h => by
+    simp only [List.find?_cons, h x List.mem_cons_self,
+      find?_congr' (l := l) (fun y hy => h y (List.mem_cons_of_mem _ hy))]
+
+/-- A dot-free key does not end in `.c`. -/
+theorem not_endsWith_dot {k c : String} (hk : '.' ∉ k.toList) :
+    k.toLower.endsWith s!".{c.toLower}" = false := by
+  rw [Bool.eq_false_iff]
+  intro h
+  rw [endsWith_iff_suffix] at h
+  have hd : '.' ∈ k.toLower.toList := by
+    apply h.subset
+    simp [toString, String.toList_append, toList_dot]
+  exact dot_not_mem_map_toLower hk (by simpa [toList_toLower] using hd)
+
+/-- Lookup in `projected ++ source` falls through to the source when no output name matches:
+    output names have no dot, so a qualified reference never matches one. -/
+theorem getQualified_append_noMatch (p u : SqlEquiv.Row) (q : Option String) (c : String)
+    (hdot : ∀ kv ∈ p, '.' ∉ kv.1.toList) (hne : q = none → ∀ kv ∈ p, kv.1.toLower ≠ c.toLower) :
+    (p ++ u).getQualified q c = u.getQualified q c := by
+  cases q with
+  | some t =>
+    simp only [SqlEquiv.Row.getQualified, lookupCI_eq_find?, List.find?_append]
+    have : p.find? (fun kv => kv.1.toLower == (s!"{t}.{c}").toLower) = none := by
+      rw [List.find?_eq_none]
+      intro kv hkv h
+      have h' := congrArg String.toList (beq_iff_eq.mp h)
+      simp only [toList_toLower, toList_qualified, List.map_append, List.map_cons, toLower_dot] at h'
+      exact dot_not_mem_map_toLower (hdot kv hkv) (h' ▸ List.mem_append_right _ List.mem_cons_self)
+    rw [this, Option.none_or]
+  | none =>
+    simp only [SqlEquiv.Row.getQualified, List.find?_append]
+    have : p.find? (fun kv : String × SqlEquiv.Value =>
+        kv.1.toLower == c.toLower || kv.1.toLower.endsWith s!".{c.toLower}") = none := by
+      rw [List.find?_eq_none]
+      intro kv hkv
+      simp [hne rfl kv hkv, not_endsWith_dot (c := c) (hdot kv hkv)]
+    rw [this, Option.none_or]
+
+/-- Lookup of a bare name in `projected ++ source` finds the first output column with that name
+    (ignoring case). -/
+theorem getQualified_none_append_match (p u : SqlEquiv.Row) (c : String)
+    (hdot : ∀ kv ∈ p, '.' ∉ kv.1.toList) {kv : String × SqlEquiv.Value}
+    (hp : p.find? (fun kv => kv.1.toLower == c.toLower) = some kv) :
+    (p ++ u).getQualified none c = some kv.2 := by
+  simp only [SqlEquiv.Row.getQualified, List.find?_append]
+  rw [find?_congr' (l := p) (q := fun kv => kv.1.toLower == c.toLower)
+    (fun x hx => by simp [not_endsWith_dot (c := c) (hdot x hx)]), hp]
+  rfl
+
+/-- The elaborated items carry `SqlEquiv`'s output names, for named fragment items. -/
+theorem itemsNames_of_elab (N : NamedSchema) {n : ℕ} (cols : Fin n → Column) :
+    ∀ (items : List SqlEquiv.SelectItem) {its : List (Expr n × Column)},
+      itemsFragment items = true → itemsNamed items = true → elabItems N cols items = .ok its →
+      List.Forall₂ (fun it x => x.2.name = outName it) items its
+  | [], its, _, _, h => by
+    simp only [elabItems, pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact .nil
+  | .exprItem e al :: rest, its, hf, hn, h => by
+    simp only [itemsFragment, Bool.and_eq_true] at hf
+    have hn' : itemsNamed rest = true ∧ (al = none → ∃ c, e = .col c) := by
+      cases al <;> cases e <;> simp_all [itemsNamed]
+    simp only [elabItems] at h
+    rcases he : elabExpr cols N.fold noHook e with _ | e'
+    · simp [he, bind, Except.bind] at h
+    rcases hτ : e'.typeOf (ctx cols) with _ | τ
+    · simp [he, hτ, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+    rcases hr : elabItems N cols rest with _ | its'
+    · simp [he, hτ, hr, bind, Except.bind] at h
+    simp only [he, hτ, hr, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    refine .cons ?_ (itemsNames_of_elab N cols rest hf.2 hn'.1 hr)
+    cases al with
+    | some a => rfl
+    | none =>
+      obtain ⟨c, rfl⟩ := hn'.2 rfl
+      rfl
+  | .star _ :: _, _, hf, _, _ => by simp [itemsFragment] at hf
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+
+/-- A bare `ORDER BY` name that matches output columns: `SqlEquiv` reads the first match's value,
+    which relates to the typed key (every match elaborates to the same expression). -/
+theorem first_match_rel (hfoldCI : ∀ x y, fold x = fold y ↔ x.toLower = y.toLower)
+    (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n} {u : SqlEquiv.Row}
+    (hrow : RowRel cols fold r u) (hr : r.Conforms Γ) (c : String) {e' : Expr n} {d : Datum}
+    (hd : e'.eval r = .ok d) :
+    ∀ {items : List SqlEquiv.SelectItem} {its : List (Expr n × Column)},
+      ItemsRel cols fold items its → List.Forall₂ (fun it x => x.2.name = outName it) items its →
+      (∀ x ∈ its, NoBoolOrder Γ x.1) →
+      (∀ x ∈ its.filter (fun x => fold x.2.name == fold c), x.1 = e') →
+      its.filter (fun x => fold x.2.name == fold c) ≠ [] →
+      ∃ kv, (items.map fun it => (outName it, itemValue db u it)).find?
+        (fun kv => kv.1.toLower == c.toLower) = some kv ∧ DatumRel d kv.2
+  | _, _, .nil, _, _, _, hne => absurd rfl hne
+  | it :: items, x :: its, .cons ⟨e, al, hit, ht⟩ hrest, .cons hnx hnrest, hnb, hall, hne => by
+    by_cases hp : fold x.2.name = fold c
+    · have hlow : (outName it).toLower = c.toLower := by rw [← hnx]; exact (hfoldCI _ _).mp hp
+      have hx : x.1 = e' := hall x (by simp [hp])
+      subst hx
+      obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols fold db hrow hr ht
+        (hnb x List.mem_cons_self) hd
+      refine ⟨(outName it, itemValue db u it), ?_, ?_⟩
+      · simp [hlow]
+      · subst hit; simpa [itemValue, hv] using hrel
+    · have hlow : (outName it).toLower ≠ c.toLower := by
+        rw [← hnx]; exact fun h => hp ((hfoldCI _ _).mpr h)
+      have hf : (x :: its).filter (fun x => fold x.2.name == fold c) =
+          its.filter (fun x => fold x.2.name == fold c) := by simp [hp]
+      rw [hf] at hall hne
+      obtain ⟨kv, hkv, hrel⟩ := first_match_rel hfoldCI db hrow hr c hd hrest hnrest
+        (fun y hy => hnb y (List.mem_cons_of_mem _ hy)) hall hne
+      exact ⟨kv, by simp [hlow, hkv], hrel⟩
+
+/-- No output column matches a bare name: no `SqlEquiv` output name matches it either. -/
+theorem no_match_names (hfoldCI : ∀ x y, fold x = fold y ↔ x.toLower = y.toLower)
+    (db : SqlEquiv.Database) (u : SqlEquiv.Row) (c : String) :
+    ∀ {items : List SqlEquiv.SelectItem} {its : List (Expr n × Column)},
+      List.Forall₂ (fun it x => x.2.name = outName it) items its →
+      its.filter (fun x => fold x.2.name == fold c) = [] →
+      ∀ kv ∈ items.map (fun it => (outName it, itemValue db u it)), kv.1.toLower ≠ c.toLower
+  | _, _, .nil, _ => by simp
+  | it :: items, x :: its, .cons hnx hrest, h => by
+    have hp : ¬ fold x.2.name = fold c := by
+      intro hp; simp [hp] at h
+    have h' : its.filter (fun x => fold x.2.name == fold c) = [] := by simpa [hp] using h
+    intro kv hkv
+    rcases List.mem_cons.mp hkv with rfl | hkv
+    · show (outName it).toLower ≠ c.toLower
+      rw [← hnx]; exact fun hl => hp ((hfoldCI _ _).mpr hl)
+    · exact no_match_names hfoldCI db u c hrest h' kv hkv
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+
+/-- A column reference evaluated on the source row and on `projected ++ source` agree when no
+    output name matches it. -/
+theorem col_rel_of_noMatch (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n}
+    {u p : SqlEquiv.Row} (hrow : RowRel cols fold r u) (hr : r.Conforms Γ)
+    (hdotp : ∀ kv ∈ p, '.' ∉ kv.1.toList) (cr : SqlEquiv.ColumnRef)
+    (hne : cr.table = none → ∀ kv ∈ p, kv.1.toLower ≠ cr.column.toLower)
+    {e' : Expr n} (he : elabExpr cols fold noHook (.col cr) = .ok e') {d : Datum}
+    (hd : e'.eval r = .ok d) :
+    ∃ v, SqlEquiv.evalExprWithDb db (p ++ u) (.col cr) = some v ∧ DatumRel d v := by
+  have ht := translates_of_elab cols fold (.col cr) rfl he
+  obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols fold db hrow hr ht (by cases ht; trivial) hd
+  refine ⟨v, ?_, hrel⟩
+  rw [SqlEquiv.evalExprWithDb_col] at hv ⊢
+  rw [getQualified_append_noMatch p u cr.table cr.column hdotp hne, hv]
+
+/-- An `ORDER BY` key that is a column reference: the typed key's value on a row relates to the
+    value `SqlEquiv` reads on `projected ++ source`, and the key keeps the item's direction and
+    `NULL` placement. Output names are looked up first, as in both evaluators. -/
+theorem orderKey_rel (hfoldCI : ∀ x y, fold x = fold y ↔ x.toLower = y.toLower)
+    (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n} {u : SqlEquiv.Row}
+    (hrow : RowRel cols fold r u) (hr : r.Conforms Γ)
+    {items : List SqlEquiv.SelectItem} {its : List (Expr n × Column)}
+    (hif : itemsFragment items = true) (hin : itemsNamed items = true)
+    (hir : ItemsRel cols fold items its)
+    (hnm : List.Forall₂ (fun it x => x.2.name = outName it) items its)
+    (hnb : ∀ x ∈ its, NoBoolOrder Γ x.1) (cr : SqlEquiv.ColumnRef) (dir : SqlEquiv.OrderDir)
+    (nulls : SqlEquiv.NullsOrder) {key : SortKey n}
+    (hk : elabOrderKey fold (elabExpr cols fold noHook) its ⟨.col cr, dir, nulls⟩ = .ok key)
+    {d : Datum} (hd : key.e.eval r = .ok d) :
+    (∃ v, SqlEquiv.evalExprWithDb db (items.flatMap (SqlEquiv.evalSelectItem db u) ++ u)
+      (.col cr) = some v ∧ DatumRel d v) ∧
+    key.desc = (dir == .desc) ∧ key.nullsFirst = (nulls == .first) := by
+  rw [flatMap_items db u items hif]
+  have hdotp : ∀ kv ∈ items.map (fun it => (outName it, itemValue db u it)), '.' ∉ kv.1.toList := by
+    intro kv hkv
+    obtain ⟨it, hit, rfl⟩ := List.mem_map.mp hkv
+    exact outName_noDot items hin it hit
+  obtain ⟨q, c⟩ := cr
+  cases q with
+  | some t =>
+    simp only [elabOrderKey, bind, Except.bind] at hk
+    rcases he : elabExpr cols fold noHook (.col ⟨some t, c⟩) with _ | e'
+    · simp [he] at hk
+    simp only [he, pure, Except.pure, Except.ok.injEq] at hk
+    subst hk
+    exact ⟨col_rel_of_noMatch cols fold db hrow hr hdotp _ (by simp) he hd, rfl, rfl⟩
+  | none =>
+    simp only [elabOrderKey, bind, Except.bind] at hk
+    rcases hm : ((its.filter fun it => fold it.2.name == fold c).map (·.1)).eraseDups with
+      _ | ⟨e', _ | ⟨e'', l⟩⟩
+    · -- no output column: the input
+      simp only [hm] at hk
+      rcases he : elabExpr cols fold noHook (.col ⟨none, c⟩) with _ | e'
+      · simp [he] at hk
+      simp only [he, pure, Except.pure, Except.ok.injEq] at hk
+      subst hk
+      have hf : its.filter (fun it => fold it.2.name == fold c) = [] := by
+        rw [List.eq_nil_iff_forall_not_mem]
+        intro x hx
+        have : x.1 ∈ ((its.filter fun it => fold it.2.name == fold c).map (·.1)).eraseDups :=
+          List.mem_eraseDups.mpr (List.mem_map_of_mem hx)
+        rw [hm] at this; cases this
+      exact ⟨col_rel_of_noMatch cols fold db hrow hr hdotp _
+        (fun _ => no_match_names fold hfoldCI db u c hnm hf) he hd, rfl, rfl⟩
+    · -- one output expression: the first matching output column
+      simp only [hm, pure, Except.pure, Except.ok.injEq] at hk
+      subst hk
+      have hall : ∀ x ∈ its.filter (fun x => fold x.2.name == fold c), x.1 = e' := by
+        intro x hx
+        have : x.1 ∈ ((its.filter fun it => fold it.2.name == fold c).map (·.1)).eraseDups :=
+          List.mem_eraseDups.mpr (List.mem_map_of_mem hx)
+        rw [hm] at this; simpa using this
+      have hne : its.filter (fun x => fold x.2.name == fold c) ≠ [] := by
+        intro h0; rw [h0] at hm; cases hm
+      obtain ⟨kv, hkv, hrel⟩ := first_match_rel cols fold hfoldCI db hrow hr c hd hir hnm hnb hall hne
+      refine ⟨⟨kv.2, ?_, hrel⟩, rfl, rfl⟩
+      rw [SqlEquiv.evalExprWithDb_col]
+      exact getQualified_none_append_match _ u c hdotp hkv
+    · -- several output expressions: ambiguous, not elaborated
+      simp [hm, throw, throwThe, MonadExceptOf.throw] at hk
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlEquiv
+
+theorem evalSelectCore_project_ordered (db : Database)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
+    (orderBy : List OrderByItem) (lim off : Option Nat)
+    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk false items (some from_) wh [] none orderBy lim off) =
+    let src := match wh with
+      | some c => (fromEval db from_).filter fun row => exprEval db row c == some (Value.bool true)
+      | none => fromEval db from_
+    applyOrderByLimitOffsetAligned compareEval db orderBy lim off true src
+      (src.map fun row => items.flatMap (selectItemEval db row)) := by
+  rw [evalSelectCore_eq_afterFilter]
+  cases wh <;>
+  simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin]
+
+end SqlBridge.CorrectOrder
