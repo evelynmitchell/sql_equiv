@@ -106,8 +106,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       combination of `HAVING`, `ORDER BY` aggregates and `LIMIT`: one statement,
       `SqlBridge/CorrectGrouped.lean`, `elabStmt_correct_grouped`, of which 3b-1 to 3b-3 are
       instances. Spider coverage **380**, up from 333
-    - [ ] Step 3b-5: bare columns next to one `MIN`/`MAX` (the extreme row, 3 queries) and
-      ordering by a key column (1)
+    - [x] Step 3b-5: bare columns next to one `MIN`/`MAX`, read on the row where its argument is
+      extreme (`AggCall.atExtreme`, `SqlBridge/CorrectExtreme.lean`), in the same statement.
+      Spider coverage **381**, up from 380
+    - [ ] Step 3b-6: the same without `GROUP BY` (2 queries, step 3a's path) and ordering by a
+      key column (1)
     - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
@@ -161,7 +164,8 @@ too), where the `ORDER BY` keys are column references and, when there is an `ORD
 item is a column or has an alias; and `SELECT agg₁, …, aggₖ FROM f [WHERE p]`
 (`elabStmt_correct_agg`) with `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`;
 and the same with `GROUP BY c₁, …` columns, each item a key column, such an aggregate or a bare
-column read on the group's first row (no `MIN`/`MAX` written), with an optional `HAVING` of key
+column read on the group's first row (no `MIN`/`MAX` written) or on the row where the one
+`MIN`/`MAX` argument is extreme, with an optional `HAVING` of key
 columns, such aggregates, literals, comparisons, `AND`, `OR` and `NOT`, ordered by such
 aggregates, with `LIMIT`/`OFFSET` (`elabStmt_correct_grouped`).
 
@@ -181,8 +185,9 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3b-1. `GROUP BY` columns, items keys or aggregates (done) | 288 |
 | 3b-2. `HAVING` (done) | 303 |
 | 3b-3. Ordered by aggregates, `LIMIT` (done) | 333 |
-| Today: 3b-4. Bare columns on the first row, all combinations (done) | 380 |
-| 3b-5. Bare columns at a `MIN`/`MAX`, ordering by a key column | 384 |
+| 3b-4. Bare columns on the first row, all combinations (done) | 380 |
+| Today: 3b-5. Bare columns at a `MIN`/`MAX` under `GROUP BY` (done) | 381 |
+| 3b-6. Bare columns at a `MIN`/`MAX` without `GROUP BY`, ordering by a key column | 384 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
 | 5. `DISTINCT` | 410 |
 
@@ -289,14 +294,14 @@ follows coverage instead (decided 20 Nov 2026):
        hypothesis, `hnm`, which the coverage report checks); they relate by 3a's `agg_rel`, so
        the two comparators agree on related pairs and step 1's sorting argument applies to any
        such pair relation (`sorted_gen`). The one Spider query ordered by a key column is left
-       to 3b-5.
+       to 3b-6.
      - **3b-4, bare columns, done** (47 queries, registry T9). One statement for the whole
        grouped fragment, `elabStmt_correct_grouped` (`SqlBridge/CorrectGrouped.lean`): an
        optional `HAVING`, `ORDER BY` aggregates, `LIMIT`/`OFFSET`, in any combination (filter,
        then sort), and items that are aggregates, key columns or bare columns; 3b-1 to 3b-3 are
        its instances, and their separate proofs are gone. A bare column becomes the aggregate
        `AggCall.first`; `SqlEquiv` reads it on its sample row, which is the group's first row
-       when no `MIN`/`MAX` is written (`BareFirst`, the one hypothesis bare columns bring).
+       when no `MIN`/`MAX` is written (`BareOk`, the one hypothesis bare columns bring).
        The elaborator used to resolve an ambiguous name against the aggregate's output, where
        only the keys keep their names: it accepted
        `SELECT name FROM singer a JOIN singer b ON … GROUP BY b.name` (sqlite: "ambiguous column
@@ -305,13 +310,23 @@ follows coverage instead (decided 20 Nov 2026):
        proof also found a `SqlEquiv` bug: a `MIN`/`MAX` written twice (`SELECT b, max(a) …
        HAVING max(a) > 1`) counted as two calls, so bare columns read the first row; sqlite and
        the bridge count it once (fixed, registry T9).
-     - **3b-5, the extreme row** (3 queries) and ordering by a key column (1). Next to one
-       `MIN`/`MAX`, a bare column reads the first row where the argument is extreme
-       (`AggCall.atExtreme`; `SqlEquiv`'s `bareSampleRow`). Relating the two needs `bestAt`
-       against `minMaxAgg` and a `find?` of the extreme value, which `SqlEquiv` compares
-       structurally: decimals `1.0` and `1.00` differ there and not in the typed core (a
-       question for the registry). Open as well: a `MIN`/`MAX` in `ORDER BY` picks the row in
-       sqlite and the bridge, not in `SqlEquiv` (registry T9, pending a decision).
+     - **3b-5, the extreme row, done** (1 query under `GROUP BY`). Next to one `MIN`/`MAX`, a
+       bare column reads the first row where the argument is extreme: `AggCall.atExtreme` in the
+       typed core, `bareSampleRow` in `SqlEquiv`, which takes `minMaxAgg`'s value and searches
+       for the first row whose argument is structurally that value. `SqlBridge/CorrectExtreme.lean`
+       proves both are one fold, the first strictly best entry over a linear order (`fbest`), and
+       that the search finds its pick (`atExtreme_rel`): every earlier row's typed key is `NULL`
+       or strictly worse, so its untyped value differs (an untyped value relates to one typed
+       value, `valRel_inj`). Decimals `1.0` and `1.00`, structurally different and equal in the
+       typed core, are no obstacle: ties after the pick are never searched. `BareOk` gains a
+       third case: the sqlite dialect, exactly one `MIN`/`MAX` call in the items and `HAVING`
+       (counted once, not DISTINCT, in a mode that picks the row), and no other in `ORDER BY`.
+       Still outside: a `MIN`/`MAX` only in `ORDER BY` picks the row in sqlite and the bridge,
+       not in `SqlEquiv` (registry T9, pending a decision).
+     - **3b-6** (3 queries): the extreme row without `GROUP BY` (`select max(capacity), average
+       from stadium`; step 3a's path, which has no bare columns yet), and ordering by a key
+       column (`… GROUP BY document_id ORDER BY document_id`), which needs the sort-key relation
+       for a key column read back from the output row or the sample row.
    - **`AVG`, a design decision.** `AVG` is an exact rational in the typed core (T10) and
      rounded to 16 places in `SqlEquiv` when it does not terminate (row 7): the theorem can
      leave it out, assume the averages terminate, or relate values up to rounding. Left out

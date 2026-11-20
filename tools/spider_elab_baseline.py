@@ -44,7 +44,7 @@ ROADMAP = [
     # On Spider, every non-column ORDER BY key and every unaliased item next to an ORDER BY is an
     # aggregate (`ORDER BY count(*)`, `SELECT x, count(*) … ORDER BY …`): step 3 extends step 1's
     # key resolution to them.
-    ("3b-5. bare columns at a MIN/MAX, ordering by a key column",
+    ("3b-6. bare columns at a MIN/MAX without GROUP BY, ordering by a key column",
      {"aggregate/GROUP BY", "ORDER BY expression", "unnamed item with ORDER BY"}),
     ("4. IS NULL, negation, arithmetic, IN list, BETWEEN",
      {"IS NULL/negation", "arithmetic", "IN list/BETWEEN"}),
@@ -89,7 +89,8 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "`SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,",
         "`MAX` (not `AVG`, pending its rounding decision), and `elabStmt_correct_grouped`",
         "(`SqlBridge/CorrectGrouped.lean`) for the same `GROUP BY` columns, each item a key column,",
-        "such an aggregate or a bare column read on the group's first row (no `MIN`/`MAX`), with an",
+        "such an aggregate or a bare column (read on the group's first row or, next to one `MIN`/`MAX`,",
+        "on the row where its argument is extreme), with an",
         "optional `HAVING`, ordered by such aggregates, with `LIMIT`/`OFFSET`. Counts are of the",
         "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",

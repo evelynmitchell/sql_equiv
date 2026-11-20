@@ -494,14 +494,13 @@ theorem ordered_vals {τ : SqlType} (hτ : τ ≠ .bool) : ∀ {ds : List Datum}
         cases hx <;> simp_all [Value.type]
     · exact ordered_vals hτ hs v hv
 
-/-- `MIN` and `MAX` agree on a column of a non-boolean type, in every dialect mode (there are no
-    booleans, and numbers and strings do not mix). -/
-theorem minmax_agree {τ : SqlType} (hτ : τ ≠ .bool) (mode : SqlEquiv.MinMaxMode) (wantMax : Bool)
-    {ds : List Datum} {vs : List SqlEquiv.Value} (h : List.Forall₂ (TRel τ) ds vs) {d : Datum}
-    (hd : (if wantMax then AggFn.max else AggFn.min).apply (ds.filterMap id) = .ok d) :
-    ∃ v, SqlEquiv.minMaxAgg mode wantMax vs = some v ∧ DatumRel d v := by
+/-- On a column of a non-boolean type, `minMaxAgg` is `extremeValue` of the non-`NULL` values, in
+    every dialect mode (there are no booleans, and numbers and strings do not mix). -/
+theorem minMaxAgg_eq {τ : SqlType} (hτ : τ ≠ .bool) (mode : SqlEquiv.MinMaxMode) (wantMax : Bool)
+    {ds : List Datum} {vs : List SqlEquiv.Value} (h : List.Forall₂ (TRel τ) ds vs) :
+    SqlEquiv.minMaxAgg mode wantMax vs =
+      some ((SqlEquiv.extremeValue wantMax (vs.filter fun v => !v.isNull)).getD (.null none)) := by
   have hvals := ordered_vals hτ h
-  have hrel := nonnull_rel h
   set V := vs.filter fun v => !v.isNull with hV
   have hVvals : ∀ v ∈ V, (∃ z, v = .int z ∧ τ = .int) ∨ (∃ u s, v = .decimal u s ∧ τ = .decimal) ∨
       (∃ s, v = .string s ∧ τ = .text) := by
@@ -571,6 +570,17 @@ theorem minmax_agree {τ : SqlType} (hτ : τ ≠ .bool) (mode : SqlEquiv.MinMax
         · rfl
         · rfl
         · exact absurd h htext
+  exact hres
+
+/-- `MIN` and `MAX` agree on a column of a non-boolean type, in every dialect mode (there are no
+    booleans, and numbers and strings do not mix). -/
+theorem minmax_agree {τ : SqlType} (hτ : τ ≠ .bool) (mode : SqlEquiv.MinMaxMode) (wantMax : Bool)
+    {ds : List Datum} {vs : List SqlEquiv.Value} (h : List.Forall₂ (TRel τ) ds vs) {d : Datum}
+    (hd : (if wantMax then AggFn.max else AggFn.min).apply (ds.filterMap id) = .ok d) :
+    ∃ v, SqlEquiv.minMaxAgg mode wantMax vs = some v ∧ DatumRel d v := by
+  have hrel := nonnull_rel h
+  have hres := minMaxAgg_eq hτ mode wantMax h
+  set V := vs.filter fun v => !v.isNull with hV
   rw [hres]
   refine ⟨_, rfl, ?_⟩
   clear_value V

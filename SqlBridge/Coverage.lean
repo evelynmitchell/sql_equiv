@@ -141,10 +141,11 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
-  -- grouped (roadmap steps 3b-1 to 3b-4, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
+  -- grouped (roadmap steps 3b-1 to 3b-5, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
   -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates, `LIMIT`/`OFFSET`.
   -- With sort keys, no output name may capture `SqlEquiv`'s sort-key columns `__group_orderkey_k`
-  -- (hypothesis `hnm`); a bare column (one not grouped) only without any `MIN`/`MAX` (`BareFirst`).
+  -- (hypothesis `hnm`); a bare column (one not grouped) without any `MIN`/`MAX`, or with exactly one
+  -- (`BareOk`).
   let orderOk := s.orderBy.all (fun o => aggCallOk o.expr) &&
     (s.orderBy.isEmpty || s.items.all fun
       | .exprItem e al =>
@@ -156,7 +157,15 @@ partial def selectFeatures (s : SelectStmt) : List String :=
       | _ => true) ||
     (s.items.all (fun | .exprItem e _ => (minMaxCalls e).isEmpty | .star _ => true) &&
       s.having.all (fun h => (minMaxCalls h).isEmpty) &&
-      s.orderBy.all (fun o => (minMaxCalls o.expr).isEmpty))
+      s.orderBy.all (fun o => (minMaxCalls o.expr).isEmpty)) ||
+    -- one `MIN`/`MAX` call in the items and `HAVING` (not DISTINCT; `ORDER BY` adds no other):
+    -- bare columns are read on the row where its argument is extreme (`atExtreme`)
+    (let ih := (s.items.flatMap (fun | .exprItem e _ => minMaxCalls e | .star _ => []) ++
+        (s.having.map minMaxCalls).getD []).eraseDups
+     match ih with
+     | [(_, m, some _, false)] =>
+       m.bareRow && (ih ++ s.orderBy.flatMap (fun o => minMaxCalls o.expr)).eraseDups == ih
+     | _ => false)
   let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.all (havingOk s.groupBy) &&
     orderOk && bareOk &&
     s.groupBy.all (fun | .col _ => true | _ => false) &&
