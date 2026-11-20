@@ -515,6 +515,11 @@ def registryPinTests : List TestResult := [
     "SELECT name, MIN(0 - age) FROM users" (.string "Carol"),
   testContainsValueIn "bare_column_max_grouped_sqlite" .sqlite
     "SELECT name, MAX(age) FROM users GROUP BY department ORDER BY department" (.string "Carol"),
+  -- the same MIN/MAX written twice is one call, as in sqlite: the row where it is extreme
+  testContainsValueIn "bare_column_repeated_max_sqlite" .sqlite
+    "SELECT name, MAX(age), MAX(age) FROM users" (.string "Carol"),
+  testContainsValueIn "bare_column_max_item_and_having_sqlite" .sqlite
+    "SELECT name, MAX(age) FROM users HAVING MAX(age) > 0" (.string "Carol"),
   -- AVG/SUM over a string is a type error, as in DuckDB and Postgres; sqlite converts it to a
   -- number (registry row 17). In a SELECT item the error shows as NULL; in HAVING it drops the
   -- group, which tells it apart from a NULL result.
