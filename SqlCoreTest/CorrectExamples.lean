@@ -8,16 +8,19 @@ import SqlBridge.CorrectOrder
 import SqlBridge.CorrectJoin
 import SqlBridge.CorrectAgg
 import SqlBridge.CorrectGroup
+import SqlBridge.CorrectGroupOrder
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
 
 namespace SqlCoreTest.CorrectExamples
 open SqlBridge SqlBridge.Correct SqlCoreTest.BridgeDiff
-open SqlBridge.CorrectOrder (itemsNamed)
+open SqlBridge.CorrectOrder (itemsNamed outName)
 open SqlBridge.CorrectJoin (fromFragment joinStmt)
 open SqlBridge.CorrectAgg (aggItems aggStmt)
 open SqlBridge.CorrectGroup (groupItems groupStmt havingFragment)
+open SqlBridge.CorrectGroupOrder (groupOrderStmt)
+open SqlBridge.CorrectAgg (aggFragment)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
 example : WellNamed named :=
@@ -78,6 +81,19 @@ def groupShape : SqlEquiv.Stmt → Bool
       having.all (havingFragment groupBy) && stmt == groupStmt items f wh groupBy having
   | _ => false
 
+/-- The shape of `elabStmt_correct_group_ordered` (roadmap step 3b-3): `groupShape` without
+    `HAVING`, ordered by aggregates, with an optional `LIMIT`/`OFFSET`; no output name is dotted
+    or starts with `__group_orderkey_` (ignoring case). -/
+def groupOrderShape : SqlEquiv.Stmt → Bool
+  | stmt@(.query (.simple (.mk false items (some f) wh groupBy none orderBy lim off))) =>
+    groupItems groupBy items && !groupBy.isEmpty &&
+      groupBy.all (fun | .col _ => true | _ => false) && fromFragment f && wh.all isFragment &&
+      !orderBy.isEmpty && orderBy.all (fun o => aggFragment o.expr) &&
+      items.all (fun it => decide ('.' ∉ (outName it).toList) &&
+        !"__group_orderkey_".toList.isPrefixOf (outName it).toLower.toList) &&
+      stmt == groupOrderStmt items f wh groupBy orderBy lim off
+  | _ => false
+
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
     `itemsNamed` agrees with the theorem's. -/
@@ -85,7 +101,7 @@ def coverageAgrees (sql : String) : Bool :=
   match SqlEquiv.parse sql with
   | .ok stmt =>
     (SqlBridge.Coverage.outsideFragment stmt).isEmpty ==
-      (stmtShape stmt || aggShape stmt || groupShape stmt) &&
+      (stmtShape stmt || aggShape stmt || groupShape stmt || groupOrderShape stmt) &&
       match stmt with
       | .query (.simple s) => SqlBridge.Coverage.itemsNamed s.items == itemsNamed s.items
       | _ => true
@@ -113,6 +129,13 @@ def coverageAgrees (sql : String) : Bool :=
   "SELECT name, COUNT(*) FROM users GROUP BY department",
   "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1",
   "SELECT department, COUNT(*) FROM users GROUP BY department ORDER BY COUNT(*) DESC LIMIT 1",
+  "SELECT department FROM users GROUP BY department ORDER BY MAX(age), COUNT(*) LIMIT 2 OFFSET 1",
+  "SELECT department AS d FROM users GROUP BY department ORDER BY SUM(age + 1)",
+  "SELECT department FROM users GROUP BY department ORDER BY department",
+  "SELECT department FROM users GROUP BY department ORDER BY AVG(age)",
+  "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 ORDER BY COUNT(*)",
+  "SELECT department AS __Group_OrderKey_0 FROM users GROUP BY department ORDER BY COUNT(*)",
+  "SELECT department FROM users GROUP BY department LIMIT 1",
   "SELECT department, AVG(age) FROM users GROUP BY department",
   "SELECT department FROM users GROUP BY department HAVING NOT (COUNT(*) <= 1) OR department = 'x'",
   "SELECT department FROM users GROUP BY department HAVING name = 'x'",
@@ -247,5 +270,22 @@ def groupSpider (sql : String) : Bool :=
 #guard !groupSpider "SELECT name, count(*) FROM singer GROUP BY age"
 #guard !groupSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
 #guard !groupSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
+
+/-- Spider-shaped grouped queries ordered by aggregates (roadmap step 3b-3) have the shape of
+    `elabStmt_correct_group_ordered` and elaborate under the folding schema. -/
+def groupOrderSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => groupOrderShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+#guard groupOrderSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
+#guard groupOrderSpider "SELECT Age, count(*) FROM Singer WHERE age > 20 GROUP BY Age ORDER BY COUNT(*)"
+#guard groupOrderSpider ("SELECT T1.name FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
+  "T2.singer_id GROUP BY T1.name ORDER BY count(*) DESC, max(T2.title) LIMIT 3 OFFSET 1")
+-- Outside step 3b-3: a key column as sort key, `AVG`, `HAVING` with `ORDER BY`, a bare column.
+#guard !groupOrderSpider "SELECT age FROM singer GROUP BY age ORDER BY age"
+#guard !groupOrderSpider "SELECT age FROM singer GROUP BY age ORDER BY avg(singer_id)"
+#guard !groupOrderSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1 ORDER BY count(*)"
+#guard !groupOrderSpider "SELECT name FROM singer GROUP BY age ORDER BY count(*)"
 
 end SqlCoreTest.CorrectExamples

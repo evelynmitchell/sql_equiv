@@ -11,6 +11,7 @@ import SqlBridge.CorrectOrder
 import SqlBridge.CorrectJoin
 import SqlBridge.CorrectAgg
 import SqlBridge.CorrectGroup
+import SqlBridge.CorrectGroupOrder
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore
