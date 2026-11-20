@@ -32,6 +32,30 @@
       "file": "SqlEquiv/Equiv/Decidable.lean",
       "proof": "decideClosedExprEquivInst",
       "note": "Decidable (≃ₑ) for closed expressions only (isClosed); see also decideGroundExprEquiv_sound_closed"
+    },
+    {
+      "name": "SqlCore.Expr.simplify",
+      "file": "SqlCore/Simplify.lean",
+      "proof": "SqlCore.Expr.equiv_simplify",
+      "note": "typed core (phase 7); concludes SqlCore.Expr.Equiv Γ: every row conforming to Γ, the typed core's domain"
+    },
+    {
+      "name": "SqlCore.Query.simplify",
+      "file": "SqlCore/Simplify.lean",
+      "proof": "SqlCore.Query.equiv_simplify",
+      "note": "typed core; concludes SqlCore.Query.Equiv .ordered: every conforming instance, rows in order"
+    },
+    {
+      "name": "SqlCore.Expr.checkEquiv",
+      "file": "SqlCore/Check.lean",
+      "proof": "SqlCore.Expr.equiv_of_check",
+      "note": "decision procedure (normalize = simplify then canon, then compare); proof-carrying Check (Expr.Equiv Γ e₁ e₂)"
+    },
+    {
+      "name": "SqlCore.Query.checkEquiv",
+      "file": "SqlCore/Check.lean",
+      "proof": "SqlCore.Query.equiv_of_check",
+      "note": "decision procedure; proof-carrying Check (Query.Equiv .ordered q₁ q₂); syntactic step via Query.beq (eq_of_beq)"
     }
   ],
   "evaluator": {
@@ -64,6 +88,10 @@
       "QueryEquiv (≃ᵩ)",
       "StmtEquiv (≃)",
       "each quantifies over every database"
+    ],
+    "typedCoreRelations": [
+      "SqlCore.Expr.Equiv Γ: equal results on every row conforming to Γ (typed core; conformance is part of the typed semantics, not a gap)",
+      "SqlCore.Query.Equiv ℓ: on every conforming database instance, at level ℓ (.ordered, bags, sets)"
     ]
   },
   "guards": [
@@ -79,14 +107,15 @@
   "probe": {
     "command": "lake exe sql_equiv_lspec",
     "group": "Context Sweep (rows, real db, subqueries)",
-    "mutantSelfCheck": true
+    "mutantSelfCheck": true,
+    "note": "The LSpec probe exercises SqlEquiv's expression rewriters only; the SqlCore simplifier and checkers rely on their kernel-checked proofs and the decide +kernel tests in SqlCore/Check.lean"
   },
-  "trustGuard": "Test/TrustBaseTest.lean",
+  "trustGuard": "Test/TrustBaseTest.lean (SqlEquiv); SqlCoreTest/TrustBaseTest.lean (#assert_trust_base SqlCore and SqlBridge; scripts/lean/check_trust_base.sh cannot import SqlBridge, which has no root module)",
   "projectSpecificChecks": [
     "checkEquivFull may conclude ≃ₑ from ground evaluation only when both sides are Expr.isClosed; Expr.isGround admits database-dependent EXISTS (SELECT 1 FROM t)",
     "Dialect operators (BinOp.likeCI, MIN/MAX modes) must not be matched by rewrite arms whose proofs cover only the default operator",
     "When a Value constructor is added, the LSpec generators and tools/definition_coverage_matrix.py must learn it in the same PR (CLAUDE.md)",
-    "No partial def, unsafe, implemented_by, extern or native_decide may be reachable from the evaluator, a rewriter, a tactic or a checker (#278); the remaining partial defs (58 on 17 Nov 2026; count with grep -rnE \"^\\s*(private |protected )?partial def\" SqlEquiv/, since a plain grep also matches comments) are only in Parser.lean, Pretty.lean and toReprStr. Test/TrustBaseTest.lean (#assert_no_runtime_overrides) and Test/TacticTest.lean (#guard_msgs on axioms) enforce this",
+    "No partial def, unsafe, implemented_by, extern or native_decide may be reachable from the evaluator, a rewriter, a tactic or a checker (#278); the remaining partial defs (58 on 17 Nov 2026; count with grep -rnE \"^\\s*(private |protected )?partial def\" SqlEquiv/, since a plain grep also matches comments) are only in Parser.lean, Pretty.lean and toReprStr. Test/TrustBaseTest.lean (#assert_no_runtime_overrides) and Test/TacticTest.lean (#guard_msgs on axioms) enforce this. In SqlCore/ and SqlBridge/ the only partial defs allowed are the Spider coverage reporter (SqlBridge/Coverage.lean, 5 on 20 Nov 2026), off every proof and checker path: grep -rnE \"^\\s*(private |protected )?partial def\" SqlCore/ SqlBridge/",
     "No theorem may have textually identical sides (it would prove nothing; #307): tools/rewrite-audit/scripts/lean/find_identical_sides.py SqlEquiv SqlCore SqlBridge must report OK. CI runs it",
     "The LSpec probe exercises only expression rewriters; statement checkers (checkSelectEquiv, checkQueryEquiv) rely on their kernel-checked proofs and the smoke tests in StatementChecker.lean"
   ]

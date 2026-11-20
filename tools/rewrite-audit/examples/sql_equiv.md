@@ -194,6 +194,28 @@ observation.**
   The callback-congruence obligation is discharged by `minMaxCalls_arg_size` (a call's
   argument is smaller than its expression). This resolves the 19 Nov evening observation.
 
+**Re-audited 20 Nov 2026, evening (master `c85aa03`, after #376–#380): 0 issues; the config
+gained the typed core's rewriters.**
+- **Trust base:** standard for the same seven entry points; guard counts are 3025 theorems,
+  2580 definitions and 50 opaque constants. `SqlCore`: OK over 1534 theorems and 952
+  definitions; standard axioms for `Expr.equiv_simplify`, `Query.equiv_simplify`,
+  `Expr.checkEquiv`, `Query.checkEquiv` and `Query.equiv_of_check`.
+- **`partial def`s:** 58 in `SqlEquiv/`, none on-path. 5 in `SqlBridge/Coverage.lean` (the
+  Spider coverage reporter, #352), off every proof and checker path.
+- **Overrides:** none in `SqlEquiv/`, `SqlCore/` or `SqlBridge/`.
+- **Vacuous theorems:** none.
+- **Discovery:** the typed core's simplifier and checkers (phase 7) were not in the config:
+  `SqlCore.Expr.simplify` / `Query.simplify` and `Expr.checkEquiv` / `Query.checkEquiv`, all
+  proof-carrying, concluding `Expr.Equiv Γ` (rows conforming to `Γ`) and
+  `Query.Equiv .ordered` (conforming instances), the typed core's documented relations. Added
+  to `.claude/rewrite-audit.json` and `/audit`, with the `partial def` check widened to
+  `SqlCore/` and `SqlBridge/`.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **Since the last entry:** no rewriter arm changed. #376–#380 add the elaborator-correctness
+  proofs (`SqlBridge/Correct*.lean`) and extend `QNoBoolOrder` (a hypothesis of those
+  theorems, not a guard of any rewriter).
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)

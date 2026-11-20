@@ -19,7 +19,10 @@ This is a thin adapter over the general **rewrite-audit** skill in
    map, `.claude/rewrite-audit.json`, but on a full scan **also re-run the
    skill's discovery searches** and report any rewriter or decision procedure
    that is not in the config. A new one may not be listed. The config names:
-   - the rewriters: `certifiedRewrite`, `normalizeExpr`, `checkEquivFull`;
+   - the rewriters: `certifiedRewrite`, `normalizeExpr`, `checkEquivFull`, the statement
+     checkers, and the typed core's `SqlCore.Expr.simplify`, `SqlCore.Query.simplify` and
+     checkers `Expr.checkEquiv` / `Query.checkEquiv` (relations `Expr.Equiv Γ` and
+     `Query.Equiv .ordered`, over conforming rows and instances);
    - the evaluator dispatch: `evalBinOp`, `evalUnaryOp`, `evalFunc` in
      `SqlEquiv/SemanticsBase.lean`;
    - the value type: `Value`;
@@ -37,6 +40,14 @@ This is a thin adapter over the general **rewrite-audit** skill in
    ```bash
    tools/rewrite-audit/scripts/lean/check_trust_base.sh SqlEquiv SqlEquiv
    ```
+   ```bash
+   tools/rewrite-audit/scripts/lean/print_axioms.sh SqlCore SqlCore.Expr.equiv_simplify SqlCore.Query.equiv_simplify SqlCore.Expr.checkEquiv SqlCore.Query.checkEquiv SqlCore.Expr.equiv_of_check SqlCore.Query.equiv_of_check
+   ```
+   ```bash
+   tools/rewrite-audit/scripts/lean/check_trust_base.sh SqlCore SqlCore
+   ```
+   `SqlBridge` has no root module, so the script cannot import it;
+   `SqlCoreTest/TrustBaseTest.lean` asserts its trust base (built with `sqlcore_test`).
    Expected: `[propext, Classical.choice, Quot.sound]` everywhere, and
    "trust base OK" over every theorem, definition and opaque constant. Always
    run the script: `Test/TrustBaseTest.lean` enforces the same check only when
@@ -52,7 +63,9 @@ This is a thin adapter over the general **rewrite-audit** skill in
    ```bash
    grep -rnE "^\s*(private |protected )?partial def" SqlEquiv/ | cut -d: -f1 | sort | uniq -c
    ```
-   Every hit must be in `Parser.lean`, `Pretty.lean` or a `toReprStr`. A
+   Every hit must be in `Parser.lean`, `Pretty.lean` or a `toReprStr`. Run the same count
+   over `SqlCore/ SqlBridge/`: the only hits allowed there are the Spider coverage reporter,
+   `SqlBridge/Coverage.lean` (5 on 20 Nov 2026), which no theorem or checker uses. A
    `partial def` anywhere else, or reachable from the evaluator, a rewriter
    or a checker, is a finding. Since #278 there are no
    overrides left in `SqlEquiv/`: the AST's `DecidableEq` is a total generated
