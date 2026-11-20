@@ -400,3 +400,182 @@ theorem sum_agree {τ : SqlType} (hτ : τ = .int ∨ τ = .decimal) (b : SqlEqu
       rw [this]; exact .decimal u' s'
 
 end SqlBridge.CorrectAgg
+
+namespace SqlBridge.CorrectAgg
+open SqlCore SqlBridge.Correct
+
+/-! ### `MIN` / `MAX` -/
+
+/-- Non-`NULL` values related, with their type. -/
+def VRel (τ : SqlType) (a : Value) (x : SqlEquiv.Value) : Prop := ValRel a x ∧ a.type = τ
+
+theorem nonnull_rel {τ : SqlType} : ∀ {ds : List Datum} {vs : List SqlEquiv.Value},
+    List.Forall₂ (TRel τ) ds vs →
+      List.Forall₂ (VRel τ) (ds.filterMap id) (vs.filter fun v => !v.isNull)
+  | _, _, .nil => .nil
+  | none :: _, _ :: _, .cons ⟨⟨t, rfl⟩, _⟩ hs => by
+    simpa [SqlEquiv.Value.isNull] using nonnull_rel hs
+  | some a :: _, _ :: _, .cons ⟨ha, hty⟩ hs => by
+    rw [List.filterMap_cons_some (f := id) (a := some a) (b := a) rfl, List.filter_cons,
+      null_of_rel ha]
+    exact .cons ⟨ha, hty⟩ (nonnull_rel hs)
+
+/-- The untyped fold of `extremeValue`. -/
+def extremeStep (wantMax : Bool) (acc : Option SqlEquiv.Value) (v : SqlEquiv.Value) :
+    Option SqlEquiv.Value :=
+  match acc with
+  | none => some v
+  | some m =>
+    if SqlEquiv.Value.compare m v == some (if wantMax then .lt else .gt) then some v else acc
+
+theorem extremeValue_eq (wantMax : Bool) (vs : List SqlEquiv.Value) :
+    SqlEquiv.extremeValue wantMax vs = vs.foldl (extremeStep wantMax) none := rfl
+
+theorem extreme_rel {τ : SqlType} (hτ : τ ≠ .bool) (wantMax : Bool) :
+    ∀ {l : List Value} {l' : List SqlEquiv.Value}, List.Forall₂ (VRel τ) l l' →
+      ∀ {acc : Value} {acc' : SqlEquiv.Value}, VRel τ acc acc' → ∀ {w : Value},
+        extremeFrom (if wantMax then .gt else .lt) acc l = .ok w →
+        ∃ w', l'.foldl (extremeStep wantMax) (some acc') = some w' ∧ ValRel w w'
+  | _, _, .nil, acc, acc', hacc, w, h => by
+    simp only [extremeFrom, Except.ok.injEq] at h
+    subst h; exact ⟨acc', rfl, hacc.1⟩
+  | v :: l, v' :: l', .cons hv hs, acc, acc', hacc, w, h => by
+    simp only [extremeFrom, bind, Except.bind] at h
+    rcases ho : Value.cmp v acc with e | o
+    · simp [ho] at h
+    simp only [ho] at h
+    have hswap : Value.cmp acc v = .ok o.swap := by
+      rw [Value.cmp_swap, ho]; rfl
+    have hnb : ∀ x y, ¬ (acc = .bool x ∧ v = .bool y) := by
+      rintro x y ⟨rfl, rfl⟩; exact hτ (hacc.2.symm.trans rfl)
+    have hc := compare_of_cmp hacc.1 hv.1 hnb hswap
+    have hcond : (SqlEquiv.Value.compare acc' v' == some (if wantMax then .lt else .gt)) =
+        decide (o = if wantMax then .gt else .lt) := by
+      rw [hc]
+      cases wantMax <;> cases o <;> rfl
+    rw [List.foldl_cons]
+    simp only [extremeStep, hcond]
+    by_cases hp : o = if wantMax then .gt else .lt
+    · simp only [hp, ↓reduceIte, decide_true] at h ⊢
+      exact extreme_rel hτ wantMax hs hv h
+    · simp only [hp, ↓reduceIte, decide_false, Bool.false_eq_true] at h ⊢
+      exact extreme_rel hτ wantMax hs hacc h
+/-- The untyped values of a column of a non-boolean type: `NULL`, or a value of that type. -/
+theorem ordered_vals {τ : SqlType} (hτ : τ ≠ .bool) : ∀ {ds : List Datum}
+    {vs : List SqlEquiv.Value}, List.Forall₂ (TRel τ) ds vs → ∀ v ∈ vs,
+      (∃ t, v = .null t) ∨ (∃ z, v = .int z ∧ τ = .int) ∨ (∃ u s, v = .decimal u s ∧ τ = .decimal) ∨
+        (∃ s, v = .string s ∧ τ = .text)
+  | _, _, .nil => by simp
+  | d :: _, x :: _, .cons ⟨hx, hty⟩ hs => by
+    intro v hv
+    rcases List.mem_cons.mp hv with rfl | hv
+    · cases d with
+      | none => exact .inl hx
+      | some a =>
+        have hty' : a.type = τ := hty
+        cases hx <;> simp_all [Value.type]
+    · exact ordered_vals hτ hs v hv
+
+/-- `MIN` and `MAX` agree on a column of a non-boolean type, in every dialect mode (there are no
+    booleans, and numbers and strings do not mix). -/
+theorem minmax_agree {τ : SqlType} (hτ : τ ≠ .bool) (mode : SqlEquiv.MinMaxMode) (wantMax : Bool)
+    {ds : List Datum} {vs : List SqlEquiv.Value} (h : List.Forall₂ (TRel τ) ds vs) {d : Datum}
+    (hd : (if wantMax then AggFn.max else AggFn.min).apply (ds.filterMap id) = .ok d) :
+    ∃ v, SqlEquiv.minMaxAgg mode wantMax vs = some v ∧ DatumRel d v := by
+  have hvals := ordered_vals hτ h
+  have hrel := nonnull_rel h
+  set V := vs.filter fun v => !v.isNull with hV
+  have hVvals : ∀ v ∈ V, (∃ z, v = .int z ∧ τ = .int) ∨ (∃ u s, v = .decimal u s ∧ τ = .decimal) ∨
+      (∃ s, v = .string s ∧ τ = .text) := by
+    intro v hv
+    rw [hV, List.mem_filter] at hv
+    rcases hvals v hv.1 with ⟨t, rfl⟩ | h | h | h
+    · simp [SqlEquiv.Value.isNull] at hv
+    all_goals simp_all
+  -- the pool `minMaxAgg` takes the extreme of is `V`; the predicates are `minMaxAgg`'s own
+  have knil : ∀ {l : List SqlEquiv.Value} (p : SqlEquiv.Value → Bool), (∀ v ∈ l, p v = false) →
+      l.filter p = [] := fun p h => List.filter_eq_nil_iff.mpr fun v hv => by simp [h v hv]
+  have kself : ∀ {l : List SqlEquiv.Value} (p : SqlEquiv.Value → Bool), (∀ v ∈ l, p v = true) →
+      l.filter p = l := fun p h => List.filter_eq_self.mpr h
+  have kV : ∀ (p : SqlEquiv.Value → Bool), (∀ v ∈ vs, p v = !v.isNull) → vs.filter p = V :=
+    fun p h => List.filter_congr h
+  have kall : ∀ (p : SqlEquiv.Value → Bool), (∀ v ∈ V, p v = false) →
+      (V.all p && !V.isEmpty) = false := by
+    intro p h
+    rcases hVe : V with _ | ⟨x, l⟩
+    · rfl
+    · have := h x (by rw [hVe]; exact List.mem_cons_self)
+      simp [this]
+  have hres : SqlEquiv.minMaxAgg mode wantMax vs =
+      some ((SqlEquiv.extremeValue wantMax V).getD (.null none)) := by
+    unfold SqlEquiv.minMaxAgg
+    dsimp only
+    rw [knil _ ?hb]
+    case hb =>
+      intro v hv
+      rcases hvals v hv with ⟨t, rfl⟩ | ⟨z, rfl, -⟩ | ⟨u, s, rfl, -⟩ | ⟨s, rfl, -⟩ <;> rfl
+    simp only [List.isEmpty_nil, ↓reduceIte, Option.bind_some]
+    rw [kV _ ?ho]
+    case ho =>
+      intro v hv
+      rcases hvals v hv with ⟨t, rfl⟩ | ⟨z, rfl, -⟩ | ⟨u, s, rfl, -⟩ | ⟨s, rfl, -⟩ <;> rfl
+    rw [kall _ ?hab]
+    case hab =>
+      intro v hv
+      rcases hVvals v hv with ⟨z, rfl, -⟩ | ⟨u, s, rfl, -⟩ | ⟨s, rfl, -⟩ <;> rfl
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    by_cases htext : τ = .text
+    · rw [knil _ ?hn, kself _ ?hs]
+      · simp
+      case hn =>
+        intro v hv
+        rcases hVvals v hv with ⟨z, rfl, h⟩ | ⟨u, s, rfl, h⟩ | ⟨s, rfl, -⟩
+        · rw [h] at htext; cases htext
+        · rw [h] at htext; cases htext
+        · rfl
+      case hs =>
+        intro v hv
+        rcases hVvals v hv with ⟨z, rfl, h⟩ | ⟨u, s, rfl, h⟩ | ⟨s, rfl, -⟩
+        · rw [h] at htext; cases htext
+        · rw [h] at htext; cases htext
+        · rfl
+    · rw [kself _ ?hn, knil _ ?hs]
+      · by_cases hVe : V = [] <;> simp [hVe]
+      case hn =>
+        intro v hv
+        rcases hVvals v hv with ⟨z, rfl, -⟩ | ⟨u, s, rfl, -⟩ | ⟨s, rfl, h⟩
+        · rfl
+        · rfl
+        · exact absurd h htext
+      case hs =>
+        intro v hv
+        rcases hVvals v hv with ⟨z, rfl, -⟩ | ⟨u, s, rfl, -⟩ | ⟨s, rfl, h⟩
+        · rfl
+        · rfl
+        · exact absurd h htext
+  rw [hres]
+  refine ⟨_, rfl, ?_⟩
+  clear_value V
+  rcases hX : ds.filterMap id with _ | ⟨a, l⟩
+  · rw [hX] at hd hrel
+    cases hrel
+    cases wantMax <;> simp only [AggFn.apply, Except.ok.injEq, Bool.false_eq_true, ↓reduceIte] at hd <;>
+      (subst hd; exact ⟨none, rfl⟩)
+  · rw [hX] at hd hrel
+    obtain ⟨x, l', hxa, hl', hVeq⟩ : ∃ x l', VRel τ a x ∧ List.Forall₂ (VRel τ) l l' ∧ V = x :: l' := by
+      cases hrel with
+      | cons hxa hl' => exact ⟨_, _, hxa, hl', rfl⟩
+    rw [hVeq, extremeValue_eq, List.foldl_cons]
+    simp only [extremeStep]
+    have hd' : ∃ w, extremeFrom (if wantMax then .gt else .lt) a l = .ok w ∧ d = some w := by
+      cases wantMax <;>
+      · simp only [AggFn.apply, Bool.false_eq_true, ↓reduceIte, Functor.map, Except.map] at hd
+        split at hd
+        · cases hd
+        · rename_i w hw; simp only [Except.ok.injEq] at hd; exact ⟨w, hw, hd.symm⟩
+    obtain ⟨w, hw, rfl⟩ := hd'
+    obtain ⟨w', hw', hrw⟩ := extreme_rel hτ wantMax hl' hxa hw
+    rw [hw']
+    exact hrw
+
+end SqlBridge.CorrectAgg
