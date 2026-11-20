@@ -174,6 +174,26 @@ observation.**
   - The one proof that reads aggregate evaluation, `evalAggOverTableParam_ground_eq`, is
     stated over the whole value list, so it needed no change.
 
+**Re-audited 20 Nov 2026 (`2dcfb46`, PR #365 on master `6851f64`, so #363 and #364 too):
+0 issues.**
+- **Trust base:** standard for the same seven entry points. Guard counts are 3022 theorems,
+  2527 definitions and 50 opaque constants.
+- **`partial def`s:** 58, none on-path.
+- **Overrides:** none.
+- **Vacuous theorems:** none.
+- **Discovery:** no new rewriter or decision procedure.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **#363 (AVG exact or rounded, row 7):** changes `avgNumeric` only. `≃ₑ` treats aggregates
+  as errors, so no rewriter is affected.
+- **#364 (SUM/AVG over booleans per dialect, row 18):** `AggFunc.sum`/`avg` and
+  `WindowFunc.sum`/`avg` now carry a `BoolSumAvg`. No rewriter arm matches on `AggFunc`;
+  aggregates go through `agg_congr`/`normalizeExpr_agg`. `BoolSumAvg` derives `Ord`, so the
+  structural `Expr.cmp` that `normalizeExpr` uses to order operands stays total.
+- **#365 (bare columns for any MIN/MAX argument, T9):** `bareSampleRow` takes any argument.
+  The callback-congruence obligation is discharged by `minMaxCalls_arg_size` (a call's
+  argument is smaller than its expression). This resolves the 19 Nov evening observation.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
