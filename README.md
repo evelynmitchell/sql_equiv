@@ -234,7 +234,7 @@ returns an error naming it instead of printing SQL that changes meaning. It
 checks this by re-parsing its own output. `toSql` prints for the default
 (`standard`) dialect, so it also folds a sqlite LIKE, but it never refuses.
 `LOWER` folds ASCII letters only, here and in sqlite; DuckDB and Postgres also
-fold non-ASCII letters (registry row 19), so on non-ASCII text the `LOWER`
+fold non-ASCII letters (registry row 19, decided: ASCII), so on non-ASCII text the `LOWER`
 spelling run on those engines can differ.
 
 ## Usage Examples

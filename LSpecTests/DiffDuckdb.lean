@@ -13,6 +13,10 @@
   KNOWN DIVERGENCES (do not add cases that hit these without resolving them;
   the full registry of implementation-defined behaviour, with sqlite and
   Postgres results and our decisions, is docs/IMPLEMENTATION_DEFINED.md):
+  - LOWER/UPPER of non-ASCII letters (registry row 19): DuckDB folds them
+    (`lower('ÉCOLE')` is `école`); we fold ASCII letters only, as sqlite
+    (`École`). Decided; pinned by `diffDiverges` below and the unit tests
+    `lower_non_ascii_ascii_only`, `upper_non_ascii_ascii_only`.
   - AVG that does not terminate (1/3): DuckDB returns a DOUBLE with 17
     significant digits; we round to 16 places (registry row 7). Cases below
     use averages that terminate, where the two agree exactly.
@@ -208,6 +212,25 @@ private def diffTest (description : String) (sql : String) : IO (String × Bool)
         IO.eprintln s!"  Mismatch for '{description}': ours={repr (sortTable ourResult)} duckdb={repr (sortTable duckResult)}"
         return (description, false)
 
+/-- A documented divergence (registry row 19 and similar): passes while ours and DuckDB
+    both answer and the answers DIFFER, so it fails if either side changes. -/
+private def diffDiverges (description : String) (sql : String) : IO (String × Bool) := do
+  match parse sql (dialect := .duckdb) with
+  | .error e =>
+    IO.eprintln s!"  Our parser failed for '{description}': {e}"
+    return (description, false)
+  | .ok stmt =>
+    let ourResult := ((evalStmt db stmt).2).getD []
+    match ← runDuckdbRaw sql with
+    | .error err =>
+      IO.eprintln s!"  DuckDB error for '{description}': {err}"
+      return (description, false)
+    | .ok output =>
+      let theirs := parseDuckdbOutput output
+      if sortTable ourResult != sortTable theirs then return (description, true)
+      IO.eprintln s!"  Expected a divergence for '{description}', both gave {repr (sortTable theirs)}"
+      return (description, false)
+
 private def duckdbAvailable : IO Bool := do
   try
     let result ← IO.Process.output { cmd := "duckdb", args := #["--version"] }
@@ -377,6 +400,12 @@ def runAllTests : IO TestSeq := do
       "SELECT name, SUM(price) OVER () AS s FROM items",
     diffTest "COUNT(*) OVER ()"
       "SELECT name, COUNT(*) OVER () AS c FROM users",
+    -- LOWER/UPPER (registry row 19): agree on ASCII letters; on non-ASCII letters this engine
+    -- folds them and we do not (decided: ASCII, as sqlite)
+    diffTest "LOWER/UPPER of ASCII letters"
+      "SELECT LOWER(name) AS lo, UPPER(name) AS up FROM users",
+    diffDiverges "LOWER/UPPER of non-ASCII letters (row 19 divergence)"
+      "SELECT LOWER('ÉCOLE') AS lo, UPPER('école') AS up",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)
