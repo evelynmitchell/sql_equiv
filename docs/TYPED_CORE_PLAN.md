@@ -296,12 +296,12 @@ follows coverage instead (decided 20 Nov 2026):
        then sort), and items that are aggregates, key columns or bare columns; 3b-1 to 3b-3 are
        its instances, and their separate proofs are gone. A bare column becomes the aggregate
        `AggCall.first`; `SqlEquiv` reads it on its sample row, which is the group's first row
-       when no `MIN`/`MAX` is written (`BareFirst`). Two hypotheses come with bare columns:
-       no `MIN`/`MAX` anywhere, and every item column resolves in the `FROM` scope. Without the
-       second, the elaborator resolves an ambiguous name against the aggregate's output, where
-       only the keys keep their names: it accepts
+       when no `MIN`/`MAX` is written (`BareFirst`, the one hypothesis bare columns bring).
+       The elaborator used to resolve an ambiguous name against the aggregate's output, where
+       only the keys keep their names: it accepted
        `SELECT name FROM singer a JOIN singer b ON … GROUP BY b.name` (sqlite: "ambiguous column
-       name") and reads `b.name`, where `SqlEquiv` reads the row's first `name`. Building the
+       name") and read `b.name`, where `SqlEquiv` reads the row's first `name`. It now checks
+       that every item and `HAVING` column resolves in the `FROM` scope (#384). Building the
        proof also found a `SqlEquiv` bug: a `MIN`/`MAX` written twice (`SELECT b, max(a) …
        HAVING max(a) > 1`) counted as two calls, so bare columns read the first row; sqlite and
        the bridge count it once (fixed, registry T9).

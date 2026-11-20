@@ -8,7 +8,7 @@
     per-group sort keys included.
   * `elab_grouped_shape`: the elaborator's query. A bare column becomes the aggregate
     `AggCall.first`; with bare columns, no `MIN`/`MAX` is written (`BareFirst`), so both evaluators
-    read the group's first row, and item columns resolve in the `FROM` scope.
+    read the group's first row. Item columns resolve in the `FROM` scope (the elaborator checks it).
 -/
 import SqlBridge.CorrectGroupOrder
 
@@ -96,17 +96,14 @@ def groupedStmt (items : List SqlEquiv.SelectItem) (f : SqlEquiv.FromClause)
   .query (.simple (.mk false items (some f) wh groupBy having orderBy lim off))
 
 /-- Bare columns read the group's first row: every item column is a key, or the dialect takes bare
-    columns, no `MIN`/`MAX` is written anywhere, and every item column resolves in the `FROM`
-    scope (so that the elaborator does not fall back on the aggregate's output scope, where an
-    ambiguous name may resolve to a key column). -/
-def BareFirst (N : NamedSchema) (fr : SqlEquiv.FromClause) (items : List SqlEquiv.SelectItem)
+    columns and no `MIN`/`MAX` is written anywhere. (Every item column resolves in the `FROM`
+    scope: the elaborator checks it, #384.) -/
+def BareFirst (N : NamedSchema) (items : List SqlEquiv.SelectItem)
     (groupBy : List SqlEquiv.Expr) (having : Option SqlEquiv.Expr)
     (orderBy : List SqlEquiv.OrderByItem) : Prop :=
   (∀ c ∈ colRefs items, SqlEquiv.Expr.col c ∈ groupBy) ∨
   (N.config.bareColumns = .sqlite ∧ (∀ it ∈ items, SqlEquiv.minMaxCalls (itemExpr it) = []) ∧
-    (∀ h ∈ having, SqlEquiv.minMaxCalls h = []) ∧ (∀ o ∈ orderBy, SqlEquiv.minMaxCalls o.expr = []) ∧
-    ∀ sub n qf cf, elabFrom N sub fr = .ok ⟨n, qf, cf⟩ → ∀ c ∈ colRefs items,
-      ∃ e', elabExpr cf N.fold noHook (.col c) = .ok e')
+    (∀ h ∈ having, SqlEquiv.minMaxCalls h = []) ∧ ∀ o ∈ orderBy, SqlEquiv.minMaxCalls o.expr = [])
 
 section
 variable {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr} (hf : ∀ e al, f (.exprItem e al) = some e)
@@ -231,7 +228,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
     (hob : ∀ o ∈ orderBy, aggFragment o.expr = true)
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
-    (hbf : BareFirst N fr items groupBy having orderBy)
+    (hbf : BareFirst N items groupBy having orderBy)
     (hw : ∀ w ∈ wh, isFragment w = true) {e : Elaborated N.S}
     (h : elabStmt N (groupedStmt items fr wh groupBy having orderBy lim off) = .ok e) :
     e.q.typeOf.isSome ∧ ∃ sub n, ∃ qf : Query N.S n, ∃ cf, elabFrom N sub fr = .ok ⟨n, qf, cf⟩ ∧
@@ -308,6 +305,9 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     rename_i keyList hk
     split at hraw
     · cases hraw
+    rename_i colsE hcolsE
+    split at hraw
+    · cases hraw
     rename_i aggList hv
     generalize hB : List.filterMap _
       (if (N.config.bareColumns == SqlEquiv.BareColumns.sqlite) = true then _ else []) = B at hraw
@@ -317,10 +317,11 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
         e' ∈ keyList := fun c hc => by
       obtain ⟨e', he', h⟩ := forall₂_mem_left hK hc
       exact ⟨e', h, he'⟩
+    -- every item column resolves in the `FROM` scope: the elaborator checks it (#384)
     have hres' : ∀ c ∈ colRefs items, ∃ e', elabExpr cf N.fold noHook (.col c) = .ok e' := by
-      rcases hbf with hall | ⟨-, -, -, -, hres⟩
-      · intro c hc; obtain ⟨e', he', -⟩ := hkey c (hall c hc); exact ⟨e', he'⟩
-      · exact hres _ n qf cf hf
+      intro c hc
+      obtain ⟨e', -, he'⟩ := forall₂_mem_left (mapM_forall₂ hcolsE) (List.mem_append_left _ hc)
+      exact ⟨e', he'⟩
     -- the bare columns: item columns that are no key
     have hBmem : ∀ p ∈ B, elabExpr cf N.fold noHook (.col p.1) = .ok p.2 ∧ p.2 ∉ keyList := by
       intro p hp
@@ -335,7 +336,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     -- either no bare column, or no MIN/MAX: every bare column reads the first row
     have hBX : B = [] ∨ (∀ x ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
         orderBy.map SqlEquiv.OrderByItem.expr).eraseDups, SqlEquiv.minMaxCalls x = []) := by
-      rcases hbf with hall | ⟨-, hmi, hmh, hmo, -⟩
+      rcases hbf with hall | ⟨-, hmi, hmh, hmo⟩
       · left
         rw [← hB, List.filterMap_eq_nil_iff]
         intro c hc
@@ -708,7 +709,7 @@ set_option maxHeartbeats 8000000 in
     column keys, every item an aggregate of step 3a, a key column or a bare column, `h` in
     `havingFragment`, every sort key an aggregate: when the statement elaborates, the typed query's
     rows relate, in order, to `SqlEquiv`'s. Bare columns read the group's first row
-    (`BareFirst`, which also asks that item columns resolve in the `FROM` scope), and with sort keys no output
+    (`BareFirst`), and with sort keys no output
     name captures `SqlEquiv`'s key columns (`hnm`). -/
 theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
@@ -720,7 +721,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment fr = true)
     (hw : ∀ w ∈ wh, isFragment w = true) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
-    (hob : ∀ o ∈ orderBy, aggFragment o.expr = true) (hbf : BareFirst N fr items groupBy having orderBy)
+    (hob : ∀ o ∈ orderBy, aggFragment o.expr = true) (hbf : BareFirst N items groupBy having orderBy)
     (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
       ∀ k, (outName it).toLower ≠ SqlEquiv.groupOrderKeyName k)
     {e : Elaborated N.S}
@@ -1046,7 +1047,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
           exact colRefs_of_mem (List.getElem_mem hi') hx
         -- a bare column rules out `BareFirst`'s first case: no `MIN`/`MAX`, the first row
         have hcalls : SqlEquiv.selectMinMaxCalls items having = [] := by
-          rcases hbf with hall | ⟨-, hmi, hmh, -, -⟩
+          rcases hbf with hall | ⟨-, hmi, hmh, -⟩
           · exfalso
             obtain ⟨e'', he'', hm⟩ := hkey c (hall c hcr)
             rw [hel] at he''; cases he''; exact hkn hm
