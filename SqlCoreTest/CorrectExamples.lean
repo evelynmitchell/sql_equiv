@@ -9,6 +9,7 @@ import SqlBridge.CorrectJoin
 import SqlBridge.CorrectAgg
 import SqlBridge.CorrectGroup
 import SqlBridge.CorrectGroupOrder
+import SqlBridge.CorrectGrouped
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -17,9 +18,9 @@ namespace SqlCoreTest.CorrectExamples
 open SqlBridge SqlBridge.Correct SqlCoreTest.BridgeDiff
 open SqlBridge.CorrectOrder (itemsNamed outName)
 open SqlBridge.CorrectJoin (fromFragment joinStmt)
-open SqlBridge.CorrectAgg (aggItems aggStmt)
-open SqlBridge.CorrectGroup (groupItems groupStmt havingFragment)
-open SqlBridge.CorrectGroupOrder (groupOrderStmt)
+open SqlBridge.CorrectAgg (aggItems aggStmt itemExpr)
+open SqlBridge.CorrectGroup (groupItems groupStmt havingFragment colRefs)
+open SqlBridge.CorrectGrouped (groupedItems groupedStmt)
 open SqlBridge.CorrectAgg (aggFragment)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
@@ -71,27 +72,23 @@ def aggShape : SqlEquiv.Stmt → Bool
       stmt == aggStmt items f wh
   | _ => false
 
-/-- The shape of `elabStmt_correct_group` and `elabStmt_correct_having` (roadmap steps 3b-1 and
-    3b-2): column keys, items keys or aggregates, an optional `HAVING` in `havingFragment`, no
-    `ORDER BY` or `LIMIT`. -/
-def groupShape : SqlEquiv.Stmt → Bool
-  | stmt@(.query (.simple (.mk false items (some f) wh groupBy having [] none none))) =>
-    groupItems groupBy items && !groupBy.isEmpty &&
+/-- The shape of `elabStmt_correct_grouped` (roadmap steps 3b-1 to 3b-4): column keys, items
+    aggregates or columns, an optional `HAVING` in `havingFragment`, `ORDER BY` aggregates, an
+    optional `LIMIT`/`OFFSET`; with sort keys, no output name dotted or starting with
+    `__group_orderkey_` (ignoring case); with a bare column (an item column not grouped), no
+    `MIN`/`MAX` anywhere (`BareFirst`). -/
+def groupedShape : SqlEquiv.Stmt → Bool
+  | stmt@(.query (.simple (.mk false items (some f) wh groupBy having orderBy lim off))) =>
+    groupedItems items && !groupBy.isEmpty &&
       groupBy.all (fun | .col _ => true | _ => false) && fromFragment f && wh.all isFragment &&
-      having.all (havingFragment groupBy) && stmt == groupStmt items f wh groupBy having
-  | _ => false
-
-/-- The shape of `elabStmt_correct_group_ordered` (roadmap step 3b-3): `groupShape` without
-    `HAVING`, ordered by aggregates, with an optional `LIMIT`/`OFFSET`; no output name is dotted
-    or starts with `__group_orderkey_` (ignoring case). -/
-def groupOrderShape : SqlEquiv.Stmt → Bool
-  | stmt@(.query (.simple (.mk false items (some f) wh groupBy none orderBy lim off))) =>
-    groupItems groupBy items && !groupBy.isEmpty &&
-      groupBy.all (fun | .col _ => true | _ => false) && fromFragment f && wh.all isFragment &&
-      !orderBy.isEmpty && orderBy.all (fun o => aggFragment o.expr) &&
-      items.all (fun it => decide ('.' ∉ (outName it).toList) &&
-        !"__group_orderkey_".toList.isPrefixOf (outName it).toLower.toList) &&
-      stmt == groupOrderStmt items f wh groupBy orderBy lim off
+      having.all (havingFragment groupBy) && orderBy.all (fun o => aggFragment o.expr) &&
+      (orderBy.isEmpty || items.all (fun it => decide ('.' ∉ (outName it).toList) &&
+        !"__group_orderkey_".toList.isPrefixOf (outName it).toLower.toList)) &&
+      ((colRefs items).all (fun c => groupBy.contains (.col c)) ||
+        (items.all (fun it => (SqlEquiv.minMaxCalls (itemExpr it)).isEmpty) &&
+          having.all (fun h => (SqlEquiv.minMaxCalls h).isEmpty) &&
+          orderBy.all (fun o => (SqlEquiv.minMaxCalls o.expr).isEmpty))) &&
+      stmt == groupedStmt items f wh groupBy having orderBy lim off
   | _ => false
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
@@ -101,7 +98,7 @@ def coverageAgrees (sql : String) : Bool :=
   match SqlEquiv.parse sql with
   | .ok stmt =>
     (SqlBridge.Coverage.outsideFragment stmt).isEmpty ==
-      (stmtShape stmt || aggShape stmt || groupShape stmt || groupOrderShape stmt) &&
+      (stmtShape stmt || aggShape stmt || groupedShape stmt) &&
       match stmt with
       | .query (.simple s) => SqlBridge.Coverage.itemsNamed s.items == itemsNamed s.items
       | _ => true
@@ -136,6 +133,10 @@ def coverageAgrees (sql : String) : Bool :=
   "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 ORDER BY COUNT(*)",
   "SELECT department AS __Group_OrderKey_0 FROM users GROUP BY department ORDER BY COUNT(*)",
   "SELECT department FROM users GROUP BY department LIMIT 1",
+  "SELECT name, COUNT(*) FROM users GROUP BY department HAVING COUNT(*) > 1 ORDER BY COUNT(*) LIMIT 2",
+  "SELECT name, MAX(age) FROM users GROUP BY department",
+  "SELECT name FROM users GROUP BY department ORDER BY MIN(age)",
+  "SELECT name FROM users GROUP BY department HAVING MAX(age) > 1",
   "SELECT department, AVG(age) FROM users GROUP BY department",
   "SELECT department FROM users GROUP BY department HAVING NOT (COUNT(*) <= 1) OR department = 'x'",
   "SELECT department FROM users GROUP BY department HAVING name = 'x'",
@@ -162,7 +163,9 @@ def features (sql : String) : List String :=
 #guard features "SELECT AVG(age) FROM users" == ["AVG", "aggregate/GROUP BY"]
 #guard features "SELECT SUM(age + 1) FROM users" == ["arithmetic"]
 #guard features "SELECT department, COUNT(*) FROM users GROUP BY department" == []
-#guard features "SELECT name, COUNT(*) FROM users GROUP BY department" == ["aggregate/GROUP BY"]
+-- a bare column (step 3b-4): in the fragment without MIN/MAX, outside next to one
+#guard features "SELECT name, COUNT(*) FROM users GROUP BY department" == []
+#guard features "SELECT name, MAX(age) FROM users GROUP BY department" == ["aggregate/GROUP BY"]
 #guard features "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 AND MAX(age) < 60" == []
 #guard features "SELECT department FROM users GROUP BY department HAVING SUM(age + 1) > 1" == ["arithmetic"]
 
@@ -252,40 +255,41 @@ def aggSpider (sql : String) : Bool :=
 #guard !aggSpider "SELECT max(age), name FROM singer"
 #guard !aggSpider "SELECT sum(name) FROM singer"
 
-/-- Spider-shaped `GROUP BY` queries (roadmap step 3b-1) have the shape of
-    `elabStmt_correct_group` and elaborate under the folding schema. -/
-def groupSpider (sql : String) : Bool :=
+/-- Spider-shaped grouped queries (roadmap steps 3b-1 to 3b-4) have the shape of
+    `elabStmt_correct_grouped` and elaborate under the folding schema. -/
+def groupedSpider (sql : String) : Bool :=
   match SqlEquiv.parse sql (dialect := .sqlite) with
-  | .ok stmt => groupShape stmt && (elabStmt singerSchema stmt).toBool
+  | .ok stmt => groupedShape stmt && (elabStmt singerSchema stmt).toBool
   | .error _ => false
 
-#guard groupSpider "SELECT age, count(*) FROM singer GROUP BY age"
-#guard groupSpider "SELECT Age, max(name), min(singer_id) FROM Singer WHERE age > 20 GROUP BY Age"
-#guard groupSpider ("SELECT T1.name, count(*) FROM singer AS T1 JOIN song AS T2 ON " ++
+-- 3b-1: keys and aggregates
+#guard groupedSpider "SELECT age, count(*) FROM singer GROUP BY age"
+#guard groupedSpider "SELECT Age, max(name), min(singer_id) FROM Singer WHERE age > 20 GROUP BY Age"
+#guard groupedSpider ("SELECT T1.name, count(*) FROM singer AS T1 JOIN song AS T2 ON " ++
   "T1.singer_id = T2.singer_id GROUP BY T1.name")
-#guard groupSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1"
-#guard groupSpider ("SELECT T1.name FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
+-- 3b-2: `HAVING`
+#guard groupedSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1"
+#guard groupedSpider ("SELECT T1.name FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
   "T2.singer_id GROUP BY T1.name HAVING COUNT(*) >= 2 AND max(T2.title) <> 'x'")
--- Later sub-steps: a bare column, ordering by an aggregate; and a `HAVING` column that is no key.
-#guard !groupSpider "SELECT name, count(*) FROM singer GROUP BY age"
-#guard !groupSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
-#guard !groupSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
-
-/-- Spider-shaped grouped queries ordered by aggregates (roadmap step 3b-3) have the shape of
-    `elabStmt_correct_group_ordered` and elaborate under the folding schema. -/
-def groupOrderSpider (sql : String) : Bool :=
-  match SqlEquiv.parse sql (dialect := .sqlite) with
-  | .ok stmt => groupOrderShape stmt && (elabStmt singerSchema stmt).toBool
-  | .error _ => false
-
-#guard groupOrderSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
-#guard groupOrderSpider "SELECT Age, count(*) FROM Singer WHERE age > 20 GROUP BY Age ORDER BY COUNT(*)"
-#guard groupOrderSpider ("SELECT T1.name FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
+-- 3b-3: ordered by aggregates, `LIMIT`/`OFFSET`
+#guard groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
+#guard groupedSpider "SELECT Age, count(*) FROM Singer WHERE age > 20 GROUP BY Age ORDER BY COUNT(*)"
+#guard groupedSpider ("SELECT T1.name FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
   "T2.singer_id GROUP BY T1.name ORDER BY count(*) DESC, max(T2.title) LIMIT 3 OFFSET 1")
--- Outside step 3b-3: a key column as sort key, `AVG`, `HAVING` with `ORDER BY`, a bare column.
-#guard !groupOrderSpider "SELECT age FROM singer GROUP BY age ORDER BY age"
-#guard !groupOrderSpider "SELECT age FROM singer GROUP BY age ORDER BY avg(singer_id)"
-#guard !groupOrderSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1 ORDER BY count(*)"
-#guard !groupOrderSpider "SELECT name FROM singer GROUP BY age ORDER BY count(*)"
+-- 3b-4: bare columns read on the first row, `HAVING` with `ORDER BY`, `LIMIT` alone
+#guard groupedSpider "SELECT name, count(*) FROM singer GROUP BY age"
+#guard groupedSpider ("SELECT T2.title FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
+  "T2.singer_id GROUP BY T1.singer_id ORDER BY count(*) DESC LIMIT 1")
+#guard groupedSpider ("SELECT T1.name, T1.age FROM singer AS T1 JOIN song AS T2 ON " ++
+  "T1.singer_id = T2.singer_id GROUP BY T1.singer_id HAVING count(*) >= 2")
+#guard groupedSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1 ORDER BY count(*)"
+#guard groupedSpider "SELECT age FROM singer GROUP BY age LIMIT 2"
+-- Outside: a key column as sort key, `AVG`, a `HAVING` column that is no key; a bare column next
+-- to a `MIN`/`MAX` (it reads the extreme row, a later sub-step).
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY age"
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY avg(singer_id)"
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
+#guard !groupedSpider "SELECT name, max(age) FROM singer GROUP BY singer_id"
+#guard !groupedSpider "SELECT name FROM singer GROUP BY age ORDER BY min(singer_id)"
 
 end SqlCoreTest.CorrectExamples

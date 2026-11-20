@@ -22,11 +22,11 @@ under inner joins and cross joins, with literals, columns, comparisons, `AND`, `
 column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an
 alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for
 `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
-`MAX` (not `AVG`, pending its rounding decision), and `elabStmt_correct_group`
-(`SqlBridge/CorrectGroup.lean`) for the same `GROUP BY` columns, each item a key column or
-such an aggregate, with an optional `HAVING` (`elabStmt_correct_having`) or ordered by
-such aggregates with `LIMIT`/`OFFSET` (`elabStmt_correct_group_ordered`,
-`SqlBridge/CorrectGroupOrder.lean`). Counts are of the elaborated
+`MAX` (not `AVG`, pending its rounding decision), and `elabStmt_correct_grouped`
+(`SqlBridge/CorrectGrouped.lean`) for the same `GROUP BY` columns, each item a key column,
+such an aggregate or a bare column read on the group's first row (no `MIN`/`MAX`), with an
+optional `HAVING`, ordered by such aggregates, with `LIMIT`/`OFFSET`. Counts are of the
+elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
 `docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to
 lowercase (#351), given that the untyped database answers every spelling of a table name
@@ -34,8 +34,8 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 333 |
-| after 3b-4. bare columns | 384 |
+| Today | 380 |
+| after 3b-5. bare columns at a MIN/MAX, ordering by a key column | 384 |
 | after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 388 |
 | after 5. DISTINCT | 410 |
 

@@ -294,11 +294,31 @@ where
     | none => []
     | some e => minMaxCalls e
 
-/-- The MIN/MAX calls of a SELECT list and its HAVING clause. -/
+/-- The distinct MIN/MAX calls of a SELECT list and its HAVING clause (registry T9): sqlite counts
+    a call once however often it is written (`SELECT b, max(a) … HAVING max(a) > 1` reads `b` on
+    the row of the one `max(a)`). -/
 def selectMinMaxCalls (items : List SelectItem) (having : Option Expr) :
     List (Bool × MinMaxMode × Option Expr × Bool) :=
-  items.flatMap (fun | .exprItem e _ => minMaxCalls e | .star _ => []) ++
-    minMaxCalls.minMaxCallsOpt having
+  (items.flatMap (fun | .exprItem e _ => minMaxCalls e | .star _ => []) ++
+    minMaxCalls.minMaxCallsOpt having).eraseDups
+
+/-- `eraseDups` keeps only elements of the list (for any `BEq`). -/
+theorem mem_of_mem_eraseDups {α : Type} [BEq α] {a : α} :
+    ∀ (n : Nat) {l : List α}, l.length ≤ n → a ∈ l.eraseDups → a ∈ l
+  | _, [], _, h => by simp at h
+  | 0, _ :: _, hn, _ => by simp at hn
+  | n + 1, b :: l, hn, h => by
+    rw [List.eraseDups_cons, List.mem_cons] at h
+    rcases h with rfl | h
+    · exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (List.mem_filter.mp
+        (mem_of_mem_eraseDups n (Nat.le_trans (List.length_filter_le _ _) (by simpa using hn)) h)).1
+
+theorem mem_of_mem_selectMinMaxCalls {items : List SelectItem} {having : Option Expr}
+    {c : Bool × MinMaxMode × Option Expr × Bool} (h : c ∈ selectMinMaxCalls items having) :
+    c ∈ items.flatMap (fun | .exprItem e _ => minMaxCalls e | .star _ => []) ++
+      minMaxCalls.minMaxCallsOpt having :=
+  mem_of_mem_eraseDups _ (Nat.le_refl _) h
 
 /-- The row a group's bare columns read (registry T9). With exactly one MIN/MAX call, not
     DISTINCT, whose mode has `bareRow` (the sqlite dialect): the first row where its argument

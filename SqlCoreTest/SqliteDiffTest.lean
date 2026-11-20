@@ -42,6 +42,8 @@ def corpus : List String := [
   "SELECT department, name FROM users GROUP BY department HAVING MAX(age) > 26",
   "SELECT department, COUNT(*), SUM(age), MAX(age), name FROM users GROUP BY department",
   "SELECT department, name, MAX(age) FROM users GROUP BY department ORDER BY MAX(age)",
+  "SELECT department, name, MAX(age) FROM users GROUP BY department HAVING MAX(age) > 26",
+  "SELECT name, MAX(age), MAX(age) FROM users",
   -- no MIN/MAX: the group's first row
   "SELECT department, COUNT(*), name FROM users GROUP BY department",
   "SELECT department, name FROM users GROUP BY department",

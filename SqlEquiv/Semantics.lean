@@ -1223,8 +1223,8 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
     apply bareSampleRow_congr
     intro w' m' a d' hmem r
     have ha : a.size < N := by
-      simp only [SelectStmt.items, SelectStmt.having, selectMinMaxCalls, List.mem_append,
-        List.mem_flatMap] at hmem
+      replace hmem := mem_of_mem_selectMinMaxCalls hmem
+      simp only [SelectStmt.items, SelectStmt.having, List.mem_append, List.mem_flatMap] at hmem
       rcases hmem with ⟨item, hitem, hin⟩ | hin
       · cases item with
         | star t => simp at hin

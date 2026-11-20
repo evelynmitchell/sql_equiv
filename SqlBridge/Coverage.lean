@@ -11,15 +11,15 @@
   `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)` (`AVG` is its own feature, pending the
   decision on its rounding, registry row 7); or the same grouped by columns, `GROUP BY c₁, …`,
   each item a key column or such an aggregate, with an optional `HAVING` of key columns, such
-  aggregates, literals, comparisons, `AND`, `OR`, `NOT` (`SqlBridge/CorrectGroup.lean`,
-  `elabStmt_correct_group`, `elabStmt_correct_having`), or, without `HAVING`, ordered by such
-  aggregates with an optional `LIMIT`/`OFFSET`, no output name able to capture `SqlEquiv`'s
-  sort-key columns (`SqlBridge/CorrectGroupOrder.lean`, `elabStmt_correct_group_ordered`). `outsideFragment stmt` lists the features that put a parsed
+  aggregates, literals, comparisons, `AND`, `OR`, `NOT`, ordered by such aggregates with an
+  optional `LIMIT`/`OFFSET`, no output name able to capture `SqlEquiv`'s sort-key columns, and
+  item columns that are not grouped (bare columns, registry T9) when no `MIN`/`MAX` is written
+  (`SqlBridge/CorrectGrouped.lean`, `elabStmt_correct_grouped`). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
   `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`/
-  `groupItems`/`groupStmt`/`havingFragment`/`groupOrderStmt`.
+  `groupedItems`/`groupedStmt`/`havingFragment`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
   `tools/spider_elab_baseline.py` turns them into the coverage table of
@@ -28,7 +28,9 @@
   Shape only: the theorem also assumes the schema's fold keeps names equal ignoring case (Spider's
   `String.toLower` does, #351), that the untyped database answers every such spelling of a table
   name alike (`DbRel`), and that no comparison or `ORDER BY` key orders booleans
-  (`QNoBoolOrder`). The fold must also identify exactly the names equal ignoring case
+  (`QNoBoolOrder`). With bare columns, the elaborator must resolve each item column in the `FROM`
+  scope (`BareFirst`; a valid sqlite query, as Spider's are, has no ambiguous column), and the
+  dialect must take bare columns (Spider's schemas use the sqlite dialect). The fold must also identify exactly the names equal ignoring case
   (`hfoldCI`), and the schema's column names must be their own folds (`hfix`): Spider's
   lowercased names under `String.toLower` satisfy both.
 -/
@@ -140,22 +142,27 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
-  -- grouped, ordered by aggregates, no `HAVING` (roadmap step 3b-3): no output name may capture
-  -- `SqlEquiv`'s sort-key columns `__group_orderkey_k` (mirrors `elabStmt_correct_group_ordered`'s
-  -- hypothesis `hnm`)
-  let groupOrderOk := s.having.isNone && !s.orderBy.isEmpty &&
-    s.orderBy.all (fun o => aggCallOk o.expr) &&
-    s.items.all fun
+  -- grouped (roadmap steps 3b-1 to 3b-4, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
+  -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates, `LIMIT`/`OFFSET`.
+  -- With sort keys, no output name may capture `SqlEquiv`'s sort-key columns `__group_orderkey_k`
+  -- (hypothesis `hnm`); a bare column (one not grouped) only without any `MIN`/`MAX` (`BareFirst`).
+  let orderOk := s.orderBy.all (fun o => aggCallOk o.expr) &&
+    (s.orderBy.isEmpty || s.items.all fun
       | .exprItem e al =>
         let nm := (al.getD (exprToName e)).toLower
         !nm.contains '.' && !nm.startsWith "__group_orderkey_"
-      | .star _ => false
-  -- `GROUP BY` columns, items that are those columns or aggregates (roadmap step 3b-1)
+      | .star _ => false)
+  let bareOk := s.items.all (fun
+      | .exprItem (.col c) _ => s.groupBy.contains (.col c)
+      | _ => true) ||
+    (s.items.all (fun | .exprItem e _ => (minMaxCalls e).isEmpty | .star _ => true) &&
+      s.having.all (fun h => (minMaxCalls h).isEmpty) &&
+      s.orderBy.all (fun o => (minMaxCalls o.expr).isEmpty))
   let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.all (havingOk s.groupBy) &&
-    ((s.orderBy.isEmpty && s.limitVal.isNone && s.offsetVal.isNone) || groupOrderOk) &&
+    orderOk && bareOk &&
     s.groupBy.all (fun | .col _ => true | _ => false) &&
     s.items.all fun
-      | .exprItem e _ => aggCallOk e || (match e with | .col c => s.groupBy.contains (.col c) | _ => false)
+      | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
       | .star _ => false
   (if s.distinct then [distinct] else []) ++
   (if plainAgg || plainGroup then
