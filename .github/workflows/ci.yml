@@ -80,6 +80,13 @@ jobs:
       - name: Check Spider parse-rate ratchet
         run: python3 tools/spider_parse_baseline.py --check
 
+      - name: Start Postgres (Spider tiebreaker oracle, preinstalled on the runner)
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres createuser -s "$USER"
+          sudo -u postgres createdb "$USER"
+          psql -X -At -c 'select version()'
+
       - name: Check Spider evaluate-rate ratchet
         run: python3 tools/spider_eval_baseline.py --check
 

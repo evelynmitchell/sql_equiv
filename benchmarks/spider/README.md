@@ -82,6 +82,18 @@ are unchanged: an engine-divergent query still does not count as agreement. Only
 disagreements are cross-checked, so CI stays fast; without the CLI the report says
 the cross-check was not run. A self-test guards the classification.
 
+**Postgres tiebreaker.** For an engine-divergent query, the harness also runs
+Postgres (`psql`, the same data in a throwaway schema: BIGINT/TEXT columns, table
+and column names lowercased so Spider's unquoted identifiers resolve). If Postgres
+gives sqlite's answer, two of the three oracles agree against ours and the query
+is counted as a failure of ours under **tiebroken against ours**. Otherwise the
+engine-divergent label records what Postgres did (rejects the query, matches ours,
+matches DuckDB, or differs from all three). Without a reachable Postgres (`psql -c
+'select 1'` fails) the tiebreaker is skipped and the report says so. Locally:
+`pg_ctlcluster 16 main start`, then a superuser role and database for your user
+(`su postgres -c "createuser -s $USER && createdb $USER"`). Self-tested on every
+run when Postgres is reachable.
+
 **Stress variants** (`--stress=K`). The fixed data (5 rows per table, NULLs only on
 row 3, foreign keys cycling 1–5) can hide bugs: the grouped-aggregate bug of #353
 passed most queries by luck of the data. `python3 tools/spider_eval_baseline.py
