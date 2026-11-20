@@ -19,7 +19,11 @@ abbrev Row := List (String × Value)
 /-- A table is a list of rows (bag semantics for now) -/
 abbrev Table := List Row
 
-/-- A database maps table names to tables -/
+/-- A database maps table names to tables. The evaluator applies it to a table name exactly
+    as the query spells it, so the `Database` decides how names match: SQL engines fold ASCII
+    letters in unquoted table names (`FROM tab` finds `Tab`), and a `Database` that should
+    behave like them must fold too (the Spider harness lowercases names on both sides).
+    Registry row 20, #372. -/
 abbrev Database := String → Table
 
 -- ============================================================================
