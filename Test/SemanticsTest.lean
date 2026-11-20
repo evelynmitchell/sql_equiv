@@ -569,6 +569,11 @@ def registryPinTests : List TestResult := [
     "SELECT élan FROM Été WHERE 日本 = 'a'" (.null none),
   testRowCount "non_ascii_ascii_letters_still_fold"
     "SELECT name FROM users WHERE AGE > 26" 3,
+  -- Table names reach the Database exactly as written (registry row 20, #372): testDb
+  -- matches exactly, so USERS is an unknown (empty) table here; the engines fold ASCII
+  -- letters and would find users. Column names do fold (above).
+  testRowCount "table_name_matched_exactly" "SELECT name FROM USERS" 0,
+  testRowCount "table_name_exact_spelling_found" "SELECT name FROM users" 5,
   -- NOT BETWEEN (#354): ages 30, 25, 35, 28, 22, so Carol (35) and Eve (22)
   testRowCount "not_between" "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30" 2,
   -- three-valued: NOT (age >= NULL AND age <= 30) is TRUE only where age > 30 (sqlite, DuckDB)
