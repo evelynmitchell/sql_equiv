@@ -631,7 +631,7 @@ implemented): {String.ofList lit}…"
           message := if isTypographicQuote c then
               s!"Typographic quote '{c}': use a straight quote (' for strings, \" for names)"
             else if isUnicodeSpace c then
-              s!"Non-ASCII space (U+{String.mk (Nat.toDigits 16 c.toNat) |>.toUpper}): use a plain space"
+              s!"Non-ASCII space (U+{String.ofList (Nat.toDigits 16 c.toNat) |>.toUpper}): use a plain space"
             else s!"Unexpected character: '{c}'"
           line := state.line
           column := state.column
