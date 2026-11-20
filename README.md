@@ -216,10 +216,26 @@ dialect-independent. Configurable today: NULL ordering, LIKE letter case
 (sqlite's LIKE ignores ASCII case), MIN/MAX over mixed numbers and strings
 or over booleans, whether `SELECT DISTINCT` may sort on a key it does not
 select, and (for the typed core's bridge) whether bare columns next to
-aggregates are allowed, as sqlite allows them. `toSql` prints SQL for the default dialect (explicit
-`NULLS FIRST/LAST` where an item differs from it); the MIN/MAX mode has no SQL
-spelling, so re-parsing printed SQL uses the parsing dialect's mode. The full registry of implementation-defined behaviour,
-with what each engine does, is `docs/IMPLEMENTATION_DEFINED.md`.
+aggregates are allowed, as sqlite allows them. The full registry of
+implementation-defined behaviour, with what each engine does, is
+`docs/IMPLEMENTATION_DEFINED.md`.
+
+**Printing for a dialect.** `stmt.toSqlIn d : Except String String` prints SQL that
+dialect `d` parses back with every recorded choice (#267):
+
+- NULL position: explicit `NULLS FIRST/LAST` wherever an item differs from `d`'s rule.
+- LIKE case: sqlite's case-insensitive LIKE prints as `LIKE` for sqlite and as
+  `LOWER(x) LIKE LOWER(p)` elsewhere; a case-sensitive LIKE cannot be printed for
+  sqlite.
+- MIN/MAX mode and SUM/AVG over booleans have no SQL spelling.
+
+Where `d` would read a choice differently and SQL cannot spell it, `toSqlIn`
+returns an error naming it instead of printing SQL that changes meaning. It
+checks this by re-parsing its own output. `toSql` prints for the default
+(`standard`) dialect, so it also folds a sqlite LIKE, but it never refuses.
+`LOWER` folds ASCII letters only, here and in sqlite; DuckDB and Postgres also
+fold non-ASCII letters (registry row 19), so on non-ASCII text the `LOWER`
+spelling run on those engines can differ.
 
 ## Usage Examples
 

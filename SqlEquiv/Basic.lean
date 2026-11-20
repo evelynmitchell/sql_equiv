@@ -4,6 +4,7 @@
 import SqlEquiv.Ast
 import SqlEquiv.Parser
 import SqlEquiv.Pretty
+import SqlEquiv.PrettyDialect
 import SqlEquiv.Semantics
 import SqlEquiv.Equiv
 import SqlEquiv.Rewriter
