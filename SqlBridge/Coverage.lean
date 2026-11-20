@@ -9,11 +9,14 @@
   key is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
   alias (`itemsNamed`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
   `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)` (`AVG` is its own feature, pending the
-  decision on its rounding, registry row 7). `outsideFragment stmt` lists the features that put a parsed
+  decision on its rounding, registry row 7); or the same grouped by columns, `GROUP BY c₁, …`,
+  each item a key column or such an aggregate (`SqlBridge/CorrectGroup.lean`,
+  `elabStmt_correct_group`). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
-  `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`.
+  `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`/
+  `groupItems`/`groupStmt`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
   `tools/spider_elab_baseline.py` turns them into the coverage table of
@@ -115,8 +118,15 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
+  -- `GROUP BY` columns, items that are those columns or aggregates (roadmap step 3b-1)
+  let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    s.limitVal.isNone && s.offsetVal.isNone &&
+    s.groupBy.all (fun | .col _ => true | _ => false) &&
+    s.items.all fun
+      | .exprItem e _ => aggCallOk e || (match e with | .col c => s.groupBy.contains (.col c) | _ => false)
+      | .star _ => false
   (if s.distinct then [distinct] else []) ++
-  (if plainAgg then
+  (if plainAgg || plainGroup then
     s.items.flatMap fun
       | .exprItem (.agg _ (some a) _) _ => exprFeatures a
       | _ => []
@@ -127,7 +137,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
    | none => [noFrom]
    | some f => fromFeatures f) ++
   ((s.whereClause.map exprFeatures).getD []) ++
-  (if s.groupBy.isEmpty && s.having.isNone then [] else [aggregate]) ++
+  (if (s.groupBy.isEmpty && s.having.isNone) || plainGroup then [] else [aggregate]) ++
   (s.groupBy.flatMap exprFeatures) ++ ((s.having.map exprFeatures).getD []) ++
   (if s.orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) then []
    else [orderKey]) ++

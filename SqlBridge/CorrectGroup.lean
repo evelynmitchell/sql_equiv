@@ -1,3 +1,22 @@
+/-
+  Elaborator correctness for `GROUP BY` (#352, roadmap step 3b-1).
+
+  `SELECT … FROM f [WHERE p] GROUP BY c₁, …, cₘ`, the keys column references, every item a key
+  column or an aggregate of step 3a, `f` a `FROM` tree of step 2. The typed core groups keyed rows
+  in order of first appearance (`Row.groups`); `SqlEquiv` groups the filtered rows by the set keys
+  of the key values, also in order of first appearance, and projects each group on a sample row.
+
+  * Grouping: with distinct keys, `SqlEquiv`'s grouping step is `insU` (`addStep_new`,
+    `addStep_found`, `foldl_insU`), and on related rows whose keys correspond (`KRel`,
+    `krel_iff`: equal typed keys exactly when equal set keys, by `trel_iff`) the two groupings
+    relate group by group, in order (`groupAux_rel`).
+  * The query: `SqlEquiv`'s grouped path in closed form (`evalSelectCore_grouped`), the
+    elaborator's (`elab_group_shape`: no bare columns, as every item column is a key), and the
+    statement (`elabStmt_correct_group`): per group, aggregates by `agg_rel` (step 3a), key
+    columns read on `SqlEquiv`'s sample row, which lies in the group.
+
+  `HAVING`, ordering by aggregates and bare columns (registry T9) are later sub-steps.
+-/
 import SqlBridge.CorrectAgg
 
 namespace SqlBridge.CorrectGroup

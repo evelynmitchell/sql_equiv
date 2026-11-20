@@ -22,7 +22,9 @@ under inner joins and cross joins, with literals, columns, comparisons, `AND`, `
 column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an
 alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for
 `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
-`MAX` (not `AVG`, pending its rounding decision). Counts are of the elaborated
+`MAX` (not `AVG`, pending its rounding decision), and `elabStmt_correct_group`
+(`SqlBridge/CorrectGroup.lean`) for the same `GROUP BY` columns, each item a key column or
+such an aggregate. Counts are of the elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
 `docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to
 lowercase (#351), given that the untyped database answers every spelling of a table name
@@ -30,8 +32,8 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 258 |
-| after 3b. GROUP BY / HAVING, ordered by aggregates | 384 |
+| Today | 288 |
+| after 3b-2..4. HAVING, ordered by aggregates, bare columns | 384 |
 | after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 388 |
 | after 5. DISTINCT | 410 |
 
