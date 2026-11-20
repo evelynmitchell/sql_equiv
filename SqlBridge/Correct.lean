@@ -905,14 +905,16 @@ structure WellNamed (N : NamedSchema) : Prop where
   noDot : ∀ T j, '.' ∉ (N.S.columns T j).name.toList
   distinct : ∀ T j k, (N.S.columns T j).name.toLower = (N.S.columns T k).name.toLower → j = k
 
-/-- No predicate or projection of the query orders two booleans (see `NoBoolOrder`), and no
-    `ORDER BY` key is boolean (`SqlEquiv` does not order booleans; #352). -/
+/-- No predicate, join condition or projection of the query orders two booleans (see
+    `NoBoolOrder`), and no `ORDER BY` key is boolean (`SqlEquiv` does not order booleans; #352). -/
 def QNoBoolOrder {S : DbSchema} : {n : ℕ} → Query S n → Prop
   | _, .select p q => (∀ Γ, q.typeOf = some Γ → NoBoolOrder Γ p) ∧ QNoBoolOrder q
   | _, .project es q => (∀ Γ, q.typeOf = some Γ → ∀ i, NoBoolOrder Γ (es i)) ∧ QNoBoolOrder q
   | _, .orderBy keys q =>
     (∀ Γ, q.typeOf = some Γ → ∀ i, (keys i).e.typeOf Γ ≠ some .bool) ∧ QNoBoolOrder q
   | _, .limit _ _ q => QNoBoolOrder q
+  | _, .join θ q₁ q₂ => (∀ Γ Δ, q₁.typeOf = some Γ → q₂.typeOf = some Δ →
+      NoBoolOrder (Fin.append Γ Δ) θ) ∧ QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
   | _, _ => True
 
 /-- The statements of #309: `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`. -/

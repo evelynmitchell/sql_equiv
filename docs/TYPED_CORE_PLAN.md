@@ -92,7 +92,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 0: case-folding schemas (#351)
     - [x] Step 1: `ORDER BY` column keys, `LIMIT`, `OFFSET`: `SqlBridge/CorrectOrder.lean`,
       `elabStmt_correct_ordered`. Spider coverage **113**, up from 64
-    - [ ] Step 2: joins
+    - [x] Step 2: inner and cross joins: `SqlBridge/CorrectJoin.lean`, `elabStmt_correct_join`.
+      Spider coverage **165**, up from 113
     - [ ] Step 3: aggregates, `GROUP BY`, `HAVING`, ordered by aggregates
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
@@ -138,14 +139,15 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 `elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
 the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
 sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
-(phase 9, #298). Its fragment today (step 1 done, `elabStmt_correct_ordered`) is
-`SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` with
-literals, columns, comparisons, `AND`, `OR` and `NOT`, where the `ORDER BY` keys are column
+(phase 9, #298). Its fragment today (steps 1 and 2 done, `elabStmt_correct_join`) is
+`SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, where `f` nests
+tables (optionally aliased) under inner joins and cross joins without `ON`, with literals,
+columns, comparisons, `AND`, `OR` and `NOT` (in `ON` too), where the `ORDER BY` keys are column
 references and, when there is an `ORDER BY`, every item is a column or has an alias.
 
 **Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
 features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
-against the theorem's own `isFragment`/`fragmentStmt` in `SqlCoreTest/CorrectExamples.lean`).
+against the theorem's own shape, `stmtShape`, in `SqlCoreTest/CorrectExamples.lean`).
 `tools/spider_elab_baseline.py` turns them into the coverage table of
 [`elab_report.md`](../benchmarks/spider/elab_report.md): the queries in the fragment today and
 after each step below. At the time of writing (20 Nov 2026, 520 queries elaborate):
@@ -153,8 +155,8 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | Step | Spider queries in the fragment |
 |------|-------------------------------:|
 | Before step 1 | 64 |
-| Today: 1. `ORDER BY` / `LIMIT` (done) | 113 |
-| 2. Joins (inner, cross) | 165 |
+| 1. `ORDER BY` / `LIMIT` (done) | 113 |
+| Today: 2. Joins (inner, cross) (done) | 165 |
 | 3. Aggregates, `GROUP BY`, `HAVING`, ordered by aggregates | 405 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 409 |
 | 5. `DISTINCT` | 431 |
@@ -198,9 +200,28 @@ follows coverage instead (decided 20 Nov 2026):
    `ORDER BY`); and `QNoBoolOrder` also rules out boolean keys. On Spider, every query ordered
    by something other than a column, and every unaliased item next to an `ORDER BY`, is an
    aggregate query (`ORDER BY count(*)`), so step 3 takes those on.
-2. **Joins (inner and cross).** `Fin.append` columns against `SqlEquiv`'s concatenated
-   qualified rows; `RowRel` handles two qualifiers and `WellNamed` uniqueness becomes
-   uniqueness per qualifier.
+2. **Joins (inner and cross), done.** `SqlBridge/CorrectJoin.lean` proves
+   `elabStmt_correct_join` for a `FROM` tree of tables (optionally aliased) under inner joins
+   (`ON` a fragment condition, or none) and cross joins without `ON`, nested as Spider writes
+   them (`FROM a AS T1 JOIN b AS T2 ON … JOIN c AS T3 ON …`):
+   - Both evaluators build a join as the cross product, left row outermost, filtered by `ON`
+     (`evalFrom_join_filter`; the typed `Query.join` is `Row.product` then `filterRows`), so
+     the `WHERE` argument of #309 carries over (`product_rel`, `filter_rel_of`).
+   - `RowRel` ("every resolved reference finds its value") does not compose under `++`: a
+     reference resolved in the right table could match a key of the left one. `KeyedRow`
+     records the keys `SqlEquiv`'s `FROM` builds (`Q.name` per column, `Q` the table name or
+     alias as written), composes under joins, and implies `RowRel` (`rowRel_of_keyed`).
+   - The projection, `WHERE`, `ORDER BY` and `LIMIT`/`OFFSET` reuse step 1 unchanged, as they
+     only see the column list.
+
+   New hypotheses, each checked on a Spider-shaped schema in `CorrectExamples`: the fold
+   identifies exactly the names equal ignoring case (`hfoldCI`, now for every statement, since
+   two tables may spell a qualifier alike up to case), and the schema's column names are their
+   own folds (`hfix`: Spider lowercases them), so a name the elaborator resolves unambiguously
+   in the joined columns is the one `SqlEquiv`'s first-match lookup finds; `QNoBoolOrder` also
+   covers `ON`. An unqualified column that two tables share is ambiguous: the elaborator
+   rejects it, so the theorem does not speak of it. Outer joins (`LEFT`/`RIGHT`/`FULL`), which
+   the elaborator rejects, stay out.
 3. **Aggregates and `GROUP BY` / `HAVING`.** The largest blocker, and the hardest step. It
    includes ordering by aggregates (`ORDER BY count(*)`, 52 queries), which extends step 1's
    key resolution. Known

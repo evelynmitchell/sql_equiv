@@ -5,13 +5,15 @@
 -/
 import SqlBridge.Correct
 import SqlBridge.CorrectOrder
+import SqlBridge.CorrectJoin
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
 
 namespace SqlCoreTest.CorrectExamples
 open SqlBridge SqlBridge.Correct SqlCoreTest.BridgeDiff
-open SqlBridge.CorrectOrder (orderedStmt itemsNamed)
+open SqlBridge.CorrectOrder (itemsNamed)
+open SqlBridge.CorrectJoin (fromFragment joinStmt)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
 example : WellNamed named :=
@@ -38,19 +40,21 @@ def inFragment (sql : String) : Bool :=
 #guard inFragment "SELECT Name FROM singer WHERE Age > 20"
 #guard inFragment "SELECT name, age >= 30, NULL FROM users WHERE TRUE"
 
--- Outside the fragment: arithmetic, `*`, `DISTINCT`, joins.
+-- Outside #309's single-table shape: arithmetic, `*`, `DISTINCT`, joins (joins are covered by
+-- `elabStmt_correct_join` since #352 step 2; see `stmtShape` below).
 #guard !inFragment "SELECT age + 1 FROM users"
 #guard !inFragment "SELECT * FROM users"
 #guard !inFragment "SELECT DISTINCT name FROM users"
 #guard !inFragment "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id"
 
-/-- The shape of `elabStmt_correct_ordered` (roadmap step 1, #352): fragment items and `WHERE`,
-    `ORDER BY` keys that are column references, named items when there is an `ORDER BY`. -/
-def orderedShape : SqlEquiv.Stmt → Bool
-  | stmt@(.query (.simple (.mk false items (some (.table ⟨name, al⟩)) wh [] none orderBy lim off))) =>
-    itemsFragment items && wh.all isFragment &&
+/-- The shape of `elabStmt_correct_join` (roadmap steps 1 and 2, #352): fragment items, `FROM`
+    (tables under inner and cross joins), `WHERE`; `ORDER BY` keys that are column references;
+    named items when there is an `ORDER BY`. -/
+def stmtShape : SqlEquiv.Stmt → Bool
+  | stmt@(.query (.simple (.mk false items (some f) wh [] none orderBy lim off))) =>
+    itemsFragment items && fromFragment f && wh.all isFragment &&
       orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) &&
-      (orderBy.isEmpty || itemsNamed items) && stmt == orderedStmt items name al wh orderBy lim off
+      (orderBy.isEmpty || itemsNamed items) && stmt == joinStmt items f wh orderBy lim off
   | _ => false
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
@@ -59,7 +63,7 @@ def orderedShape : SqlEquiv.Stmt → Bool
 def coverageAgrees (sql : String) : Bool :=
   match SqlEquiv.parse sql with
   | .ok stmt =>
-    (SqlBridge.Coverage.outsideFragment stmt).isEmpty == orderedShape stmt &&
+    (SqlBridge.Coverage.outsideFragment stmt).isEmpty == stmtShape stmt &&
       match stmt with
       | .query (.simple s) => SqlBridge.Coverage.itemsNamed s.items == itemsNamed s.items
       | _ => true
@@ -70,6 +74,9 @@ def coverageAgrees (sql : String) : Bool :=
   "SELECT u.name FROM users u WHERE u.age = 30", "SELECT name, age >= 30, NULL FROM users WHERE TRUE",
   "SELECT age + 1 FROM users", "SELECT * FROM users", "SELECT DISTINCT name FROM users",
   "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id",
+  "SELECT u.name FROM users u CROSS JOIN orders o WHERE u.id = o.user_id ORDER BY u.name",
+  "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id",
+  "SELECT u.name FROM users u JOIN orders o ON u.id + 1 = o.user_id",
   "SELECT name FROM users ORDER BY age LIMIT 2", "SELECT name FROM users LIMIT 2 OFFSET 1",
   "SELECT name AS n, age FROM users WHERE age > 1 ORDER BY n DESC, age NULLS FIRST",
   "SELECT name FROM users ORDER BY age + 1", "SELECT age > 30 FROM users ORDER BY age",
@@ -90,6 +97,8 @@ def features (sql : String) : List String :=
 #guard features "SELECT name FROM users ORDER BY age LIMIT 2" == []
 #guard features "SELECT name FROM users ORDER BY age + 1" == ["ORDER BY expression", "arithmetic"]
 #guard features "SELECT age > 30 FROM users ORDER BY age" == ["unnamed item with ORDER BY"]
+#guard features "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id" == []
+#guard features "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id" == ["outer join"]
 
 /-! ### A Spider-shaped schema (#351)
 
@@ -101,7 +110,8 @@ under folding; `SqlEquiv` looks a table up by the name as written, registry row 
 
 open SqlBridge.Spider in
 def singerSchema : NamedSchema :=
-  { schemaOf #[⟨"singer", #[("singer_id", .int), ("name", .text), ("age", .int)]⟩] with
+  { schemaOf #[⟨"singer", #[("singer_id", .int), ("name", .text), ("age", .int)]⟩,
+      ⟨"song", #[("title", .text), ("singer_id", .int)]⟩] with
     config := SqlEquiv.Dialect.sqlite.config }
 
 example : ∀ s, (singerSchema.fold s).toLower = s.toLower := string_toLower_toLower
@@ -111,10 +121,15 @@ example : WellNamed singerSchema := by
 
 example : DbRel singerSchema (fun _ => []) (fun _ => []) := fun _ _ _ => .nil
 
-/-- With an `ORDER BY`, `elabStmt_correct_ordered` also asks the fold to identify exactly the
-    names equal ignoring case; `String.toLower` does. -/
+/-- With an `ORDER BY` or a join, the theorems also ask the fold to identify exactly the names
+    equal ignoring case (`String.toLower` does) ... -/
 example : ∀ x y, singerSchema.fold x = singerSchema.fold y ↔ x.toLower = y.toLower :=
   fun _ _ => Iff.rfl
+
+/-- ... and, with a join, the column names to be their own folds (Spider lowercases them). -/
+example : ∀ T j, singerSchema.fold (singerSchema.S.columns T j).name =
+    (singerSchema.S.columns T j).name := by
+  simp only [singerSchema, SqlBridge.Spider.schemaOf]; decide +kernel
 
 /-- Mixed-case references, as Spider writes them, are in the fragment and elaborate under the
     folding schema, so `elabStmt_correct` applies to them. -/
@@ -130,11 +145,11 @@ def inFragmentSpider (sql : String) : Bool :=
 #guard inFragmentSpider "SELECT singer_id, NAME FROM singer"
 #guard !inFragmentSpider "SELECT Name FROM Singers"
 
-/-- Spider-shaped queries with `ORDER BY` / `LIMIT` / `OFFSET` (roadmap step 1) have the shape
-    of `elabStmt_correct_ordered` and elaborate under the folding schema. -/
+/-- Spider-shaped queries with `ORDER BY` / `LIMIT` / `OFFSET` (roadmap step 1) and joins (step 2)
+    have the shape of `elabStmt_correct_join` and elaborate under the folding schema. -/
 def orderedSpider (sql : String) : Bool :=
   match SqlEquiv.parse sql (dialect := .sqlite) with
-  | .ok stmt => orderedShape stmt && (elabStmt singerSchema stmt).toBool
+  | .ok stmt => stmtShape stmt && (elabStmt singerSchema stmt).toBool
   | .error _ => false
 
 #guard orderedSpider "SELECT Name FROM Singer ORDER BY Age DESC LIMIT 1"
@@ -142,5 +157,15 @@ def orderedSpider (sql : String) : Bool :=
 #guard orderedSpider "SELECT name AS n FROM singer ORDER BY n LIMIT 3 OFFSET 1"
 #guard orderedSpider "SELECT name, age FROM singer LIMIT 2"
 #guard !orderedSpider "SELECT name FROM singer ORDER BY age + 1"
+
+-- Spider-shaped joins (roadmap step 2) have the shape of `elabStmt_correct_join` and elaborate.
+#guard orderedSpider
+  "SELECT T2.Title , T1.Name FROM singer AS T1 JOIN song AS T2 ON T1.Singer_ID = T2.Singer_ID"
+#guard orderedSpider ("SELECT T1.name FROM SINGER AS T1 JOIN song AS T2 ON t1.singer_id = " ++
+  "T2.SINGER_ID WHERE T2.title = 'x' ORDER BY T1.age DESC LIMIT 1")
+#guard orderedSpider "SELECT title, name FROM singer CROSS JOIN song"
+#guard orderedSpider "SELECT a.name FROM singer AS a JOIN singer AS b ON a.age < b.age"
+-- An unqualified column of both tables is ambiguous: the elaborator rejects it.
+#guard !orderedSpider "SELECT singer_id FROM singer JOIN song ON singer.singer_id = song.singer_id"
 
 end SqlCoreTest.CorrectExamples
