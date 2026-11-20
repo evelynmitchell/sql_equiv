@@ -17,7 +17,7 @@ open SqlBridge SqlBridge.Correct SqlCoreTest.BridgeDiff
 open SqlBridge.CorrectOrder (itemsNamed)
 open SqlBridge.CorrectJoin (fromFragment joinStmt)
 open SqlBridge.CorrectAgg (aggItems aggStmt)
-open SqlBridge.CorrectGroup (groupItems groupStmt)
+open SqlBridge.CorrectGroup (groupItems groupStmt havingFragment)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
 example : WellNamed named :=
@@ -68,13 +68,14 @@ def aggShape : SqlEquiv.Stmt → Bool
       stmt == aggStmt items f wh
   | _ => false
 
-/-- The shape of `elabStmt_correct_group` (roadmap step 3b-1): column keys, items keys or
-    aggregates, no `HAVING`, `ORDER BY` or `LIMIT`. -/
+/-- The shape of `elabStmt_correct_group` and `elabStmt_correct_having` (roadmap steps 3b-1 and
+    3b-2): column keys, items keys or aggregates, an optional `HAVING` in `havingFragment`, no
+    `ORDER BY` or `LIMIT`. -/
 def groupShape : SqlEquiv.Stmt → Bool
-  | stmt@(.query (.simple (.mk false items (some f) wh groupBy none [] none none))) =>
+  | stmt@(.query (.simple (.mk false items (some f) wh groupBy having [] none none))) =>
     groupItems groupBy items && !groupBy.isEmpty &&
       groupBy.all (fun | .col _ => true | _ => false) && fromFragment f && wh.all isFragment &&
-      stmt == groupStmt items f wh groupBy
+      having.all (havingFragment groupBy) && stmt == groupStmt items f wh groupBy having
   | _ => false
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
@@ -113,6 +114,9 @@ def coverageAgrees (sql : String) : Bool :=
   "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1",
   "SELECT department, COUNT(*) FROM users GROUP BY department ORDER BY COUNT(*) DESC LIMIT 1",
   "SELECT department, AVG(age) FROM users GROUP BY department",
+  "SELECT department FROM users GROUP BY department HAVING NOT (COUNT(*) <= 1) OR department = 'x'",
+  "SELECT department FROM users GROUP BY department HAVING name = 'x'",
+  "SELECT department FROM users GROUP BY department HAVING AVG(age) > 1",
   "SELECT department FROM users GROUP BY department", "SELECT name FROM users WHERE age IS NULL",
   "SELECT name FROM users WHERE age IN (1, 2)", "SELECT name FROM users WHERE age BETWEEN 1 AND 2",
   "SELECT name FROM users WHERE name LIKE 'a%'", "SELECT 1",
@@ -136,6 +140,8 @@ def features (sql : String) : List String :=
 #guard features "SELECT SUM(age + 1) FROM users" == ["arithmetic"]
 #guard features "SELECT department, COUNT(*) FROM users GROUP BY department" == []
 #guard features "SELECT name, COUNT(*) FROM users GROUP BY department" == ["aggregate/GROUP BY"]
+#guard features "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 AND MAX(age) < 60" == []
+#guard features "SELECT department FROM users GROUP BY department HAVING SUM(age + 1) > 1" == ["arithmetic"]
 
 /-! ### A Spider-shaped schema (#351)
 
@@ -234,9 +240,12 @@ def groupSpider (sql : String) : Bool :=
 #guard groupSpider "SELECT Age, max(name), min(singer_id) FROM Singer WHERE age > 20 GROUP BY Age"
 #guard groupSpider ("SELECT T1.name, count(*) FROM singer AS T1 JOIN song AS T2 ON " ++
   "T1.singer_id = T2.singer_id GROUP BY T1.name")
--- Later sub-steps: a bare column, `HAVING`, ordering by an aggregate.
+#guard groupSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1"
+#guard groupSpider ("SELECT T1.name FROM singer AS T1 JOIN song AS T2 ON T1.singer_id = " ++
+  "T2.singer_id GROUP BY T1.name HAVING COUNT(*) >= 2 AND max(T2.title) <> 'x'")
+-- Later sub-steps: a bare column, ordering by an aggregate; and a `HAVING` column that is no key.
 #guard !groupSpider "SELECT name, count(*) FROM singer GROUP BY age"
-#guard !groupSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1"
+#guard !groupSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
 #guard !groupSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
 
 end SqlCoreTest.CorrectExamples

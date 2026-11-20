@@ -10,13 +10,14 @@
   alias (`itemsNamed`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
   `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)` (`AVG` is its own feature, pending the
   decision on its rounding, registry row 7); or the same grouped by columns, `GROUP BY c₁, …`,
-  each item a key column or such an aggregate (`SqlBridge/CorrectGroup.lean`,
-  `elabStmt_correct_group`). `outsideFragment stmt` lists the features that put a parsed
+  each item a key column or such an aggregate, with an optional `HAVING` of key columns, such
+  aggregates, literals, comparisons, `AND`, `OR`, `NOT` (`SqlBridge/CorrectGroup.lean`,
+  `elabStmt_correct_group`, `elabStmt_correct_having`). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
   `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`/
-  `groupItems`/`groupStmt`.
+  `groupItems`/`groupStmt`/`havingFragment`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
   `tools/spider_elab_baseline.py` turns them into the coverage table of
@@ -74,7 +75,26 @@ def aggCallOk : Expr → Bool
   | .agg (.max _) (some _) false => true
   | _ => false
 
+/-- Mirrors `SqlBridge.CorrectGroup.havingFragment`'s shape (aggregate arguments are checked
+    separately): literals, key columns, aggregates, comparisons, `AND`, `OR`, `NOT`. -/
+def havingOk (groupBy : List Expr) : Expr → Bool
+  | .lit _ => true
+  | .col c => groupBy.contains (.col c)
+  | .binOp op x y =>
+    (match op with
+     | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
+     | _ => false) && havingOk groupBy x && havingOk groupBy y
+  | .unaryOp .not x => havingOk groupBy x
+  | e => aggCallOk e
+
 mutual
+
+/-- Features of a `HAVING` predicate in the fragment: those of its aggregates' arguments. -/
+partial def havingFeatures : Expr → List String
+  | .binOp _ x y => havingFeatures x ++ havingFeatures y
+  | .unaryOp _ x => havingFeatures x
+  | .agg _ (some a) _ => exprFeatures a
+  | _ => []
 
 /-- Features of an expression outside the fragment (subqueries are not entered). -/
 partial def exprFeatures : Expr → List String
@@ -119,7 +139,8 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
   -- `GROUP BY` columns, items that are those columns or aggregates (roadmap step 3b-1)
-  let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+  let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.all (havingOk s.groupBy) &&
+    s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone &&
     s.groupBy.all (fun | .col _ => true | _ => false) &&
     s.items.all fun
@@ -138,7 +159,8 @@ partial def selectFeatures (s : SelectStmt) : List String :=
    | some f => fromFeatures f) ++
   ((s.whereClause.map exprFeatures).getD []) ++
   (if (s.groupBy.isEmpty && s.having.isNone) || plainGroup then [] else [aggregate]) ++
-  (s.groupBy.flatMap exprFeatures) ++ ((s.having.map exprFeatures).getD []) ++
+  (s.groupBy.flatMap exprFeatures) ++
+  ((s.having.map (if plainGroup then havingFeatures else exprFeatures)).getD []) ++
   (if s.orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) then []
    else [orderKey]) ++
   (if s.orderBy.isEmpty || itemsNamed s.items then [] else [unnamedItem]) ++

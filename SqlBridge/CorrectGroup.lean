@@ -1,5 +1,5 @@
 /-
-  Elaborator correctness for `GROUP BY` (#352, roadmap step 3b-1).
+  Elaborator correctness for `GROUP BY` and `HAVING` (#352, roadmap steps 3b-1 and 3b-2).
 
   `SELECT … FROM f [WHERE p] GROUP BY c₁, …, cₘ`, the keys column references, every item a key
   column or an aggregate of step 3a, `f` a `FROM` tree of step 2. The typed core groups keyed rows
@@ -15,7 +15,12 @@
     statement (`elabStmt_correct_group`): per group, aggregates by `agg_rel` (step 3a), key
     columns read on `SqlEquiv`'s sample row, which lies in the group.
 
-  `HAVING`, ordering by aggregates and bare columns (registry T9) are later sub-steps.
+  * `HAVING` (step 3b-2): `TranslatesH` relates the elaborator's predicate over the aggregate's
+    output to `SqlEquiv`'s per-group predicate (`translatesH_of_elab`); they decide each group
+    alike (`TranslatesH.eval_rel`), so the kept groups relate in order (`out_rel_filter`,
+    `elabStmt_correct_having`).
+
+  Ordering by aggregates and bare columns (registry T9) are later sub-steps.
 -/
 import SqlBridge.CorrectAgg
 
