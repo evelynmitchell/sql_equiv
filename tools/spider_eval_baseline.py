@@ -8,8 +8,10 @@ data (FK-aware so joins discriminate), evaluates the query with our engine
 (sql_equiv --spider-eval) and with sqlite3 (in-process — the Spider-fidelity
 oracle per the role split on #225), and compares result multisets. Each
 disagreement is cross-checked on DuckDB (the `duckdb` CLI, same data): when
-DuckDB rejects the query or disagrees with sqlite, the class is labelled
-"engine-divergent" and is not a failure of ours (still not counted as agreement).
+DuckDB rejects the query or disagrees with sqlite, Postgres (`psql`, same
+data) breaks the tie: if it gives sqlite's answer the query is a failure of
+ours ("tiebroken against ours"); otherwise it is labelled "engine-divergent"
+and is not a failure of ours (still not counted as agreement).
 
 Failure classes become issues; the agree-count is ratcheted in
 tools/spider_eval_minimum.txt. The count is exact multiset matches plus
@@ -29,6 +31,7 @@ Stdlib only (CI runs plain python3; sqlite3 is stdlib).
 from __future__ import annotations
 
 import json
+import os
 import random
 import shutil
 import re
@@ -445,6 +448,106 @@ def duckdb_verdict(path: Path | None, query: str, ours: list, sq_rows: list) -> 
     return "engine-divergent: DuckDB differs from sqlite and from ours"
 
 
+def _postgres_available() -> bool:
+    if shutil.which("psql") is None:
+        return False
+    r = subprocess.run(["psql", "-X", "-At", "-c", "select 1"], capture_output=True, text=True)
+    return r.returncode == 0 and r.stdout.strip() == "1"
+
+
+POSTGRES = _postgres_available()
+
+
+def postgres_schema(schema: dict, tables, rows, tag: str) -> str:
+    """Load the same synthetic data as `sqlite_for` into a fresh Postgres schema (BIGINT for
+    `number`/`boolean`, TEXT otherwise) and return its name. Table and column names are
+    lowercased, so the unquoted (case-insensitive) identifiers of Spider queries resolve."""
+    name = f"spider_{tag}_{schema['db_id']}".lower()
+    types = schema["column_types"]
+    cols = schema["column_names_original"]
+    ti_of = {t: i for i, t in enumerate(schema["table_names_original"])}
+    stmts = [f'DROP SCHEMA IF EXISTS "{name}" CASCADE;', f'CREATE SCHEMA "{name}";']
+    for tname, colnames in tables:
+        ctypes = [types[i] for i, (t, _) in enumerate(cols) if t == ti_of[tname]]
+        decls = ", ".join(f'"{c.lower()}" {"BIGINT" if ty in ("number", "boolean") else "TEXT"}'
+                          for c, ty in zip(colnames, ctypes))
+        stmts.append(f'CREATE TABLE "{name}"."{tname.lower()}" ({decls});')
+        for row in rows[tname]:
+            stmts.append(f'INSERT INTO "{name}"."{tname.lower()}" VALUES '
+                         f'({", ".join(_duck_literal(c) for c in row)});')
+    subprocess.run(["psql", "-X", "-q", "-v", "ON_ERROR_STOP=1"], input="\n".join(stmts),
+                   text=True, capture_output=True, check=True)
+    return name
+
+
+def postgres_drop(names) -> None:
+    if names:
+        subprocess.run(["psql", "-X", "-q", "-c",
+                        "; ".join(f'DROP SCHEMA IF EXISTS "{n}" CASCADE' for n in names)],
+                       capture_output=True, text=True)
+
+
+def postgres_rows(schema_name: str, query: str):
+    """("ok", rows) or ("err", message): the query on Postgres, cells as text, booleans 1/0."""
+    r = subprocess.run(["psql", "-X", "-q", "-At", "-F", "\x1f", "-P", "null=NULL",
+                        "-v", "ON_ERROR_STOP=1",
+                        "-c", f'SET search_path TO "{schema_name}"', "-c", query],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        msg = next((l for l in r.stderr.splitlines() if l.startswith("ERROR")), "error")
+        return ("err", msg[:100])
+    out = []
+    for line in r.stdout.splitlines():
+        out.append([{"t": "1", "f": "0"}.get(c, None if c == "NULL" else c)
+                    for c in line.split("\x1f")])
+    return ("ok", out)
+
+
+def postgres_tiebreak(schema_name: str, query: str, ours: list, sq_rows: list,
+                      duck) -> tuple[bool, str]:
+    """#225 tiebreaker for an engine-divergent query: (Postgres sides with sqlite, note).
+    `duck` is DuckDB's ("ok", rows) / ("err", msg). When Postgres gives sqlite's answer, two
+    of three oracles agree against ours, so the query is a failure of ours after all."""
+    status, pg = postgres_rows(schema_name, query)
+    if status == "err":
+        return (False, f"Postgres rejects the query ({pg})")
+    if normalize(pg) == normalize(sq_rows):
+        return (True, "Postgres matches sqlite")
+    if normalize(pg) == normalize(ours):
+        return (False, "Postgres matches ours")
+    if duck[0] == "ok" and normalize(pg) == normalize(duck[1]):
+        return (False, "Postgres matches DuckDB")
+    return (False, "Postgres differs from sqlite, DuckDB and ours")
+
+
+def _self_test_postgres_tiebreak() -> None:
+    """Guards `postgres_tiebreak` (needs a reachable Postgres; skipped without one)."""
+    if not POSTGRES:
+        return
+    schema = {"db_id": "selftest", "table_names_original": ["T"],
+              "column_names_original": [[-1, "*"], [0, "N"], [0, "s"]],
+              "column_types": ["text", "number", "text"]}
+    name = postgres_schema(schema, [("T", ["N", "s"])],
+                           {"T": [[1, "a"], [2, None], [None, "it's"]]}, "selftest")
+    try:
+        sq = [[1, "a"], [2, None], [None, "it's"]]
+        assert postgres_tiebreak(name, "SELECT N, s FROM T", [], sq, ("err", "")) == \
+            (True, "Postgres matches sqlite")
+        sides, note = postgres_tiebreak(name, "SELECT avg(s) FROM T", [], [[0.0]], ("err", ""))
+        assert not sides and note.startswith("Postgres rejects"), note
+        assert postgres_tiebreak(name, "SELECT 1 = 1", [["1"]], [[0]], ("err", "")) == \
+            (False, "Postgres matches ours")
+        assert postgres_tiebreak(name, "SELECT 2", [[3]], [[1]], ("ok", [["2"]])) == \
+            (False, "Postgres matches DuckDB")
+        assert postgres_tiebreak(name, "SELECT 2", [[3]], [[1]], ("ok", [["4"]])) == \
+            (False, "Postgres differs from sqlite, DuckDB and ours")
+        # 1/2 = 0 on sqlite and Postgres; 0.5 on DuckDB: the tie goes to sqlite.
+        assert postgres_tiebreak(name, "SELECT 1/2", [["0.5"]], [[0]], ("ok", [["0.5"]])) == \
+            (True, "Postgres matches sqlite")
+    finally:
+        postgres_drop([name])
+
+
 def _self_test_duckdb_verdict() -> None:
     """Guards `duckdb_verdict` (needs the duckdb CLI; skipped without it)."""
     if DUCKDB is None:
@@ -536,13 +639,27 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
 
     duck_dir = Path(tempfile.mkdtemp(prefix="spider_duck_")) if DUCKDB else None
 
+    pg_schemas: dict[str, str] = {}
+
     def duck_label(i: int, p: dict, ours_rows: list, sq_rows: list, label: str) -> str:
         if duck_dir is None:
             return label
         tables, rows = built[p["db"]]
         path = duckdb_file(schemas[p["db"]], tables, rows, duck_dir)
         verdict = duckdb_verdict(path, p["query"], ours_rows, sq_rows)
-        return label if verdict is None else f"{verdict} — {label}"
+        if verdict is None:
+            return label
+        if not POSTGRES:
+            return f"{verdict} — {label}"
+        if p["db"] not in pg_schemas:
+            pg_schemas[p["db"]] = postgres_schema(schemas[p["db"]], tables, rows,
+                                                  f"{os.getpid()}_v{variant}")
+        sides, note = postgres_tiebreak(pg_schemas[p["db"]], p["query"], ours_rows, sq_rows,
+                                        duckdb_rows(path, p["query"]))
+        if sides:
+            what = verdict.removeprefix("engine-divergent: ")
+            return f"tiebroken against ours: {what}, but {note} — {label}"
+        return f"{verdict}; {note} — {label}"
 
     agree = 0
     tie_ok: list[str] = []
@@ -587,6 +704,7 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
 
     if duck_dir is not None:
         shutil.rmtree(duck_dir, ignore_errors=True)
+    postgres_drop(pg_schemas.values())
     return agree, tie_ok, affinity_ok, failures, oracle_err, accepted
 
 
@@ -635,6 +753,7 @@ def main() -> None:
     _self_test_text_affinity()
     _self_test_aggregates_text()
     _self_test_duckdb_verdict()
+    _self_test_postgres_tiebreak()
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
 
@@ -678,8 +797,11 @@ def main() -> None:
             ("  disagrees with sqlite, so sqlite's answer is not the only defensible one."
              if DUCKDB else "  disagreement below counts as ours."),
             "  Still counted as disagreements with sqlite (the rate above), but not as",
-            "  failures of ours. The class says whether ours matches DuckDB.",
-            f"- Failures of ours (sqlite and DuckDB agree, we do not): {ours_fail}",
+            "  failures of ours. The class says whether ours matches DuckDB, and what",
+            ("  Postgres (the standards tiebreaker) answers." if POSTGRES else
+             "  Postgres tiebreaker: not run (no reachable Postgres)."),
+            f"- Failures of ours: {ours_fail}: sqlite and DuckDB agree and we do not, or they",
+            "  disagree and Postgres gives sqlite's answer (class `tiebroken against ours`).",
             "",
             "Deterministic synthetic data (5 rows/table, FK-aware) over the dev",
             "schemas; multiset comparison of result rows.",
