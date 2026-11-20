@@ -19,12 +19,13 @@ types (sqlite accepts it through type affinity, e.g. a `text` column compared wi
 result rows match the untyped evaluator's, for `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`
 with literals, columns, comparisons, `AND`, `OR`, `NOT`. Counts are of the elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
-`docs/TYPED_CORE_PLAN.md`. **The theorem also assumes the schema does not fold names, and
-Spider's schemas lowercase them, so until #351 it applies to none of these queries.**
+`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to
+lowercase (#351), given that the untyped database answers every spelling of a table name
+alike (as the evaluate harness's lowercasing does) and no comparison orders two booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today (shape) | 64 |
+| Today | 64 |
 | after 1. ORDER BY / LIMIT | 113 |
 | after 2. Joins (inner, cross) | 165 |
 | after 3. Aggregates and GROUP BY / HAVING | 405 |

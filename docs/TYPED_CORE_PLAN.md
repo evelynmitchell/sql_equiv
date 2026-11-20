@@ -83,7 +83,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     the typed query evaluates, and its rows relate, in order, to `SqlEquiv`'s (values by `ValRel`:
     a typed decimal is the rational of an untyped scaled integer; a typed `NULL` is an untyped
     `NULL` of any tag; column names are dropped). Hypotheses: the untyped database relates to
-    the typed one (`DbRel`), case folding is off (`fold = id`), column names have no dots and
+    the typed one (`DbRel`), the schema's fold keeps names equal ignoring case (`id`, or
+    `String.toLower` as Spider's schemas use, since #351), column names have no dots and
     are distinct ignoring case (`WellNamed`), and no ordering comparison has two boolean
     operands (`QNoBoolOrder`: the typed core orders `false < true`, `SqlEquiv` does not order
     booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
@@ -151,10 +152,14 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 
 Still outside after step 5: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2).
 
-**Step 0, a prerequisite: case folding (#351).** The theorem assumes the schema does not fold
-names (`fold = id`); Spider's schemas lowercase them, as sqlite's names are case-insensitive. So
-until #351 the theorem applies to *none* of the Spider queries above, whatever their shape. The
-table counts shape, which is what the steps change.
+**Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
+does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are
+case-insensitive; so it applied to none of the Spider queries above. It now takes any fold that
+keeps names equal ignoring case (`(fold s).toLower = s.toLower`), and `DbRel` asks the untyped
+database to answer every spelling the fold maps to a table's key (the `Database` decides how
+names match, registry row 20, #372). `CorrectExamples` checks the hypotheses on a Spider-shaped
+schema and that mixed-case Spider references (`SELECT T1.name FROM SINGER AS T1 WHERE t1.AGE …`)
+elaborate into the fragment. So the "Today" row is now queries the theorem covers.
 
 **Order, and why.** #352 first listed the steps by proof cost: unary operators, arithmetic,
 `IN`/`BETWEEN`, `DISTINCT`, joins. Measured on Spider, those first four steps add almost

@@ -13,8 +13,9 @@
   `tools/spider_elab_baseline.py` turns them into the coverage table of
   `benchmarks/spider/elab_report.md`: queries in the fragment today, and after each step.
 
-  Shape only: the theorem also assumes the schema does not fold names (`fold = id`, dropped by
-  #351) and that no comparison orders two booleans (`QNoBoolOrder`).
+  Shape only: the theorem also assumes the schema's fold keeps names equal ignoring case (Spider's
+  `String.toLower` does, #351), that the untyped database answers every such spelling of a table
+  name alike (`DbRel`), and that no comparison orders two booleans (`QNoBoolOrder`).
 -/
 import SqlEquiv
 

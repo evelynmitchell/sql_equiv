@@ -5,6 +5,7 @@
 -/
 import SqlBridge.Correct
 import SqlBridge.Coverage
+import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
 
 namespace SqlCoreTest.CorrectExamples
@@ -14,7 +15,8 @@ open SqlBridge SqlBridge.Correct SqlCoreTest.BridgeDiff
 example : WellNamed named :=
   ⟨fun T => by cases T <;> decide, fun T => by cases T <;> decide +kernel⟩
 
-example : named.fold = id := rfl
+/-- The test schema does not fold names; `fold = id` keeps names equal ignoring case. -/
+example : ∀ s, (named.fold s).toLower = s.toLower := fun _ => rfl
 
 /-- The parsed statement is `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]` with fragment expressions,
     and it elaborates: `elabStmt_correct` applies to it. -/
@@ -65,5 +67,39 @@ def coverageAgrees (sql : String) : Bool :=
 #guard SqlBridge.Coverage.outsideFragment
   (match SqlEquiv.parse "SELECT name FROM users ORDER BY age LIMIT 2" with
    | .ok s => s | .error _ => .query (.simple default)) == ["ORDER BY/LIMIT"]
+
+/-! ### A Spider-shaped schema (#351)
+
+Spider's schemas (`SqlBridge.Spider.schemaOf`) store names lowercased and fold references with
+`String.toLower`, as sqlite's names are case-insensitive. The theorem's hypotheses hold for them:
+the fold keeps names equal ignoring case, the names are well formed, and a database that answers
+every spelling of a table name alike relates (here an empty one, to show `DbRel` is satisfiable
+under folding; `SqlEquiv` looks a table up by the name as written, registry row 20). -/
+
+open SqlBridge.Spider in
+def singerSchema : NamedSchema :=
+  { schemaOf #[⟨"singer", #[("singer_id", .int), ("name", .text), ("age", .int)]⟩] with
+    config := SqlEquiv.Dialect.sqlite.config }
+
+example : ∀ s, (singerSchema.fold s).toLower = s.toLower := string_toLower_toLower
+
+example : WellNamed singerSchema := by
+  constructor <;> (simp only [singerSchema, SqlBridge.Spider.schemaOf]; decide +kernel)
+
+example : DbRel singerSchema (fun _ => []) (fun _ => []) := fun _ _ _ => .nil
+
+/-- Mixed-case references, as Spider writes them, are in the fragment and elaborate under the
+    folding schema, so `elabStmt_correct` applies to them. -/
+def inFragmentSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt@(.query (.simple (.mk false items (some (.table ⟨name, al⟩)) wh [] none [] none none))) =>
+    itemsFragment items && wh.all isFragment && stmt == fragmentStmt items name al wh &&
+      (elabStmt singerSchema stmt).toBool
+  | _ => false
+
+#guard inFragmentSpider "SELECT Name FROM Singer WHERE Age > 20"
+#guard inFragmentSpider "SELECT T1.name FROM SINGER AS T1 WHERE t1.AGE >= 30 OR T1.Name = 'Joe'"
+#guard inFragmentSpider "SELECT singer_id, NAME FROM singer"
+#guard !inFragmentSpider "SELECT Name FROM Singers"
 
 end SqlCoreTest.CorrectExamples

@@ -36,8 +36,8 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 
 
 # Elaborator-correctness roadmap (#352, docs/TYPED_CORE_PLAN.md): each step lifts the features
-# it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351) changes no shape
-# but is needed before the theorem applies to any Spider query (Spider schemas fold names).
+# it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351, done) let the
+# theorem apply to Spider's case-folding schemas at all.
 ROADMAP = [
     ("1. ORDER BY / LIMIT", {"ORDER BY/LIMIT"}),
     ("2. Joins (inner, cross)", {"join"}),
@@ -80,12 +80,13 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "result rows match the untyped evaluator's, for `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`",
         "with literals, columns, comparisons, `AND`, `OR`, `NOT`. Counts are of the elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
-        "`docs/TYPED_CORE_PLAN.md`. **The theorem also assumes the schema does not fold names, and",
-        "Spider's schemas lowercase them, so until #351 it applies to none of these queries.**",
+        "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",
+        "lowercase (#351), given that the untyped database answers every spelling of a table name",
+        "alike (as the evaluate harness's lowercasing does) and no comparison orders two booleans.",
         "",
         "| Step | Queries in the fragment |",
         "|------|------------------------:|",
-        f"| Today (shape) | {now} |",
+        f"| Today | {now} |",
     ]
     lifted: set[str] = set()
     for name, feats in ROADMAP:
