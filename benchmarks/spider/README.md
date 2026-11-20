@@ -71,6 +71,17 @@ but is reported under its own label naming the registry row (e.g. **known
 divergence: AVG/SUM over a TEXT column (registry row 17)**), so the remaining
 unlabelled classes are the ones still to investigate.
 
+**DuckDB cross-check** (#225 stage 2). Each disagreement with sqlite is re-run on
+DuckDB (the `duckdb` CLI, loaded with the same synthetic data: `number`/`boolean`
+columns as BIGINT, the rest as VARCHAR). If DuckDB rejects the query or answers
+differently from sqlite, the class gains an **engine-divergent** prefix saying
+which, and whether our answer is DuckDB's. sqlite's answer is then not the only
+defensible one, so the report counts these apart from "failures of ours" (queries
+where sqlite and DuckDB agree and we do not). The headline rate and the ratchet
+are unchanged: an engine-divergent query still does not count as agreement. Only
+disagreements are cross-checked, so CI stays fast; without the CLI the report says
+the cross-check was not run. A self-test guards the classification.
+
 **Stress variants** (`--stress=K`). The fixed data (5 rows per table, NULLs only on
 row 3, foreign keys cycling 1–5) can hide bugs: the grouped-aggregate bug of #353
 passed most queries by luck of the data. `python3 tools/spider_eval_baseline.py

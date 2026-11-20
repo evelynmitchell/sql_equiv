@@ -6,7 +6,10 @@ For every (db, query) pair in the dev corpus, builds the schema from
 benchmarks/spider/dev_tables.json, populates small DETERMINISTIC synthetic
 data (FK-aware so joins discriminate), evaluates the query with our engine
 (sql_equiv --spider-eval) and with sqlite3 (in-process — the Spider-fidelity
-oracle per the role split on #225), and compares result multisets.
+oracle per the role split on #225), and compares result multisets. Each
+disagreement is cross-checked on DuckDB (the `duckdb` CLI, same data): when
+DuckDB rejects the query or disagrees with sqlite, the class is labelled
+"engine-divergent" and is not a failure of ours (still not counted as agreement).
 
 Failure classes become issues; the agree-count is ratcheted in
 tools/spider_eval_minimum.txt. The count is exact multiset matches plus
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import re
 import sqlite3
 import subprocess
@@ -377,6 +381,92 @@ def classify_query(sql: str) -> str:
     return "+".join(feats[:3]) if feats else "plain SELECT"
 
 
+DUCKDB = shutil.which("duckdb")
+
+
+def _duck_literal(v) -> str:
+    if v is None:
+        return "NULL"
+    if isinstance(v, (int, float)):
+        return str(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def duckdb_file(schema: dict, tables, rows, workdir: Path) -> Path:
+    """A DuckDB database holding the same synthetic data as `sqlite_for` (same column types:
+    `number`/`boolean` as integers, everything else as text)."""
+    path = workdir / f"{schema['db_id']}.duckdb"
+    if path.exists():
+        return path
+    types = schema["column_types"]
+    cols = schema["column_names_original"]
+    ti_of = {t: i for i, t in enumerate(schema["table_names_original"])}
+    stmts = []
+    for tname, colnames in tables:
+        ctypes = [types[i] for i, (t, _) in enumerate(cols) if t == ti_of[tname]]
+        decls = ", ".join(f'"{c}" {"BIGINT" if ty in ("number", "boolean") else "VARCHAR"}'
+                          for c, ty in zip(colnames, ctypes))
+        stmts.append(f'CREATE TABLE "{tname}" ({decls});')
+        for row in rows[tname]:
+            stmts.append(f'INSERT INTO "{tname}" VALUES ({", ".join(_duck_literal(c) for c in row)});')
+    subprocess.run([DUCKDB, str(path)], input="\n".join(stmts), text=True,
+                   capture_output=True, check=True)
+    return path
+
+
+def duckdb_rows(path: Path, query: str):
+    """("ok", rows) or ("err", message): the query on DuckDB, cells as text, booleans as 1/0."""
+    r = subprocess.run([DUCKDB, "-readonly", "-noheader", "-list", "-separator", "\x1f",
+                        "-nullvalue", "NULL", str(path), "-c", query],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0 or r.stderr.strip():
+        msg = (r.stderr.strip().splitlines() or ["error"])[0]
+        return ("err", msg.split(". ")[0][:100])
+    out = []
+    for line in r.stdout.splitlines():
+        out.append([{"true": "1", "false": "0"}.get(c, None if c == "NULL" else c)
+                    for c in line.split("\x1f")])
+    return ("ok", out)
+
+
+def duckdb_verdict(path: Path | None, query: str, ours: list, sq_rows: list) -> str | None:
+    """Stage 2 (#225): None when DuckDB agrees with sqlite (a failure of ours), else the
+    engine-divergent label: DuckDB rejects the query, or returns another answer (and whether
+    ours is DuckDB's)."""
+    if path is None:
+        return None
+    status, duck = duckdb_rows(path, query)
+    if status == "err":
+        return f"engine-divergent: DuckDB rejects the query ({duck})"
+    if normalize(duck) == normalize(sq_rows):
+        return None
+    if normalize(ours) == normalize(duck):
+        return "engine-divergent: DuckDB differs from sqlite, ours matches DuckDB"
+    return "engine-divergent: DuckDB differs from sqlite and from ours"
+
+
+def _self_test_duckdb_verdict() -> None:
+    """Guards `duckdb_verdict` (needs the duckdb CLI; skipped without it)."""
+    if DUCKDB is None:
+        return
+    schema = {"db_id": "t", "table_names_original": ["T"],
+              "column_names_original": [[-1, "*"], [0, "n"], [0, "s"]],
+              "column_types": ["text", "number", "text"]}
+    with tempfile.TemporaryDirectory() as d:
+        path = duckdb_file(schema, [("T", ["n", "s"])],
+                           {"T": [[1, "a"], [2, None], [None, "it's"]]}, Path(d))
+        q = 'SELECT n, s FROM T'
+        sq = [[1, "a"], [2, None], [None, "it's"]]
+        assert duckdb_verdict(path, q, [], sq) is None, "DuckDB agrees with sqlite"
+        v = duckdb_verdict(path, "SELECT avg(s) FROM T", [], [[0.0]])
+        assert v and v.startswith("engine-divergent: DuckDB rejects"), v
+        v = duckdb_verdict(path, "SELECT 1 = 1", [["1"]], [[0]])
+        assert v == "engine-divergent: DuckDB differs from sqlite, ours matches DuckDB", v
+        v = duckdb_verdict(path, "SELECT 2", [[3]], [[1]])
+        assert v == "engine-divergent: DuckDB differs from sqlite and from ours", v
+        assert duckdb_verdict(None, q, [], sq) is None
+
+
 def run_corpus(schemas: dict, pairs: list, variant: int):
     """Evaluate every corpus query on one data variant, with us and with sqlite. Returns
     (agree, tie_ok, affinity_ok, failures, oracle_err, accepted): `accepted[i]` is "agree" for an
@@ -387,8 +477,10 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
     manifest_lines = []
     conns: dict[str, sqlite3.Connection] = {}
     text_cols: dict[str, set[str]] = {}
+    built: dict[str, tuple] = {}
     for db_id, schema in schemas.items():
         tables, rows = build_db(schema, variant)
+        built[db_id] = (tables, rows)
         conns[db_id] = sqlite_for(schema, tables, rows)
         text_cols[db_id] = text_affinity_columns(schema, tables, rows)
         manifest_lines.append(f"#DB {db_id}")
@@ -442,6 +534,16 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
         elif cur is not None:
             cur_rows.append(line.split("|"))
 
+    duck_dir = Path(tempfile.mkdtemp(prefix="spider_duck_")) if DUCKDB else None
+
+    def duck_label(i: int, p: dict, ours_rows: list, sq_rows: list, label: str) -> str:
+        if duck_dir is None:
+            return label
+        tables, rows = built[p["db"]]
+        path = duckdb_file(schemas[p["db"]], tables, rows, duck_dir)
+        verdict = duckdb_verdict(path, p["query"], ours_rows, sq_rows)
+        return label if verdict is None else f"{verdict} — {label}"
+
     agree = 0
     tie_ok: list[str] = []
     affinity_ok: list[str] = []
@@ -456,8 +558,8 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
             continue
         status, payload = ours.get(i, ("err", "missing output"))
         if status == "err":
-            failures[f"ours-error: {classify_query(p['query'])}"].append(
-                (p["query"], str(payload)))
+            failures[duck_label(i, p, [], sq_rows, f"ours-error: {classify_query(p['query'])}")
+                     ].append((p["query"], str(payload)))
             continue
         if normalize(payload) == normalize(sq_rows):
             agree += 1
@@ -475,12 +577,16 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
         elif aggregates_text(p["query"], text_declared_columns(schemas[p["db"]])):
             # A known divergence, reported under its own label and still counted as a
             # failure: sqlite coerces TEXT inside AVG/SUM (registry row 17, decided).
-            failures["known divergence: AVG/SUM over a TEXT column (registry row 17)"].append(
+            failures[duck_label(i, p, payload, sq_rows,
+                "known divergence: AVG/SUM over a TEXT column (registry row 17)")].append(
                 (p["query"], f"ours {payload} vs sqlite {sq_rows}"))
         else:
-            failures[f"mismatch: {classify_query(p['query'])}"].append(
+            failures[duck_label(i, p, payload, sq_rows,
+                f"mismatch: {classify_query(p['query'])}")].append(
                 (p["query"], f"ours {len(payload)} rows vs sqlite {len(sq_rows)} rows"))
 
+    if duck_dir is not None:
+        shutil.rmtree(duck_dir, ignore_errors=True)
     return agree, tie_ok, affinity_ok, failures, oracle_err, accepted
 
 
@@ -528,6 +634,7 @@ def main() -> None:
     _self_test_tie_valid()
     _self_test_text_affinity()
     _self_test_aggregates_text()
+    _self_test_duckdb_verdict()
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
 
@@ -541,6 +648,9 @@ def main() -> None:
     accepted = agree + len(tie_ok) + len(affinity_ok)
     rate = 100.0 * accepted / total if total else 0.0
     strict_rate = 100.0 * agree / total if total else 0.0
+    divergent = sum(len(v) for c, v in failures.items() if c.startswith("engine-divergent"))
+    ours_fail = sum(len(v) for c, v in failures.items()
+                    if not c.startswith(("engine-divergent", "oracle-error")))
     if not check_only:
         lines = [
             "# Spider Dev-Set Evaluate Report",
@@ -562,6 +672,14 @@ def main() -> None:
             "  comparison sqlite performs; our core semantics keep it a type error (#235,",
             "  docs/IMPLEMENTATION_DEFINED.md row 12). Includes rewritten answers that are",
             "  tie-valid. The original query is always tried first.",
+            (f"- Engine-divergent: {divergent}: DuckDB (cross-check) rejects the query or"
+             if DUCKDB else
+             "- Engine-divergent: not checked (duckdb CLI not installed): every"),
+            ("  disagrees with sqlite, so sqlite's answer is not the only defensible one."
+             if DUCKDB else "  disagreement below counts as ours."),
+            "  Still counted as disagreements with sqlite (the rate above), but not as",
+            "  failures of ours. The class says whether ours matches DuckDB.",
+            f"- Failures of ours (sqlite and DuckDB agree, we do not): {ours_fail}",
             "",
             "Deterministic synthetic data (5 rows/table, FK-aware) over the dev",
             "schemas; multiset comparison of result rows.",
@@ -577,7 +695,8 @@ def main() -> None:
             lines.append(f"| {len(items)} | {cls} | `{q}` | {d[:60]} |")
         REPORT.write_text("\n".join(lines) + "\n")
         print(f"Evaluate-agreement: {accepted}/{total} ({rate:.1f}%) "
-              f"[exact {agree}, tie-valid {len(tie_ok)}, affinity-emulated {len(affinity_ok)}] "
+              f"[exact {agree}, tie-valid {len(tie_ok)}, affinity-emulated {len(affinity_ok)}; "
+              f"engine-divergent {divergent if DUCKDB else 'n/a'}, ours {ours_fail}] "
               f"— report: {REPORT}")
 
     minimum = int(RATCHET.read_text().strip()) if RATCHET.exists() else 0

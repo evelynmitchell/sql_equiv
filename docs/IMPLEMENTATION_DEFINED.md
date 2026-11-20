@@ -64,7 +64,9 @@ the issue or PR.
 `tools/spider_eval_baseline.py` compares against sqlite. Where we tolerate or
 emulate an implementation-defined difference, the harness counts it in its own
 labelled category with a self-test (as with **tie-valid** answers), never as a
-silent pass.
+silent pass. Disagreements where DuckDB also disagrees with sqlite (or rejects
+the query) are labelled **engine-divergent**: reported apart from failures of
+ours, but still not counted as agreement.
 
 ### 4. Changing a row
 
