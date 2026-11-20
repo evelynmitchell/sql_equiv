@@ -802,7 +802,8 @@ open SqlCore SqlBridge SqlBridge.Correct
 def limitWrap {S : DbSchema} {k : ℕ} (lim off : Option ℕ) (q : Query S k) : Query S k :=
   match lim, off with
   | none, none => q
-  | l, o => .limit l (o.getD 0) q
+  | some l, o => .limit (some l) (o.getD 0) q
+  | none, some o => .limit none o q
 
 /-- The query `finishSelect` builds without `DISTINCT`: the projection, sorted below it when there
     are keys, then `LIMIT` / `OFFSET`. -/
@@ -918,5 +919,115 @@ theorem keysRel_of_elab (hfoldCI : ∀ x y, fold x = fold y ↔ x.toLower = y.to
     exact (orderKey_dir fold _ its _ dir nulls hki).2
   · intro i
     exact hty _ (List.getElem_mem i.2)
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+/-- The typed core's `OFFSET` / `LIMIT` on a list (`Query.eval_limit`, offset default 0). -/
+def typedLimit {α : Type _} (lim off : Option ℕ) (l : List α) : List α :=
+  match lim with
+  | some c => (l.drop (off.getD 0)).take c
+  | none => l.drop (off.getD 0)
+
+/-- `SqlEquiv`'s `OFFSET` / `LIMIT` on a list (`applyOrderByLimitOffsetAligned`). -/
+def untypedLimit {α : Type _} (lim off : Option ℕ) (l : List α) : List α :=
+  let o := match off with
+    | some m => l.drop m
+    | none => l
+  match lim with
+  | some n => o.take n
+  | none => o
+
+theorem eval_limitWrap {S : DbSchema} {k : ℕ} (D : Database S) (lim off : Option ℕ)
+    (q : Query S k) {rs : List (Row k)} (h : (limitWrap lim off q).eval D = .ok rs) :
+    ∃ base, q.eval D = .ok base ∧ rs = typedLimit lim off base := by
+  cases lim <;> cases off <;> simp only [limitWrap] at h
+  all_goals first
+    | exact ⟨rs, h, by simp [typedLimit]⟩
+    | (simp only [Query.eval_limit, bind, Except.bind] at h
+       split at h
+       · cases h
+       · rename_i base hb
+         simp only [pure, Except.pure, Except.ok.injEq] at h
+         exact ⟨base, hb, by rw [← h]; simp [typedLimit]⟩)
+
+/-- `OFFSET` then `LIMIT` keep related lists related. -/
+theorem limit_rel {α β : Type _} {P : α → β → Prop} {as : List α} {bs : List β}
+    (h : List.Forall₂ P as bs) (lim off : Option ℕ) :
+    List.Forall₂ P (typedLimit lim off as) (untypedLimit lim off bs) := by
+  have hd : List.Forall₂ P (as.drop (off.getD 0))
+      (match off with | some m => bs.drop m | none => bs) := by
+    cases off with
+    | some m => exact List.forall₂_drop m h
+    | none => simpa using h
+  cases lim with
+  | some c => exact List.forall₂_take c hd
+  | none => exact hd
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+theorem bind_ok {α β ε : Type _} {x : Except ε α} {f : α → Except ε β} {b : β}
+    (h : (x >>= f) = .ok b) : ∃ a, x = .ok a ∧ f a = .ok b := by
+  cases x with
+  | error e => cases h
+  | ok a => exact ⟨a, rfl, h⟩
+
+theorem applyOrder_eq (compareEval : SqlEquiv.Database → SqlEquiv.Row → SqlEquiv.Row →
+    List SqlEquiv.OrderByItem → Bool) (db : SqlEquiv.Database)
+    (orderBy : List SqlEquiv.OrderByItem) (lim off : Option ℕ) (sources rows : SqlEquiv.Table) :
+    SqlEquiv.applyOrderByLimitOffsetAligned compareEval db orderBy lim off true sources rows =
+      untypedLimit lim off (if orderBy.isEmpty then rows else
+        ((rows.zip sources).mergeSort fun p₁ p₂ =>
+          compareEval db (p₁.1 ++ p₁.2) (p₂.1 ++ p₂.2) orderBy).map (·.1)) := by
+  cases lim <;> cases off <;> rfl
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String) (db : SqlEquiv.Database)
+  (Γ : Fin n → SqlType) (items : List SqlEquiv.SelectItem) (orderBy : List SqlEquiv.OrderByItem)
+
+/-- Projection, `ORDER BY`, `OFFSET` and `LIMIT` over related input rows: the typed result relates,
+    in order, to `SqlEquiv`'s. -/
+theorem finish_rel {S : DbSchema} {D : Database S} {q₀ : Query S n} {R : List (Row n)}
+    {U : List SqlEquiv.Row} (hR : q₀.eval D = .ok R)
+    (hRU : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U)
+    {its : List (Expr n × Column)} (hits : ItemsRel cols fold items its)
+    (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1)
+    {keyList : List (SortKey n)} (hlen : orderBy.length = keyList.length)
+    (hk : keyList.length ≠ 0 → KeysRel cols fold db Γ items orderBy hlen (fun i => keyList[i]))
+    (lim off : Option ℕ) {rs : List (Row its.length)}
+    (hrs : (limitWrap lim off (if keyList.length = 0 then .project (fun i => (its[i]).1) q₀
+      else .project (fun i => (its[i]).1)
+        (.orderBy (fun i : Fin keyList.length => keyList[i]) q₀))).eval D = .ok rs) :
+    List.Forall₂ OutRel rs
+      (SqlEquiv.applyOrderByLimitOffsetAligned
+        (SqlEquiv.compareByOrderItemsParam fun db' r e => SqlEquiv.evalExprWithDb db' r e)
+        db orderBy lim off true U (U.map (projRow db items))) := by
+  obtain ⟨base, hbase, rfl⟩ := eval_limitWrap D lim off _ hrs
+  rw [applyOrder_eq]
+  apply limit_rel
+  by_cases hk0 : keyList.length = 0
+  · have ho : orderBy = [] := List.eq_nil_of_length_eq_zero (by omega)
+    subst ho
+    simp only [hk0, ↓reduceIte, Query.eval_project, hR, bind, Except.bind] at hbase
+    simp only [List.isEmpty_nil, ↓reduceIte]
+    exact project_rel cols fold db hits hnb hRU hbase
+  · have hne : orderBy.isEmpty = false := by
+      cases orderBy with
+      | nil => simp at hlen; omega
+      | cons _ _ => rfl
+    simp only [hk0, ↓reduceIte] at hbase
+    simp only [hne, Bool.false_eq_true, ↓reduceIte]
+    rw [Query.eval_project] at hbase
+    obtain ⟨sorted, hsorted, hout⟩ := bind_ok hbase
+    rw [Query.eval_orderBy, hR] at hsorted
+    obtain ⟨R', hR', hK'⟩ := bind_ok hsorted
+    cases hR'
+    obtain ⟨K, hK, hpure⟩ := bind_ok hK'
+    cases hpure
+    exact ordered_out_rel cols fold db Γ items orderBy hlen _ (hk hk0) hits hnb hRU hK hout
 
 end SqlBridge.CorrectOrder
