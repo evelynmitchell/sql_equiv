@@ -17,6 +17,7 @@ import LSpecTests.QueryHelpers
 import LSpecTests.EdgeCaseDb
 import LSpecTests.DiffSqlite
 import LSpecTests.DiffDuckdb
+import LSpecTests.DiffPostgres
 import LSpecTests.RewriterProperties
 
 open LSpec SlimCheck
@@ -30,11 +31,13 @@ def main : IO UInt32 := do
   -- IO-based tests (SQLite differential)
   let sqliteTests ← DiffSqlite.runAllTests
   let duckdbTests ← DiffDuckdb.runAllTests
+  let postgresTests ← DiffPostgres.runAllTests
   lspecIO (.ofList [
     ("Expression Algebra", [ExprAlgebra.allTests cfg]),
     ("NULL Semantics", [NullSemantics.allTests cfg]),
     ("Edge-Case Databases", [EdgeCaseDb.allTests cfg]),
     ("SQLite Differential", [sqliteTests]),
     ("DuckDB Differential", [duckdbTests]),
+    ("Postgres Differential", [postgresTests]),
     ("Rewriter Properties", [RewriterProperties.allTests cfg])
   ]) []
