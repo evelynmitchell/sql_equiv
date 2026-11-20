@@ -726,3 +726,294 @@ theorem elabStmt_correct_group (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
     exact filter_rel _ _ db (translates_of_elab _ _ w (hw w rfl) hp) (hnbq₀.1 _ hsrc) hrows hR'
 
 end SqlBridge.CorrectGroup
+
+namespace SqlBridge.CorrectGroup
+open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder SqlBridge.CorrectJoin
+open SqlBridge.CorrectAgg
+
+/-! ### `HAVING` (roadmap step 3b-2) -/
+
+section Having
+variable {n g a : ℕ} (cols : Fin n → Column) (out : Fin (g + a) → Column) (fold : String → String)
+  (keys : Fin g → Expr n) (aggs : Fin a → AggCall n)
+
+/-- A `HAVING` predicate over the aggregate's output elaborates the untyped one: literals,
+    aggregates of step 3a (their output column), key columns (their key column), comparisons,
+    `AND`, `OR`, `NOT`. -/
+inductive TranslatesH : SqlEquiv.Expr → Expr (g + a) → Prop
+  | lit {v : SqlEquiv.Value} {w : Value} : elabValue v = some w → TranslatesH (.lit v) (.lit w)
+  | litNull {v : SqlEquiv.Value} (τ : SqlType) : elabValue v = none →
+      TranslatesH (.lit v) (.null τ)
+  | agg {x : SqlEquiv.Expr} {j : Fin a} : aggFragment x = true →
+      elabAgg cols fold x = .ok (aggs j) → TranslatesH x (.col (Fin.natAdd g j))
+  | key {c : SqlEquiv.ColumnRef} {i : Fin g} : elabExpr cols fold noHook (.col c) = .ok (keys i) →
+      TranslatesH (.col c) (.col (Fin.castAdd a i))
+  | cmp {op : SqlEquiv.BinOp} {c : CmpOp} {x y : SqlEquiv.Expr} {x' y' : Expr (g + a)} :
+      elabBinOp op = .ok (.cmp c) → TranslatesH x x' → TranslatesH y y' →
+      TranslatesH (.binOp op x y) (.binary (.cmp c) (retypeNull out x' y') (retypeNull out y' x'))
+  | and {x y : SqlEquiv.Expr} {x' y' : Expr (g + a)} : TranslatesH x x' → TranslatesH y y' →
+      TranslatesH (.binOp .and x y) (.binary .and (retypeNull out x' y') (retypeNull out y' x'))
+  | or {x y : SqlEquiv.Expr} {x' y' : Expr (g + a)} : TranslatesH x x' → TranslatesH y y' →
+      TranslatesH (.binOp .or x y) (.binary .or (retypeNull out x' y') (retypeNull out y' x'))
+  | not {x : SqlEquiv.Expr} {x' : Expr (g + a)} : TranslatesH x x' →
+      TranslatesH (.unaryOp .not x) (.unary .not x')
+
+/-- On a group's output row, a `HAVING` predicate that evaluates relates to `SqlEquiv`'s value of
+    it over the group's rows and sample row. -/
+theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {Δ : Fin (g + a) → SqlType}
+    {k : Row g} {A : Row a} {rs : List (Row n)} {us : List SqlEquiv.Row} {s : SqlEquiv.Row}
+    (hrows : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) rs us)
+    (hA : AggCall.evalAll aggs rs = .ok A) (hconf : Row.Conforms Δ (Fin.append k A : Row (g + a)))
+    (hs : ∃ r, RowRel cols fold r s ∧ r.Conforms Γ ∧ Expr.evalRow keys r = .ok k)
+    (hnbK : ∀ i, NoBoolOrder Γ (keys i)) (hnbAgg : ∀ j, AggNoBool Γ (aggs j))
+    (has : ∀ j, ∃ σ, (aggs j).typeOf Γ = some σ) :
+    ∀ {e : SqlEquiv.Expr} {e' : Expr (g + a)}, TranslatesH cols out fold keys aggs e e' →
+      NoBoolOrder Δ e' → ∀ {d : Datum}, e'.eval (Fin.append k A) = .ok d →
+        ∃ v, SqlEquiv.evalExprWithAggParam ee db us s e = some v ∧ DatumRel d v := by
+  intro e e' ht
+  induction ht with
+  | lit hw =>
+    intro _ d h
+    cases h
+    exact ⟨_, by simp [SqlEquiv.evalExprWithAggParam, ee, SqlEquiv.evalExprWithDb_lit],
+      valRel_of_elabValue hw⟩
+  | @litNull v τ hw =>
+    intro _ d h
+    cases h
+    cases v <;> simp [elabValue] at hw
+    rename_i t
+    exact ⟨.null t, by simp [SqlEquiv.evalExprWithAggParam, ee, SqlEquiv.evalExprWithDb_lit], ⟨t, rfl⟩⟩
+  | @agg x j hx hel =>
+    intro _ d h
+    have hd : d = A j := by
+      have : (Expr.col (Fin.natAdd g j) : Expr (g + a)).eval (Fin.append k A) = .ok (A j) := by
+        show Except.ok _ = _; rw [Fin.append_right]
+      exact Except.ok.inj (h.symm.trans this)
+    subst hd
+    obtain ⟨σ, hσ⟩ := has j
+    exact agg_rel cols fold db hrows s x hx hel (hnbAgg j) hσ (evalAll_get hA j)
+  | @key c i hel =>
+    intro _ d h
+    have hd : d = k i := by
+      have : (Expr.col (Fin.castAdd a i) : Expr (g + a)).eval (Fin.append k A) = .ok (k i) := by
+        show Except.ok _ = _; rw [Fin.append_left]
+      exact Except.ok.inj (h.symm.trans this)
+    subst hd
+    obtain ⟨r, hrow, hr, hk⟩ := hs
+    have hki : (keys i).eval r = .ok (k i) := Expr.evalRow_eq_ok_iff.mp hk i
+    obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols fold db hrow hr
+      (translates_of_elab cols fold (.col c) rfl hel) (hnbK i) hki
+    exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, ee, hv], hrel⟩
+  | @cmp op c x y x' y' hop _ _ iha ihb =>
+    intro hnb d h
+    obtain ⟨hc, hna, hnb'⟩ := hnb
+    obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
+    have hea' := hea; have heb' := heb
+    rw [eval_retypeNull] at hea' heb'
+    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull out y' hna) hea'
+    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull out x' hnb') heb'
+    obtain ⟨v, hv, hrel⟩ := cmp_agree hop hra hrb (fun h1 h2 p q hpq => by
+      rcases hc with hc | hc | ⟨τ, hτ, hτb⟩
+      · exact h1 hc
+      · exact h2 hc
+      · rcases Expr.eval_ok_or_divisionByZero hconf hτ with ⟨d', hd', hty⟩ | ⟨hdz, _⟩
+        · rw [hea] at hd'; cases hd'
+          rw [hpq.1] at hty
+          exact hτb (by simpa [Datum.HasType, Value.type] using hty.symm)
+        · rw [hea] at hdz; cases hdz) hd
+    exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hvb, hv], hrel⟩
+  | and _ _ iha ihb =>
+    intro hnb d h
+    obtain ⟨hna, hnb'⟩ := hnb
+    obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
+    rw [eval_retypeNull] at hea heb
+    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull out _ hna) hea
+    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull out _ hnb') heb
+    obtain ⟨v, hv, hrel⟩ := and_agree hra hrb hd
+    exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hvb, hv], hrel⟩
+  | or _ _ iha ihb =>
+    intro hnb d h
+    obtain ⟨hna, hnb'⟩ := hnb
+    obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
+    rw [eval_retypeNull] at hea heb
+    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull out _ hna) hea
+    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull out _ hnb') heb
+    obtain ⟨v, hv, hrel⟩ := or_agree hra hrb hd
+    exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hvb, hv], hrel⟩
+  | not _ iha =>
+    intro hn d h
+    obtain ⟨da, hea, hd⟩ := eval_unary_ok h
+    obtain ⟨va, hva, hra⟩ := iha hn hea
+    obtain ⟨v, hv, hrel⟩ := not_agree hra hd
+    exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hv], hrel⟩
+/-- The `HAVING` predicates of step 3b-2: literals, key columns, aggregates of step 3a,
+    comparisons, `AND`, `OR`, `NOT`. -/
+def havingFragment (groupBy : List SqlEquiv.Expr) : SqlEquiv.Expr → Bool
+  | .lit _ => true
+  | .col c => decide (SqlEquiv.Expr.col c ∈ groupBy)
+  | .binOp op x y =>
+    (match op with
+     | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
+     | _ => false) && havingFragment groupBy x && havingFragment groupBy y
+  | .unaryOp .not x => havingFragment groupBy x
+  | e => aggFragment e
+
+omit out keys aggs in
+theorem elab_lit_not_col (v : SqlEquiv.Value) {e'' : Expr n}
+    (h : elabExpr cols fold noHook (.lit v) = .ok e'') : ∀ idx, e'' ≠ .col idx := by
+  unfold elabExpr at h
+  simp only [noHook] at h
+  cases v <;> simp only [elabValue, pure, Except.pure, Except.ok.injEq] at h <;> subst h <;> simp
+
+omit out keys aggs in
+theorem elab_binOp_not_col (op : SqlEquiv.BinOp) (x y : SqlEquiv.Expr) {e'' : Expr n}
+    (h : elabExpr cols fold noHook (.binOp op x y) = .ok e'') : ∀ idx, e'' ≠ .col idx := by
+  simp only [elabExpr, noHook] at h
+  rcases hx : elabExpr cols fold noHook x with _ | x'
+  · cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure]
+  rcases hy : elabExpr cols fold noHook y with _ | y'
+  · cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure]
+  cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure] <;> subst h <;> simp
+
+omit out keys aggs in
+theorem elab_unary_not_col (op : SqlEquiv.UnaryOp) (x : SqlEquiv.Expr) {e'' : Expr n}
+    (h : elabExpr cols fold noHook (.unaryOp op x) = .ok e'') : ∀ idx, e'' ≠ .col idx := by
+  simp only [elabExpr, noHook] at h
+  rcases hx : elabExpr cols fold noHook x with _ | x'
+  · simp [hx, bind, Except.bind] at h
+  simp only [hx, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+  subst h; simp
+
+omit out aggs in
+/-- The aggregate hook declines an expression that is no aggregate of the list and does not
+    elaborate to a key (the keys are columns). -/
+theorem aggHook_none (X : List SqlEquiv.Expr) {e : SqlEquiv.Expr}
+    (hX : X.findIdx? (· == e) = none) (hkc : ∀ i, ∃ idx, keys i = .col idx)
+    (hnc : ∀ e'', elabExpr cols fold noHook e = .ok e'' → ∀ idx, e'' ≠ .col idx) :
+    aggHook (a := a) cols fold keys X e = none := by
+  simp only [aggHook, hX]
+  split
+  · rename_i e'' he
+    rw [Option.map_eq_none_iff, List.find?_eq_none]
+    intro i _
+    obtain ⟨idx, hidx⟩ := hkc i
+    simp only [beq_iff_eq, hidx]
+    exact fun h => hnc e'' he idx h.symm
+  · rfl
+end Having
+
+section HavingElab
+variable {n a : ℕ} (cols : Fin n → Column) (fold : String → String) (keyList : List (Expr n))
+  (out : Fin (keyList.length + a) → Column) (aggs : Fin a → AggCall n) (X : List SqlEquiv.Expr)
+  (groupBy : List SqlEquiv.Expr)
+  (hXf : ∀ x ∈ X, aggFragment x = true)
+  (hXa : ∀ j (hj : j < X.length), ∃ hja : j < a, elabAgg cols fold X[j] = .ok (aggs ⟨j, hja⟩))
+  (hkc : ∀ i : Fin keyList.length, ∃ idx, keyList[i] = .col idx)
+  (hkey : ∀ c, SqlEquiv.Expr.col c ∈ groupBy →
+    ∃ e', elabExpr cols fold noHook (.col c) = .ok e' ∧ e' ∈ keyList)
+include hXf hXa hkc hkey
+
+omit hXa hkc hkey in
+theorem findIdx_none_of_not_agg {e : SqlEquiv.Expr} (he : aggFragment e = false) :
+    X.findIdx? (· == e) = none := by
+  rw [List.findIdx?_eq_none_iff]
+  intro y hy
+  have := hXf y hy
+  have hne : y ≠ e := by rintro rfl; simp_all
+  simpa using hne
+
+omit hXf hkc hkey in
+/-- An aggregate leaf of `HAVING` reads its aggregate's output column. -/
+theorem agg_leaf {e : SqlEquiv.Expr} {e' : Expr (keyList.length + a)} (hfr : aggFragment e = true)
+    (hsub : ∀ x ∈ aggsOf e, x ∈ X)
+    (h : elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) e =
+      .ok e') :
+    TranslatesH cols out fold (fun i : Fin keyList.length => keyList[i]) aggs e e' := by
+  have hmem : e ∈ X := hsub e (by simp [aggsOf_aggFragment e hfr])
+  obtain ⟨j, hj⟩ : ∃ j, X.findIdx? (· == e) = some j :=
+    Option.isSome_iff_exists.mp (by
+      rw [List.findIdx?_isSome, List.any_eq_true]; exact ⟨e, hmem, by simp⟩)
+  obtain ⟨hjl, hje, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hj
+  obtain ⟨hja, hel⟩ := hXa j hjl
+  rw [elab_of_hook _ _ _ (hook_agg cols fold _ X hj hja), Except.ok.injEq] at h
+  subst h
+  simp only [beq_iff_eq] at hje
+  exact .agg hfr (hje ▸ hel)
+
+/-- The elaborated `HAVING` predicate translates the untyped one. -/
+theorem translatesH_of_elab : ∀ (h : SqlEquiv.Expr) {e' : Expr (keyList.length + a)},
+    havingFragment groupBy h = true → (∀ x ∈ aggsOf h, x ∈ X) →
+    elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) h =
+      .ok e' →
+    TranslatesH cols out fold (fun i : Fin keyList.length => keyList[i]) aggs h e'
+  | .lit v, e', _, _, h => by
+    unfold elabExpr at h
+    rw [aggHook_none cols fold _ X (findIdx_none_of_not_agg X hXf rfl)
+      (fun i => hkc i) (fun _ h => elab_lit_not_col cols fold v h)] at h
+    cases v <;> simp only [elabValue, pure, Except.pure, Except.ok.injEq] at h <;> subst h
+    · exact .lit rfl
+    · exact .lit rfl
+    · exact .lit rfl
+    · exact .lit rfl
+    · exact .litNull _ rfl
+  | .col c, e', hf, _, h => by
+    simp only [havingFragment, decide_eq_true_eq] at hf
+    obtain ⟨e₀, he₀, hmem⟩ := hkey c hf
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hmem
+    obtain ⟨i₀, hi₀⟩ : ∃ i₀, (List.finRange keyList.length).find?
+        (fun k : Fin keyList.length => keyList[k] == keyList[i]'hi) = some i₀ :=
+      Option.isSome_iff_exists.mp
+        ((List.find?_isSome (p := fun k : Fin keyList.length => keyList[k] == keyList[i]'hi)).mpr
+          ⟨⟨i, hi⟩, List.mem_finRange _, beq_self_eq_true (keyList[i]'hi)⟩)
+    have hk₀ : keyList[i₀] = keyList[i]'hi := by simpa using List.find?_some hi₀
+    rw [elab_key keyList out cols fold X (findIdx_none_of_not_agg X hXf rfl) he₀ hi₀,
+      Except.ok.injEq] at h
+    subst h
+    exact .key (by rw [he₀, hk₀])
+  | .binOp op x y, e', hf, hsub, h => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    obtain ⟨⟨hop, hx⟩, hy⟩ := hf
+    have hsx : ∀ z ∈ aggsOf x, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
+    have hsy : ∀ z ∈ aggsOf y, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
+    unfold elabExpr at h
+    rw [aggHook_none cols fold _ X (findIdx_none_of_not_agg X hXf (by simp [aggFragment]))
+      (fun i => hkc i) (fun _ h => elab_binOp_not_col cols fold op x y h)] at h
+    dsimp only at h
+    rcases hea : elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) x
+      with _ | x'
+    · cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure]
+    rcases heb : elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) y
+      with _ | y'
+    · cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure]
+    have ta := translatesH_of_elab x hx hsx hea
+    have tb := translatesH_of_elab y hy hsy heb
+    cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure] <;> subst h
+    · exact .cmp rfl ta tb
+    · exact .cmp rfl ta tb
+    · exact .cmp rfl ta tb
+    · exact .cmp rfl ta tb
+    · exact .cmp rfl ta tb
+    · exact .cmp rfl ta tb
+    · exact .and ta tb
+    · exact .or ta tb
+  | .unaryOp op x, e', hf, hsub, h => by
+    cases op <;> simp only [havingFragment] at hf
+    · unfold elabExpr at h
+      rw [aggHook_none cols fold _ X (findIdx_none_of_not_agg X hXf (by simp [aggFragment]))
+        (fun i => hkc i) (fun _ h => elab_unary_not_col cols fold _ x h)] at h
+      dsimp only at h
+      obtain ⟨x', hx', rfl⟩ := bind_pure_ok h
+      exact .not (translatesH_of_elab x hf (fun z hz => hsub z (by simpa [aggsOf] using hz)) hx')
+    all_goals simp [aggFragment] at hf
+  | .countStar, e', hf, hsub, h => agg_leaf cols fold keyList out aggs X hXa
+      (by simpa [havingFragment] using hf) hsub h
+  | .agg fn arg d, e', hf, hsub, h => agg_leaf cols fold keyList out aggs X hXa
+      (by simpa [havingFragment] using hf) hsub h
+  | .func _ _, _, hf, _, _ | .case _ _, _, hf, _, _ | .inList _ _ _, _, hf, _, _
+  | .between _ _ _, _, hf, _, _ | .inSubquery _ _ _, _, hf, _, _ | .exists _ _, _, hf, _, _
+  | .subquery _, _, hf, _, _ | .windowFn _ _ _, _, hf, _, _ => by
+    simp [havingFragment, aggFragment] at hf
+
+end HavingElab
+
+end SqlBridge.CorrectGroup
