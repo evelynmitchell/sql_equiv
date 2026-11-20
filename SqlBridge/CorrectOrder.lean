@@ -794,3 +794,129 @@ theorem ordered_out_rel (hk : KeysRel cols fold db Γ items orderBy hlen keys)
   exact project_pairs_rel cols fold db Γ items orderBy keys hits hnb hW hout
 
 end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+/-- `LIMIT` / `OFFSET` as `finishSelect` adds them. -/
+def limitWrap {S : DbSchema} {k : ℕ} (lim off : Option ℕ) (q : Query S k) : Query S k :=
+  match lim, off with
+  | none, none => q
+  | l, o => .limit l (o.getD 0) q
+
+/-- The query `finishSelect` builds without `DISTINCT`: the projection, sorted below it when there
+    are keys, then `LIMIT` / `OFFSET`. -/
+theorem finishSelect_nondistinct {S : DbSchema} (fold : String → String) (sc : Scoped S)
+    (orderBy : List SqlEquiv.OrderByItem) (lim off : Option ℕ) {e : Elaborated S}
+    (h : finishSelect fold sc false orderBy lim off = .ok e) :
+    ∃ keyList, orderBy.mapM (elabOrderKey fold sc.scope sc.items) = .ok keyList ∧
+      e = ⟨sc.items.length, limitWrap lim off
+        (if keyList.length = 0 then .project (fun i => (sc.items[i]).1) sc.q
+         else .project (fun i => (sc.items[i]).1)
+           (.orderBy (fun i : Fin keyList.length => keyList[i]) sc.q)),
+        fun i => (sc.items[i]).2⟩ := by
+  unfold finishSelect at h
+  rcases hk : orderBy.mapM (elabOrderKey fold sc.scope sc.items) with _ | keyList
+  · simp [hk, bind, Except.bind] at h
+  refine ⟨keyList, rfl, ?_⟩
+  simp only [hk, bind, Except.bind] at h
+  split at h
+  · split at h
+    · cases h
+    · simp only [Bool.false_eq_true, ↓reduceIte, pure, Except.pure, Except.ok.injEq] at h
+      subst h
+      cases lim <;> cases off <;> rfl
+  · simp only [Bool.false_eq_true, ↓reduceIte, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    cases lim <;> cases off <;> rfl
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+theorem mapM_forall₂ {α β ε : Type _} {f : α → Except ε β} :
+    ∀ {l : List α} {l' : List β}, l.mapM f = .ok l' → List.Forall₂ (fun a b => f a = .ok b) l l'
+  | [], l', h => by
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact .nil
+  | a :: l, l', h => by
+    rw [List.mapM_cons] at h
+    rcases ha : f a with _ | b
+    · simp [ha, bind, Except.bind] at h
+    rcases hl : l.mapM f with _ | l''
+    · simp [ha, hl, bind, Except.bind] at h
+    simp only [ha, hl, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    exact .cons ha (mapM_forall₂ hl)
+
+theorem bind_pure_ok {α β ε : Type _} {x : Except ε α} {f : α → β} {b : β}
+    (h : (x >>= fun a => pure (f a)) = .ok b) : ∃ a, x = .ok a ∧ b = f a := by
+  cases x <;> simp_all [bind, Except.bind, pure, Except.pure]
+
+/-- An elaborated `ORDER BY` key keeps the item's direction and `NULL` placement. -/
+theorem orderKey_dir {m : ℕ} (fold : String → String) (sc : SqlEquiv.Expr → ElabM (Expr m))
+    (its : List (Expr m × Column)) (e : SqlEquiv.Expr) (dir : SqlEquiv.OrderDir)
+    (nulls : SqlEquiv.NullsOrder) {key : SortKey m}
+    (h : elabOrderKey fold sc its ⟨e, dir, nulls⟩ = .ok key) :
+    key.desc = (dir == .desc) ∧ key.nullsFirst = (nulls == .first) := by
+  unfold elabOrderKey at h
+  dsimp only at h
+  repeat' split at h
+  all_goals
+    simp only [bind, Except.bind, pure, Except.pure, throw, throwThe, MonadExceptOf.throw] at h
+  all_goals
+    first
+      | (cases h <;> exact ⟨rfl, rfl⟩)
+      | (split at h <;> cases h <;> exact ⟨rfl, rfl⟩)
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+
+/-- The elaborated `ORDER BY` keys of column references satisfy `KeysRel`. -/
+theorem keysRel_of_elab (hfoldCI : ∀ x y, fold x = fold y ↔ x.toLower = y.toLower)
+    (db : SqlEquiv.Database) {Γ : Fin n → SqlType}
+    {items : List SqlEquiv.SelectItem} {its : List (Expr n × Column)}
+    (hif : itemsFragment items = true) (hin : itemsNamed items = true)
+    (hir : ItemsRel cols fold items its)
+    (hnm : List.Forall₂ (fun it x => x.2.name = outName it) items its)
+    (hnbIt : ∀ x ∈ its, NoBoolOrder Γ x.1)
+    {orderBy : List SqlEquiv.OrderByItem} {keyList : List (SortKey n)}
+    (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c)
+    (hk : orderBy.mapM (elabOrderKey fold (elabExpr cols fold noHook) its) = .ok keyList)
+    (hty : ∀ k ∈ keyList, ∃ τ, k.e.typeOf Γ = some τ ∧ τ ≠ .bool) :
+    ∃ hlen : orderBy.length = keyList.length,
+      KeysRel cols fold db Γ items orderBy hlen (fun i => keyList[i]) := by
+  have hF := mapM_forall₂ hk
+  have hlen := hF.length_eq
+  have hget : ∀ i : Fin keyList.length,
+      elabOrderKey fold (elabExpr cols fold noHook) its (orderBy[i.1]'(by rw [hlen]; exact i.2)) = .ok keyList[i] :=
+    fun i => (List.forall₂_iff_get.mp hF).2 i.1 (by rw [hlen]; exact i.2) i.2
+  have hitem : ∀ i : Fin keyList.length, ∃ cr dir nulls,
+      orderBy[i.1]'(by rw [hlen]; exact i.2) = ⟨.col cr, dir, nulls⟩ := by
+    intro i
+    obtain ⟨c, hc⟩ := hcols _ (List.getElem_mem (by rw [hlen]; exact i.2))
+    generalize orderBy[i.1]'(by rw [hlen]; exact i.2) = it at hc ⊢
+    obtain ⟨e, dir, nulls⟩ := it
+    simp only [SqlEquiv.OrderByItem.expr] at hc
+    subst hc
+    exact ⟨c, dir, nulls, rfl⟩
+  refine ⟨hlen, ⟨?_, ?_, ?_, ?_⟩⟩
+  · intro r u hrow hr i d hd
+    obtain ⟨cr, dir, nulls, hi⟩ := hitem i
+    have hki := hget i
+    rw [hi] at hki ⊢
+    exact (orderKey_rel cols fold hfoldCI db hrow hr hif hin hir hnm hnbIt cr dir nulls hki hd).1
+  · intro i
+    obtain ⟨cr, dir, nulls, hi⟩ := hitem i
+    have hki := hget i
+    rw [hi] at hki ⊢
+    exact (orderKey_dir fold _ its _ dir nulls hki).1
+  · intro i
+    obtain ⟨cr, dir, nulls, hi⟩ := hitem i
+    have hki := hget i
+    rw [hi] at hki ⊢
+    exact (orderKey_dir fold _ its _ dir nulls hki).2
+  · intro i
+    exact hty _ (List.getElem_mem i.2)
+
+end SqlBridge.CorrectOrder
