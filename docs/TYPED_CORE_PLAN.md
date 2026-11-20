@@ -153,7 +153,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 `elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
 the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
 sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
-(phase 9, #298). Its fragment today (steps 1, 2 and 3a done) is
+(phase 9, #298). Its fragment today (steps 1 to 3b-4 done) is
 `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`
 (`elabStmt_correct_join`), where `f` nests tables (optionally aliased) under inner joins and
 cross joins without `ON`, with literals, columns, comparisons, `AND`, `OR` and `NOT` (in `ON`
