@@ -255,3 +255,203 @@ theorem colsOutsideAggsList_groupItems {groupBy : List SqlEquiv.Expr} : ∀ item
   | .star _ :: _, h => by simp [groupItems] at h
 
 end SqlBridge.CorrectGroup
+
+namespace SqlBridge.CorrectGroup
+open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder SqlBridge.CorrectJoin
+open SqlBridge.CorrectAgg
+
+theorem mem_of_mem_eraseDups' {α : Type} [BEq α] {a : α} :
+    ∀ (n : ℕ) {l : List α}, l.length ≤ n → a ∈ l.eraseDups → a ∈ l
+  | _, [], _, h => by simp at h
+  | 0, _ :: _, hn, _ => by simp at hn
+  | n + 1, b :: l, hn, h => by
+    rw [List.eraseDups_cons, List.mem_cons] at h
+    rcases h with rfl | h
+    · exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (List.mem_of_mem_filter
+        (mem_of_mem_eraseDups' n (le_trans (List.length_filter_le _ _) (by simpa using hn)) h))
+
+theorem elab_of_hook {m : ℕ} (cols : Fin m → Column) (fold : String → String)
+    (hook : SqlEquiv.Expr → Option (Expr m)) {e : SqlEquiv.Expr} {x : Expr m}
+    (h : hook e = some x) : elabExpr cols fold hook e = .ok x := by
+  unfold elabExpr; rw [h]; rfl
+
+theorem hook_agg {n g a : ℕ} (cols : Fin n → Column) (fold : String → String) (keys : Fin g → Expr n)
+    (X : List SqlEquiv.Expr) {e : SqlEquiv.Expr} {j : ℕ} (hj : X.findIdx? (· == e) = some j)
+    (h : j < a) : aggHook (a := a) cols fold keys X e = some (.col (Fin.natAdd g ⟨j, h⟩)) := by
+  simp [aggHook, hj, h]
+
+theorem hook_key {n g a : ℕ} (cols : Fin n → Column) (fold : String → String) (keys : Fin g → Expr n)
+    (X : List SqlEquiv.Expr) {e : SqlEquiv.Expr} {e' : Expr n} (hj : X.findIdx? (· == e) = none)
+    (he : elabExpr cols fold noHook e = .ok e') {i : Fin g}
+    (hi : (List.finRange g).find? (fun i => keys i == e') = some i) :
+    aggHook (a := a) cols fold keys X e = some (.col (Fin.castAdd a i)) := by
+  simp [aggHook, hj, he, hi]
+
+theorem elab_key {n a : ℕ} (ks : List (Expr n)) (out : Fin (ks.length + a) → Column)
+    (cols : Fin n → Column) (fold : String → String) (X : List SqlEquiv.Expr) {c : SqlEquiv.ColumnRef}
+    {e' : Expr n} (hj : X.findIdx? (· == SqlEquiv.Expr.col c) = none)
+    (he : elabExpr cols fold noHook (.col c) = .ok e') {i : Fin ks.length}
+    (hi : (List.finRange ks.length).find? (fun k => ks[k] == e') = some i) :
+    elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin ks.length => ks[i]) X) (.col c) =
+      .ok (.col (Fin.castAdd a i)) :=
+  elab_of_hook _ _ _ (hook_key _ _ _ _ hj he hi)
+
+set_option maxHeartbeats 1000000 in
+theorem elab_group_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
+    {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} {groupBy : List SqlEquiv.Expr}
+    (hgi : groupItems groupBy items = true) (hgb : groupBy ≠ [])
+    (hw : ∀ w ∈ wh, isFragment w = true) {e : Elaborated N.S}
+    (h : elabStmt N (groupStmt items fr wh groupBy) = .ok e) :
+    e.q.typeOf.isSome ∧ ∃ sub n, ∃ qf : Query N.S n, ∃ cf, elabFrom N sub fr = .ok ⟨n, qf, cf⟩ ∧
+      ∃ q₀ : Query N.S n,
+        ((wh = none ∧ q₀ = qf) ∨ ∃ w p, wh = some w ∧
+          elabExpr cf N.fold noHook w = .ok p ∧ q₀ = .select p qf) ∧
+      ∃ (keyList : List (Expr n)) (a : ℕ) (aggs : Fin a → AggCall n)
+        (its : List (Expr (keyList.length + a) × Column)),
+        groupBy.mapM (elabExpr cf N.fold noHook) = .ok keyList ∧
+        (∀ j, ∃ x, aggFragment x = true ∧ elabAgg cf N.fold x = .ok (aggs j)) ∧
+        List.Forall₂ (fun it x =>
+          (∃ j : Fin a, elabAgg cf N.fold (itemExpr it) = .ok (aggs j) ∧
+            x.1 = .col (Fin.natAdd _ j)) ∨
+          (∃ c, ∃ i : Fin keyList.length, itemExpr it = .col c ∧
+            elabExpr cf N.fold noHook (.col c) = .ok keyList[i] ∧ x.1 = .col (Fin.castAdd a i)))
+          items its ∧
+        e = ⟨its.length, .project (fun i => (its[i]).1)
+          (.aggregate (fun i : Fin keyList.length => keyList[i]) aggs q₀), fun i => (its[i]).2⟩ := by
+  simp only [groupStmt, elabStmt, elabQuery, bind, Except.bind] at h
+  rcases hraw : elabQueryRaw N (.simple (.mk false items (some fr) wh groupBy none [] none none))
+    with _ | e₀
+  · simp [hraw] at h
+  simp only [hraw] at h
+  split at h
+  swap
+  · simp [throw, throwThe, MonadExceptOf.throw] at h
+  rename_i hty
+  simp only [pure, Except.pure, Except.ok.injEq] at h
+  subst h
+  refine ⟨hty, ?_⟩
+  simp only [elabQueryRaw, elabSelect] at hraw
+  rw [elabSelectF] at hraw
+  obtain ⟨⟨n, qf, cf⟩, hf, hraw'⟩ := bind_ok hraw
+  clear hraw
+  rename' hraw' => hraw
+  dsimp only at hraw
+  have hgbe : groupBy.isEmpty = false := by
+    cases groupBy with
+    | nil => exact absurd rfl hgb
+    | cons _ _ => rfl
+  cases wh
+  case' none =>
+    simp only [pure, Except.pure, bind, Except.bind] at hraw
+    rw [aggsOfList_groupItems ?hf items hgi, colsOutsideAggsList_groupItems ?hf2 items hgi] at hraw
+    case hf => intros; rfl
+    case hf2 => intros; rfl
+    simp only [List.map_nil, aggsOfList, aggsOfOpt, colsOutsideAggsOpt, colsOutsideAggsList,
+      List.append_nil, hgbe, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
+      ] at hraw
+    refine ⟨_, n, qf, cf, hf, qf, .inl ⟨rfl, rfl⟩, ?_⟩
+  case' some w =>
+    simp only [subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil, ↓reduceIte] at hraw
+    rcases hp : elabExpr cf N.fold noHook w with _ | p
+    · simp [hp, bind, Except.bind] at hraw
+    simp only [hp, bind, Except.bind, pure, Except.pure] at hraw
+    rw [aggsOfList_groupItems ?hf items hgi, colsOutsideAggsList_groupItems ?hf2 items hgi] at hraw
+    case hf => intros; rfl
+    case hf2 => intros; rfl
+    simp only [List.map_nil, aggsOfList, aggsOfOpt, colsOutsideAggsOpt, colsOutsideAggsList,
+      List.append_nil, hgbe, Bool.false_and, Bool.false_eq_true, ↓reduceIte,
+      ] at hraw
+    refine ⟨_, n, qf, cf, hf, .select p qf, .inr ⟨w, p, rfl, hp, rfl⟩, ?_⟩
+  all_goals
+    split at hraw
+    · cases hraw
+    rename_i keyList hk
+    split at hraw
+    · cases hraw
+    rename_i aggList hv
+    have hK := mapM_forall₂ hk
+    have hV := mapM_forall₂ hv
+    -- every item column is a key, so there are no bare columns
+    have hkey : ∀ c, SqlEquiv.Expr.col c ∈ groupBy → ∃ e', elabExpr cf N.fold noHook (.col c) = .ok e' ∧
+        e' ∈ keyList := fun c hc => by
+      obtain ⟨e', he', h⟩ := forall₂_mem_left hK hc
+      exact ⟨e', h, he'⟩
+    rw [List.filterMap_eq_nil_iff.mpr ?hb] at hraw
+    case hb =>
+      intro c hc
+      have hc' : c ∈ colRefs items := by
+        split at hc
+        · exact mem_of_mem_eraseDups' _ le_rfl hc
+        · simp at hc
+      obtain ⟨e', he', hmem⟩ := hkey c (colRefs_mem hgi c hc')
+      simp [he', hmem]
+    simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ↓reduceIte, List.mapM_nil,
+      pure, Except.pure, List.map_nil, List.append_nil] at hraw
+    split at hraw
+    · cases hraw
+    rename_i out hout
+    split at hraw
+    · cases hraw
+    rename_i its hits
+    obtain ⟨keys', hk', rfl⟩ := finishSelect_nondistinct N.fold _ [] none none hraw
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hk'
+    subst hk'
+    refine ⟨keyList, _, fun j => aggList[j], its, hk, ?_, ?_, rfl⟩
+    · intro ⟨j, hj⟩
+      have hjv : j < aggList.length := by simpa using hj
+      have hjl := hV.length_eq ▸ hjv
+      have hx := (List.forall₂_iff_get.mp hV).2 j hjl hjv
+      simp only [List.get_eq_getElem] at hx
+      have hm := List.mem_eraseDups.mp (List.getElem_mem hjl)
+      exact ⟨_, (List.mem_filter.mp hm).2, hx⟩
+    · refine forall₂_imp_mem (mapM_forall₂ hits) fun it hit x hx => ?_
+      obtain ⟨e, al, rfl, hcase⟩ := groupItems_mem hgi it hit
+      dsimp only at hx
+      rcases hcase with hfr | ⟨c, rfl, hc⟩
+      · -- an aggregate: its column among the aggregates
+        have hmem : e ∈ ((items.map itemExpr).filter aggFragment).eraseDups :=
+          List.mem_eraseDups.mpr (List.mem_filter.mpr ⟨List.mem_map.mpr ⟨_, hit, rfl⟩, hfr⟩)
+        obtain ⟨j, hj⟩ : ∃ j, ((items.map itemExpr).filter aggFragment).eraseDups.findIdx?
+            (· == e) = some j :=
+          Option.isSome_iff_exists.mp (by
+            rw [List.findIdx?_isSome, List.any_eq_true]; exact ⟨e, hmem, by simp⟩)
+        obtain ⟨hjl, hje, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hj
+        simp only [beq_iff_eq] at hje
+        have hjv : j < aggList.length := hV.length_eq ▸ hjl
+        have hja : j < (aggList ++ []).length := by simpa using hjv
+        rw [elab_of_hook _ _ _ (hook_agg _ _ _ _ hj hja)] at hx
+        simp only at hx
+        split at hx
+        · simp only [Except.ok.injEq] at hx
+          subst hx
+          refine .inl ⟨⟨j, hja⟩, ?_, rfl⟩
+          have := (List.forall₂_iff_get.mp hV).2 j hjl hjv
+          simp only [List.get_eq_getElem, hje] at this
+          simpa [itemExpr] using this
+        · simp [throw, throwThe, MonadExceptOf.throw] at hx
+      · -- a key column: its column among the keys
+        have hnone : ((items.map itemExpr).filter aggFragment).eraseDups.findIdx?
+            (· == SqlEquiv.Expr.col c) = none := by
+          rw [List.findIdx?_eq_none_iff]
+          intro y hy
+          have := (List.mem_filter.mp (List.mem_eraseDups.mp hy)).2
+          have hne : y ≠ .col c := by rintro rfl; simp [aggFragment] at this
+          simpa using hne
+        obtain ⟨e', he', hmem⟩ := hkey c hc
+        obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hmem
+        obtain ⟨i₀, hi₀⟩ : ∃ i₀, (List.finRange keyList.length).find?
+            (fun k : Fin keyList.length => keyList[k] == keyList[i]'hi) = some i₀ :=
+          Option.isSome_iff_exists.mp
+            ((List.find?_isSome (p := fun k : Fin keyList.length => keyList[k] == keyList[i]'hi)).mpr ⟨⟨i, hi⟩, List.mem_finRange _, beq_self_eq_true (keyList[i]'hi)⟩)
+        have hk₀ : keyList[i₀] = keyList[i]'hi := by
+          simpa using List.find?_some hi₀
+        rw [elab_key keyList out cf N.fold _ hnone he' hi₀] at hx
+        simp only at hx
+        split at hx
+        · simp only [Except.ok.injEq] at hx
+          subst hx
+          exact .inr ⟨c, i₀, rfl, by rw [he', hk₀], rfl⟩
+        · simp [throw, throwThe, MonadExceptOf.throw] at hx
+
+end SqlBridge.CorrectGroup
