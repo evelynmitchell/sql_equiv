@@ -87,6 +87,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     are distinct ignoring case (`WellNamed`), and no ordering comparison has two boolean
     operands (`QNoBoolOrder`: the typed core orders `false < true`, `SqlEquiv` does not order
     booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
+  - [ ] Elaborator correctness roadmap (#352), below
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
   - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)
@@ -123,6 +124,61 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Bridge (nested, compound bodies, correlated rejected), differential tests, Spider rate:
       **519/564 (92.0%)**, up from 479
 - [ ] Phase 9: retire the untyped semantics (#298)
+
+## Elaborator correctness roadmap (#352)
+
+`elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
+the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
+sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
+(phase 9, #298). Its fragment today is `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]` with literals,
+columns, comparisons, `AND`, `OR` and `NOT`.
+
+**Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
+features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
+against the theorem's own `isFragment`/`fragmentStmt` in `SqlCoreTest/CorrectExamples.lean`).
+`tools/spider_elab_baseline.py` turns them into the coverage table of
+[`elab_report.md`](../benchmarks/spider/elab_report.md): the queries in the fragment today and
+after each step below. At the time of writing (20 Nov 2026, 520 queries elaborate):
+
+| Step | Spider queries in the fragment |
+|------|-------------------------------:|
+| Today | 64 |
+| 1. `ORDER BY` / `LIMIT` | 113 |
+| 2. Joins (inner, cross) | 165 |
+| 3. Aggregates, `GROUP BY`, `HAVING` | 405 |
+| 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 409 |
+| 5. `DISTINCT` | 431 |
+
+Still outside after step 5: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2).
+
+**Step 0, a prerequisite: case folding (#351).** The theorem assumes the schema does not fold
+names (`fold = id`); Spider's schemas lowercase them, as sqlite's names are case-insensitive. So
+until #351 the theorem applies to *none* of the Spider queries above, whatever their shape. The
+table counts shape, which is what the steps change.
+
+**Order, and why.** #352 first listed the steps by proof cost: unary operators, arithmetic,
+`IN`/`BETWEEN`, `DISTINCT`, joins. Measured on Spider, those first four steps add almost
+nothing: the queries that use them also use aggregates, joins or `ORDER BY`. The order above
+follows coverage instead (decided 20 Nov 2026):
+
+1. **`ORDER BY` / `LIMIT`.** The cheapest large step. Both evaluators sort stably, keep input
+   order on ties (registry rows 2 and T14) and carry an explicit NULL position on every key, so
+   the in-order output relation (`List.Forall₂ OutRel`) can stay as it is.
+2. **Joins (inner and cross).** `Fin.append` columns against `SqlEquiv`'s concatenated
+   qualified rows; `RowRel` handles two qualifiers and `WellNamed` uniqueness becomes
+   uniqueness per qualifier.
+3. **Aggregates and `GROUP BY` / `HAVING`.** The largest blocker, and the hardest step. Known
+   difference: `AVG` is an exact rational in the typed core (T10) and rounded to 16 places in
+   `SqlEquiv` when it does not terminate (row 7), so the theorem needs a hypothesis there or
+   covers terminating averages only.
+4. **Unary operators, arithmetic, `IN (list)`, `BETWEEN`.** As in #352's first steps: division
+   by zero (a typed error, an untyped NULL) and decimal `%` need a hypothesis or a design
+   decision. These come in wherever an earlier step's queries need them.
+5. **`DISTINCT`.** The output relation becomes a bag or set relation, since dedup keeps the first
+   occurrence and NULL tags differ.
+
+Each step lands with its theorem, `CorrectExamples` checks that its new hypotheses are
+satisfiable, and an update of this table (the report regenerates it).
 
 ## Phase 1 differences
 

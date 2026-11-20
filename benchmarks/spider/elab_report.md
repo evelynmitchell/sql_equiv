@@ -13,6 +13,30 @@ lowercase (sqlite names are case-insensitive), `number` columns are `int`, `text
 `others` are `text`. A `typeError` is a query that is ill-typed under the declared column
 types (sqlite accepts it through type affinity, e.g. a `text` column compared with `32`).
 
+## Elaborator-correctness coverage (#352)
+
+`elabStmt_correct` (`SqlBridge/Correct.lean`) proves that an elaborated query's typed
+result rows match the untyped evaluator's, for `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`
+with literals, columns, comparisons, `AND`, `OR`, `NOT`. Counts are of the elaborated
+queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
+`docs/TYPED_CORE_PLAN.md`. **The theorem also assumes the schema does not fold names, and
+Spider's schemas lowercase them, so until #351 it applies to none of these queries.**
+
+| Step | Queries in the fragment |
+|------|------------------------:|
+| Today (shape) | 64 |
+| after 1. ORDER BY / LIMIT | 113 |
+| after 2. Joins (inner, cross) | 165 |
+| after 3. Aggregates and GROUP BY / HAVING | 405 |
+| after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 409 |
+| after 5. DISTINCT | 431 |
+
+Still outside after step 5 (queries using each feature):
+
+- subquery/set operation/CTE: 80
+- LIKE: 8
+- *: 2
+
 ## Failure classes (largest first)
 
 | Count | Class | Example (first occurrence) |
