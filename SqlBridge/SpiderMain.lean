@@ -1,9 +1,11 @@
 /-
   `lake exe spider_elab`: elaborate every Spider dev query into the typed core
   (#295). Prints one line per query, `ok` or `err` with the failure category,
-  for `tools/spider_elab_baseline.py`.
+  for `tools/spider_elab_baseline.py`. An `ok` line also lists the features that put the query
+  outside the elaborator-correctness theorem's fragment (`SqlBridge.Coverage`, #352).
 -/
 import SqlBridge.Spider
+import SqlBridge.Coverage
 
 open Lean SqlBridge SqlBridge.Spider
 
@@ -27,6 +29,7 @@ def main (args : List String) : IO UInt32 := do
     | .error _ => IO.println "err\tparse error"
     | .ok stmt =>
       match elabStmt N stmt with
-      | .ok _ => IO.println "ok"
+      -- second field: the features outside the correctness theorem's fragment (#352)
+      | .ok _ => IO.println s!"ok\t{",".intercalate (SqlBridge.Coverage.outsideFragment stmt)}"
       | .error e => IO.println s!"err\t{e.category}"
   return 0

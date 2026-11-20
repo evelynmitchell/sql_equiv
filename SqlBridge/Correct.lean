@@ -11,6 +11,11 @@
     `Translates` derivation, and `Translates.eval_rel` shows that on related rows a typed value is
     related to the untyped one. Ordering comparisons of two booleans are excluded (`NoBoolOrder`):
     the typed core orders `false < true`, `SqlEquiv` does not order booleans.
+  * Names (#351): the schema may fold names (`NamedSchema.fold`) when it keeps them equal ignoring
+    case (`(fold s).toLower = s.toLower`; `id` and `String.toLower`, the Spider schemas' fold, do).
+    `SqlEquiv` compares column keys ignoring case, so `rowRel_qualified` holds for any such fold;
+    tables are looked up by the name as written, so `DbRel` asks the untyped database to answer
+    every spelling the fold maps to a table's key.
 -/
 import SqlBridge.Elab
 import Mathlib.Tactic.Positivity
@@ -260,7 +265,7 @@ theorem or_agree {a b : Datum} {a' b' : SqlEquiv.Value} (ha : DatumRel a a')
 section Exprs
 open SqlCore
 
-variable {n : ℕ} (cols : Fin n → Column)
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
 
 /-- The typed expression elaborates the untyped one, in the fragment of #309: literals, columns,
     comparisons, `AND`, `OR` and `NOT`. `retypeNull` only gives an untyped `NULL` operand a type. -/
@@ -268,7 +273,8 @@ inductive Translates : SqlEquiv.Expr → Expr n → Prop
   | lit {v : SqlEquiv.Value} {w : Value} : elabValue v = some w → Translates (.lit v) (.lit w)
   | litNull {v : SqlEquiv.Value} (τ : SqlType) : elabValue v = none →
       Translates (.lit v) (.null τ)
-  | col {c : SqlEquiv.ColumnRef} {i : Fin n} : resolveColumn cols c.table c.column = .ok i →
+  | col {c : SqlEquiv.ColumnRef} {i : Fin n} :
+      resolveColumn cols (c.table.map fold) (fold c.column) = .ok i →
       Translates (.col c) (.col i)
   | cmp {op : SqlEquiv.BinOp} {c : CmpOp} {a b : SqlEquiv.Expr} {a' b' : Expr n} :
       elabBinOp op = .ok (.cmp c) → Translates a a' → Translates b b' →
@@ -292,7 +298,7 @@ def NoBoolOrder (Γ : Fin n → SqlType) : Expr n → Prop
 /-- An untyped row agrees with a typed one: every column the elaborator resolves reads a related
     value through `SqlEquiv`'s lookup. -/
 def RowRel (r : Row n) (u : SqlEquiv.Row) : Prop :=
-  ∀ (q : Option String) (name : String) (i : Fin n), resolveColumn cols q name = .ok i →
+  ∀ (q : Option String) (name : String) (i : Fin n), resolveColumn cols (q.map fold) (fold name) = .ok i →
     ∃ v, u.getQualified q name = some v ∧ DatumRel (r i) v
 
 theorem eval_retypeNull (e o : Expr n) (r : Row n) :
@@ -346,8 +352,8 @@ theorem valRel_of_elabValue {v : SqlEquiv.Value} {w : Value} (h : elabValue v = 
 /-- The expression theorem of #309: on related rows, a typed expression that evaluates gives a
     value related to the untyped expression's. -/
 theorem Translates.eval_rel {Γ : Fin n → SqlType} (db : SqlEquiv.Database) {r : Row n}
-    {u : SqlEquiv.Row} (hrow : RowRel cols r u) (hr : r.Conforms Γ) :
-    ∀ {e : SqlEquiv.Expr} {e' : Expr n}, Translates cols e e' → NoBoolOrder Γ e' →
+    {u : SqlEquiv.Row} (hrow : RowRel cols fold r u) (hr : r.Conforms Γ) :
+    ∀ {e : SqlEquiv.Expr} {e' : Expr n}, Translates cols fold e e' → NoBoolOrder Γ e' →
       ∀ {d : Datum}, e'.eval r = .ok d →
         ∃ v, SqlEquiv.evalExprWithDb db u e = some v ∧ DatumRel d v := by
   intro e e' ht
@@ -421,9 +427,9 @@ def isFragment : SqlEquiv.Expr → Bool
   | .unaryOp .not a => isFragment a
   | _ => false
 
-/-- Elaborating a fragment expression (without a hook, names unfolded) gives a translation. -/
+/-- Elaborating a fragment expression (without a hook, names folded by `fold`) gives a translation. -/
 theorem translates_of_elab : ∀ (e : SqlEquiv.Expr) {e' : Expr n}, isFragment e = true →
-    elabExpr cols id noHook e = .ok e' → Translates cols e e'
+    elabExpr cols fold noHook e = .ok e' → Translates cols fold e e'
   | .lit v, e', _, h => by
     unfold elabExpr at h
     simp only [noHook] at h
@@ -435,10 +441,7 @@ theorem translates_of_elab : ∀ (e : SqlEquiv.Expr) {e' : Expr n}, isFragment e
     · exact .litNull _ rfl
   | .col c, e', _, h => by
     simp only [elabExpr, noHook, resolve] at h
-    have hid : Option.map id c.table = c.table := by cases c.table <;> rfl
-    rw [hid] at h
-    simp only [id_eq] at h
-    rcases hr : resolveColumn cols c.table c.column with _ | i
+    rcases hr : resolveColumn cols (c.table.map fold) (fold c.column) with _ | i
     · rename_i err
       cases err <;> simp [hr, throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h
     · rw [hr] at h
@@ -449,9 +452,9 @@ theorem translates_of_elab : ∀ (e : SqlEquiv.Expr) {e' : Expr n}, isFragment e
     simp only [isFragment, Bool.and_eq_true] at hf
     obtain ⟨⟨hop, ha⟩, hb⟩ := hf
     simp only [elabExpr, noHook] at h
-    rcases hea : elabExpr cols id noHook a with _ | a'
+    rcases hea : elabExpr cols fold noHook a with _ | a'
     · cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure]
-    rcases heb : elabExpr cols id noHook b with _ | b'
+    rcases heb : elabExpr cols fold noHook b with _ | b'
     · cases op <;> simp_all [elabBinOp, bind, Except.bind, pure, Except.pure]
     have ta := translates_of_elab a ha hea
     have tb := translates_of_elab b hb heb
@@ -467,7 +470,7 @@ theorem translates_of_elab : ∀ (e : SqlEquiv.Expr) {e' : Expr n}, isFragment e
   | .unaryOp op a, e', hf, h => by
     cases op <;> simp only [isFragment, Bool.false_eq_true] at hf
     simp only [elabExpr, noHook] at h
-    rcases hea : elabExpr cols id noHook a with _ | a'
+    rcases hea : elabExpr cols fold noHook a with _ | a'
     · simp [hea, bind, Except.bind] at h
     simp only [hea, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
     subst h
@@ -547,28 +550,61 @@ theorem find?_ofFn_of_unique {α : Type _} {m : ℕ} (f : Fin m → α) (p : α 
   have := hu ⟨j, hjm⟩ hp
   simp [Fin.ext_iff] at this; omega
 
-/-- Rows as `evalFrom` builds them for a base table: the key of column `j` is `Q.name_j`. On such
-rows a resolved column reference finds the related value, provided column names have no dots and
-are distinct ignoring case. -/
-theorem rowRel_qualified {m : ℕ} (Q : String) (base : Fin m → Column) (r : Row m)
+theorem char_toLower_toLower (c : Char) : c.toLower.toLower = c.toLower := by
+  unfold Char.toLower
+  split
+  · rename_i hc
+    split
+    · rename_i hc2
+      exfalso
+      simp only [ge_iff_le, UInt32.le_iff_toNat_le] at hc hc2
+      rw [UInt32.toNat_add] at hc2
+      simp at hc hc2
+      omega
+    · rfl
+  · rfl
+
+/-- Lowercasing is idempotent, so `String.toLower` is a fold `rowRel_qualified` accepts. -/
+theorem string_toLower_toLower (s : String) : s.toLower.toLower = s.toLower := by
+  apply String.toList_inj.mp
+  simp [toList_toLower, List.map_map, Function.comp_def, char_toLower_toLower]
+
+/-- Rows as `evalFrom` builds them for a base table: the key of column `j` is `Q.name_j`, with `Q`
+the table name or alias as written. On such rows a column reference the elaborator resolves
+(names and qualifier folded by `fold`, the typed columns qualified by `fold Q`) finds the related
+value, provided column names have no dots and are distinct ignoring case, and `fold` keeps a name
+equal to itself ignoring case (`id` and `String.toLower` do; #351). -/
+theorem rowRel_qualified {m : ℕ} (fold : String → String)
+    (hfold : ∀ s, (fold s).toLower = s.toLower) (Q : String) (base : Fin m → Column) (r : Row m)
     (w : Fin m → SqlEquiv.Value) (hw : ∀ j, DatumRel (r j) (w j))
     (hdot : ∀ j, '.' ∉ (base j).name.toList)
     (hnd : ∀ j k, (base j).name.toLower = (base k).name.toLower → j = k) :
-    RowRel (requalify Q base) r (List.ofFn fun j => (s!"{Q}.{(base j).name}", w j)) := by
+    RowRel (requalify (fold Q) base) fold r
+      (List.ofFn fun j => (s!"{Q}.{(base j).name}", w j)) := by
   intro q name i hres
   have hm := (resolveColumn_eq_ok_iff.mp hres).1
-  have hname : (base i).name = name := by
+  have hname : (base i).name = fold name := by
     cases q <;> simp_all [requalify, Column.Matches]
-  subst hname
+  -- the reference names column `i` up to case
+  have hnl : name.toLower = (base i).name.toLower := by
+    rw [hname, hfold]
   refine ⟨w i, ?_, hw i⟩
   have hlow : ∀ j, (base j).name.toList.map Char.toLower = (base i).name.toList.map Char.toLower →
       j = i := fun j h => hnd j i (String.toList_inj.mp (by simpa [toList_toLower] using h))
   cases q with
   | some q' =>
-    have hq : q' = Q := by simp [requalify, Column.Matches] at hm; exact hm.symm
-    subst hq
+    have hq : q'.toLower = Q.toLower := by
+      have : fold Q = fold q' := by simpa [requalify, Column.Matches] using hm.2
+      rw [← hfold q', ← this, hfold]
+    have hkey : (s!"{q'}.{name}").toLower = (s!"{Q}.{(base i).name}").toLower := by
+      apply String.toList_inj.mp
+      have h1 := congrArg String.toList hq
+      have h2 := congrArg String.toList hnl
+      simp only [toList_toLower] at h1 h2
+      simp only [toList_toLower, toList_qualified, List.map_append, List.map_cons, toLower_dot,
+        h1, h2]
     simp only [SqlEquiv.Row.getQualified, lookupCI_eq_find?]
-    rw [find?_ofFn_of_unique _ _ i]
+    rw [hkey, find?_ofFn_of_unique _ _ i]
     · rfl
     · simp
     · intro j hj
@@ -579,6 +615,7 @@ theorem rowRel_qualified {m : ℕ} (Q : String) (base : Fin m → Column) (r : R
       simpa using this
   | none =>
     simp only [SqlEquiv.Row.getQualified]
+    rw [hnl]
     have hd := dot_not_mem_map_toLower (hdot i)
     rw [find?_ofFn_of_unique _ _ i]
     · simp only [Bool.or_eq_true, endsWith_iff_suffix]
@@ -640,7 +677,7 @@ theorem aggsOfList_items {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
 section Query
 open SqlCore
 
-variable {n : ℕ} (cols : Fin n → Column)
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
 
 /-- An output row: the typed cells relate, in order, to the untyped values; names are dropped. -/
 def OutRel {k : ℕ} (d : Row k) (u : SqlEquiv.Row) : Prop :=
@@ -649,7 +686,7 @@ def OutRel {k : ℕ} (d : Row k) (u : SqlEquiv.Row) : Prop :=
 theorem divSafe_retypeNull (e o : Expr n) : (retypeNull cols e o).divSafe = e.divSafe := by
   unfold retypeNull; split <;> simp [Expr.divSafe]
 
-theorem Translates.divSafe {e : SqlEquiv.Expr} {e' : Expr n} (h : Translates cols e e') :
+theorem Translates.divSafe {e : SqlEquiv.Expr} {e' : Expr n} (h : Translates cols fold e e') :
     e'.divSafe = true := by
   induction h <;> simp_all [Expr.divSafe, divSafe_retypeNull, BinOp.isDivision]
 
@@ -684,11 +721,11 @@ theorem filterRows_cons_ok {p : Expr n} {r : Row n} {R R' : List (Row n)}
       simp [bind, Except.bind, pure, Except.pure] at h ⊢ <;> exact h.symm
 
 theorem filter_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {w : SqlEquiv.Expr} {p : Expr n}
-    (ht : Translates cols w p) (hnb : NoBoolOrder Γ p) :
+    (ht : Translates cols fold w p) (hnb : NoBoolOrder Γ p) :
     ∀ {R : List (Row n)} {U : List SqlEquiv.Row},
-      List.Forall₂ (fun r u => RowRel cols r u ∧ r.Conforms Γ) R U →
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U →
       ∀ {R' : List (Row n)}, p.filterRows R = .ok R' →
-      List.Forall₂ (fun r u => RowRel cols r u ∧ r.Conforms Γ) R'
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R'
         (U.filter fun u => SqlEquiv.evalExprWithDb db u w == some (.bool true))
   | _, _, .nil, R', h => by
     simp only [Expr.filterRows, List.filterMapM_nil, pure, Except.pure, Except.ok.injEq] at h
@@ -703,7 +740,7 @@ theorem filter_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {w : SqlEqu
       · simp only [he, bind, Except.bind] at hte
         exact ⟨d, rfl, hte⟩
     obtain ⟨d, hd, hdt⟩ := hev
-    obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols db hru.1 hru.2 ht hnb hd
+    obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols fold db hru.1 hru.2 ht hnb hd
     have key := isTrue_iff_where hrel hdt
     rw [← hv] at key
     simp only [List.filter_cons, ← key]
@@ -713,7 +750,7 @@ theorem filter_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {w : SqlEqu
 
 /-- The `SELECT` items and their elaborations: each item is an expression that translates. -/
 def ItemsRel (items : List SqlEquiv.SelectItem) (its : List (Expr n × Column)) : Prop :=
-  List.Forall₂ (fun it x => ∃ e al, it = .exprItem e al ∧ Translates cols e x.1) items its
+  List.Forall₂ (fun it x => ∃ e al, it = .exprItem e al ∧ Translates cols fold e x.1) items its
 
 /-- The value `SqlEquiv` gives an expression item; an error becomes `NULL`. -/
 def itemValue (db : SqlEquiv.Database) (u : SqlEquiv.Row) : SqlEquiv.SelectItem → SqlEquiv.Value
@@ -721,7 +758,7 @@ def itemValue (db : SqlEquiv.Database) (u : SqlEquiv.Row) : SqlEquiv.SelectItem 
   | .star _ => .null none
 
 theorem map_snd_flatMap_items (db : SqlEquiv.Database) (u : SqlEquiv.Row) :
-    ∀ {items its}, ItemsRel cols items its →
+    ∀ {items its}, ItemsRel cols fold items its →
       (items.flatMap (SqlEquiv.evalSelectItem db u)).map (·.2) = items.map (itemValue db u)
   | _, _, .nil => rfl
   | _, _, .cons ⟨e, al, rfl, _⟩ rest => by
@@ -730,13 +767,13 @@ theorem map_snd_flatMap_items (db : SqlEquiv.Database) (u : SqlEquiv.Row) :
     split <;> simp_all
 
 theorem row_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n} {u : SqlEquiv.Row}
-    (hrow : RowRel cols r u) (hr : r.Conforms Γ) {items : List SqlEquiv.SelectItem}
-    {its : List (Expr n × Column)} (hits : ItemsRel cols items its)
+    (hrow : RowRel cols fold r u) (hr : r.Conforms Γ) {items : List SqlEquiv.SelectItem}
+    {its : List (Expr n × Column)} (hits : ItemsRel cols fold items its)
     (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1) {d : Row its.length}
     (hd : Expr.evalRow (fun i : Fin its.length => (its[i]).1) r = .ok d) :
     OutRel d (items.flatMap (SqlEquiv.evalSelectItem db u)) := by
   unfold OutRel
-  rw [map_snd_flatMap_items cols db u hits, List.forall₂_iff_get]
+  rw [map_snd_flatMap_items cols fold db u hits, List.forall₂_iff_get]
   have hlen := hits.length_eq
   refine ⟨by simp [hlen], fun i h1 h2 => ?_⟩
   simp only [List.get_eq_getElem, List.getElem_ofFn, List.getElem_map]
@@ -745,14 +782,14 @@ theorem row_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n} {u
   simp only [List.get_eq_getElem] at hit htr
   rw [hit]
   have hev := (Expr.evalRow_eq_ok_iff.mp hd) ⟨i, hi⟩
-  obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols db hrow hr htr (hnb ⟨i, hi⟩) hev
+  obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cols fold db hrow hr htr (hnb ⟨i, hi⟩) hev
   simpa [itemValue, hv] using hrel
 
 theorem project_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType}
     {items : List SqlEquiv.SelectItem} {its : List (Expr n × Column)}
-    (hits : ItemsRel cols items its) (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1) :
+    (hits : ItemsRel cols fold items its) (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1) :
     ∀ {R : List (Row n)} {U : List SqlEquiv.Row},
-      List.Forall₂ (fun r u => RowRel cols r u ∧ r.Conforms Γ) R U →
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U →
       ∀ {out}, R.mapM (Expr.evalRow fun i : Fin its.length => (its[i]).1) = .ok out →
       List.Forall₂ OutRel out (U.map fun u => items.flatMap (SqlEquiv.evalSelectItem db u))
   | _, _, .nil, out, h => by
@@ -767,18 +804,18 @@ theorem project_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType}
     rw [hd, hR] at h
     simp only [bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
     subst h
-    exact .cons (row_rel cols db hru.1 hru.2 hits hnb hd) (project_rel db hits hnb hrest hR)
+    exact .cons (row_rel cols fold db hru.1 hru.2 hits hnb hd) (project_rel db hits hnb hrest hR)
 
-theorem itemsRel_of_elab (N : NamedSchema) (hN : N.fold = id) :
+theorem itemsRel_of_elab (N : NamedSchema) :
     ∀ (items : List SqlEquiv.SelectItem) {its : List (Expr n × Column)},
-      itemsFragment items = true → elabItems N cols items = .ok its → ItemsRel cols items its
+      itemsFragment items = true → elabItems N cols items = .ok its → ItemsRel cols N.fold items its
   | [], its, _, h => by
     simp only [elabItems, pure, Except.pure, Except.ok.injEq] at h
     subst h; exact .nil
   | .exprItem e al :: rest, its, hf, h => by
     simp only [itemsFragment, Bool.and_eq_true] at hf
-    simp only [elabItems, hN] at h
-    rcases he : elabExpr cols id noHook e with _ | e'
+    simp only [elabItems] at h
+    rcases he : elabExpr cols N.fold noHook e with _ | e'
     · simp [he, bind, Except.bind] at h
     rcases hτ : e'.typeOf (ctx cols) with _ | τ
     · simp [he, hτ, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
@@ -786,7 +823,7 @@ theorem itemsRel_of_elab (N : NamedSchema) (hN : N.fold = id) :
     · simp [he, hτ, hr, bind, Except.bind] at h
     simp only [he, hτ, hr, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
     subst h
-    exact .cons ⟨e, al, rfl, translates_of_elab cols e hf.1 he⟩ (itemsRel_of_elab N hN rest hf.2 hr)
+    exact .cons ⟨e, al, rfl, translates_of_elab cols N.fold e hf.1 he⟩ (itemsRel_of_elab N rest hf.2 hr)
   | .star _ :: _, _, hf, _ => by simp [itemsFragment] at hf
 
 end Query
@@ -855,9 +892,13 @@ def TableRowRel {m : ℕ} (base : Fin m → Column) (r : Row m) (u : SqlEquiv.Ro
   ∃ w : Fin m → SqlEquiv.Value, u = List.ofFn (fun j => ((base j).name, w j)) ∧
     ∀ j, DatumRel (r j) (w j)
 
-/-- The untyped database `db` holds, for each named table, rows related to the typed ones. -/
+/-- The untyped database `db` holds, for each table, rows related to the typed ones, under every
+    spelling `s` of its name that the schema's `fold` maps to the table's key. `SqlEquiv` looks a
+    table up by the name as the query spells it, so `db` must answer each such spelling alike: the
+    `Database` decides how names match (registry row 20, #372; the Spider harness lowercases). With
+    `fold = id` this is one name per table. -/
 def DbRel (N : NamedSchema) (db : SqlEquiv.Database) (D : Database N.S) : Prop :=
-  ∀ name T, (name, T) ∈ N.tables → List.Forall₂ (TableRowRel (N.S.columns T)) (D T) (db name)
+  ∀ s T, (N.fold s, T) ∈ N.tables → List.Forall₂ (TableRowRel (N.S.columns T)) (D T) (db s)
 
 /-- Column names that `SqlEquiv`'s lookup finds unambiguously: no dots, distinct ignoring case. -/
 structure WellNamed (N : NamedSchema) : Prop where
@@ -875,11 +916,13 @@ def fragmentStmt (items : List SqlEquiv.SelectItem) (name : String) (al : Option
     (wh : Option SqlEquiv.Expr) : SqlEquiv.Stmt :=
   .query (.simple (.mk false items (some (.table ⟨name, al⟩)) wh [] none [] none none))
 
-theorem fragment_rows (N : NamedSchema) (hwn : WellNamed N) {db : SqlEquiv.Database}
+theorem fragment_rows (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hwn : WellNamed N) {db : SqlEquiv.Database}
     {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D) {name : String} {T : N.S.Table}
-    (hT : (name, T) ∈ N.tables) (al : Option String) :
+    (hT : (N.fold name, T) ∈ N.tables) (al : Option String) :
     List.Forall₂
-      (fun r u => RowRel (requalify (al.getD name) (N.S.columns T)) r u ∧ r.Conforms (N.S.ctx T))
+      (fun r u => RowRel (requalify (N.fold (al.getD name)) (N.S.columns T)) N.fold r u ∧
+        r.Conforms (N.S.ctx T))
       (D T) (SqlEquiv.evalFrom db (.table ⟨name, al⟩)) := by
   rw [SqlEquiv.evalFrom_table]
   refine forall₂_and_left ?_ (fun r hr => hD T r hr)
@@ -887,9 +930,10 @@ theorem fragment_rows (N : NamedSchema) (hwn : WellNamed N) {db : SqlEquiv.Datab
   refine (hrel name T hT).imp ?_
   rintro r u ⟨w, rfl, hw⟩
   simp only [List.map_ofFn]
-  exact rowRel_qualified _ _ r w hw (hwn.noDot T) (hwn.distinct T)
+  exact rowRel_qualified N.fold hfold _ _ r w hw (hwn.noDot T) (hwn.distinct T)
 
-theorem elabStmt_correct (N : NamedSchema) (hN : N.fold = id) (hwn : WellNamed N)
+theorem elabStmt_correct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hwn : WellNamed N)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {name : String} {al : Option String}
     {wh : Option SqlEquiv.Expr} (hit : itemsFragment items = true)
@@ -900,28 +944,28 @@ theorem elabStmt_correct (N : NamedSchema) (hN : N.fold = id) (hwn : WellNamed N
         List.Forall₂ OutRel rs out := by
   simp only [fragmentStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect] at h
   rw [elabSelectF] at h
-  simp only [elabFrom, lookupTable, hN, id_eq, List.map_nil, aggsOfList, aggsOfOpt,
+  simp only [elabFrom, lookupTable, List.map_nil, aggsOfList, aggsOfOpt,
     List.append_nil, List.isEmpty_nil, Option.isNone_none, Bool.and_true, Bool.true_and] at h
   rw [aggsOfList_items ?hf items hit] at h
   case hf => intros; rfl
-  rcases hT : N.tables.find? (fun x => x.1 == name) with _ | ⟨nm, T⟩
+  rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
   · simp [hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
-  have hmem : (name, T) ∈ N.tables := by
+  have hmem : (N.fold name, T) ∈ N.tables := by
     have h1 := List.mem_of_find?_eq_some hT
     have h2 := List.find?_some hT
     simp only [beq_iff_eq] at h2; subst h2; exact h1
   simp only [hT] at h
-  have hrows := fragment_rows N hwn hD hrel hmem al
+  have hrows := fragment_rows N hfold hwn hD hrel hmem al
   have hdiv : ∀ {its : List (Expr (N.S.arity T) × Column)},
-      ItemsRel (requalify (al.getD name) (N.S.columns T)) items its →
+      ItemsRel (requalify (N.fold (al.getD name)) (N.S.columns T)) N.fold items its →
       ∀ i : Fin its.length, (its[i]).1.divSafe = true := fun hir i => by
     obtain ⟨_, _, _, htr⟩ := (List.forall₂_iff_get.mp hir).2 i.1 (by have := hir.length_eq; omega) i.2
-    exact Translates.divSafe _ htr
+    exact Translates.divSafe _ _ htr
   cases wh with
   | none =>
-    rcases hits : elabItems N (requalify (al.getD name) (N.S.columns T)) items with _ | its
+    rcases hits : elabItems N (requalify (N.fold (al.getD name)) (N.S.columns T)) items with _ | its
     · simp [hits, bind, Except.bind, pure, Except.pure] at h
-    have hir := itemsRel_of_elab _ N hN items hit hits
+    have hir := itemsRel_of_elab _ N items hit hits
     simp [hits, finishSelect, bind, Except.bind, pure, Except.pure] at h
     split at h
     swap
@@ -936,15 +980,15 @@ theorem elabStmt_correct (N : NamedSchema) (hN : N.fold = id) (hwn : WellNamed N
     rw [SqlEquiv.evalSelect_nondistinct_project _ _ _ (selectHasAggregate_frag items hit)
       (selectHasWindowFn_frag items hit)]
     simp only [Query.eval_project, Query.eval_table, bind, Except.bind] at hrs
-    exact project_rel _ db hir (fun i => hnb.1 _ rfl i) hrows hrs
+    exact project_rel _ _ db hir (fun i => hnb.1 _ rfl i) hrows hrs
   | some w =>
-    rcases hp : elabExpr (requalify (al.getD name) (N.S.columns T)) id noHook w with _ | p
+    rcases hp : elabExpr (requalify (N.fold (al.getD name)) (N.S.columns T)) N.fold noHook w with _ | p
     · simp [subsOf_frag w (hw w rfl), hp, bind, Except.bind, pure, Except.pure] at h
-    have htp := translates_of_elab _ w (hw w rfl) hp
-    rcases hits : elabItems N (requalify (al.getD name) (N.S.columns T)) items with _ | its
+    have htp := translates_of_elab _ _ w (hw w rfl) hp
+    rcases hits : elabItems N (requalify (N.fold (al.getD name)) (N.S.columns T)) items with _ | its
     · simp [subsOf_frag w (hw w rfl), hp, hits, bind, Except.bind, pure,
         Except.pure] at h
-    have hir := itemsRel_of_elab _ N hN items hit hits
+    have hir := itemsRel_of_elab _ N items hit hits
     simp [subsOf_frag w (hw w rfl), hp, hits, finishSelect, bind, Except.bind, pure,
         Except.pure] at h
     have hstep : (if (Query.project (fun i => (its[i]).1) (Query.select p (Query.table T))).typeOf.isSome
@@ -966,7 +1010,7 @@ theorem elabStmt_correct (N : NamedSchema) (hN : N.fold = id) (hwn : WellNamed N
       by_cases hb : p.typeOf (N.S.ctx T) = some .bool <;> simp [hb, bind]
     obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok (q := Query.project (fun i => (its[i]).1)
       (Query.select p (Query.table T)))
-      ⟨hty, by simpa [Query.divSafe, Translates.divSafe _ htp] using hdiv hir⟩ hD
+      ⟨hty, by simpa [Query.divSafe, Translates.divSafe _ _ htp] using hdiv hir⟩ hD
     refine ⟨rs, hrs, _, rfl, ?_⟩
     simp only [SqlEquiv.evalQuery]
     rw [SqlEquiv.evalSelect_nondistinct_project_where _ _ _ _ (selectHasAggregate_frag items hit)
@@ -975,8 +1019,8 @@ theorem elabStmt_correct (N : NamedSchema) (hN : N.fold = id) (hwn : WellNamed N
     rcases hf : p.filterRows (D T) with _ | R'
     · rw [hf] at hrs; cases hrs
     rw [hf] at hrs
-    have hfr := filter_rel _ db htp (hnb.2.1 _ rfl) hrows hf
-    exact project_rel _ db hir (fun i => hnb.1 _ hsel i) hfr hrs
+    have hfr := filter_rel _ _ db htp (hnb.2.1 _ rfl) hrows hf
+    exact project_rel _ _ db hir (fun i => hnb.1 _ hsel i) hfr hrs
 
 end Statement
 

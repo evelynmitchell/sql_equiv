@@ -35,7 +35,20 @@ RATCHET = ROOT / "tools" / "spider_elab_minimum.txt"
 EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 
 
-def run() -> tuple[int, int, dict[str, list[str]]]:
+# Elaborator-correctness roadmap (#352, docs/TYPED_CORE_PLAN.md): each step lifts the features
+# it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351, done) let the
+# theorem apply to Spider's case-folding schemas at all.
+ROADMAP = [
+    ("1. ORDER BY / LIMIT", {"ORDER BY/LIMIT"}),
+    ("2. Joins (inner, cross)", {"join"}),
+    ("3. Aggregates and GROUP BY / HAVING", {"aggregate/GROUP BY"}),
+    ("4. IS NULL, negation, arithmetic, IN list, BETWEEN",
+     {"IS NULL/negation", "arithmetic", "IN list/BETWEEN"}),
+    ("5. DISTINCT", {"DISTINCT"}),
+]
+
+
+def run() -> tuple[int, int, dict[str, list[str]], list[set[str]]]:
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build spider_elab` first")
     queries = [json.loads(l) for l in QUERIES.read_text().splitlines() if l.strip()]
@@ -44,17 +57,51 @@ def run() -> tuple[int, int, dict[str, list[str]]]:
     ).stdout.splitlines()
     if len(out) != len(queries):
         sys.exit(f"error: {len(out)} results for {len(queries)} queries")
-    ok, failures = 0, defaultdict(list)
+    ok, failures, features = 0, defaultdict(list), []
     for line, q in zip(out, queries):
-        if line == "ok":
+        if line == "ok" or line.startswith("ok\t"):
             ok += 1
+            rest = line.split("\t", 1)[1] if "\t" in line else ""
+            features.append({f for f in rest.split(",") if f})
         else:
             cls = line.split("\t", 1)[1] if "\t" in line else line
             failures[cls].append(f"[{q['db']}] {q['query']}")
-    return ok, len(queries), failures
+    return ok, len(queries), failures, features
 
 
-def write_report(ok: int, total: int, failures: dict) -> None:
+def coverage_lines(features: list[set[str]]) -> list[str]:
+    """The coverage section: elaborated queries in the correctness theorem's fragment today and
+    after each roadmap step (cumulative), and what keeps the rest out."""
+    now = sum(1 for f in features if not f)
+    lines = [
+        "## Elaborator-correctness coverage (#352)",
+        "",
+        "`elabStmt_correct` (`SqlBridge/Correct.lean`) proves that an elaborated query's typed",
+        "result rows match the untyped evaluator's, for `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`",
+        "with literals, columns, comparisons, `AND`, `OR`, `NOT`. Counts are of the elaborated",
+        "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
+        "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",
+        "lowercase (#351), given that the untyped database answers every spelling of a table name",
+        "alike (as the evaluate harness's lowercasing does) and no comparison orders two booleans.",
+        "",
+        "| Step | Queries in the fragment |",
+        "|------|------------------------:|",
+        f"| Today | {now} |",
+    ]
+    lifted: set[str] = set()
+    for name, feats in ROADMAP:
+        lifted |= feats
+        lines.append(f"| after {name} | {sum(1 for f in features if f <= lifted)} |")
+    rest = defaultdict(int)
+    for f in features:
+        for x in f - lifted:
+            rest[x] += 1
+    lines += ["", "Still outside after step 5 (queries using each feature):", ""]
+    lines += [f"- {x}: {c}" for x, c in sorted(rest.items(), key=lambda kv: -kv[1])]
+    return lines + [""]
+
+
+def write_report(ok: int, total: int, failures: dict, features: list[set[str]]) -> None:
     rate = 100.0 * ok / total if total else 0.0
     lines = [
         "# Spider Dev-Set Elaboration Report (typed core)",
@@ -72,6 +119,7 @@ def write_report(ok: int, total: int, failures: dict) -> None:
         "`others` are `text`. A `typeError` is a query that is ill-typed under the declared column",
         "types (sqlite accepts it through type affinity, e.g. a `text` column compared with `32`).",
         "",
+        *coverage_lines(features),
         "## Failure classes (largest first)",
         "",
         "| Count | Class | Example (first occurrence) |",
@@ -88,9 +136,9 @@ def write_report(ok: int, total: int, failures: dict) -> None:
 def main() -> None:
     check_only = "--check" in sys.argv
     update = "--update-ratchet" in sys.argv
-    ok, total, failures = run()
+    ok, total, failures, features = run()
     if not check_only:
-        write_report(ok, total, failures)
+        write_report(ok, total, failures, features)
         print(f"Elaboration rate: {ok}/{total} ({100.0 * ok / total:.1f}%) — report: {REPORT}")
     minimum = int(RATCHET.read_text().strip()) if RATCHET.exists() else 0
     if update or not RATCHET.exists():
