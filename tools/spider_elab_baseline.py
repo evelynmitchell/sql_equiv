@@ -38,13 +38,13 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # Elaborator-correctness roadmap (#352, docs/TYPED_CORE_PLAN.md): each step lifts the features
 # it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351, done) let the
 # theorem apply to Spider's case-folding schemas at all; steps 1 (ORDER BY / LIMIT), 2 (inner
-# and cross joins), 3a (aggregates without GROUP BY, AVG aside) and 3b-1 (GROUP BY columns,
-# items keys or aggregates) are done and counted in "Today".
+# and cross joins), 3a (aggregates without GROUP BY, AVG aside), 3b-1 (GROUP BY columns, items
+# keys or aggregates) and 3b-2 (HAVING) are done and counted in "Today".
 ROADMAP = [
     # On Spider, every non-column ORDER BY key and every unaliased item next to an ORDER BY is an
     # aggregate (`ORDER BY count(*)`, `SELECT x, count(*) … ORDER BY …`): step 3 extends step 1's
     # key resolution to them.
-    ("3b-2..4. HAVING, ordered by aggregates, bare columns",
+    ("3b-3..4. ordered by aggregates, bare columns",
      {"aggregate/GROUP BY", "ORDER BY expression", "unnamed item with ORDER BY"}),
     ("4. IS NULL, negation, arithmetic, IN list, BETWEEN",
      {"IS NULL/negation", "arithmetic", "IN list/BETWEEN"}),
@@ -89,7 +89,8 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "`SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,",
         "`MAX` (not `AVG`, pending its rounding decision), and `elabStmt_correct_group`",
         "(`SqlBridge/CorrectGroup.lean`) for the same `GROUP BY` columns, each item a key column or",
-        "such an aggregate. Counts are of the elaborated",
+        "such an aggregate, with an optional `HAVING` (`elabStmt_correct_having`). Counts are of the",
+        "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
         "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",
         "lowercase (#351), given that the untyped database answers every spelling of a table name",

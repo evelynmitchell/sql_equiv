@@ -99,7 +99,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       **258**, up from 165
     - [x] Step 3b-1: `GROUP BY` columns, items keys or aggregates: `SqlBridge/CorrectGroup.lean`,
       `elabStmt_correct_group`. Spider coverage **288**, up from 258
-    - [ ] Step 3b-2: `HAVING` (15 Spider queries)
+    - [x] Step 3b-2: `HAVING`: `elabStmt_correct_having`. Spider coverage **303**, up from 288
     - [ ] Step 3b-3: ordering by keys or aggregates, `LIMIT` (31)
     - [ ] Step 3b-4: bare columns (registry T9; 48)
     - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
@@ -155,7 +155,8 @@ too), where the `ORDER BY` keys are column references and, when there is an `ORD
 item is a column or has an alias; and `SELECT agg₁, …, aggₖ FROM f [WHERE p]`
 (`elabStmt_correct_agg`) with `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`;
 and the same with `GROUP BY c₁, …` columns, each item a key column or such an aggregate
-(`elabStmt_correct_group`).
+(`elabStmt_correct_group`), with an optional `HAVING` of key columns, such aggregates, literals,
+comparisons, `AND`, `OR` and `NOT` (`elabStmt_correct_having`).
 
 **Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
 features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
@@ -170,8 +171,9 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 1. `ORDER BY` / `LIMIT` (done) | 113 |
 | 2. Joins (inner, cross) (done) | 165 |
 | 3a. Aggregates without `GROUP BY`, not `AVG` (done) | 258 |
-| Today: 3b-1. `GROUP BY` columns, items keys or aggregates (done) | 288 |
-| 3b-2..4. `HAVING`, ordered by aggregates, bare columns | 384 |
+| 3b-1. `GROUP BY` columns, items keys or aggregates (done) | 288 |
+| Today: 3b-2. `HAVING` (done) | 303 |
+| 3b-3..4. Ordered by aggregates, bare columns | 384 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
 | 5. `DISTINCT` | 410 |
 
@@ -261,7 +263,13 @@ follows coverage instead (decided 20 Nov 2026):
        one, in order (`groupAux_rel`). Per group, aggregates relate by 3a's `agg_rel`, and a key
        column, which `SqlEquiv` reads on a sample row of the group, holds the group's key. No
        new hypotheses.
-     - **3b-2, `HAVING`** (15 queries): a predicate over aggregates and keys on each side.
+     - **3b-2, `HAVING`, done** (15 queries). `elabStmt_correct_having`: the elaborator builds
+       `select p` over the aggregate, `p` over its output scope; `SqlEquiv` evaluates the
+       predicate per group, over the group's rows and sample row, and drops the group unless it
+       is `TRUE`. `TranslatesH` relates the two predicates (aggregates read their output column,
+       key columns their key column, as the elaborator's hook resolves them), and its
+       evaluation lemma (`TranslatesH.eval_rel`) gives the same decision per group
+       (`isTrue_iff_where`), so both keep the same groups, in order (`out_rel_filter`).
      - **3b-3, ordering by keys or aggregates, `LIMIT`** (31 queries, mostly
        `ORDER BY count(*) DESC LIMIT 1`): extends step 1's key resolution to the grouped sort.
      - **3b-4, bare columns** (48 queries, registry T9): an item column that is not a key reads
