@@ -92,7 +92,8 @@ matches DuckDB, or differs from all three). Without a reachable Postgres (`psql 
 'select 1'` fails) the tiebreaker is skipped and the report says so. Locally:
 `pg_ctlcluster 16 main start`, then a superuser role and database for your user
 (`su postgres -c "createuser -s $USER && createdb $USER"`). Self-tested on every
-run when Postgres is reachable.
+run when Postgres is reachable. CI uses the runner's preinstalled Postgres (18.6 when
+this landed; the step prints `select version()`), the dev environment 16.15.
 
 **Stress variants** (`--stress=K`). The fixed data (5 rows per table, NULLs only on
 row 3, foreign keys cycling 1–5) can hide bugs: the grouped-aggregate bug of #353
