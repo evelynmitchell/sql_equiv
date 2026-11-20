@@ -1017,3 +1017,94 @@ theorem translatesH_of_elab : ∀ (h : SqlEquiv.Expr) {e' : Expr (keyList.length
 end HavingElab
 
 end SqlBridge.CorrectGroup
+
+namespace SqlBridge.CorrectGroup
+open SqlEquiv
+
+/-- `evalSelectCore_grouped` with an optional `HAVING`: a group whose predicate is not `TRUE` on its
+    sample row gives no row. -/
+theorem evalSelectCore_grouped_having (db : Database)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (wh : Option Expr) (groupBy : List Expr)
+    (having : Option Expr) (hg : groupBy ≠ []) :
+    ∃ (F : List (List (Option Value) × Table) → Row → List (List (Option Value) × Table))
+      (Φ : List (Option Value) × Table → Option (List (String × Value))),
+      (∀ gs u, (gs.map Prod.fst).Nodup →
+        F gs u = insU (groupBy.map fun e => (exprEval db u e).map Value.setKey) u gs) ∧
+      (∀ key rows s, bareSampleRow (exprEval db) (selectMinMaxCalls items having) rows = some s →
+        Φ (key, rows) = if (having.all fun c => exprWithAggEval db rows s c == some (Value.bool true))
+          then some (items.flatMap (selectItemWithAggEval db rows s)) else none) ∧
+      evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+        exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+        (SelectStmt.mk false items (some from_) wh groupBy having [] none none) =
+      ((match wh with
+        | some c => (fromEval db from_).filter fun row => exprEval db row c == some (Value.bool true)
+        | none => fromEval db from_).foldl F []).filterMap Φ := by
+  have hne : groupBy.isEmpty = false := by cases groupBy <;> simp_all
+  refine ⟨?F, ?Φ, ?h1, ?h2, ?h3⟩
+  case h3 =>
+    rw [evalSelectCore_eq_afterFilter]
+    cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hne] <;> rfl
+  case h1 =>
+    intro gs u h
+    split
+    · rename_i x hx
+      exact addStep_found _ u gs h hx
+    · rename_i hx
+      exact addStep_new _ u gs hx
+  case h2 =>
+    intro key rows s h
+    cases having <;> simp [h]
+end SqlBridge.CorrectGroup
+
+namespace SqlBridge.CorrectGroup
+open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectAgg
+
+theorem having_aggs {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
+    havingFragment groupBy h = true → ∀ x ∈ aggsOf h, aggFragment x = true
+  | .lit _, _, x, hx | .col _, _, x, hx => by simp [aggsOf] at hx
+  | .binOp op p q, hf, x, hx => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [aggsOf, List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact having_aggs p hf.1.2 x hx
+    · exact having_aggs q hf.2 x hx
+  | .unaryOp op p, hf, x, hx => by
+    cases op <;> simp only [havingFragment] at hf
+    · exact having_aggs p hf x (by simpa [aggsOf] using hx)
+    all_goals simp [aggFragment] at hf
+  | .countStar, hf, x, hx => by simp only [aggsOf, List.mem_singleton] at hx; subst hx; rfl
+  | .agg _ _ _, hf, x, hx => by simp only [aggsOf, List.mem_singleton] at hx; subst hx; simpa [havingFragment] using hf
+  | .func _ _, hf, _, _ | .case _ _, hf, _, _ | .inList _ _ _, hf, _, _
+  | .between _ _ _, hf, _, _ | .inSubquery _ _ _, hf, _, _ | .exists _ _, hf, _, _
+  | .subquery _, hf, _, _ | .windowFn _ _ _, hf, _, _ => by simp [havingFragment, aggFragment] at hf
+
+theorem having_cols {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
+    havingFragment groupBy h = true → ∀ c ∈ colsOutsideAggs h, SqlEquiv.Expr.col c ∈ groupBy
+  | .lit _, _, c, hc => by simp [colsOutsideAggs] at hc
+  | .col c', hf, c, hc => by
+    simp only [colsOutsideAggs, List.mem_singleton] at hc; subst hc
+    simpa [havingFragment] using hf
+  | .binOp op p q, hf, c, hc => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [colsOutsideAggs, List.mem_append] at hc
+    rcases hc with hc | hc
+    · exact having_cols p hf.1.2 c hc
+    · exact having_cols q hf.2 c hc
+  | .unaryOp op p, hf, c, hc => by
+    cases op <;> simp only [havingFragment] at hf
+    · exact having_cols p hf c (by simpa [colsOutsideAggs] using hc)
+    all_goals simp [aggFragment] at hf
+  | .countStar, _, c, hc | .agg _ _ _, _, c, hc => by simp [colsOutsideAggs] at hc
+  | .func _ _, hf, _, _ | .case _ _, hf, _, _ | .inList _ _ _, hf, _, _
+  | .between _ _ _, hf, _, _ | .inSubquery _ _ _, hf, _, _ | .exists _ _, hf, _, _
+  | .subquery _, hf, _, _ | .windowFn _ _ _, hf, _, _ => by simp [havingFragment, aggFragment] at hf
+
+end SqlBridge.CorrectGroup
