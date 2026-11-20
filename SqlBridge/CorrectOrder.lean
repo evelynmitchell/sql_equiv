@@ -602,3 +602,193 @@ theorem evalSelectCore_project_ordered (db : Database)
   simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin]
 
 end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+/-! ### Sorting related rows -/
+
+/-- `SqlEquiv`'s projection of a source row. -/
+def projRow (db : SqlEquiv.Database) (items : List SqlEquiv.SelectItem) (u : SqlEquiv.Row) :
+    SqlEquiv.Row :=
+  items.flatMap (SqlEquiv.evalSelectItem db u)
+
+/-- `SqlEquiv`'s `ORDER BY` comparator on `(projected, source)` pairs. -/
+def cmpU (db : SqlEquiv.Database) (orderBy : List SqlEquiv.OrderByItem)
+    (p₁ p₂ : SqlEquiv.Row × SqlEquiv.Row) : Bool :=
+  SqlEquiv.compareByOrderItemsParam (fun db' r e => SqlEquiv.evalExprWithDb db' r e) db
+    (p₁.1 ++ p₁.2) (p₂.1 ++ p₂.2) orderBy
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String) (db : SqlEquiv.Database)
+  (Γ : Fin n → SqlType) (items : List SqlEquiv.SelectItem) (orderBy : List SqlEquiv.OrderByItem)
+  (keys : Fin orderBy.length → SortKey n)
+
+/-- A typed keyed row and `SqlEquiv`'s `(projected, source)` pair for the same input row. -/
+def PairRel (x : Row orderBy.length × Row n) (y : SqlEquiv.Row × SqlEquiv.Row) : Prop :=
+  RowRel cols fold x.2 y.2 ∧ x.2.Conforms Γ ∧ y.1 = projRow db items y.2 ∧
+    Expr.evalRow (fun i => (keys i).e) x.2 = .ok x.1
+
+theorem keyed_rel_of {F : Row n → Except EvalError (Row orderBy.length × Row n)}
+    (hF : ∀ r x, F r = .ok x → Expr.evalRow (fun i => (keys i).e) r = .ok x.1 ∧ x.2 = r) :
+    ∀ {R : List (Row n)} {U : List SqlEquiv.Row},
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U →
+      ∀ {K}, R.mapM F = .ok K →
+      List.Forall₂ (PairRel cols fold db Γ items orderBy keys) K ((U.map (projRow db items)).zip U)
+  | _, _, .nil, K, h => by
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact .nil
+  | r :: R, u :: U, .cons hru hrest, K, h => by
+    rw [List.mapM_cons] at h
+    rcases hk : F r with _ | x
+    · simp [hk, bind, Except.bind] at h
+    rcases hK : R.mapM F with _ | K'
+    · simp [hk, hK, bind, Except.bind] at h
+    simp only [hk, hK, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    obtain ⟨hx1, hx2⟩ := hF r x hk
+    obtain ⟨kr, r'⟩ := x
+    simp only at hx1 hx2
+    subst hx2
+    exact .cons ⟨hru.1, hru.2, rfl, hx1⟩ (keyed_rel_of hF hrest hK)
+
+theorem keyed_rel {R : List (Row n)} {U : List SqlEquiv.Row}
+    (hRU : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U) {K}
+    (h : R.mapM (fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r)) = .ok K) :
+    List.Forall₂ (PairRel cols fold db Γ items orderBy keys) K ((U.map (projRow db items)).zip U) :=
+  keyed_rel_of cols fold db Γ items orderBy keys (fun r x hx => by
+    rcases hk : Expr.evalRow (fun i => (keys i).e) r with _ | kr
+    · simp [hk, bind, Except.bind] at hx
+    · simp only [hk, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at hx
+      subst hx; exact ⟨rfl, rfl⟩) hRU h
+
+/-- What each `ORDER BY` key must satisfy: its typed value relates to the value `SqlEquiv` reads on
+    `projected ++ source` (`orderKey_rel`), it keeps the item's direction and `NULL` placement,
+    and its type is not boolean (`SqlEquiv` does not order booleans). -/
+structure KeysRel : Prop where
+  val : ∀ r u, RowRel cols fold r u → r.Conforms Γ → ∀ (i : Fin orderBy.length) d,
+    (keys i).e.eval r = .ok d →
+      ∃ v, SqlEquiv.evalExprWithDb db (projRow db items u ++ u) (orderBy[i]).expr = some v ∧
+        DatumRel d v
+  dir : ∀ i : Fin orderBy.length, (keys i).desc = ((orderBy[i]).dir == .desc)
+  nulls : ∀ i : Fin orderBy.length, (keys i).nullsFirst = ((orderBy[i]).nulls == .first)
+  ty : ∀ i : Fin orderBy.length, ∃ τ, (keys i).e.typeOf Γ = some τ ∧ τ ≠ .bool
+
+/-- A key datum of a conforming row has its key's type. -/
+theorem key_hasType {r : Row n} (hr : r.Conforms Γ) {e : Expr n} {τ : SqlType}
+    (hτ : e.typeOf Γ = some τ) {d : Datum} (hd : e.eval r = .ok d) : d.HasType τ := by
+  rcases Expr.eval_ok_or_divisionByZero hr hτ with ⟨d', hd', ht⟩ | ⟨hdz, _⟩
+  · rw [hd] at hd'; cases hd'; exact ht
+  · rw [hd] at hdz; cases hdz
+
+/-- On related pairs, `SqlEquiv`'s comparator is the typed one. -/
+theorem cmpU_agree (hk : KeysRel cols fold db Γ items orderBy keys)
+    {x₁ x₂ : Row orderBy.length × Row n} {y₁ y₂ : SqlEquiv.Row × SqlEquiv.Row}
+    (h₁ : PairRel cols fold db Γ items orderBy keys x₁ y₁)
+    (h₂ : PairRel cols fold db Γ items orderBy keys x₂ y₂) :
+    cmpU db orderBy y₁ y₂ = decide (cmpKeyRows keys x₁.1 x₂.1 ≠ .gt) := by
+  obtain ⟨hrow₁, hr₁, hp₁, hk₁⟩ := h₁
+  obtain ⟨hrow₂, hr₂, hp₂, hk₂⟩ := h₂
+  unfold cmpU
+  apply compareBy_agree
+  intro i
+  have he₁ := (Expr.evalRow_eq_ok_iff.mp hk₁) i
+  have he₂ := (Expr.evalRow_eq_ok_iff.mp hk₂) i
+  obtain ⟨v₁, hv₁, hrel₁⟩ := hk.val _ _ hrow₁ hr₁ i _ he₁
+  obtain ⟨v₂, hv₂, hrel₂⟩ := hk.val _ _ hrow₂ hr₂ i _ he₂
+  rw [hp₁, hp₂]
+  rw [hv₁, hv₂]
+  obtain ⟨τ, hτ, hτb⟩ := hk.ty i
+  refine cmpDatum_agree (keys i) _ (hk.dir i) (hk.nulls i) hrel₁ hrel₂ ?_
+  rintro x y ⟨hx, -⟩
+  have := key_hasType Γ hr₁ hτ he₁
+  rw [hx] at this
+  exact hτb (by simpa [Datum.HasType] using this.symm)
+
+theorem insertionSort_congr {α : Type _} {r s : α → α → Prop} [DecidableRel r] [DecidableRel s]
+    (h : ∀ a b, r a b ↔ s a b) (l : List α) : l.insertionSort r = l.insertionSort s := by
+  have : r = s := funext fun a => funext fun b => propext (h a b)
+  subst this
+  congr
+
+/-- Both sorts are images of one sorted list of related pairs: the typed sort's keyed rows are its
+    first components and `SqlEquiv`'s sorted `(projected, source)` pairs its second. -/
+theorem sorted_rel (hk : KeysRel cols fold db Γ items orderBy keys)
+    {K : List (Row orderBy.length × Row n)} {Y : List (SqlEquiv.Row × SqlEquiv.Row)}
+    (hKY : List.Forall₂ (PairRel cols fold db Γ items orderBy keys) K Y) :
+    ∃ W : List ((Row orderBy.length × Row n) × (SqlEquiv.Row × SqlEquiv.Row)),
+      sortKeyed keys K = W.map Prod.fst ∧ Y.mergeSort (cmpU db orderBy) = W.map Prod.snd ∧
+        ∀ w ∈ W, PairRel cols fold db Γ items orderBy keys w.1 w.2 := by
+  obtain ⟨hlen, hzip⟩ := List.forall₂_iff_zip.mp hKY
+  let Z := K.zip Y
+  have hZ1 : Z.map Prod.fst = K := List.map_fst_zip (by omega)
+  have hZ2 : Z.map Prod.snd = Y := List.map_snd_zip (by omega)
+  have hmem : ∀ z ∈ Z, PairRel cols fold db Γ items orderBy keys z.1 z.2 := fun z hz => hzip hz
+  let le : Row orderBy.length × Row n → Row orderBy.length × Row n → Bool :=
+    fun x y => decide (cmpKeyRows keys x.1 y.1 ≠ .gt)
+  let W := Z.mergeSort fun a b => le a.1 b.1
+  refine ⟨W, ?_, ?_, fun w hw => hmem w (List.mem_mergeSort.mp hw)⟩
+  · -- the typed insertion sort is the merge sort, a total preorder on these key rows
+    choose τ hτ using hk.ty
+    have htyped : ∀ x ∈ K, ∀ i, (x.1 i).HasType (τ i) := by
+      intro x hx i
+      rw [← hZ1] at hx
+      obtain ⟨z, hz, rfl⟩ := List.mem_map.mp hx
+      obtain ⟨-, hr, -, hkr⟩ := hmem z hz
+      exact key_hasType Γ hr (hτ i).1 ((Expr.evalRow_eq_ok_iff.mp hkr) i)
+    obtain ⟨htot, htrans⟩ := keyed_total_trans keys τ K htyped
+    rw [sortKeyed, insertionSort_congr (s := fun x y => le x y = true) (fun a b => by simp [le]),
+      ← SortBridge.mergeSort_eq_insertionSort_of_mem le K htrans htot]
+    conv_lhs => rw [← hZ1]
+    exact (List.map_mergeSort (r := fun a b => le a.1 b.1) (s := le) (f := Prod.fst) (l := Z)
+      (fun _ _ _ _ => rfl)).symm
+  · rw [← hZ2]
+    exact (List.map_mergeSort (fun a ha b hb =>
+      (cmpU_agree cols fold db Γ items orderBy keys hk (hmem a ha) (hmem b hb)).symm)).symm
+
+theorem mapM_rel_of {α β γ ε : Type _} {f : α → Except ε β} {g : γ → α} {h : γ → SqlEquiv.Row}
+    {P : β → SqlEquiv.Row → Prop} :
+    ∀ {W : List γ}, (∀ w ∈ W, ∀ d, f (g w) = .ok d → P d (h w)) →
+      ∀ {out}, (W.map g).mapM f = .ok out → List.Forall₂ P out (W.map h)
+  | [], _, out, e => by
+    simp only [List.map_nil, List.mapM_nil, pure, Except.pure, Except.ok.injEq] at e
+    subst e; exact .nil
+  | w :: W, hW, out, e => by
+    rw [List.map_cons, List.mapM_cons] at e
+    rcases hd : f (g w) with _ | d
+    · simp [hd, bind, Except.bind] at e
+    rcases hR : (W.map g).mapM f with _ | out'
+    · simp [hd, hR, bind, Except.bind] at e
+    simp only [hd, hR, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at e
+    subst e
+    exact .cons (hW w List.mem_cons_self d hd)
+      (mapM_rel_of (fun v hv => hW v (List.mem_cons_of_mem _ hv)) hR)
+
+theorem project_pairs_rel {its : List (Expr n × Column)} (hits : ItemsRel cols fold items its)
+    (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1)
+    {W : List ((Row orderBy.length × Row n) × (SqlEquiv.Row × SqlEquiv.Row))}
+    (hW : ∀ w ∈ W, PairRel cols fold db Γ items orderBy keys w.1 w.2) {out}
+    (h : (W.map fun w => w.1.2).mapM (Expr.evalRow fun i : Fin its.length => (its[i]).1) = .ok out) :
+    List.Forall₂ OutRel out (W.map fun w => w.2.1) :=
+  mapM_rel_of (fun w hw d hd => by
+    obtain ⟨hrow, hr, hp, -⟩ := hW w hw
+    rw [hp]
+    exact row_rel cols fold db hrow hr hits hnb hd) h
+
+/-- `ORDER BY`, then the projection: the typed result relates, in order, to `SqlEquiv`'s sorted
+    projected rows. -/
+theorem ordered_out_rel (hk : KeysRel cols fold db Γ items orderBy keys)
+    {its : List (Expr n × Column)} (hits : ItemsRel cols fold items its)
+    (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1) {R : List (Row n)}
+    {U : List SqlEquiv.Row} (hRU : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U)
+    {K} (hK : R.mapM (fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r)) = .ok K)
+    {out} (hout : ((sortKeyed keys K).map Prod.snd).mapM
+      (Expr.evalRow fun i : Fin its.length => (its[i]).1) = .ok out) :
+    List.Forall₂ OutRel out
+      ((((U.map (projRow db items)).zip U).mergeSort (cmpU db orderBy)).map Prod.fst) := by
+  obtain ⟨W, hW1, hW2, hW⟩ := sorted_rel cols fold db Γ items orderBy keys hk
+    (keyed_rel cols fold db Γ items orderBy keys hRU hK)
+  rw [hW1, List.map_map] at hout
+  rw [hW2, List.map_map]
+  exact project_pairs_rel cols fold db Γ items orderBy keys hits hnb hW hout
+
+end SqlBridge.CorrectOrder
