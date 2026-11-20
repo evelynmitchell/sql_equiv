@@ -97,7 +97,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 3a: aggregates without `GROUP BY` (`COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
       `MAX`; not `AVG`): `SqlBridge/CorrectAgg.lean`, `elabStmt_correct_agg`. Spider coverage
       **258**, up from 165
-    - [ ] Step 3b: `GROUP BY`, `HAVING`, ordered by aggregates
+    - [x] Step 3b-1: `GROUP BY` columns, items keys or aggregates: `SqlBridge/CorrectGroup.lean`,
+      `elabStmt_correct_group`. Spider coverage **288**, up from 258
+    - [ ] Step 3b-2: `HAVING` (15 Spider queries)
+    - [ ] Step 3b-3: ordering by keys or aggregates, `LIMIT` (31)
+    - [ ] Step 3b-4: bare columns (registry T9; 48)
     - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
@@ -149,7 +153,9 @@ sqlite, DuckDB and Postgres. It is also the precondition for retiring the untype
 cross joins without `ON`, with literals, columns, comparisons, `AND`, `OR` and `NOT` (in `ON`
 too), where the `ORDER BY` keys are column references and, when there is an `ORDER BY`, every
 item is a column or has an alias; and `SELECT agg₁, …, aggₖ FROM f [WHERE p]`
-(`elabStmt_correct_agg`) with `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`.
+(`elabStmt_correct_agg`) with `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`;
+and the same with `GROUP BY c₁, …` columns, each item a key column or such an aggregate
+(`elabStmt_correct_group`).
 
 **Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
 features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
@@ -163,8 +169,9 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | Before step 1 | 64 |
 | 1. `ORDER BY` / `LIMIT` (done) | 113 |
 | 2. Joins (inner, cross) (done) | 165 |
-| Today: 3a. Aggregates without `GROUP BY`, not `AVG` (done) | 258 |
-| 3b. `GROUP BY`, `HAVING`, ordered by aggregates | 384 |
+| 3a. Aggregates without `GROUP BY`, not `AVG` (done) | 258 |
+| Today: 3b-1. `GROUP BY` columns, items keys or aggregates (done) | 288 |
+| 3b-2..4. `HAVING`, ordered by aggregates, bare columns | 384 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
 | 5. `DISTINCT` | 410 |
 
@@ -245,8 +252,21 @@ follows coverage instead (decided 20 Nov 2026):
      reported as such: `AVG` (below), `DISTINCT` in `SUM`/`MIN`/`MAX` (no Spider query),
      bare columns next to an aggregate (registry T9; 2 Spider queries), and aggregates with
      `ORDER BY`/`LIMIT` (step 3b).
-   - **3b. `GROUP BY` / `HAVING`**, including ordering by aggregates (`ORDER BY count(*)`, 52
-     queries), which extends step 1's key resolution.
+   - **3b. `GROUP BY` / `HAVING`**, in four sub-steps by Spider coverage (decided 20 Nov 2026):
+     - **3b-1, done.** `SqlBridge/CorrectGroup.lean` proves `elabStmt_correct_group` for
+       `SELECT … FROM f [WHERE p] GROUP BY c₁, …`, column keys, each item a key column or an
+       aggregate of 3a. Both evaluators group in order of first appearance and append rows to
+       their group; `SqlEquiv` keys a group by the `setKey`s of its key values, which identify
+       exactly the equal typed keys (as for `COUNT(DISTINCT)`), so the groups correspond one to
+       one, in order (`groupAux_rel`). Per group, aggregates relate by 3a's `agg_rel`, and a key
+       column, which `SqlEquiv` reads on a sample row of the group, holds the group's key. No
+       new hypotheses.
+     - **3b-2, `HAVING`** (15 queries): a predicate over aggregates and keys on each side.
+     - **3b-3, ordering by keys or aggregates, `LIMIT`** (31 queries, mostly
+       `ORDER BY count(*) DESC LIMIT 1`): extends step 1's key resolution to the grouped sort.
+     - **3b-4, bare columns** (48 queries, registry T9): an item column that is not a key reads
+       the group's first row (or the extreme row next to one `MIN`/`MAX` in sqlite), as
+       `AggCall.first`/`atExtreme` do.
    - **`AVG`, a design decision.** `AVG` is an exact rational in the typed core (T10) and
      rounded to 16 places in `SqlEquiv` when it does not terminate (row 7): the theorem can
      leave it out, assume the averages terminate, or relate values up to rounding. Left out
