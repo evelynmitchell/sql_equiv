@@ -200,6 +200,34 @@ def deleteTests : List TestResult := [
 -- Parse Failure Tests (invalid SQL)
 -- ============================================================================
 
+/-- Non-ASCII identifiers (#370): parse, and print back unchanged. -/
+def nonAsciiIdentTests : List TestResult := [
+  testRoundTrip "non_ascii_table_and_column" "SELECT Élan FROM Été",
+  testRoundTrip "non_ascii_alias_and_qualifier" "SELECT é.Élan AS 日本 FROM Été AS é WHERE é.Élan > 1",
+  testRoundTrip "non_ascii_symbols" "SELECT a€b, x😀 FROM t",
+  testRoundTrip "non_ascii_after_digit" "SELECT é1 FROM t",
+  (match parse "SELECT ÉLAN FROM t" with
+   | .ok (.query (.simple sel)) =>
+     (match sel.items with
+      | [.exprItem (.col ⟨none, "ÉLAN"⟩) none] => .pass "non_ascii_word_is_identifier"
+      | _ => .fail "non_ascii_word_is_identifier" "wrong AST shape")
+   | _ => .fail "non_ascii_word_is_identifier" "parse failure"),
+  -- typographic quotes stay a parse error: as identifier characters they would name an
+  -- unknown column, which evaluates to a quiet NULL here (the engines fail the query)
+  (match parse "SELECT name FROM t WHERE name = ‘Alice’" with
+   | .error e => if (e.splitOn "Typographic quote").length > 1 then .pass "typographic_quote_rejected"
+                 else .fail "typographic_quote_rejected" e
+   | .ok _ => .fail "typographic_quote_rejected" "parsed"),
+  testParseFail "typographic_double_quote_rejected" "SELECT “name” FROM t",
+  testParseFail "typographic_quote_inside_word_rejected" "SELECT O’Brien FROM t",
+  -- a pasted no-break space would otherwise glue `25` into an unknown column name
+  (match parse "SELECT name FROM t WHERE age >\u00a025" with
+   | .error e => if (e.splitOn "Non-ASCII space (U+A0)").length > 1 then .pass "no_break_space_rejected"
+                 else .fail "no_break_space_rejected" e
+   | .ok _ => .fail "no_break_space_rejected" "parsed"),
+  testParseFail "ideographic_space_rejected" "SELECT a\u3000b FROM t"
+]
+
 def parseFailTests : List TestResult := [
   testParseFail "empty" "",
   testParseFail "gibberish" "asdf qwer",
@@ -482,7 +510,7 @@ def dialectPrintTests : List TestResult :=
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
-  insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests ++
+  insertTests ++ updateTests ++ deleteTests ++ nonAsciiIdentTests ++ parseFailTests ++ cteTests ++
   recursiveCTETests ++ doubleQuoteTests ++ trailingInputTests ++ windowParserTests ++
   dialectPrintTests
 

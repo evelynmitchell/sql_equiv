@@ -107,7 +107,9 @@ private def sqliteSetupSql : String :=
   "INSERT INTO other VALUES (2);\n" ++
   "INSERT INTO other VALUES (3);\n" ++
   "INSERT INTO other VALUES (3);\n" ++
-  "INSERT INTO other VALUES (4);\n"
+  "INSERT INTO other VALUES (4);\n" ++
+  "CREATE TABLE Été (Élan INTEGER, 日本 INTEGER);\n" ++
+  "INSERT INTO Été VALUES (1, 10), (2, 20), (3, 30);\n"
 
 -- ============================================================================
 -- Lean-side tables mirroring the SQLite setup above (for the parse-based
@@ -131,9 +133,17 @@ private def otherTable : Table := [
   [("x", .int 2)], [("x", .int 3)], [("x", .int 3)], [("x", .int 4)]
 ]
 
-/-- QueryHelpers.testDb (users/orders/products) extended with items/dups/other. -/
+/-- Non-ASCII table and column names (#370). -/
+private def eteTable : Table := [
+  [("Élan", .int 1), ("日本", .int 10)],
+  [("Élan", .int 2), ("日本", .int 20)],
+  [("Élan", .int 3), ("日本", .int 30)]
+]
+
+/-- QueryHelpers.testDb (users/orders/products) extended with items/dups/other/Été. -/
 private def db : Database := fun name =>
-  if name == "items" then itemsTable
+  if name == "Été" then eteTable
+  else if name == "items" then itemsTable
   else if name == "dups" then dupsTable
   else if name == "other" then otherTable
   else testDb name
@@ -420,6 +430,11 @@ def runAllTests : IO TestSeq := do
       "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
     diffTest "derived: nested aliases"
       "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
+    -- Non-ASCII identifiers (#370): every engine accepts them unquoted
+    diffTest "non-ASCII table, column and alias names"
+      "SELECT Élan, 日本 AS a€b FROM Été WHERE Élan > 1",
+    diffTest "non-ASCII table alias as qualifier"
+      "SELECT é.Élan FROM Été AS é WHERE é.日本 < 25",
     -- LOWER/UPPER fold ASCII letters only, as here (registry row 19). Aliased to TEXT
     -- columns of the schema so the harness reads the cells as strings.
     diffTest "LOWER/UPPER of non-ASCII letters (ASCII folding)"

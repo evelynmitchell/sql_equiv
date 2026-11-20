@@ -332,6 +332,35 @@ def isAlpha (c : Char) : Bool :=
 def isAlphaNum (c : Char) : Bool :=
   isAlpha c || isDigit c
 
+/-- Typographic quotes (‘ ’ ‚ ‛ “ ” „ ‟), usually pasted in place of `'` or `"`. The engines
+    read them as identifier characters and then fail with "no such column"; here an unknown
+    column is a quiet NULL, so the tokenizer rejects them instead, keeping the error loud. -/
+def isTypographicQuote (c : Char) : Bool :=
+  c.toNat >= 0x2018 && c.toNat <= 0x201F
+
+/-- Non-ASCII spaces (U+00A0 no-break space, U+2000–U+200B, U+202F, U+205F, U+3000, U+FEFF
+    and the line/paragraph separators), usually pasted from formatted text. sqlite and
+    Postgres read them as identifier characters (DuckDB reads U+00A0 as whitespace); here
+    they are rejected for the same reason as typographic quotes. -/
+def isUnicodeSpace (c : Char) : Bool :=
+  let n := c.toNat
+  n == 0xA0 || n == 0x1680 || (n >= 0x2000 && n <= 0x200B) || n == 0x2028 || n == 0x2029 ||
+  n == 0x202F || n == 0x205F || n == 0x3000 || n == 0xFEFF
+
+/-- A character that can start an unquoted identifier: an ASCII letter, `_`, or any
+    character at or above U+0080 (#370) except typographic quotes and non-ASCII spaces.
+    That is sqlite's and Postgres's rule (both accept every non-ASCII character in an
+    identifier: letters, `€`, emoji, CJK), minus the two groups usually pasted by mistake,
+    which are rejected so the mistake stays a loud error. Keywords are ASCII, so a non-ASCII
+    word is always an identifier. Names still fold ASCII letters only when matched, as in
+    the engines (`Été` and `été` are different names). -/
+def isIdentStart (c : Char) : Bool :=
+  isAlpha c || (c.toNat >= 0x80 && !isTypographicQuote c && !isUnicodeSpace c)
+
+/-- A character that can continue an unquoted identifier. -/
+def isIdentChar (c : Char) : Bool :=
+  isIdentStart c || isDigit c
+
 /-- Tokenizer state tracking position -/
 structure TokenizerState where
   line   : Nat := 1
@@ -579,7 +608,7 @@ implemented): {String.ofList lit}…"
             let allFrac := c2 :: fracDigits
             if isExponent rest''' then exponentError (allDigits ++ '.' :: allFrac)
             else decimalToken allFrac (allDigits ++ '.' :: allFrac) rest'''
-          else if isAlpha c2 then intToken ()  -- e.g. `1.x`: leave the dot alone
+          else if isIdentStart c2 then intToken ()  -- e.g. `1.x`: leave the dot alone
           else
             -- Trailing-dot literal `1.` — engines read this as 1.0
             decimalToken [] (allDigits ++ ['.']) (c2 :: rest'')
@@ -587,10 +616,10 @@ implemented): {String.ofList lit}…"
         | _ =>
           if isExponent rest' then exponentError allDigits
           else intToken ()
-      else if isAlpha c then
+      else if isIdentStart c then
         -- Identifier or keyword
         let startPos := ⟨state.line, state.column⟩
-        let (chars', rest') := rest.span isAlphaNum
+        let (chars', rest') := rest.span isIdentChar
         let allChars := c :: chars'
         let word := String.ofList allChars
         let upper := word.toUpper
@@ -599,7 +628,11 @@ implemented): {String.ofList lit}…"
         go rest' (advancePosMany state allChars) (pt :: acc)
       else
         .error {
-          message := s!"Unexpected character: '{c}'"
+          message := if isTypographicQuote c then
+              s!"Typographic quote '{c}': use a straight quote (' for strings, \" for names)"
+            else if isUnicodeSpace c then
+              s!"Non-ASCII space (U+{String.mk (Nat.toDigits 16 c.toNat) |>.toUpper}): use a plain space"
+            else s!"Unexpected character: '{c}'"
           line := state.line
           column := state.column
           context := getContextAt input state.offset
