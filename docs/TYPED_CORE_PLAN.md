@@ -100,8 +100,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 3b-1: `GROUP BY` columns, items keys or aggregates: `SqlBridge/CorrectGroup.lean`,
       `elabStmt_correct_group`. Spider coverage **288**, up from 258
     - [x] Step 3b-2: `HAVING`: `elabStmt_correct_having`. Spider coverage **303**, up from 288
-    - [ ] Step 3b-3: ordering by keys or aggregates, `LIMIT` (31)
-    - [ ] Step 3b-4: bare columns (registry T9; 48)
+    - [x] Step 3b-3: ordering by aggregates, `LIMIT`/`OFFSET`: `SqlBridge/CorrectGroupOrder.lean`,
+      `elabStmt_correct_group_ordered`. Spider coverage **333**, up from 303
+    - [ ] Step 3b-4: bare columns (registry T9; 48), and ordering by a key column (1)
     - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
@@ -172,8 +173,9 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 2. Joins (inner, cross) (done) | 165 |
 | 3a. Aggregates without `GROUP BY`, not `AVG` (done) | 258 |
 | 3b-1. `GROUP BY` columns, items keys or aggregates (done) | 288 |
-| Today: 3b-2. `HAVING` (done) | 303 |
-| 3b-3..4. Ordered by aggregates, bare columns | 384 |
+| 3b-2. `HAVING` (done) | 303 |
+| Today: 3b-3. Ordered by aggregates, `LIMIT` (done) | 333 |
+| 3b-4. Bare columns | 384 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
 | 5. `DISTINCT` | 410 |
 
@@ -270,8 +272,17 @@ follows coverage instead (decided 20 Nov 2026):
        key columns their key column, as the elaborator's hook resolves them), and its
        evaluation lemma (`TranslatesH.eval_rel`) gives the same decision per group
        (`isTrue_iff_where`), so both keep the same groups, in order (`out_rel_filter`).
-     - **3b-3, ordering by keys or aggregates, `LIMIT`** (31 queries, mostly
-       `ORDER BY count(*) DESC LIMIT 1`): extends step 1's key resolution to the grouped sort.
+     - **3b-3, ordering by aggregates, `LIMIT`, done** (30 queries, mostly
+       `ORDER BY count(*) DESC LIMIT 1`). `elabStmt_correct_group_ordered`, without `HAVING`
+       (no Spider query combines the two): the elaborator adds the sort keys' aggregates to the
+       aggregate and sorts its output by their columns, below the projection; `SqlEquiv` builds a
+       key row per group (`groupOrderKeyRow`, columns `__group_orderkey_k`) and sorts the
+       projected rows together with the key rows, reading the keys back by name. The keys are
+       found when no output name is dotted or a key name ignoring case (`keyRow_lookup`; a new
+       hypothesis, `hnm`, which the coverage report checks); they relate by 3a's `agg_rel`, so
+       the two comparators agree on related pairs and step 1's sorting argument applies to any
+       such pair relation (`sorted_gen`). The one Spider query ordered by a key column is left
+       to 3b-4, whose unnamed items it shares.
      - **3b-4, bare columns** (48 queries, registry T9): an item column that is not a key reads
        the group's first row (or the extreme row next to one `MIN`/`MAX` in sqlite), as
        `AggCall.first`/`atExtreme` do.
