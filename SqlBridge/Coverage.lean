@@ -1,15 +1,16 @@
 /-
   Coverage of the elaborator-correctness theorem (#352).
 
-  `SqlBridge/CorrectOrder.lean` proves `elabStmt_correct_ordered` for a fragment of SQL:
-  `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` where every
-  expression is a literal, a column, a comparison, `AND`, `OR` or `NOT`, every `ORDER BY` key
-  is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
+  `SqlBridge/CorrectJoin.lean` proves `elabStmt_correct_join` for a fragment of SQL:
+  `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` where `f` nests
+  tables (optionally aliased) under inner joins and cross joins without `ON`, every expression
+  (`ON` included) is a literal, a column, a comparison, `AND`, `OR` or `NOT`, every `ORDER BY`
+  key is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
   alias (`itemsNamed`). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
-  `isFragment`/`itemsFragment`/`orderedStmt`/`itemsNamed`.
+  `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
   `tools/spider_elab_baseline.py` turns them into the coverage table of
@@ -18,8 +19,9 @@
   Shape only: the theorem also assumes the schema's fold keeps names equal ignoring case (Spider's
   `String.toLower` does, #351), that the untyped database answers every such spelling of a table
   name alike (`DbRel`), and that no comparison or `ORDER BY` key orders booleans
-  (`QNoBoolOrder`). With an `ORDER BY`, the fold must also identify exactly the names equal
-  ignoring case (`hfoldCI`, which `String.toLower` satisfies).
+  (`QNoBoolOrder`). The fold must also identify exactly the names equal ignoring case
+  (`hfoldCI`), and the schema's column names must be their own folds (`hfix`): Spider's
+  lowercased names under `String.toLower` satisfy both.
 -/
 import SqlEquiv
 
@@ -31,7 +33,7 @@ open SqlEquiv
 def orderKey := "ORDER BY expression"
 def unnamedItem := "unnamed item with ORDER BY"
 def orderCompound := "ORDER BY/LIMIT on a set operation"
-def join := "join"
+def join := "outer join"
 def aggregate := "aggregate/GROUP BY"
 def unaryArith := "IS NULL/negation"
 def arithmetic := "arithmetic"
@@ -80,11 +82,16 @@ partial def exprFeatures : Expr → List String
   | .exists _ _ | .subquery _ => [subquery]
   | .windowFn _ _ _ => [window]
 
-/-- Features of a FROM clause outside the fragment (one table, optionally aliased). -/
+/-- Features of a FROM clause outside the fragment (tables, optionally aliased, under inner joins
+    and cross joins without `ON`; mirrors `SqlBridge.CorrectJoin.fromFragment`). -/
 partial def fromFeatures : FromClause → List String
   | .table _ => []
   | .subquery _ _ => [subquery]
-  | .join l _ r on_ => join :: fromFeatures l ++ fromFeatures r ++ (on_.map exprFeatures).getD []
+  | .join l kind r on_ =>
+    (match kind, on_ with
+     | .inner, _ | .cross, none => []
+     | _, _ => [join]) ++
+    fromFeatures l ++ fromFeatures r ++ (on_.map exprFeatures).getD []
 
 /-- Features of a SELECT outside the fragment. -/
 partial def selectFeatures (s : SelectStmt) : List String :=

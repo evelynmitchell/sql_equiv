@@ -37,10 +37,9 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 
 # Elaborator-correctness roadmap (#352, docs/TYPED_CORE_PLAN.md): each step lifts the features
 # it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351, done) let the
-# theorem apply to Spider's case-folding schemas at all; step 1 (ORDER BY / LIMIT, done) is in
-# "Today".
+# theorem apply to Spider's case-folding schemas at all; steps 1 (ORDER BY / LIMIT) and 2
+# (inner and cross joins) are done and counted in "Today".
 ROADMAP = [
-    ("2. Joins (inner, cross)", {"join"}),
     # On Spider, every non-column ORDER BY key and every unaliased item next to an ORDER BY is an
     # aggregate (`ORDER BY count(*)`, `SELECT x, count(*) … ORDER BY …`): step 3 extends step 1's
     # key resolution to them.
@@ -80,11 +79,12 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
     lines = [
         "## Elaborator-correctness coverage (#352)",
         "",
-        "`elabStmt_correct_ordered` (`SqlBridge/CorrectOrder.lean`) proves that an elaborated",
+        "`elabStmt_correct_join` (`SqlBridge/CorrectJoin.lean`) proves that an elaborated",
         "query's typed result rows match the untyped evaluator's, in order, for",
-        "`SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` with",
-        "literals, columns, comparisons, `AND`, `OR`, `NOT`, column `ORDER BY` keys, and (with",
-        "an `ORDER BY`) items that are columns or have an alias. Counts are of the elaborated",
+        "`SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, `f` tables",
+        "under inner joins and cross joins, with literals, columns, comparisons, `AND`, `OR`, `NOT`,",
+        "column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an",
+        "alias. Counts are of the elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
         "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",
         "lowercase (#351), given that the untyped database answers every spelling of a table name",

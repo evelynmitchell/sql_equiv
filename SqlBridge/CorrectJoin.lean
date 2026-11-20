@@ -1,3 +1,20 @@
+/-
+  Elaborator correctness with joins (#352, roadmap step 2).
+
+  Extends `elabStmt_correct_ordered` from one table to a `FROM` tree of tables under inner joins
+  (with or without a fragment `ON`) and cross joins without `ON`:
+
+  * Rows: `KeyedRow` records how `SqlEquiv`'s `FROM` keys a row (`Q.name` per column, `Q` the
+    table name or alias as written); unlike `RowRel` it composes under `++` (`KeyedRow.append`),
+    and it implies `RowRel` when the fold identifies exactly the names equal ignoring case and
+    column names are their own folds (`rowRel_of_keyed`).
+  * Joins: `SqlEquiv`'s inner join is the cross product, left row outermost, filtered by `ON`
+    (`evalFrom_join_filter`), as is the typed `Query.join` (`product_rel`, `filter_rel_of`).
+  * The `FROM` tree (`fromFragment`, `from_rel`) and the statement (`elabStmt_correct_join`),
+    whose projection, `WHERE`, `ORDER BY` and `LIMIT`/`OFFSET` reuse `SqlBridge.CorrectOrder`.
+    Roadmap and coverage in `docs/TYPED_CORE_PLAN.md`; examples in
+    `SqlCoreTest/CorrectExamples.lean`.
+-/
 import SqlBridge.CorrectOrder
 
 namespace SqlBridge.CorrectJoin
