@@ -15,20 +15,21 @@ types (sqlite accepts it through type affinity, e.g. a `text` column compared wi
 
 ## Elaborator-correctness coverage (#352)
 
-`elabStmt_correct` (`SqlBridge/Correct.lean`) proves that an elaborated query's typed
-result rows match the untyped evaluator's, for `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`
-with literals, columns, comparisons, `AND`, `OR`, `NOT`. Counts are of the elaborated
+`elabStmt_correct_ordered` (`SqlBridge/CorrectOrder.lean`) proves that an elaborated
+query's typed result rows match the untyped evaluator's, in order, for
+`SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` with
+literals, columns, comparisons, `AND`, `OR`, `NOT`, column `ORDER BY` keys, and (with
+an `ORDER BY`) items that are columns or have an alias. Counts are of the elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
 `docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to
 lowercase (#351), given that the untyped database answers every spelling of a table name
-alike (as the evaluate harness's lowercasing does) and no comparison orders two booleans.
+alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 64 |
-| after 1. ORDER BY / LIMIT | 113 |
+| Today | 113 |
 | after 2. Joins (inner, cross) | 165 |
-| after 3. Aggregates and GROUP BY / HAVING | 405 |
+| after 3. Aggregates and GROUP BY / HAVING, ordered by aggregates | 405 |
 | after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 409 |
 | after 5. DISTINCT | 431 |
 

@@ -1,13 +1,15 @@
 /-
   Coverage of the elaborator-correctness theorem (#352).
 
-  `SqlBridge/Correct.lean` proves `elabStmt_correct` for a fragment of SQL:
-  `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]` where every expression is a literal, a column, a
-  comparison, `AND`, `OR` or `NOT`. `outsideFragment stmt` lists the features that put a parsed
+  `SqlBridge/CorrectOrder.lean` proves `elabStmt_correct_ordered` for a fragment of SQL:
+  `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` where every
+  expression is a literal, a column, a comparison, `AND`, `OR` or `NOT`, every `ORDER BY` key
+  is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
+  alias (`itemsNamed`). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
-  `isFragment`/`itemsFragment`/`fragmentStmt`.
+  `isFragment`/`itemsFragment`/`orderedStmt`/`itemsNamed`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
   `tools/spider_elab_baseline.py` turns them into the coverage table of
@@ -15,7 +17,9 @@
 
   Shape only: the theorem also assumes the schema's fold keeps names equal ignoring case (Spider's
   `String.toLower` does, #351), that the untyped database answers every such spelling of a table
-  name alike (`DbRel`), and that no comparison orders two booleans (`QNoBoolOrder`).
+  name alike (`DbRel`), and that no comparison or `ORDER BY` key orders booleans
+  (`QNoBoolOrder`). With an `ORDER BY`, the fold must also identify exactly the names equal
+  ignoring case (`hfoldCI`, which `String.toLower` satisfies).
 -/
 import SqlEquiv
 
@@ -24,7 +28,9 @@ namespace SqlBridge.Coverage
 open SqlEquiv
 
 /-- Feature names, one per roadmap step or remaining gap. -/
-def orderLimit := "ORDER BY/LIMIT"
+def orderKey := "ORDER BY expression"
+def unnamedItem := "unnamed item with ORDER BY"
+def orderCompound := "ORDER BY/LIMIT on a set operation"
 def join := "join"
 def aggregate := "aggregate/GROUP BY"
 def unaryArith := "IS NULL/negation"
@@ -39,6 +45,15 @@ def star := "*"
 def window := "window function"
 def concat := "||"
 def noFrom := "no FROM"
+
+/-- Mirrors `SqlBridge.CorrectOrder.itemsNamed` (checked in `SqlCoreTest/CorrectExamples.lean`):
+    every item is a column without an alias or has an alias, and the output names have no dot, so
+    an `ORDER BY` key resolves to the same output column in both evaluators. -/
+def itemsNamed : List SelectItem → Bool
+  | [] => true
+  | .exprItem (.col c) none :: rest => !c.column.contains '.' && itemsNamed rest
+  | .exprItem _ (some a) :: rest => !a.contains '.' && itemsNamed rest
+  | _ :: _ => false
 
 mutual
 
@@ -83,7 +98,9 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   ((s.whereClause.map exprFeatures).getD []) ++
   (if s.groupBy.isEmpty && s.having.isNone then [] else [aggregate]) ++
   (s.groupBy.flatMap exprFeatures) ++ ((s.having.map exprFeatures).getD []) ++
-  (if s.orderBy.isEmpty && s.limitVal.isNone && s.offsetVal.isNone then [] else [orderLimit]) ++
+  (if s.orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) then []
+   else [orderKey]) ++
+  (if s.orderBy.isEmpty || itemsNamed s.items then [] else [unnamedItem]) ++
   (s.orderBy.flatMap fun o => exprFeatures o.expr)
 
 /-- Features of a query outside the fragment. -/
@@ -91,7 +108,7 @@ partial def queryFeatures : Query → List String
   | .simple s => selectFeatures s
   | .compound l _ r => subquery :: queryFeatures l ++ queryFeatures r
   | .withCTE _ q => subquery :: queryFeatures q
-  | .ordered q _ _ _ => orderLimit :: queryFeatures q
+  | .ordered q _ _ _ => orderCompound :: queryFeatures q
 
 end
 

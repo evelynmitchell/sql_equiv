@@ -7,6 +7,7 @@
 import SqlCore
 import SqlBridge.Elab
 import SqlBridge.Correct
+import SqlBridge.CorrectOrder
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore
@@ -14,6 +15,7 @@ import Test.TrustBaseCommands
 #assert_no_runtime_overrides SqlCore
 
 -- The bridge from parsed SQL (#295): the elaborator, and its correctness theorem for
--- `SELECT … FROM t WHERE p` (#309, `SqlBridge.Correct`).
+-- `SELECT … FROM t WHERE p` (#309, `SqlBridge.Correct`), with `ORDER BY` / `LIMIT` / `OFFSET`
+-- (#352 step 1, `SqlBridge.CorrectOrder`).
 #assert_trust_base SqlBridge
 #assert_no_runtime_overrides SqlBridge
