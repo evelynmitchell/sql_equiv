@@ -190,6 +190,10 @@ def corpus : List (String × Expect) := [
   ("SELECT UPPER(name) FROM users", .rejected "unsupported: function"),
   ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id", .rejected "unsupported: LEFT JOIN"),
   ("SELECT id FROM users u JOIN orders o ON u.id = o.user_id", .rejected "ambiguousColumn"),
+  -- #384: with GROUP BY too (the aggregate's output keeps only the keys' names)
+  ("SELECT id FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id", .rejected "ambiguousColumn"),
+  ("SELECT u.id FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id HAVING id > 1",
+    .rejected "ambiguousColumn"),
   ("SELECT nosuch FROM users", .rejected "unknownColumn"),
   ("SELECT NAME FROM users", .rejected "unknownColumn"),
   ("SELECT * FROM nosuch", .rejected "unknownTable"),

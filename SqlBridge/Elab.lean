@@ -503,6 +503,11 @@ def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.
     else
       -- GROUP BY and aggregates (phase 8a, #313)
       let keyList ← groupBy.mapM (elabExpr cols N.fold noHook)
+      -- Every column of the items and of `HAVING` outside an aggregate resolves in the `FROM`
+      -- scope (#384): without this, an ambiguous name would resolve against the aggregate's
+      -- output below, where only the keys keep their names (sqlite: "ambiguous column name").
+      let _ ← (colsOutsideAggsList itemExprs ++ colsOutsideAggsOpt having).mapM fun c =>
+        elabExpr cols N.fold noHook (.col c)
       let aggList ← aggExprs.mapM (elabAgg cols N.fold)
       -- Bare columns (registry T9): in the sqlite dialect, a column that is neither grouped nor
       -- aggregated becomes an aggregate of its own: its value at the row of the one `MIN`/`MAX`

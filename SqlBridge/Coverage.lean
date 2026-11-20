@@ -28,9 +28,8 @@
   Shape only: the theorem also assumes the schema's fold keeps names equal ignoring case (Spider's
   `String.toLower` does, #351), that the untyped database answers every such spelling of a table
   name alike (`DbRel`), and that no comparison or `ORDER BY` key orders booleans
-  (`QNoBoolOrder`). With bare columns, the elaborator must resolve each item column in the `FROM`
-  scope (`BareFirst`; a valid sqlite query, as Spider's are, has no ambiguous column), and the
-  dialect must take bare columns (Spider's schemas use the sqlite dialect). The fold must also identify exactly the names equal ignoring case
+  (`QNoBoolOrder`). With bare columns, the dialect must take bare columns (Spider's schemas use
+  the sqlite dialect). The fold must also identify exactly the names equal ignoring case
   (`hfoldCI`), and the schema's column names must be their own folds (`hfix`): Spider's
   lowercased names under `String.toLower` satisfy both.
 -/
