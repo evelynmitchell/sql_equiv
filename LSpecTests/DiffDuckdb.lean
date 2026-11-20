@@ -91,9 +91,17 @@ private def otherTable : Table := [
   [("x", .int 2)], [("x", .int 3)], [("x", .int 3)], [("x", .int 4)]
 ]
 
-/-- QueryHelpers.testDb (users/orders/products) extended with items/dups/other. -/
+/-- Non-ASCII table and column names (#370). -/
+private def eteTable : Table := [
+  [("Élan", .int 1), ("日本", .int 10)],
+  [("Élan", .int 2), ("日本", .int 20)],
+  [("Élan", .int 3), ("日本", .int 30)]
+]
+
+/-- QueryHelpers.testDb (users/orders/products) extended with items/dups/other/Été. -/
 private def db : Database := fun name =>
-  if name == "items" then itemsTable
+  if name == "Été" then eteTable
+  else if name == "items" then itemsTable
   else if name == "dups" then dupsTable
   else if name == "other" then otherTable
   else testDb name
@@ -108,7 +116,9 @@ private def duckdbSetupSql : String :=
   "CREATE TABLE dups (x INTEGER);\n" ++
   "INSERT INTO dups VALUES (1), (1), (2), (2), (3);\n" ++
   "CREATE TABLE other (x INTEGER);\n" ++
-  "INSERT INTO other VALUES (2), (3), (3), (4);\n"
+  "INSERT INTO other VALUES (2), (3), (3), (4);\n" ++
+  "CREATE TABLE Été (Élan INTEGER, 日本 INTEGER);\n" ++
+  "INSERT INTO Été VALUES (1, 10), (2, 20), (3, 30);\n"
 
 -- ============================================================================
 -- DuckDB execution and output parsing
@@ -406,6 +416,11 @@ def runAllTests : IO TestSeq := do
       "SELECT LOWER(name) AS lo, UPPER(name) AS up FROM users",
     diffDiverges "LOWER/UPPER of non-ASCII letters (row 19 divergence)"
       "SELECT LOWER('ÉCOLE') AS lo, UPPER('école') AS up",
+    -- Non-ASCII identifiers (#370): every engine accepts them unquoted
+    diffTest "non-ASCII table, column and alias names"
+      "SELECT Élan, 日本 AS a€b FROM Été WHERE Élan > 1",
+    diffTest "non-ASCII table alias as qualifier"
+      "SELECT é.Élan FROM Été AS é WHERE é.日本 < 25",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

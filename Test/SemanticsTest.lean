@@ -66,8 +66,15 @@ def singerTable : Table := [
   [("Singer_ID", .int 3), ("Name", .string "Rose White"), ("Country", .string "UK"), ("Age", .int 18)]
 ]
 
+/-- Non-ASCII table and column names (#370) -/
+def eteTable : Table := [
+  [("Élan", .int 1), ("日本", .string "a")],
+  [("Élan", .int 2), ("日本", .string "b")]
+]
+
 def testDb : Database := fun name =>
   match name with
+  | "Été" => eteTable
   | "users" => usersTable
   | "orders" => ordersTable
   | "products" => productsTable
@@ -553,6 +560,15 @@ def registryPinTests : List TestResult := [
   testContainsValue "upper_non_ascii_ascii_only" "SELECT UPPER('école') FROM users WHERE id = 1"
     (.string "éCOLE"),
   testContainsValue "lower_ascii" "SELECT LOWER('AbC') FROM users WHERE id = 1" (.string "abc"),
+  -- Non-ASCII identifiers (#370): any character from U+0080 is an identifier character, as
+  -- in sqlite and Postgres; names fold ASCII letters only, so élan is not Élan
+  testContainsValue "non_ascii_column" "SELECT Élan FROM Été WHERE Élan = 2" (.int 2),
+  testContainsValue "non_ascii_cjk_column_and_alias"
+    "SELECT 日本 AS a€b FROM Été AS é WHERE é.Élan = 1" (.string "a"),
+  testContainsValue "non_ascii_name_folds_ascii_only"
+    "SELECT élan FROM Été WHERE 日本 = 'a'" (.null none),
+  testRowCount "non_ascii_ascii_letters_still_fold"
+    "SELECT name FROM users WHERE AGE > 26" 3,
   -- NOT BETWEEN (#354): ages 30, 25, 35, 28, 22, so Carol (35) and Eve (22)
   testRowCount "not_between" "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30" 2,
   -- three-valued: NOT (age >= NULL AND age <= 30) is TRUE only where age > 30 (sqlite, DuckDB)
