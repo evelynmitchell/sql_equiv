@@ -89,6 +89,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     operands (`QNoBoolOrder`: the typed core orders `false < true`, `SqlEquiv` does not order
     booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
   - [ ] Elaborator correctness roadmap (#352), below
+    - [x] Step 0: case-folding schemas (#351)
+    - [x] Step 1: `ORDER BY` column keys, `LIMIT`, `OFFSET`: `SqlBridge/CorrectOrder.lean`,
+      `elabStmt_correct_ordered`. Spider coverage **113**, up from 64
+    - [ ] Step 2: joins
+    - [ ] Step 3: aggregates, `GROUP BY`, `HAVING`, ordered by aggregates
+    - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
+    - [ ] Step 5: `DISTINCT`
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
   - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)
@@ -131,8 +138,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 `elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
 the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
 sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
-(phase 9, #298). Its fragment today is `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]` with literals,
-columns, comparisons, `AND`, `OR` and `NOT`.
+(phase 9, #298). Its fragment today (step 1 done, `elabStmt_correct_ordered`) is
+`SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` with
+literals, columns, comparisons, `AND`, `OR` and `NOT`, where the `ORDER BY` keys are column
+references and, when there is an `ORDER BY`, every item is a column or has an alias.
 
 **Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
 features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
@@ -143,10 +152,10 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 
 | Step | Spider queries in the fragment |
 |------|-------------------------------:|
-| Today | 64 |
-| 1. `ORDER BY` / `LIMIT` | 113 |
+| Before step 1 | 64 |
+| Today: 1. `ORDER BY` / `LIMIT` (done) | 113 |
 | 2. Joins (inner, cross) | 165 |
-| 3. Aggregates, `GROUP BY`, `HAVING` | 405 |
+| 3. Aggregates, `GROUP BY`, `HAVING`, ordered by aggregates | 405 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 409 |
 | 5. `DISTINCT` | 431 |
 
@@ -166,13 +175,35 @@ elaborate into the fragment. So the "Today" row is now queries the theorem cover
 nothing: the queries that use them also use aggregates, joins or `ORDER BY`. The order above
 follows coverage instead (decided 20 Nov 2026):
 
-1. **`ORDER BY` / `LIMIT`.** The cheapest large step. Both evaluators sort stably, keep input
-   order on ties (registry rows 2 and T14) and carry an explicit NULL position on every key, so
-   the in-order output relation (`List.Forall₂ OutRel`) can stay as it is.
+1. **`ORDER BY` / `LIMIT`, done.** The cheapest large step. Both evaluators sort stably, keep
+   input order on ties (registry rows 2 and T14) and carry an explicit NULL position on every
+   key, so the in-order output relation (`List.Forall₂ OutRel`) stays as it is.
+   `SqlBridge/CorrectOrder.lean` proves `elabStmt_correct_ordered` in layers:
+   - `SqlEquiv` sorts with `List.mergeSort`, the typed core with an insertion sort
+     (`sortKeyed`). Both are stable, so they agree whenever the comparator is total and
+     transitive on the list (`mergeSort_eq_insertionSort_of_mem`; ties allowed).
+   - Per key, `SqlEquiv`'s `orderKeyCmp` and the typed `SortKey.cmpDatum` agree on related
+     values (`cmpDatum_agree`), and so do the lexicographic comparators (`compareBy_agree`).
+   - The typed comparator is a total preorder on rows that conform to the context
+     (`transCmp_cmpKeyRows`, `keyed_total_trans`).
+   - An elaborated key resolves to the same value in both evaluators (`orderKey_rel`):
+     `SqlEquiv` sorts the projected row followed by the source row and looks the key up by
+     name, the elaborator looks it up among the output names first, then in scope.
+
+   New hypotheses, each checked satisfiable on a Spider-shaped schema in `CorrectExamples`:
+   keys are column references (`hcols`); with an `ORDER BY`, items are columns or aliased and
+   output names have no dot (`itemsNamed`, since `SqlEquiv` names an unaliased expression
+   `expr`, the elaborator `?column?`); the fold identifies exactly the names equal ignoring
+   case (`hfoldCI`, `String.toLower` does; `id` does not, so the bridge test schema is out for
+   `ORDER BY`); and `QNoBoolOrder` also rules out boolean keys. On Spider, every query ordered
+   by something other than a column, and every unaliased item next to an `ORDER BY`, is an
+   aggregate query (`ORDER BY count(*)`), so step 3 takes those on.
 2. **Joins (inner and cross).** `Fin.append` columns against `SqlEquiv`'s concatenated
    qualified rows; `RowRel` handles two qualifiers and `WellNamed` uniqueness becomes
    uniqueness per qualifier.
-3. **Aggregates and `GROUP BY` / `HAVING`.** The largest blocker, and the hardest step. Known
+3. **Aggregates and `GROUP BY` / `HAVING`.** The largest blocker, and the hardest step. It
+   includes ordering by aggregates (`ORDER BY count(*)`, 52 queries), which extends step 1's
+   key resolution. Known
    difference: `AVG` is an exact rational in the typed core (T10) and rounded to 16 places in
    `SqlEquiv` when it does not terminate (row 7), so the theorem needs a hypothesis there or
    covers terminating averages only.

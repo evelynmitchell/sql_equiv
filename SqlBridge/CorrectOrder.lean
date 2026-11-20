@@ -12,6 +12,12 @@
     `SqlEquiv` does not order.
   * The typed comparator is a total preorder on well-typed key rows (`transCmp_cmpKeyRows`,
     `keyed_total_trans`).
+  * Keys: an elaborated column key has the value `SqlEquiv` finds for it on `projected ++ source`
+    (`orderKey_rel`, `keysRel_of_elab`).
+  * The statement: `elabStmt_correct_ordered`, for
+    `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`; the
+    result rows relate in order, as in `elabStmt_correct`. Roadmap and coverage in
+    `docs/TYPED_CORE_PLAN.md`; examples in `SqlCoreTest/CorrectExamples.lean`.
 -/
 import SqlBridge.Correct
 

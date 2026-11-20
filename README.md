@@ -70,8 +70,9 @@ This repository could become a basis for SQL support in
   INTERSECT/EXCEPT, LIKE, exact AVG and division, and uncorrelated subqueries. 520 of the
   564 Spider dev queries elaborate into it. The other 44 are sqlite type-affinity cases,
   which a typed core rejects by design. For `SELECT … FROM t WHERE p` with comparisons and
-  boolean connectives, the elaborator is proved correct against SqlEquiv (#309,
-  `SqlBridge/Correct.lean`). Phase 9 retires the untyped semantics. These are
+  boolean connectives, ordered by columns, with `LIMIT`/`OFFSET`, the elaborator is proved
+  correct against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `SqlBridge/CorrectOrder.lean`);
+  113 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features
