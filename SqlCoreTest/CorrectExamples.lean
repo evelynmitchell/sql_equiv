@@ -6,6 +6,7 @@
 import SqlBridge.Correct
 import SqlBridge.CorrectOrder
 import SqlBridge.CorrectJoin
+import SqlBridge.CorrectAgg
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -14,6 +15,7 @@ namespace SqlCoreTest.CorrectExamples
 open SqlBridge SqlBridge.Correct SqlCoreTest.BridgeDiff
 open SqlBridge.CorrectOrder (itemsNamed)
 open SqlBridge.CorrectJoin (fromFragment joinStmt)
+open SqlBridge.CorrectAgg (aggItems aggStmt)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
 example : WellNamed named :=
@@ -57,13 +59,20 @@ def stmtShape : SqlEquiv.Stmt → Bool
       (orderBy.isEmpty || itemsNamed items) && stmt == joinStmt items f wh orderBy lim off
   | _ => false
 
+/-- The shape of `elabStmt_correct_agg` (roadmap step 3a): aggregates only, no `GROUP BY`. -/
+def aggShape : SqlEquiv.Stmt → Bool
+  | stmt@(.query (.simple (.mk false items (some f) wh [] none [] none none))) =>
+    aggItems items && !items.isEmpty && fromFragment f && wh.all isFragment &&
+      stmt == aggStmt items f wh
+  | _ => false
+
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
     `itemsNamed` agrees with the theorem's. -/
 def coverageAgrees (sql : String) : Bool :=
   match SqlEquiv.parse sql with
   | .ok stmt =>
-    (SqlBridge.Coverage.outsideFragment stmt).isEmpty == stmtShape stmt &&
+    (SqlBridge.Coverage.outsideFragment stmt).isEmpty == (stmtShape stmt || aggShape stmt) &&
       match stmt with
       | .query (.simple s) => SqlBridge.Coverage.itemsNamed s.items == itemsNamed s.items
       | _ => true
@@ -81,6 +90,11 @@ def coverageAgrees (sql : String) : Bool :=
   "SELECT name AS n, age FROM users WHERE age > 1 ORDER BY n DESC, age NULLS FIRST",
   "SELECT name FROM users ORDER BY age + 1", "SELECT age > 30 FROM users ORDER BY age",
   "SELECT age > 30 FROM users LIMIT 1", "SELECT COUNT(*) FROM users",
+  "SELECT COUNT(DISTINCT department), MAX(age), MIN(name), SUM(age) FROM users WHERE age > 1",
+  "SELECT COUNT(*) FROM users u JOIN orders o ON u.id = o.user_id", "SELECT AVG(age) FROM users",
+  "SELECT SUM(DISTINCT age) FROM users", "SELECT MAX(age), name FROM users",
+  "SELECT COUNT(*) FROM users LIMIT 1", "SELECT SUM(age + 1) FROM users",
+  "SELECT COUNT(*) + 1 FROM users",
   "SELECT department FROM users GROUP BY department", "SELECT name FROM users WHERE age IS NULL",
   "SELECT name FROM users WHERE age IN (1, 2)", "SELECT name FROM users WHERE age BETWEEN 1 AND 2",
   "SELECT name FROM users WHERE name LIKE 'a%'", "SELECT 1",
@@ -99,6 +113,9 @@ def features (sql : String) : List String :=
 #guard features "SELECT age > 30 FROM users ORDER BY age" == ["unnamed item with ORDER BY"]
 #guard features "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id" == []
 #guard features "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id" == ["outer join"]
+#guard features "SELECT COUNT(*), MAX(age) FROM users WHERE age > 1" == []
+#guard features "SELECT AVG(age) FROM users" == ["AVG", "aggregate/GROUP BY"]
+#guard features "SELECT SUM(age + 1) FROM users" == ["arithmetic"]
 
 /-! ### A Spider-shaped schema (#351)
 
@@ -167,5 +184,23 @@ def orderedSpider (sql : String) : Bool :=
 #guard orderedSpider "SELECT a.name FROM singer AS a JOIN singer AS b ON a.age < b.age"
 -- An unqualified column of both tables is ambiguous: the elaborator rejects it.
 #guard !orderedSpider "SELECT singer_id FROM singer JOIN song ON singer.singer_id = song.singer_id"
+
+/-- Spider-shaped aggregates without `GROUP BY` (roadmap step 3a) have the shape of
+    `elabStmt_correct_agg` and elaborate under the folding schema. -/
+def aggSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => aggShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+#guard aggSpider "SELECT count(*) FROM singer"
+#guard aggSpider "SELECT COUNT(*) FROM Singer WHERE Age > 20"
+#guard aggSpider "SELECT max(age), min(Name), sum(AGE), count(name) FROM singer"
+#guard aggSpider ("SELECT count(DISTINCT T2.title) FROM singer AS T1 JOIN song AS T2 ON " ++
+  "T1.singer_id = T2.singer_id WHERE T1.age > 20")
+-- Outside step 3a: `AVG`, grouping, a bare column next to an aggregate, `SUM` of text.
+#guard !aggSpider "SELECT avg(age) FROM singer"
+#guard !aggSpider "SELECT count(*) FROM singer GROUP BY name"
+#guard !aggSpider "SELECT max(age), name FROM singer"
+#guard !aggSpider "SELECT sum(name) FROM singer"
 
 end SqlCoreTest.CorrectExamples

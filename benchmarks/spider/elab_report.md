@@ -20,7 +20,9 @@ query's typed result rows match the untyped evaluator's, in order, for
 `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, `f` tables
 under inner joins and cross joins, with literals, columns, comparisons, `AND`, `OR`, `NOT`,
 column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an
-alias. Counts are of the elaborated
+alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for
+`SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
+`MAX` (not `AVG`, pending its rounding decision). Counts are of the elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
 `docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to
 lowercase (#351), given that the untyped database answers every spelling of a table name
@@ -28,14 +30,15 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 165 |
-| after 3. Aggregates and GROUP BY / HAVING, ordered by aggregates | 405 |
-| after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 409 |
-| after 5. DISTINCT | 431 |
+| Today | 258 |
+| after 3b. GROUP BY / HAVING, ordered by aggregates | 384 |
+| after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 388 |
+| after 5. DISTINCT | 410 |
 
 Still outside after step 5 (queries using each feature):
 
 - subquery/set operation/CTE: 80
+- AVG: 24
 - LIKE: 8
 - *: 2
 

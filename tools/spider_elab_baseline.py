@@ -37,13 +37,13 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 
 # Elaborator-correctness roadmap (#352, docs/TYPED_CORE_PLAN.md): each step lifts the features
 # it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351, done) let the
-# theorem apply to Spider's case-folding schemas at all; steps 1 (ORDER BY / LIMIT) and 2
-# (inner and cross joins) are done and counted in "Today".
+# theorem apply to Spider's case-folding schemas at all; steps 1 (ORDER BY / LIMIT), 2 (inner
+# and cross joins) and 3a (aggregates without GROUP BY, AVG aside) are done and counted in "Today".
 ROADMAP = [
     # On Spider, every non-column ORDER BY key and every unaliased item next to an ORDER BY is an
     # aggregate (`ORDER BY count(*)`, `SELECT x, count(*) … ORDER BY …`): step 3 extends step 1's
     # key resolution to them.
-    ("3. Aggregates and GROUP BY / HAVING, ordered by aggregates",
+    ("3b. GROUP BY / HAVING, ordered by aggregates",
      {"aggregate/GROUP BY", "ORDER BY expression", "unnamed item with ORDER BY"}),
     ("4. IS NULL, negation, arithmetic, IN list, BETWEEN",
      {"IS NULL/negation", "arithmetic", "IN list/BETWEEN"}),
@@ -84,7 +84,9 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "`SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, `f` tables",
         "under inner joins and cross joins, with literals, columns, comparisons, `AND`, `OR`, `NOT`,",
         "column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an",
-        "alias. Counts are of the elaborated",
+        "alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for",
+        "`SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,",
+        "`MAX` (not `AVG`, pending its rounding decision). Counts are of the elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
         "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",
         "lowercase (#351), given that the untyped database answers every spelling of a table name",

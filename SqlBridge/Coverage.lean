@@ -1,16 +1,19 @@
 /-
   Coverage of the elaborator-correctness theorem (#352).
 
-  `SqlBridge/CorrectJoin.lean` proves `elabStmt_correct_join` for a fragment of SQL:
+  `SqlBridge/CorrectJoin.lean` proves `elabStmt_correct_join` (and `SqlBridge/CorrectAgg.lean`
+  `elabStmt_correct_agg`, for aggregates without `GROUP BY`) for a fragment of SQL:
   `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` where `f` nests
   tables (optionally aliased) under inner joins and cross joins without `ON`, every expression
   (`ON` included) is a literal, a column, a comparison, `AND`, `OR` or `NOT`, every `ORDER BY`
   key is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
-  alias (`itemsNamed`). `outsideFragment stmt` lists the features that put a parsed
+  alias (`itemsNamed`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
+  `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)` (`AVG` is its own feature, pending the
+  decision on its rounding, registry row 7). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
-  `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`.
+  `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
   `tools/spider_elab_baseline.py` turns them into the coverage table of
@@ -35,6 +38,7 @@ def unnamedItem := "unnamed item with ORDER BY"
 def orderCompound := "ORDER BY/LIMIT on a set operation"
 def join := "outer join"
 def aggregate := "aggregate/GROUP BY"
+def avg := "AVG"
 def unaryArith := "IS NULL/negation"
 def arithmetic := "arithmetic"
 def inBetween := "IN list/BETWEEN"
@@ -57,6 +61,16 @@ def itemsNamed : List SelectItem → Bool
   | .exprItem _ (some a) :: rest => !a.contains '.' && itemsNamed rest
   | _ :: _ => false
 
+/-- Mirrors `SqlBridge.CorrectAgg.aggFragment`'s shape (its argument's features are reported
+    separately): `COUNT(*)`, `COUNT([DISTINCT] e)`, and `SUM`, `MIN`, `MAX` without `DISTINCT`. -/
+def aggCallOk : Expr → Bool
+  | .countStar => true
+  | .agg .count (some _) _ => true
+  | .agg (.sum _) (some _) false => true
+  | .agg (.min _) (some _) false => true
+  | .agg (.max _) (some _) false => true
+  | _ => false
+
 mutual
 
 /-- Features of an expression outside the fragment (subqueries are not entered). -/
@@ -72,7 +86,8 @@ partial def exprFeatures : Expr → List String
   | .unaryOp .not a => exprFeatures a
   | .unaryOp _ a => unaryArith :: exprFeatures a
   | .func _ args => function :: args.flatMap exprFeatures
-  | .agg _ a _ => aggregate :: (a.map exprFeatures).getD []
+  | .agg fn a _ =>
+    (match fn with | .avg _ => [avg] | _ => []) ++ aggregate :: (a.map exprFeatures).getD []
   | .countStar => [aggregate]
   | .case bs e => caseExpr :: (bs.flatMap fun (c, r) => exprFeatures c ++ exprFeatures r) ++
       (e.map exprFeatures).getD []
@@ -93,10 +108,19 @@ partial def fromFeatures : FromClause → List String
      | _, _ => [join]) ++
     fromFeatures l ++ fromFeatures r ++ (on_.map exprFeatures).getD []
 
-/-- Features of a SELECT outside the fragment. -/
+/-- Features of a SELECT outside the fragment. A SELECT of aggregates only, without `GROUP BY`,
+    `HAVING`, `ORDER BY`, `LIMIT` or `OFFSET`, is in the fragment of
+    `SqlBridge.CorrectAgg.elabStmt_correct_agg` (roadmap step 3a) when its arguments are. -/
 partial def selectFeatures (s : SelectStmt) : List String :=
+  let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
+    s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
   (if s.distinct then [distinct] else []) ++
-  (s.items.flatMap fun
+  (if plainAgg then
+    s.items.flatMap fun
+      | .exprItem (.agg _ (some a) _) _ => exprFeatures a
+      | _ => []
+  else s.items.flatMap fun
     | .star _ => [star]
     | .exprItem e _ => exprFeatures e) ++
   (match s.fromClause with

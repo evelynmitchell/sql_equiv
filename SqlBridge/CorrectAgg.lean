@@ -1,3 +1,21 @@
+/-
+  Elaborator correctness for aggregates without `GROUP BY` (#352, roadmap step 3a).
+
+  `SELECT agg₁, …, aggₖ FROM f [WHERE p]`, each `aggᵢ` one of `COUNT(*)`, `COUNT([DISTINCT] e)`,
+  `SUM(e)`, `MIN(e)`, `MAX(e)`, `e` in the fragment of #309 and `f` a `FROM` tree of step 2. The
+  typed core elaborates it to `Query.aggregate` with no keys (one group, even for no rows),
+  projected; `SqlEquiv` evaluates the items once over the filtered rows. `AVG` is left out until
+  the rounding decision (registry rows 7 and T10), as are `DISTINCT` in `SUM`/`MIN`/`MAX` and
+  bare columns (registry T9).
+
+  * Values: on related lists of one type, `COUNT` (`count_agree`), `COUNT(DISTINCT)`
+    (`count_distinct_agree`: the typed `dedup` against `dedupByKey Value.setKey`, through the
+    decimal normal form `mkDecimal_spec`/`normal_unique`), `SUM` (`sum_agree`: `sumScaled`
+    computes the rational sum, `foldl_sumStep`) and `MIN`/`MAX` (`minmax_agree`, through
+    `compare_of_cmp`) agree, in every dialect mode (there are no booleans or mixed types).
+  * Rows: an aggregate over related rows (`agg_rel`).
+  * The elaborator's query (`elab_agg_shape`) and the statement (`elabStmt_correct_agg`).
+-/
 import SqlBridge.CorrectJoin
 
 namespace SqlBridge.CorrectAgg
