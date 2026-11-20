@@ -122,6 +122,7 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 | 16 | Result type and rounding of `ROUND(x[, d])` (`ROUND(7)`, `ROUND(2.5)`, `ROUND(15, -1)`) | Not in the core standard (vendor function) | Always a float: `7.0`, `3.0`; negative `d` treated as 0 (`ROUND(15, -1)` is `15.0`) | Keeps the input type: `7`, `3` (decimal), `20`; half away from zero | `double precision` for an integer, `numeric` for a decimal (`5.00` at `d = 2`); `3`, `20`; half away from zero | **Keeps the input type** (DuckDB): an integer stays an integer, a decimal is rounded exactly at `d` places (`Value.mkDecimal`); half away from zero; negative `d` rounds to a multiple of `10^-d`; NULL in either argument gives NULL; a non-integer `d` is an error. `ABS` of a decimal keeps its scale | decided (#355; we have exact decimals, not floats, #202) | `round_*`, `abs_decimal` unit tests; DiffDuckdb (agrees on values and types); sqlite differs in type only for `d ≥ 0` (DiffSqlite KNOWN DIVERGENCES); DiffPostgres (values agree) |
 | 17 | `AVG`/`SUM` over a TEXT column (Spider `avg(horsepower)`, `horsepower` declared `text`; dates stored as text, #211) | Type error: no AVG/SUM over character strings | Converts each string to a number: its numeric prefix, else 0 (`AVG` of `'130'`, `'abc'`, `'2020-01-02'` is `716.67`) | Binder error (`No function matches avg(VARCHAR)`) | Error (`function avg(text) does not exist`) | **Type error** (`none`), as DuckDB and Postgres: any string among the inputs (`hasNonNumeric`), also mixed with numbers. In a SELECT item it shows as NULL; in HAVING it drops the group. Booleans: row 18 | decided: error, do not emulate sqlite | Unit pins `avg_text_column_error_in_having`, `sum_text_column_error_in_having`, `avg_mixed_text_error_in_having`, `avg_numbers_in_having`; Spider harness reports these as their own labelled failure class, **known divergence: AVG/SUM over a TEXT column (registry row 17)**, with a self-test; DiffSqlite KNOWN DIVERGENCES |
 | 18 | `SUM`/`AVG` over booleans (`SUM(age > 26)`) | No SUM/AVG over booleans | Integers 1/0: `SUM` counts the true rows, `AVG` is their fraction | `SUM` as 1/0; `AVG` is a binder error | Error (`function sum(boolean) does not exist`, likewise `avg`) | **Per dialect and per function** (`DialectConfig.boolSum`/`boolAvg`, recorded on each `AggFunc.sum`/`avg` and window `sum`/`avg` node as `BoolSumAvg`): sqlite → 1/0 for both; duckdb → 1/0 for SUM, error for AVG; standard, postgres → error for both. Previously booleans were skipped like NULLs, matching no engine | decided | Unit pins `sum_bool_sqlite`, `avg_bool_sqlite`, `sum_bool_duckdb`, `avg_bool_duckdb_error`, `sum_bool_standard_error`, `avg_bool_postgres_error`; DiffSqlite and DiffDuckdb (`SUM over booleans`) |
+| 19 | `UPPER`/`LOWER` of non-ASCII letters (`LOWER('ÉCOLE')`) | Unicode case mapping (the standard's `LOWER` folds by the character set) | ASCII letters only: `lower('ÉCOLE')` is `École` | Unicode: `école` | Unicode: `école` | ASCII letters only, every dialect (`String.toLower`), as sqlite | **undecided**: found while checking #267's `LOWER(x) LIKE LOWER(p)` spelling of a sqlite LIKE, which is exact here and in sqlite but on DuckDB/Postgres also folds non-ASCII letters. Options: per dialect (needs a Unicode case table), or keep ASCII and document | `to_sql_in_likeci_same_rows_*` (ours, ASCII and non-ASCII rows); no engine pin yet |
 
 ### Typed core (`SqlCore`, #287)
 
@@ -151,6 +152,23 @@ The registry rows above describe `SqlEquiv`. The typed core makes its choices st
 | T17 | Scalar subquery with several rows `WHERE x > (SELECT a FROM t)` | Error ("More than one row returned by a subquery used as an expression") | Error (same) | **Per dialect** (`DialectConfig.scalarSubqueryRows`, recorded on each `SubKind.scalar` node): standard, postgres, duckdb → `EvalError.cardinality` at evaluation (so such a node is never `divSafe`); sqlite → the first row's value. No rows is `NULL` everywhere. The subquery is evaluated strictly, once, even when the outer query has no rows, so the error is raised there too; DuckDB agrees, but Postgres is lazy (no error when the value is never needed: an empty outer query or a short-circuited `AND`), a known divergence in the error mode | decided (#329, phase 8f) | `SubqueryExamples`, `SqliteDiffTest` (first row, against sqlite) |
 
 ### Notes on individual rows
+
+- **Printing (#267).** Choices are recorded in the AST, so printed SQL must carry
+  them or say it cannot. `Stmt.toSqlIn d` prints for dialect `d`: NULLS clauses
+  relative to `d`'s rule (row 1), and a sqlite case-insensitive LIKE as
+  `LOWER(x) LIKE LOWER(p)` for case-sensitive dialects (row 8; exact in our
+  evaluator, see row 19 for engines). **Decision:** the MIN/MAX mode (rows 13, 14,
+  T9) and the SUM/AVG boolean rule (row 18) have no SQL spelling, so `toSqlIn`
+  refuses, with an error naming the choice, whenever `d` would record a different
+  one on re-parsing. A case-sensitive LIKE printed for sqlite is refused for the
+  same reason. Alternatives considered: documenting that printed SQL is
+  dialect-bound (the loss stays quiet), or annotating printed SQL with a dialect
+  comment that our parser reads (engines ignore it). The check re-parses the
+  output and compares the two statements with these choices spelled out as
+  comments (`PrintCfg.annotate`). Tests: per-dialect round trips of a corpus
+  covering every recorded choice, and the 564 Spider queries in each dialect
+  (checked once, all AST-identical); refusal and same-rows pins in
+  `Test/ParserTest.lean` (`to_sql_in_*`).
 
 - **Row 1** is the model for a configurable behaviour: one enum on the AST
   item, a `DialectConfig` field, and each differential harness running in its

@@ -350,11 +350,141 @@ def trailingInputTests : List TestResult := [
    | _ => .fail "comma_join_is_cross" "parse failure")
 ]
 
+
+-- ============================================================================
+-- Dialect-faithful printing (#267): toSqlIn
+-- ============================================================================
+
+private def allDialects : List Dialect := [.standard, .sqlite, .duckdb, .postgres]
+
+/-- Queries exercising every dialect choice the parser records: NULL position, LIKE case,
+    MIN/MAX mode (with and without a bare column), SUM/AVG over booleans, windows. -/
+private def dialectCorpus : List String := [
+  "SELECT name FROM users ORDER BY age",
+  "SELECT name FROM users ORDER BY age DESC",
+  "SELECT name FROM users ORDER BY age NULLS FIRST",
+  "SELECT name FROM users ORDER BY age DESC NULLS LAST, name",
+  "SELECT name FROM users WHERE name LIKE 'al%'",
+  "SELECT name FROM users WHERE name NOT LIKE 'A_ice'",
+  "SELECT MAX(age), MIN(name) FROM users",
+  "SELECT MAX(age), name FROM users",
+  "SELECT department, MIN(age) FROM users GROUP BY department HAVING MAX(age) > 25",
+  "SELECT SUM(age > 26), AVG(age) FROM users",
+  "SELECT name, MIN(age) OVER (PARTITION BY department) FROM users",
+  "SELECT name, SUM(age) OVER (ORDER BY age) FROM users",
+  "SELECT DISTINCT department FROM users ORDER BY department"
+]
+
+/-- Same dialect both ways: `toSqlIn d` succeeds and parses back to the identical AST. -/
+private def roundTripIn (d : Dialect) (sql : String) : TestResult :=
+  let name := s!"to_sql_in_round_trip_{d.name}: {sql}"
+  match parse sql (dialect := d) with
+  | .error e => .fail name s!"parse: {e}"
+  | .ok st =>
+    match st.toSqlIn d with
+    | .error e => .fail name s!"refused: {e}"
+    | .ok out =>
+      match parse out (dialect := d) with
+      | .ok st2 => if st2 == st then .pass name else .fail name s!"AST differs: {out}"
+      | .error e => .fail name s!"re-parse: {e}"
+
+/-- `toSqlIn dst` of a query parsed in `src` refuses, with a message containing `needle`. -/
+private def expectRefusal (name : String) (src dst : Dialect) (sql needle : String) : TestResult :=
+  match parse sql (dialect := src) with
+  | .error e => .fail name s!"parse: {e}"
+  | .ok st =>
+    match st.toSqlIn dst with
+    | .ok out => .fail name s!"expected a refusal, printed: {out}"
+    | .error e => if (e.splitOn needle).length > 1 then .pass name
+                  else .fail name s!"refusal without '{needle}': {e}"
+
+/-- `toSqlIn dst` of a query parsed in `src` succeeds, the output re-parses in `dst`, and both
+    statements evaluate to the same result on `db`. -/
+private def expectFaithful (name : String) (src dst : Dialect) (sql : String)
+    (db : Database) : TestResult :=
+  match parse sql (dialect := src) with
+  | .error e => .fail name s!"parse: {e}"
+  | .ok st =>
+    match st.toSqlIn dst with
+    | .error e => .fail name s!"refused: {e}"
+    | .ok out =>
+      match parse out (dialect := dst) with
+      | .error e => .fail name s!"re-parse: {e}"
+      | .ok st2 =>
+        if (evalStmt db st).2 == (evalStmt db st2).2 then .pass name
+        else .fail name s!"results differ for {out}"
+
+/-- Mixed letter case, non-ASCII letters, NULLs and non-strings, for the LIKE folding cases. -/
+private def caseTable : Table := [
+  [("s", .string "Alice"), ("p", .string "al%")],
+  [("s", .string "ÉCOLE"), ("p", .string "école")],
+  [("s", .string "BOB"), ("p", .string "b_b")],
+  [("s", .null none), ("p", .string "a%")],
+  [("s", .string "x"), ("p", .null none)],
+  [("s", .int 5), ("p", .string "5")]]
+
+private def caseDb : Database := fun n => if n == "t" then caseTable else []
+
+/-- Users with a NULL age and a boolean-friendly spread, so NULL positions and SUM over
+    booleans are observable. -/
+private def usersDb : Database := fun n =>
+  if n == "users" then [
+    [("name", .string "Alice"), ("age", .int 30), ("department", .string "Eng")],
+    [("name", .string "Bob"),   ("age", .null (some .int)), ("department", .string "Ops")],
+    [("name", .string "Carol"), ("age", .int 22), ("department", .string "Eng")]]
+  else []
+
+def dialectPrintTests : List TestResult :=
+  (allDialects.flatMap fun d => dialectCorpus.map (roundTripIn d)) ++ [
+  -- likeCI survives a cross-dialect trip as LOWER(x) LIKE LOWER(p): same AST shape, same rows
+  (match parse "SELECT s FROM t WHERE s LIKE p" (dialect := .sqlite) with
+   | .ok st => match st.toSqlIn .standard with
+     | .ok out => if out == "SELECT s FROM t WHERE (LOWER(s) LIKE LOWER(p))" then
+         .pass "to_sql_in_likeci_prints_lower" else .fail "to_sql_in_likeci_prints_lower" out
+     | .error e => .fail "to_sql_in_likeci_prints_lower" e
+   | .error e => .fail "to_sql_in_likeci_prints_lower" e),
+  expectFaithful "to_sql_in_likeci_same_rows_standard" .sqlite .standard
+    "SELECT s, p, s LIKE p AS m FROM t" caseDb,
+  expectFaithful "to_sql_in_likeci_same_rows_postgres" .sqlite .postgres
+    "SELECT s FROM t WHERE s NOT LIKE p" caseDb,
+  -- default toSql prints for standard, so it folds likeCI too
+  (match parse "SELECT s FROM t WHERE s LIKE 'a%'" (dialect := .sqlite) with
+   | .ok st => if (st.toSql.splitOn "LOWER(s)").length > 1 then .pass "to_sql_default_folds_likeci"
+               else .fail "to_sql_default_folds_likeci" st.toSql
+   | .error e => .fail "to_sql_default_folds_likeci" e),
+  -- NULL positions survive across dialects (explicit NULLS where the target's rule differs)
+  expectFaithful "to_sql_in_nulls_sqlite_to_postgres" .sqlite .postgres
+    "SELECT name FROM users ORDER BY age LIMIT 1" usersDb,
+  -- (postgres ASC already matches the standard rule, so only a target-relative printer
+  -- writes NULLS LAST for sqlite)
+  expectFaithful "to_sql_in_nulls_postgres_to_sqlite" .postgres .sqlite
+    "SELECT name FROM users ORDER BY age LIMIT 1" usersDb,
+  expectFaithful "to_sql_in_nulls_duckdb_to_sqlite" .duckdb .sqlite
+    "SELECT name FROM users ORDER BY age DESC LIMIT 1" usersDb,
+  -- choices with no SQL spelling are refused when the target would read them differently
+  expectRefusal "to_sql_in_refuses_case_sensitive_like_for_sqlite" .standard .sqlite
+    "SELECT name FROM users WHERE name LIKE 'A%'" "case-sensitive LIKE",
+  expectRefusal "to_sql_in_refuses_minmax_mode" .sqlite .standard
+    "SELECT MAX(age) FROM users" "mixed=typeClass",
+  expectRefusal "to_sql_in_refuses_bare_row" .sqlite .duckdb
+    "SELECT MAX(age), name FROM users" "bareRow=true",
+  expectRefusal "to_sql_in_refuses_bool_sum" .duckdb .postgres
+    "SELECT SUM(age > 26) FROM users" "bools=asInt",
+  expectRefusal "to_sql_in_refuses_window_minmax" .sqlite .postgres
+    "SELECT MIN(age) OVER () FROM users" "mixed=typeClass",
+  -- …and printed when the target records the same choice
+  expectFaithful "to_sql_in_bool_sum_duckdb_to_sqlite" .duckdb .sqlite
+    "SELECT SUM(age > 26) AS s FROM users" usersDb,
+  expectFaithful "to_sql_in_minmax_postgres_to_standard" .postgres .standard
+    "SELECT MAX(age) AS m FROM users" usersDb
+]
+
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
   insertTests ++ updateTests ++ deleteTests ++ parseFailTests ++ cteTests ++
-  recursiveCTETests ++ doubleQuoteTests ++ trailingInputTests ++ windowParserTests
+  recursiveCTETests ++ doubleQuoteTests ++ trailingInputTests ++ windowParserTests ++
+  dialectPrintTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests
