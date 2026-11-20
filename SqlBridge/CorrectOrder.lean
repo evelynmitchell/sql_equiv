@@ -868,8 +868,9 @@ theorem orderKey_dir {m : ℕ} (fold : String → String) (sc : SqlEquiv.Expr �
     simp only [bind, Except.bind, pure, Except.pure, throw, throwThe, MonadExceptOf.throw] at h
   all_goals
     first
-      | (cases h <;> exact ⟨rfl, rfl⟩)
-      | (split at h <;> cases h <;> exact ⟨rfl, rfl⟩)
+      | (cases h; exact ⟨rfl, rfl⟩)
+      | cases h
+      | (split at h <;> first | (cases h; exact ⟨rfl, rfl⟩) | cases h)
 
 variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
 
@@ -1126,5 +1127,182 @@ theorem elab_ordered_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem} 
     simp only [hits] at hraw
     obtain ⟨keyList, hk, he⟩ := finishSelect_nondistinct N.fold _ orderBy lim off hraw
     exact ⟨.select p (.table T), .inr ⟨w, p, rfl, hp, rfl⟩, its, rfl, keyList, hk, he⟩
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+theorem typeOf_limitWrap {S : DbSchema} {k : ℕ} (lim off : Option ℕ) (q : Query S k) :
+    (limitWrap lim off q).typeOf = q.typeOf := by
+  cases lim <;> cases off <;> rfl
+
+theorem divSafe_limitWrap {S : DbSchema} {k : ℕ} (lim off : Option ℕ) (q : Query S k) :
+    (limitWrap lim off q).divSafe = q.divSafe := by
+  cases lim <;> cases off <;> rfl
+
+theorem qnb_limitWrap {S : DbSchema} {k : ℕ} (lim off : Option ℕ) (q : Query S k) :
+    QNoBoolOrder (limitWrap lim off q) ↔ QNoBoolOrder q := by
+  cases lim <;> cases off <;> simp [limitWrap, QNoBoolOrder]
+
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+
+/-- An elaborated `ORDER BY` key of a column reference cannot divide by zero. -/
+theorem orderKey_divSafe {its : List (Expr n × Column)} (hits : ∀ x ∈ its, x.1.divSafe = true)
+    (cr : SqlEquiv.ColumnRef) (dir : SqlEquiv.OrderDir) (nulls : SqlEquiv.NullsOrder)
+    {key : SortKey n}
+    (hk : elabOrderKey fold (elabExpr cols fold noHook) its ⟨.col cr, dir, nulls⟩ = .ok key) :
+    key.e.divSafe = true := by
+  obtain ⟨q, c⟩ := cr
+  have hcol : ∀ {e' : Expr n}, elabExpr cols fold noHook (.col ⟨q, c⟩) = .ok e' →
+      e'.divSafe = true :=
+    fun he => Translates.divSafe cols fold (translates_of_elab cols fold (.col _) rfl he)
+  cases q with
+  | some t =>
+    simp only [elabOrderKey, bind, Except.bind] at hk
+    rcases he : elabExpr cols fold noHook (.col ⟨some t, c⟩) with _ | e'
+    · simp [he] at hk
+    simp only [he, pure, Except.pure, Except.ok.injEq] at hk
+    subst hk; exact hcol he
+  | none =>
+    simp only [elabOrderKey, bind, Except.bind] at hk
+    rcases hm : ((its.filter fun it => fold it.2.name == fold c).map (·.1)).eraseDups with
+      _ | ⟨e', _ | ⟨e'', l⟩⟩
+    · simp only [hm] at hk
+      rcases he : elabExpr cols fold noHook (.col ⟨none, c⟩) with _ | e'
+      · simp [he] at hk
+      simp only [he, pure, Except.pure, Except.ok.injEq] at hk
+      subst hk; exact hcol he
+    · simp only [hm, pure, Except.pure, Except.ok.injEq] at hk
+      subst hk
+      have : e' ∈ ((its.filter fun it => fold it.2.name == fold c).map (·.1)).eraseDups := by
+        rw [hm]; exact List.mem_cons_self
+      obtain ⟨x, hx, rfl⟩ := List.mem_map.mp (List.mem_eraseDups.mp this)
+      exact hits x (List.mem_of_mem_filter hx)
+    · simp [hm, throw, throwThe, MonadExceptOf.throw] at hk
+
+end SqlBridge.CorrectOrder
+
+namespace SqlBridge.CorrectOrder
+open SqlCore SqlBridge SqlBridge.Correct
+
+/-- **Elaborator correctness with `ORDER BY` / `LIMIT` / `OFFSET`** (#352, roadmap step 1). For
+    `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` with fragment
+    expressions and column-reference sort keys: when the statement elaborates, the typed query
+    evaluates, and its rows relate, in order, to `SqlEquiv`'s.
+
+    Beyond `elabStmt_correct`'s hypotheses, with `ORDER BY`: unaliased SELECT items are columns
+    and output names have no dot (`itemsNamed`, so both evaluators name output columns alike), the
+    fold identifies names that differ only in case (as `String.toLower` does; with `id` an `ORDER BY`
+    name could pick an output column on one side and an input column on the other), and no sort
+    key is boolean (`QNoBoolOrder`). -/
+theorem elabStmt_correct_ordered (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hwn : WellNamed N) {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms)
+    (hrel : DbRel N db D) {items : List SqlEquiv.SelectItem} {name : String}
+    {al : Option String} {wh : Option SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem}
+    {lim off : Option ℕ} (hit : itemsFragment items = true) (hw : ∀ w ∈ wh, isFragment w = true)
+    (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c)
+    (hnamed : orderBy ≠ [] → itemsNamed items = true)
+    (hfoldCI : orderBy ≠ [] → ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower)
+    {e : Elaborated N.S} (h : elabStmt N (orderedStmt items name al wh orderBy lim off) = .ok e)
+    (hnb : QNoBoolOrder e.q) :
+    ∃ rs, e.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (orderedStmt items name al wh orderBy lim off)).2 = some out ∧
+        List.Forall₂ OutRel rs out := by
+  obtain ⟨hty, T, hmem, q₀, hq₀, its, hits, keyList, hk, rfl⟩ := elab_ordered_shape N hit hw hcols h
+  have hir := itemsRel_of_elab (requalify (N.fold (al.getD name)) (N.S.columns T)) N items hit hits
+  have hlen : orderBy.length = keyList.length := (mapM_forall₂ hk).length_eq
+  simp only at hty hnb ⊢
+  rw [typeOf_limitWrap] at hty
+  rw [qnb_limitWrap] at hnb
+  -- the input query: its type, and its predicate (if any) is boolean
+  have hq₀ty : ∀ Γ, q₀.typeOf = some Γ → Γ = N.S.ctx T := by
+    intro Γ hΓ
+    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, -, -, rfl⟩
+    · simpa using hΓ.symm
+    · obtain ⟨h1, -⟩ := Query.typeOf_select_eq_some.mp hΓ
+      simpa using h1.symm
+  -- typing and the boolean side conditions, with and without keys
+  have hfacts : q₀.typeOf = some (N.S.ctx T) ∧
+      (∀ i : Fin its.length, NoBoolOrder (N.S.ctx T) (its[i]).1) ∧ QNoBoolOrder q₀ ∧
+      (keyList.length ≠ 0 → ∀ k ∈ keyList, ∃ τ, k.e.typeOf (N.S.ctx T) = some τ ∧ τ ≠ .bool) := by
+    by_cases hk0 : keyList.length = 0
+    · simp only [hk0, ↓reduceIte] at hty hnb
+      obtain ⟨Δ, hΔ⟩ := Option.isSome_iff_exists.mp hty
+      obtain ⟨Γ, hΓ, -⟩ := Query.typeOf_project_eq_some.mp hΔ
+      have := hq₀ty Γ hΓ; subst this
+      exact ⟨hΓ, fun i => hnb.1 _ hΓ i, hnb.2, fun h => absurd hk0 h⟩
+    · simp only [hk0, ↓reduceIte] at hty hnb
+      obtain ⟨Δ, hΔ⟩ := Option.isSome_iff_exists.mp hty
+      obtain ⟨Γ, hΓ, -⟩ := Query.typeOf_project_eq_some.mp hΔ
+      obtain ⟨hq, Δk, hΔk⟩ := Query.typeOf_orderBy_eq_some hΓ
+      have := hq₀ty Γ hq; subst this
+      refine ⟨hq, fun i => hnb.1 _ hΓ i, hnb.2.2, fun _ k hk => ?_⟩
+      obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hk
+      exact ⟨Δk ⟨i, hi⟩, hΔk ⟨i, hi⟩, fun hb => hnb.2.1 _ hq ⟨i, hi⟩ (by rw [hΔk ⟨i, hi⟩, hb])⟩
+  obtain ⟨hq₀T, hnbIt, hnbq₀, hkty⟩ := hfacts
+  -- division safety, so the typed query evaluates
+  have hdivIt : ∀ x ∈ its, x.1.divSafe = true := by
+    intro x hx
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
+    obtain ⟨_, _, _, htr⟩ := (List.forall₂_iff_get.mp hir).2 i (by have := hir.length_eq; omega) hi
+    exact Translates.divSafe _ _ htr
+  have hdivKeys : ∀ k ∈ keyList, k.e.divSafe = true := by
+    intro k hkm
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hkm
+    have hf := (List.forall₂_iff_get.mp (mapM_forall₂ hk)).2 i (by omega) hi
+    simp only [List.get_eq_getElem] at hf
+    obtain ⟨c, hc⟩ := hcols _ (List.getElem_mem (by omega : i < orderBy.length))
+    generalize orderBy[i]'(by omega) = it at hf hc
+    obtain ⟨e, dir, nulls⟩ := it
+    simp only [SqlEquiv.OrderByItem.expr] at hc
+    subst hc
+    exact orderKey_divSafe _ N.fold hdivIt c dir nulls hf
+  have hdivq₀ : q₀.divSafe = true := by
+    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, hwp, hp, rfl⟩
+    · rfl
+    · simp only [Query.divSafe, Bool.and_true]
+      exact Translates.divSafe _ _ (translates_of_elab _ _ w (hw w hwp) hp)
+  have hsafe : (limitWrap lim off (if keyList.length = 0 then .project (fun i => (its[i]).1) q₀
+      else .project (fun i => (its[i]).1)
+        (.orderBy (fun i : Fin keyList.length => keyList[i]) q₀))).IsSafe := by
+    refine ⟨by rw [typeOf_limitWrap]; exact hty, ?_⟩
+    rw [divSafe_limitWrap]
+    have hdi : decide (∀ i : Fin its.length, (its[i]).1.divSafe = true) = true :=
+      decide_eq_true fun i => hdivIt _ (List.getElem_mem i.2)
+    by_cases hk0 : keyList.length = 0
+    · simp only [hk0, ↓reduceIte, Query.divSafe, hdi, hdivq₀, Bool.and_true]
+    · have hdk : decide (∀ i : Fin keyList.length, (keyList[i]).e.divSafe = true) = true :=
+        decide_eq_true fun i => hdivKeys _ (List.getElem_mem i.2)
+      simp only [hk0, ↓reduceIte, Query.divSafe, hdi, hdk, hdivq₀, Bool.and_true]
+  obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok hsafe hD
+  obtain ⟨R, hR⟩ := Query.IsSafe.exists_eval_eq_ok (q := q₀) ⟨by simp [hq₀T], hdivq₀⟩ hD
+  refine ⟨rs, hrs, _, rfl, ?_⟩
+  -- `SqlEquiv`'s side, in closed form
+  simp only [SqlEquiv.evalQuery]
+  rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)]
+  -- the keys
+  have hkr : keyList.length ≠ 0 → KeysRel (requalify (N.fold (al.getD name)) (N.S.columns T))
+      N.fold db (N.S.ctx T) items orderBy hlen (fun i => keyList[i]) := fun hk0 => by
+    have hne : orderBy ≠ [] := by intro h0; subst h0; simp at hlen; omega
+    obtain ⟨_, hkr⟩ := keysRel_of_elab _ N.fold (hfoldCI hne) db hit (hnamed hne) hir
+      (itemsNames_of_elab N _ items hit (hnamed hne) hits)
+      (fun x hx => by
+        obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
+        exact hnbIt ⟨i, hi⟩) hcols hk (hkty hk0)
+    exact hkr
+  -- the input rows
+  have hrows := fragment_rows N hfold hwn hD hrel hmem al
+  rcases hq₀ with ⟨rfl, rfl⟩ | ⟨w, p, rfl, hp, rfl⟩
+  · simp only [Query.eval_table, Except.ok.injEq] at hR
+    subst hR
+    exact finish_rel _ N.fold db (N.S.ctx T) items orderBy (Query.eval_table _ _) hrows hir hnbIt
+      hlen hkr lim off hrs
+  · have hR' := hR
+    simp only [Query.eval_select, Query.eval_table, bind, Except.bind] at hR'
+    have htp := translates_of_elab _ _ w (hw w rfl) hp
+    have hfr := filter_rel _ _ db htp (hnbq₀.1 _ rfl) hrows hR'
+    exact finish_rel _ N.fold db (N.S.ctx T) items orderBy hR hfr hir hnbIt hlen hkr lim off hrs
 
 end SqlBridge.CorrectOrder
