@@ -41,7 +41,7 @@ This repository could become a basis for SQL support in
     laws that swap or merge branches hold at this level.
 
   Expressions use `≃ₑ` (every database and row) and statements use `≃`.
-- **Validated against real engines.** sqlite3 and DuckDB serve as
+- **Validated against real engines.** sqlite3, DuckDB and PostgreSQL serve as
   differential oracles. Where engines legitimately differ (NULL ordering,
   LIKE case sensitivity, MIN/MAX over mixed types), the behaviour is a named
   dialect setting recorded in [`docs/IMPLEMENTATION_DEFINED.md`](docs/IMPLEMENTATION_DEFINED.md).
@@ -141,11 +141,14 @@ example : ... := by sql_rw_null       -- NULL handling rules
 
 ### Differential Testing
 
-Every release is validated against two real engines as oracles: **sqlite3**
-(broad SQL behavior) and **DuckDB** (true DECIMAL type, strict typing). One SQL
-string drives both our evaluator and the engine; result multisets must agree.
-See `LSpecTests/DiffSqlite.lean` and `LSpecTests/DiffDuckdb.lean` (the latter
-documents known, deliberate divergences).
+Every release is validated against three real engines as oracles: **sqlite3**
+(broad SQL behavior; Spider's engine), **DuckDB** (true DECIMAL type, strict
+typing) and **PostgreSQL** (the standards tiebreaker). One SQL string drives
+both our evaluator, parsed in that engine's dialect, and the engine; result
+multisets must agree. See `LSpecTests/DiffSqlite.lean`,
+`LSpecTests/DiffDuckdb.lean` and `LSpecTests/DiffPostgres.lean` (each documents
+its known, deliberate divergences), and the role split in
+`docs/IMPLEMENTATION_DEFINED.md`.
 
 ### Property-Based Testing
 
