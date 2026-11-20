@@ -71,9 +71,9 @@ This repository could become a basis for SQL support in
   564 Spider dev queries elaborate into it. The other 44 are sqlite type-affinity cases,
   which a typed core rejects by design. For `SELECT … FROM … WHERE p` over tables, inner and
   cross joins, with comparisons and boolean connectives, ordered by columns, with
-  `LIMIT`/`OFFSET`, the elaborator is proved correct against SqlEquiv (#309, #352;
-  `SqlBridge/Correct.lean`, `CorrectOrder.lean`, `CorrectJoin.lean`); 165 of the Spider queries
-  have that shape. Phase 9 retires the untyped semantics. These are
+  `LIMIT`/`OFFSET`, and for `COUNT`/`SUM`/`MIN`/`MAX` without `GROUP BY`, the elaborator is
+  proved correct against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `CorrectOrder.lean`,
+  `CorrectJoin.lean`, `CorrectAgg.lean`); 258 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features

@@ -94,7 +94,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       `elabStmt_correct_ordered`. Spider coverage **113**, up from 64
     - [x] Step 2: inner and cross joins: `SqlBridge/CorrectJoin.lean`, `elabStmt_correct_join`.
       Spider coverage **165**, up from 113
-    - [ ] Step 3: aggregates, `GROUP BY`, `HAVING`, ordered by aggregates
+    - [x] Step 3a: aggregates without `GROUP BY` (`COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
+      `MAX`; not `AVG`): `SqlBridge/CorrectAgg.lean`, `elabStmt_correct_agg`. Spider coverage
+      **258**, up from 165
+    - [ ] Step 3b: `GROUP BY`, `HAVING`, ordered by aggregates
+    - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
@@ -139,11 +143,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 `elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
 the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
 sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
-(phase 9, #298). Its fragment today (steps 1 and 2 done, `elabStmt_correct_join`) is
-`SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, where `f` nests
-tables (optionally aliased) under inner joins and cross joins without `ON`, with literals,
-columns, comparisons, `AND`, `OR` and `NOT` (in `ON` too), where the `ORDER BY` keys are column
-references and, when there is an `ORDER BY`, every item is a column or has an alias.
+(phase 9, #298). Its fragment today (steps 1, 2 and 3a done) is
+`SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`
+(`elabStmt_correct_join`), where `f` nests tables (optionally aliased) under inner joins and
+cross joins without `ON`, with literals, columns, comparisons, `AND`, `OR` and `NOT` (in `ON`
+too), where the `ORDER BY` keys are column references and, when there is an `ORDER BY`, every
+item is a column or has an alias; and `SELECT agg₁, …, aggₖ FROM f [WHERE p]`
+(`elabStmt_correct_agg`) with `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`.
 
 **Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
 features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
@@ -156,12 +162,15 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 |------|-------------------------------:|
 | Before step 1 | 64 |
 | 1. `ORDER BY` / `LIMIT` (done) | 113 |
-| Today: 2. Joins (inner, cross) (done) | 165 |
-| 3. Aggregates, `GROUP BY`, `HAVING`, ordered by aggregates | 405 |
-| 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 409 |
-| 5. `DISTINCT` | 431 |
+| 2. Joins (inner, cross) (done) | 165 |
+| Today: 3a. Aggregates without `GROUP BY`, not `AVG` (done) | 258 |
+| 3b. `GROUP BY`, `HAVING`, ordered by aggregates | 384 |
+| 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
+| 5. `DISTINCT` | 410 |
 
-Still outside after step 5: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2).
+Still outside after step 5: subqueries, set operations and CTEs (80), `AVG` (24, pending the
+rounding decision), `LIKE` (8), `*` (2). (With `AVG`, the rows after steps 3b–5 were 405, 409
+and 431.)
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
 does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are
@@ -222,12 +231,26 @@ follows coverage instead (decided 20 Nov 2026):
    covers `ON`. An unqualified column that two tables share is ambiguous: the elaborator
    rejects it, so the theorem does not speak of it. Outer joins (`LEFT`/`RIGHT`/`FULL`), which
    the elaborator rejects, stay out.
-3. **Aggregates and `GROUP BY` / `HAVING`.** The largest blocker, and the hardest step. It
-   includes ordering by aggregates (`ORDER BY count(*)`, 52 queries), which extends step 1's
-   key resolution. Known
-   difference: `AVG` is an exact rational in the typed core (T10) and rounded to 16 places in
-   `SqlEquiv` when it does not terminate (row 7), so the theorem needs a hypothesis there or
-   covers terminating averages only.
+3. **Aggregates and `GROUP BY` / `HAVING`.** The largest blocker, and the hardest step, split
+   in two (decided 20 Nov 2026):
+   - **3a. Aggregates without `GROUP BY`, done.** `SqlBridge/CorrectAgg.lean` proves
+     `elabStmt_correct_agg` for `SELECT agg₁, …, aggₖ FROM f [WHERE p]`: one row on each side
+     (the typed `Query.aggregate` with no keys has one group even for no rows), related item by
+     item. Per aggregate, on related lists of one type: `COUNT` and `COUNT(DISTINCT)` count
+     the same (`SqlEquiv` deduplicates by `Value.setKey`, which identifies exactly the equal
+     typed values, via the decimal normal form of `mkDecimal`); `SUM` is the same number
+     (`sumScaled` computes the rational sum; integers stay integers); `MIN`/`MAX` pick related
+     values (both keep the first of ties). Every dialect mode agrees, as the typed columns
+     hold no booleans or mixed types. No new hypotheses beyond step 2's. Out of 3a, and
+     reported as such: `AVG` (below), `DISTINCT` in `SUM`/`MIN`/`MAX` (no Spider query),
+     bare columns next to an aggregate (registry T9; 2 Spider queries), and aggregates with
+     `ORDER BY`/`LIMIT` (step 3b).
+   - **3b. `GROUP BY` / `HAVING`**, including ordering by aggregates (`ORDER BY count(*)`, 52
+     queries), which extends step 1's key resolution.
+   - **`AVG`, a design decision.** `AVG` is an exact rational in the typed core (T10) and
+     rounded to 16 places in `SqlEquiv` when it does not terminate (row 7): the theorem can
+     leave it out, assume the averages terminate, or relate values up to rounding. Left out
+     for now (24 Spider queries).
 4. **Unary operators, arithmetic, `IN (list)`, `BETWEEN`.** As in #352's first steps: division
    by zero (a typed error, an untyped NULL) and decimal `%` need a hypothesis or a design
    decision. These come in wherever an earlier step's queries need them.

@@ -9,6 +9,7 @@ import SqlBridge.Elab
 import SqlBridge.Correct
 import SqlBridge.CorrectOrder
 import SqlBridge.CorrectJoin
+import SqlBridge.CorrectAgg
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore
@@ -17,6 +18,7 @@ import Test.TrustBaseCommands
 
 -- The bridge from parsed SQL (#295): the elaborator, and its correctness theorem for
 -- `SELECT … FROM t WHERE p` (#309, `SqlBridge.Correct`), with `ORDER BY` / `LIMIT` / `OFFSET`
--- (#352 step 1, `SqlBridge.CorrectOrder`), and joins (step 2, `SqlBridge.CorrectJoin`).
+-- (#352 step 1, `SqlBridge.CorrectOrder`), joins (step 2, `SqlBridge.CorrectJoin`) and aggregates
+-- without `GROUP BY` (step 3a, `SqlBridge.CorrectAgg`).
 #assert_trust_base SqlBridge
 #assert_no_runtime_overrides SqlBridge

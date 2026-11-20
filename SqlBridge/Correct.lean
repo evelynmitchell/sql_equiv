@@ -295,6 +295,13 @@ def NoBoolOrder (Γ : Fin n → SqlType) : Expr n → Prop
   | .unary _ a => NoBoolOrder Γ a
   | _ => True
 
+/-- No argument of an aggregate call orders booleans (see `NoBoolOrder`). -/
+def AggNoBool (Γ : Fin n → SqlType) : AggCall n → Prop
+  | .countStar => True
+  | .call _ _ e => NoBoolOrder Γ e
+  | .first e => NoBoolOrder Γ e
+  | .atExtreme _ k e => NoBoolOrder Γ k ∧ NoBoolOrder Γ e
+
 /-- An untyped row agrees with a typed one: every column the elaborator resolves reads a related
     value through `SqlEquiv`'s lookup. -/
 def RowRel (r : Row n) (u : SqlEquiv.Row) : Prop :=
@@ -905,8 +912,8 @@ structure WellNamed (N : NamedSchema) : Prop where
   noDot : ∀ T j, '.' ∉ (N.S.columns T j).name.toList
   distinct : ∀ T j k, (N.S.columns T j).name.toLower = (N.S.columns T k).name.toLower → j = k
 
-/-- No predicate, join condition or projection of the query orders two booleans (see
-    `NoBoolOrder`), and no `ORDER BY` key is boolean (`SqlEquiv` does not order booleans; #352). -/
+/-- No predicate, join condition, projection, grouping key or aggregate argument of the query
+    orders two booleans (see `NoBoolOrder`), and no `ORDER BY` key is boolean (`SqlEquiv` does not order booleans; #352). -/
 def QNoBoolOrder {S : DbSchema} : {n : ℕ} → Query S n → Prop
   | _, .select p q => (∀ Γ, q.typeOf = some Γ → NoBoolOrder Γ p) ∧ QNoBoolOrder q
   | _, .project es q => (∀ Γ, q.typeOf = some Γ → ∀ i, NoBoolOrder Γ (es i)) ∧ QNoBoolOrder q
@@ -915,6 +922,8 @@ def QNoBoolOrder {S : DbSchema} : {n : ℕ} → Query S n → Prop
   | _, .limit _ _ q => QNoBoolOrder q
   | _, .join θ q₁ q₂ => (∀ Γ Δ, q₁.typeOf = some Γ → q₂.typeOf = some Δ →
       NoBoolOrder (Fin.append Γ Δ) θ) ∧ QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
+  | _, .aggregate keys aggs q => (∀ Γ, q.typeOf = some Γ →
+      (∀ i, NoBoolOrder Γ (keys i)) ∧ ∀ j, AggNoBool Γ (aggs j)) ∧ QNoBoolOrder q
   | _, _ => True
 
 /-- The statements of #309: `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`. -/
