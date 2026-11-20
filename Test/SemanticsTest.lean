@@ -546,6 +546,13 @@ def registryPinTests : List TestResult := [
   testContainsValue "round_null" "SELECT ROUND(NULL) FROM users WHERE id = 1" (.null none),
   testContainsValue "round_null_places" "SELECT ROUND(2.5, NULL) FROM users WHERE id = 1" (.null none),
   testContainsValue "abs_decimal" "SELECT ABS(-2.50) FROM users WHERE id = 1" (.decimal 25 1),
+  -- LOWER/UPPER fold ASCII letters only, in every dialect, as sqlite (registry row 19;
+  -- DuckDB and Postgres also fold non-ASCII letters)
+  testContainsValue "lower_non_ascii_ascii_only" "SELECT LOWER('ÉCOLE') FROM users WHERE id = 1"
+    (.string "École"),
+  testContainsValue "upper_non_ascii_ascii_only" "SELECT UPPER('école') FROM users WHERE id = 1"
+    (.string "éCOLE"),
+  testContainsValue "lower_ascii" "SELECT LOWER('AbC') FROM users WHERE id = 1" (.string "abc"),
   -- NOT BETWEEN (#354): ages 30, 25, 35, 28, 22, so Carol (35) and Eve (22)
   testRowCount "not_between" "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30" 2,
   -- three-valued: NOT (age >= NULL AND age <= 30) is TRUE only where age > 30 (sqlite, DuckDB)

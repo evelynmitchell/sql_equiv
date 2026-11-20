@@ -420,6 +420,10 @@ def runAllTests : IO TestSeq := do
       "SELECT x.name FROM (SELECT * FROM users) AS x WHERE x.id < 3",
     diffTest "derived: nested aliases"
       "SELECT y.name FROM (SELECT x.name FROM (SELECT name FROM users) AS x) AS y",
+    -- LOWER/UPPER fold ASCII letters only, as here (registry row 19). Aliased to TEXT
+    -- columns of the schema so the harness reads the cells as strings.
+    diffTest "LOWER/UPPER of non-ASCII letters (ASCII folding)"
+      "SELECT LOWER('ÉCOLE') AS name, UPPER('école') AS department FROM users WHERE id = 1",
     -- LIKE letter case (registry row 8): ASCII case-insensitive in sqlite
     diffTest "LIKE ignores ASCII case (sqlite dialect)"
       "SELECT name FROM users WHERE name LIKE 'al%'",
