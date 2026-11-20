@@ -1361,3 +1361,239 @@ theorem out_rel_filter {G G' O : Type _} {m k : ℕ} {GR : G → G' → Prop} {P
         exact .cons hor (out_rel_filter gs₀ H hsub' hgs h1s hrs h2s)
 
 end SqlBridge.CorrectGroup
+
+namespace SqlBridge.CorrectGroup
+open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder SqlBridge.CorrectJoin
+open SqlBridge.CorrectAgg
+
+set_option maxHeartbeats 1000000 in
+/-- **Elaborator correctness for `GROUP BY … HAVING` (#352, roadmap step 3b-2).** As
+    `elabStmt_correct_group`, with a `HAVING` predicate of literals, key columns, aggregates of
+    step 3a, comparisons, `AND`, `OR` and `NOT` (`havingFragment`): the groups it keeps relate, in
+    order. For
+    `SELECT … FROM f [WHERE p] GROUP BY c₁, …, cₘ`, with column keys and every item either a key
+    column or an aggregate of step 3a, and `f` a `FROM` tree of step 2: when the statement
+    elaborates, the typed query's groups relate, in order, to `SqlEquiv`'s. Hypotheses as
+    `elabStmt_correct_join`'s. -/
+theorem elabStmt_correct_having (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {items : List SqlEquiv.SelectItem} {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    {groupBy : List SqlEquiv.Expr} (hgi : groupItems groupBy items = true) (hgb : groupBy ≠ [])
+    (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment fr = true)
+    (hw : ∀ w ∈ wh, isFragment w = true) {hav : SqlEquiv.Expr}
+    (hhv : havingFragment groupBy hav = true)
+    {e : Elaborated N.S} (h : elabStmt N (groupStmt items fr wh groupBy (some hav)) = .ok e)
+    (hnb : QNoBoolOrder e.q) :
+    ∃ rs, e.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (groupStmt items fr wh groupBy (some hav))).2 = some out ∧
+        List.Forall₂ OutRel rs out := by
+  obtain ⟨hty, sub, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, hk, haggs, hits, p, out, htrH,
+    rfl⟩ := elab_having_shape_some N hgi hgb hgc hw hhv h
+  obtain ⟨hnames, hfrom⟩ := from_rel N hfold hfoldCI hwn hfix hD hrel sub fr hff hf
+  simp only at hnames hfrom hty hnb ⊢
+  -- typing
+  obtain ⟨Δ, hΔ⟩ := Option.isSome_iff_exists.mp hty
+  obtain ⟨Γa, hΓa, -⟩ := Query.typeOf_project_eq_some.mp hΔ
+  obtain ⟨hΓagg, -⟩ := Query.typeOf_select_eq_some.mp hΓa
+  obtain ⟨Γ₀, Δk, Δa, hq₀ty, hks, has, hΓeq⟩ := Query.typeOf_aggregate_eq_some hΓagg
+  obtain ⟨-, hnbP, hnbA, hnbq₀⟩ := hnb
+  have hnbK := (hnbA Γ₀ hq₀ty).1
+  have hnbAgg := (hnbA Γ₀ hq₀ty).2
+  have hsrc : qf.typeOf = some Γ₀ := by
+    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, -, -, rfl⟩
+    · exact hq₀ty
+    · exact (Query.typeOf_select_eq_some.mp hq₀ty).1
+  have hnbsrc : QNoBoolOrder qf := by
+    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, -, -, rfl⟩
+    · exact hnbq₀
+    · exact hnbq₀.2
+  obtain ⟨hdivf, Rf, hRf, hrelf⟩ := hfrom hsrc hnbsrc
+  have hrows : List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) Rf
+      (SqlEquiv.evalFrom db fr) := hrelf.imp fun r u h =>
+    ⟨rowRel_of_keyed N.fold hfold hfoldCI (fun j => (hnames j).1) (fun j => (hnames j).2) h.1, h.2⟩
+  have hdivq₀ : q₀.divSafe = true := by
+    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, hwp, hp, rfl⟩
+    · exact hdivf
+    · simp only [Query.divSafe, hdivf, Bool.and_true]
+      exact Translates.divSafe _ _ (translates_of_elab _ _ w (hw w hwp) hp)
+  obtain ⟨R, hR⟩ := Query.IsSafe.exists_eval_eq_ok (q := q₀) ⟨by simp [hq₀ty], hdivq₀⟩ hD
+  -- the keys translate the `GROUP BY` columns
+  have hK := mapM_forall₂ hk
+  have hlen : groupBy.length = keyList.length := hK.length_eq
+  have htk : ∀ i : Fin keyList.length, Translates cf N.fold (groupBy[i.1]'(by omega)) keyList[i] := by
+    intro i
+    have h1 := (List.forall₂_iff_get.mp hK).2 i.1 (by omega) i.2
+    simp only [List.get_eq_getElem] at h1
+    obtain ⟨c, hc⟩ := hgc _ (List.getElem_mem (by omega : i.1 < groupBy.length))
+    rw [hc] at h1 ⊢
+    exact translates_of_elab cf N.fold _ rfl h1
+  -- the typed query evaluates
+  have hdivK : ∀ i : Fin keyList.length, (keyList[i]).divSafe = true :=
+    fun i => Translates.divSafe _ _ (htk i)
+  have hsafe : (Query.project (fun i : Fin its.length => (its[i]).1)
+      (Query.select p (Query.aggregate (fun i : Fin keyList.length => keyList[i]) aggs q₀))).IsSafe := by
+    refine ⟨hty, ?_⟩
+    have hcols : ∀ i : Fin its.length, ((its[i]).1).divSafe = true := by
+      intro i
+      rcases (List.forall₂_iff_get.mp hits).2 i.1 (by have := hits.length_eq; omega) i.2 with
+        ⟨j, -, hj⟩ | ⟨c, i', -, -, hj⟩ <;>
+        (simp only [List.get_eq_getElem] at hj; show ((its[i.1]).1).divSafe = true; rw [hj]; rfl)
+    have hda : ∀ j, (aggs j).divSafe = true := fun j => by
+      obtain ⟨x, hx, hel⟩ := haggs j; exact agg_divSafe cf N.fold x hx hel
+    simp only [Query.divSafe, hda, hdivq₀, TranslatesH.divSafe htrH, Bool.and_true, Bool.true_and,
+      Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨fun i => hcols i, fun i => hdivK i, fun _ => trivial⟩
+  obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok hsafe hD
+  refine ⟨rs, hrs, _, rfl, ?_⟩
+  -- the typed evaluation, step by step
+  rw [Query.eval_project] at hrs
+  obtain ⟨rowsF, hFl, hout⟩ := bind_ok hrs
+  rw [Query.eval_select] at hFl
+  obtain ⟨rowsA, hA, hfilt⟩ := bind_ok hFl
+  rw [Query.eval_aggregate, hR] at hA
+  obtain ⟨R', hR', hA⟩ := bind_ok hA
+  cases hR'
+  obtain ⟨keyed, hkeyed, hgrp⟩ := bind_ok hA
+  have hg0 : keyList.length ≠ 0 := by
+    intro h0; apply hgb; exact List.eq_nil_of_length_eq_zero (by omega)
+  have hgroups : Row.groups keyed = Row.groupAux [] keyed := by simp [Row.groups, hg0]
+  -- the keyed rows
+  have hKeyed : List.Forall₂ (fun r p => ∃ k, Expr.evalRow (fun i : Fin keyList.length => keyList[i]) r
+      = .ok k ∧ p = (k, r)) R keyed :=
+    (mapM_forall₂ hkeyed).imp fun r p h => bind_pure_ok h
+  -- `SqlEquiv`'s side
+  simp only [SqlEquiv.evalQuery]
+  rw [SqlEquiv.evalSelect_eq_evalSelectCore]
+  obtain ⟨F, Φ, hF, hΦ, heq⟩ := evalSelectCore_grouped_having _ _ _ _ _ _ _ _ _ _ items fr wh groupBy (some hav) hgb
+  rw [heq]
+  -- over any source rows related to the typed input
+  have final : ∀ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U →
+      List.Forall₂ OutRel rs ((U.foldl F []).filterMap Φ) := by
+    intro U hRU
+    let kf : SqlEquiv.Row → List (Option SqlEquiv.Value) := fun u =>
+      groupBy.map fun e => (SqlEquiv.evalExprWithDb db u e).map SqlEquiv.Value.setKey
+    let E : Row keyList.length × Row n → SqlEquiv.Row → Prop := fun p u =>
+      (RowRel cf N.fold p.2 u ∧ p.2.Conforms Γ₀) ∧
+        Expr.evalRow (fun i : Fin keyList.length => keyList[i]) p.2 = .ok p.1 ∧ KRel Δk p.1 (kf u)
+    -- each keyed row relates to its untyped row, keys included
+    have hE : List.Forall₂ E keyed U := by
+      refine zip_rel (fun r pk u hpk hq => ?_) hKeyed hRU
+      obtain ⟨k, hk, rfl⟩ := hpk
+      refine ⟨hq, hk, ?_⟩
+      have hval : ∀ i : Fin keyList.length, ∃ v,
+          SqlEquiv.evalExprWithDb db u (groupBy[i.1]'(by omega)) = some v ∧
+            TRel (Δk i) (k i) v := by
+        intro i
+        have hki : (keyList[i]).eval r = .ok (k i) := Expr.evalRow_eq_ok_iff.mp hk i
+        obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cf N.fold db hq.1 hq.2 (htk i) (hnbK i) hki
+        exact ⟨v, hv, hrel, Expr.hasType_of_eval_eq_ok hq.2 (hks i) hki⟩
+      choose w hw using hval
+      refine ⟨w, ?_, fun i => (hw i).2⟩
+      apply List.ext_getElem (by simp [kf, hlen])
+      intro i h1 h2
+      simp only [kf, List.getElem_map, List.getElem_ofFn]
+      rw [(hw ⟨i, by simpa using h2⟩).1]; rfl
+    have hgrel := groupAux_rel (E := E) (kf := kf) (KRel := KRel Δk) (fun _ _ _ h => h.2.2)
+      (fun _ _ _ _ h₁ h₂ => krel_iff h₁ h₂) hE (acc := []) (acc' := []) .nil
+    rw [foldl_insU kf F hF U [] List.nodup_nil]
+    have hsub : ∀ grp ∈ Row.groupAux [] keyed, grp ∈ Row.groups keyed := by rw [hgroups]; exact fun _ h => h
+    have hGO : Row.GroupsOf keyed (Row.groups keyed) := by
+      rw [hgroups]; exact Row.groupsOf_groupAux (fun _ h => by simp at h) (fun x hx => hx)
+    refine out_rel_filter (Row.groups keyed) ?_ hsub hgrel
+      (by rw [← hgroups]; exact mapM_forall₂ hgrp) hfilt (mapM_forall₂ hout)
+    rintro ⟨k, rs'⟩ hgm ⟨key, us⟩ rowA ⟨hkk, hrs'⟩ h1 t ht
+    obtain ⟨hne, -⟩ := hGO _ hgm
+    simp only at hne hrs' hkk
+    have hus : us ≠ [] := by
+      rintro rfl; cases hrs'; exact hne rfl
+    obtain ⟨s, hs⟩ : ∃ s, SqlEquiv.bareSampleRow (fun r e => SqlEquiv.evalExprWithDb db r e)
+        (SqlEquiv.selectMinMaxCalls items (some hav)) us = some s :=
+      Option.ne_none_iff_exists'.mp ((SqlEquiv.bareSampleRow_eq_none_iff _ _ _).not.mpr hus)
+    have hsm := bareSampleRow_mem _ _ hs
+    obtain ⟨A, hAe, rfl⟩ := bind_pure_ok h1
+    have hrows' : List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) rs' us :=
+      hrs'.imp fun _ _ h => h.1
+    -- the `HAVING` decision agrees
+    obtain ⟨rs_, -, hE_⟩ := forall₂_mem_right hrs' hsm
+    have hdec : (SqlEquiv.evalExprWithAggParam ee db us s hav == some (.bool true)) = t.isTrue := by
+      have hrsc : ∀ r ∈ rs', r.Conforms Γ₀ := fun r hr => by
+        obtain ⟨u, -, h⟩ := forall₂_mem_left hrows' hr; exact h.2
+      have hAc : Row.Conforms Δa A := by
+        rcases AggCall.evalAll_ok_or_divisionByZero hrsc has with ⟨A', hA', hc⟩ | ⟨hdz, -⟩
+        · rw [hAe, Except.ok.injEq] at hA'; subst hA'; exact hc
+        · rw [hAe] at hdz; cases hdz
+      have hkc : Row.Conforms Δk k := fun i =>
+        Expr.hasType_of_eval_eq_ok hE_.1.2 (hks i) (Expr.evalRow_eq_ok_iff.mp hE_.2.1 i)
+      have hconf : Row.Conforms Γa (Fin.append k A : Row (keyList.length + a)) := by
+        rw [← hΓeq]; exact Row.conforms_append_iff.mpr ⟨hkc, hAc⟩
+      obtain ⟨d, hd, hdt⟩ : ∃ d, p.eval (Fin.append k A) = .ok d ∧ d.toTruth = .ok t := by
+        unfold Expr.evalTruth at ht
+        rcases he : p.eval (Fin.append k A) with _ | d
+        · simp [he, bind, Except.bind] at ht
+        · simp only [he, bind, Except.bind] at ht
+          exact ⟨d, rfl, ht⟩
+      obtain ⟨v, hv, hrel⟩ := TranslatesH.eval_rel cf out N.fold _ aggs db hrows' hAe hconf
+        ⟨rs_, hE_.1.1, hE_.1.2, hE_.2.1⟩ hnbK hnbAgg (fun j => ⟨_, has j⟩) htrH
+        (hnbP _ hΓagg) hd
+      rw [hv]; exact (isTrue_iff_where hrel hdt).symm
+    rw [hΦ key us s hs]
+    split
+    · rename_i hc
+      have hc' : (SqlEquiv.evalExprWithAggParam ee db us s hav == some (.bool true)) = true := hc
+      rw [hdec] at hc'
+      refine ⟨fun _ r h2 => ⟨_, rfl, ?_⟩, fun hf => by rw [hf] at hc'; cases hc'⟩
+      have hr := Expr.evalRow_eq_ok_iff.mp h2
+      unfold OutRel
+      rw [items_vals_group db us s (fun it hit => by
+        obtain ⟨e, al, h, -⟩ := groupItems_mem hgi it hit; exact ⟨e, al, h⟩)]
+      apply List.forall₂_iff_get.mpr
+      refine ⟨by simp [hits.length_eq], fun i h1' h2' => ?_⟩
+      simp only [List.get_eq_getElem, List.getElem_ofFn, List.getElem_map]
+      have hi : i < its.length := by simpa using h1'
+      have hi' : i < items.length := by simpa using h2'
+      have hcase := (List.forall₂_iff_get.mp hits).2 i hi' hi
+      simp only [List.get_eq_getElem] at hcase
+      rcases hcase with ⟨j, hel, hj⟩ | ⟨c, i', hc, hel, hj⟩
+      · -- an aggregate
+        have hri : r ⟨i, hi⟩ = A j := by
+          have h3 := hr ⟨i, hi⟩
+          have h4 : ((its[i]).1).eval (Fin.append k A) = .ok (A j) := by
+            rw [hj]; show Except.ok _ = _; rw [Fin.append_right]
+          exact Except.ok.inj (h3.symm.trans h4)
+        obtain ⟨x, al, hx, hcase'⟩ := groupItems_mem hgi _ (List.getElem_mem hi')
+        have hfr : aggFragment (itemExpr items[i]) = true := by
+          rw [hx]; simp only [itemExpr]
+          rcases hcase' with h | ⟨c, rfl, -⟩
+          · exact h
+          · rw [hx] at hel; simp [itemExpr, elabAgg, throw, throwThe, MonadExceptOf.throw] at hel
+        obtain ⟨v, hv, hvr⟩ := agg_rel cf N.fold db hrows' s _ hfr hel (hnbAgg j) (has j)
+          (evalAll_get hAe j)
+        rw [hri, hv]; exact hvr
+      · -- a key column, read on the sample row
+        have hri : r ⟨i, hi⟩ = k i' := by
+          have h3 := hr ⟨i, hi⟩
+          have h4 : ((its[i]).1).eval (Fin.append k A) = .ok (k i') := by
+            rw [hj]; show Except.ok _ = _; rw [Fin.append_left]
+          exact Except.ok.inj (h3.symm.trans h4)
+        obtain ⟨rs_, -, hE_⟩ := forall₂_mem_right hrs' hsm
+        have hki : (keyList[i']).eval rs_ = .ok (k i') := Expr.evalRow_eq_ok_iff.mp hE_.2.1 i'
+        have htr := translates_of_elab cf N.fold (.col c) rfl hel
+        obtain ⟨v, hv, hvr⟩ := Translates.eval_rel cf N.fold db hE_.1.1 hE_.1.2 htr (hnbK i') hki
+        rw [hri, hc]
+        simp only [SqlEquiv.evalExprWithAggParam, ee, hv, Option.getD_some]
+        exact hvr
+    · rename_i hc
+      have hc' : ¬ (SqlEquiv.evalExprWithAggParam ee db us s hav == some (.bool true)) = true := hc
+      rw [hdec] at hc'
+      exact ⟨fun ht' => absurd ht' hc', fun _ => rfl⟩
+  apply final
+  rcases hq₀ with ⟨rfl, rfl⟩ | ⟨w, p, rfl, hp, rfl⟩
+  · rw [hRf, Except.ok.injEq] at hR; subst hR; exact hrows
+  · have hR' := hR
+    simp only [Query.eval_select, hRf, bind, Except.bind] at hR'
+    exact filter_rel _ _ db (translates_of_elab _ _ w (hw w rfl) hp) (hnbq₀.1 _ hsrc) hrows hR'
+
+
+end SqlBridge.CorrectGroup
