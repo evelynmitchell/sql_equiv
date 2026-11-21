@@ -72,11 +72,12 @@ This repository could become a basis for SQL support in
   which a typed core rejects by design. For `SELECT … FROM … WHERE p` over tables, inner and
   cross joins, with comparisons and boolean connectives, ordered by columns, with
   `LIMIT`/`OFFSET`, and for `COUNT`/`SUM`/`MIN`/`MAX`, also under `GROUP BY` columns, with
-  `HAVING`, ordered by aggregates, and with bare columns (on the first row or, next to one
-  `MIN`/`MAX`, the extreme row), the elaborator is proved correct
+  `HAVING`, ordered by aggregates or key columns, and with bare columns (on the first row or,
+  next to one `MIN`/`MAX`, the extreme row, with or without `GROUP BY`), the elaborator is proved
+  correct
   against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `CorrectOrder.lean`,
   `CorrectJoin.lean`, `CorrectAgg.lean`, `CorrectGroup.lean`, `CorrectGroupOrder.lean`,
-  `CorrectGrouped.lean`, `CorrectExtreme.lean`); 381 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
+  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`); 384 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features

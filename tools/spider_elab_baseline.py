@@ -40,15 +40,14 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # theorem apply to Spider's case-folding schemas at all; steps 1 (ORDER BY / LIMIT), 2 (inner
 # and cross joins), 3a (aggregates without GROUP BY, AVG aside), 3b-1 (GROUP BY columns, items
 # keys or aggregates), 3b-2 (HAVING), 3b-3 (ORDER BY aggregates, LIMIT), 3b-4 (bare columns on
-# the first row) and 3b-5 (bare columns at the one MIN/MAX) are done and counted in "Today".
+# the first row), 3b-5 (bare columns at the one MIN/MAX) and 3b-6 (the same without GROUP BY,
+# ORDER BY a key column) are done and counted in "Today".
 ROADMAP = [
-    # On Spider, every non-column ORDER BY key and every unaliased item next to an ORDER BY is an
-    # aggregate (`ORDER BY count(*)`, `SELECT x, count(*) … ORDER BY …`): step 3 extends step 1's
-    # key resolution to them.
-    ("3b-6. bare columns at a MIN/MAX without GROUP BY, ordering by a key column",
-     {"aggregate/GROUP BY", "ORDER BY expression", "unnamed item with ORDER BY"}),
+    # Grouped or aggregate queries still outside step 3 combine an aggregate with a feature of
+    # step 4 (or `AVG`), so step 4 lifts the aggregate features too.
     ("4. IS NULL, negation, arithmetic, IN list, BETWEEN",
-     {"IS NULL/negation", "arithmetic", "IN list/BETWEEN"}),
+     {"IS NULL/negation", "arithmetic", "IN list/BETWEEN",
+      "aggregate/GROUP BY", "ORDER BY expression", "unnamed item with ORDER BY"}),
     ("5. DISTINCT", {"DISTINCT"}),
 ]
 
@@ -92,7 +91,9 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "(`SqlBridge/CorrectGrouped.lean`) for the same `GROUP BY` columns, each item a key column,",
         "such an aggregate or a bare column (read on the group's first row or, next to one `MIN`/`MAX`,",
         "on the row where its argument is extreme), with an",
-        "optional `HAVING`, ordered by such aggregates, with `LIMIT`/`OFFSET`. Counts are of the",
+        "optional `HAVING`, ordered by such aggregates or key columns, with `LIMIT`/`OFFSET`, and",
+        "`elabStmt_correct_aggBare` (`SqlBridge/CorrectAggBare.lean`) for aggregates next to bare",
+        "columns without `GROUP BY`. Counts are of the",
         "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
         "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",

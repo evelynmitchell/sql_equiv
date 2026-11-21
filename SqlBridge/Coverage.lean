@@ -141,12 +141,23 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
-  -- grouped (roadmap steps 3b-1 to 3b-5, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
-  -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates, `LIMIT`/`OFFSET`.
+  -- grouped (roadmap steps 3b-1 to 3b-6, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
+  -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates or key columns,
+  -- `LIMIT`/`OFFSET`.
   -- With sort keys, no output name may capture `SqlEquiv`'s sort-key columns `__group_orderkey_k`
   -- (hypothesis `hnm`); a bare column (one not grouped) without any `MIN`/`MAX`, or with exactly one
   -- (`BareOk`).
-  let orderOk := s.orderBy.all (fun o => aggCallOk o.expr) &&
+  -- a sort key: an aggregate, or a `GROUP BY` column no other item's name captures (step 3b-6,
+  -- `OrderKeyOk`): every item named like it, in either evaluator, is that column
+  let keyColOk : Expr → Bool := fun
+    | .col c => s.groupBy.contains (.col c) && s.items.all fun
+      | .exprItem e al =>
+        !((al.getD (exprToName e)).toLower == c.column.toLower ||
+          (al.getD (match e with | .col c' => c'.column | _ => "?column?")).toLower ==
+            c.column.toLower) || e == .col c
+      | .star _ => true
+    | _ => false
+  let orderOk := s.orderBy.all (fun o => aggCallOk o.expr || keyColOk o.expr) &&
     (s.orderBy.isEmpty || s.items.all fun
       | .exprItem e al =>
         let nm := (al.getD (exprToName e)).toLower

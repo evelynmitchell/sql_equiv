@@ -56,7 +56,7 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
       ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh [] none [] none none)).2 = some out ∧
         List.Forall₂ OutRel rs out := by
   obtain ⟨hty, sub, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
-    qh, hqh, rfl⟩ := elab_grouped_shape N hgi (.inr hai) (by simp) (by simp) (by simp) hbf hw h
+    qh, hqh, rfl⟩ := elab_grouped_shape N hfoldCI hgi (.inr hai) (by simp) (by simp) (by simp) hbf hw h
   simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hk
   subst hk
   cases hsk
