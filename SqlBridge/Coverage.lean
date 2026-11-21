@@ -108,6 +108,34 @@ def havingOk (groupBy : List Expr) : Expr → Bool
   | .between x lo hi => havingOk groupBy x && havingOk groupBy lo && havingOk groupBy hi
   | e => aggCallOk e
 
+/-- A SELECT of aggregates only, without `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` or `OFFSET`
+    (mirrors the shape of `SqlBridge.CorrectAgg.elabStmt_correct_agg`). -/
+def plainAggOf (s : SelectStmt) : Bool :=
+  !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
+    s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
+
+/-- A `WHERE` with one subquery node in a position `SqlBridge.CorrectSub.HoleCtx` allows (the
+    node, `a op node` for a comparison, either under `AND`): the other expressions and the
+    node. -/
+def holeSplit : Expr → Option (List Expr × Expr)
+  | .binOp .and a b =>
+    match holeSplit a with
+    | some (xs, nd) => some (b :: xs, nd)
+    | none => (holeSplit b).map fun (xs, nd) => (a :: xs, nd)
+  | .binOp op a nd =>
+    match op, nd with
+    | .eq, .inSubquery _ _ (.simple _) | .ne, .inSubquery _ _ (.simple _)
+    | .lt, .inSubquery _ _ (.simple _) | .le, .inSubquery _ _ (.simple _)
+    | .gt, .inSubquery _ _ (.simple _) | .ge, .inSubquery _ _ (.simple _)
+    | .eq, .subquery (.simple _) | .ne, .subquery (.simple _) | .lt, .subquery (.simple _)
+    | .le, .subquery (.simple _) | .gt, .subquery (.simple _) | .ge, .subquery (.simple _) =>
+      some ([a], nd)
+    | _, _ => none
+  | .inSubquery e neg (.simple b) => some ([], .inSubquery e neg (.simple b))
+  | .subquery (.simple b) => some ([], .subquery (.simple b))
+  | _ => none
+
 mutual
 
 /-- Features of a `HAVING` predicate in the fragment: those of its aggregates' arguments. -/
@@ -158,9 +186,7 @@ partial def fromFeatures : FromClause → List String
     `HAVING`, `ORDER BY`, `LIMIT` or `OFFSET`, is in the fragment of
     `SqlBridge.CorrectAgg.elabStmt_correct_agg` (roadmap step 3a) when its arguments are. -/
 partial def selectFeatures (s : SelectStmt) : List String :=
-  let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
-    s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
-    s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
+  let plainAgg := plainAggOf s
   -- grouped (roadmap steps 3b-1 to 3b-6, 3c, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
   -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates or key columns,
   -- `LIMIT`/`OFFSET`.
@@ -227,25 +253,28 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   (match s.fromClause with
    | none => [noFrom]
    | some f => fromFeatures f) ++
-  -- `WHERE [a AND] e [NOT] IN (SELECT …)` (step 6b, `SqlBridge.CorrectSub.InSubWhere`) on a plain
-  -- outer query, under plain `DISTINCT`, or under aggregates without `GROUP BY`
+  -- a `WHERE` with one subquery node (steps 6b and 6c, `SqlBridge.CorrectSub.SubWhere`) on a
+  -- plain outer query, under plain `DISTINCT`, or under aggregates without `GROUP BY`
   -- (`elabStmt_correct_inSub`, `_distinct_inSub`, `_agg_inSub`, `_aggBare_inSub`): inside when
-  -- `a`, the probe and the body are; the body a plain statement without `ORDER BY`
-  (match (match s.whereClause with
-      | some (.inSubquery e _ (.simple b)) => some (none, e, b)
-      | some (.binOp .and a (.inSubquery e _ (.simple b))) => some (some a, e, b)
-      | _ => none), s.whereClause with
-   | some (a, e, b), _ =>
+  -- the other expressions, the probe of an `IN` and the body are; the body a plain statement
+  -- or one of aggregates only (`BodyOk`), without `ORDER BY`. A scalar node assumes a dialect
+  -- that takes the first row of several (sqlite, as Spider is).
+  (match s.whereClause.bind holeSplit, s.whereClause with
+   | some (xs, nd), _ =>
+     let probe := match nd with | .inSubquery e _ _ => exprFeatures e | _ => []
      if s.groupBy.isEmpty && s.having.isNone &&
          (if s.distinct then plainDistinct else (plainAgg || plainAggBare || !plainGroup)) then
-       (a.map exprFeatures).getD [] ++
-         (if (a.map refsHidden).getD false then [hiddenName] else []) ++
-         exprFeatures e ++ selectFeatures b ++
-         (if b.distinct || !b.groupBy.isEmpty || b.having.isSome || !b.orderBy.isEmpty ||
-             b.limitVal.isSome || b.offsetVal.isSome ||
-             b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false)
-          then [subquery] else [])
-     else subquery :: ((a.map exprFeatures).getD [] ++ exprFeatures e)
+       xs.flatMap exprFeatures ++ (if xs.any refsHidden then [hiddenName] else []) ++ probe ++
+         (match nd with
+          | .inSubquery _ _ (.simple b) | .subquery (.simple b) =>
+            selectFeatures b ++
+            (if b.distinct || !b.groupBy.isEmpty || b.having.isSome || !b.orderBy.isEmpty ||
+                b.limitVal.isSome || b.offsetVal.isSome ||
+                (b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
+                  !plainAggOf b)
+             then [subquery] else [])
+          | _ => [subquery])
+     else subquery :: (xs.flatMap exprFeatures ++ probe)
    | none, some w => exprFeatures w
    | none, none => []) ++
   (if (s.groupBy.isEmpty && s.having.isNone) || plainGroup then [] else [aggregate]) ++

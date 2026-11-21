@@ -32,6 +32,9 @@ columns without `GROUP BY`; both take `AVG` items, related up to `SqlEquiv`'s ro
 (`SqlBridge/CorrectAvg.lean`). `BETWEEN` is in the expression and `HAVING` fragments.
 `elabStmt_correct_distinct` (`SqlBridge/CorrectDistinct.lean`) covers plain
 `SELECT DISTINCT`, relating the rows up to their order (registry T18).
+Set operations over such statements (`SqlBridge/CorrectSetOp.lean`) are covered up to
+row order, and a `WHERE` with one uncorrelated subquery, `e [NOT] IN (SELECT …)` or
+`a op (SELECT …)`, alone or under `AND` (`SqlBridge/CorrectSub.lean`).
 Counts are of the
 elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
@@ -41,16 +44,16 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 488 |
-| after DISTINCT with an unselected sort key and LIMIT | 489 |
+| Today | 497 |
+| after DISTINCT with an unselected sort key and LIMIT | 498 |
 
 Still outside after that (queries using each feature):
 
-- subquery/set operation/CTE: 19
+- subquery/set operation/CTE: 10
 - LIKE: 8
 - *: 2
-- aggregate/GROUP BY: 2
 - AVG: 2
+- aggregate/GROUP BY: 2
 
 ## Failure classes (largest first)
 

@@ -1,6 +1,6 @@
 /-
-  Elaborator correctness for uncorrelated `IN` / `NOT IN` subqueries (#352, step 6b):
-  `SELECT … FROM f WHERE e [NOT] IN (SELECT e' FROM f' [WHERE p']) …`.
+  Elaborator correctness for uncorrelated subqueries in `WHERE` (#352, steps 6b and 6c):
+  `e [NOT] IN (SELECT …)` and the scalar `(SELECT …)` under a comparison.
 
   `SqlEquiv` re-evaluates the subquery body for every outer row, on rows `inner ++ outer`; the
   typed core evaluates it once and attaches the membership test to the input as a last column
@@ -10,12 +10,17 @@
     against `SqlEquiv`'s `inSubqueryResult`, `NULL`s included, whatever the order of the rows);
   * one row: `inExpr_eval_rel`; a filter by any predicate that relates row by row:
     `filter_rel_of`;
-  * the elaborated clause: `elabWhere_inSub` (its shape), `attachFilter_rel` (the
-    attach–filter–project pipeline keeps the rows `SqlEquiv` keeps);
+  * the attach–filter–project pipeline keeps the rows `SqlEquiv` keeps: `attachFilter_rel`;
   * the body: it elaborates the same with any fuel (`elabSelectF_fuel`) and gives the same
-    result under every outer row (`elabStmt_correct_join_ctx`);
-  * `whereOk_inSub`: the clause provides `WhereOk`, the hypothesis the statement theorems take
-    for their `WHERE`; `elabStmt_correct_inSub`: the statement theorem for a plain outer query.
+    result under every outer row (`body_ctx`, from `elabStmt_correct_join_ctx` and
+    `elabStmt_correct_agg_w`);
+  * the predicate (step 6c): `HoleCtx`, a clause with one subquery node, `IN` or scalar, under a
+    comparison and conjunctions; `holeCtx_elab` relates the elaborated clause to the untyped
+    one given the node's value; `elabWhere_one_inSub` / `elabWhere_one_scalar` give the shape
+    of the elaborated `WHERE`;
+  * `whereOk_attach`, `whereOk_of_subWhere`: the clause provides `WhereOk`, the hypothesis the
+    statement theorems take for their `WHERE`; `elabStmt_correct_inSub` and the three after it:
+    the statement theorems for plain, `DISTINCT` and aggregate outer queries.
 -/
 import SqlBridge.CorrectSetOp
 import SqlBridge.CorrectAggBare
@@ -193,41 +198,6 @@ end Pred
 
 /-! ### Part 3: the elaborated `WHERE e [NOT] IN (…)` -/
 
-/-- The elaborated `WHERE e [NOT] IN (sq)`: the subquery body elaborates to a one-column query,
-    the probe elaborates over the `FROM` columns, and the result attaches the membership test as
-    a last column, filters on it and projects it away. -/
-theorem elabWhere_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
-    {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {e : SqlEquiv.Expr} {neg : Bool}
-    {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n}
-    (h : elabWhere N sub cols q (some (.inSubquery e neg sq)) = .ok q₀) :
-    ∃ (r : Elaborated N.S) (h1 : r.n = 1) (e' : Expr n), sub sq = .ok r ∧
-      elabExpr cols N.fold noHook e = .ok e' ∧
-      q₀ = .project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
-        (.select (.col (Fin.last n)) (.attach (.inSub neg e') (h1 ▸ r.q) q)) := by
-  simp only [elabWhere, subsOf, List.foldl_cons, List.foldl_nil, List.any_nil, Bool.false_eq_true,
-    ↓reduceIte, List.nil_append, List.isEmpty_cons, List.mapM_cons, List.mapM_nil] at h
-  rcases hs : sub sq with err | r
-  · rw [hs] at h
-    cases err <;> first
-      | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
-      | (dsimp only at h; split at h <;>
-          simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
-  rw [hs] at h
-  by_cases h1 : r.n = 1
-  swap
-  · simp [h1, throw, throwThe, MonadExceptOf.throw, bind, Except.bind, pure, Except.pure] at h
-  simp only [h1, ↓reduceDIte, pure, Except.pure, bind, Except.bind, List.foldlM_cons,
-    List.foldlM_nil] at h
-  rcases he : elabExpr cols N.fold noHook e with err | e'
-  · simp [he] at h
-  simp only [he] at h
-  rw [elabExpr] at h
-  simp only [List.findIdx?_cons, beq_self_eq_true, ↓reduceIte, Nat.add_zero, Nat.lt_add_one,
-    ↓reduceDIte, pure, Except.pure, Nat.le_add_right] at h
-  simp only [Except.ok.injEq] at h
-  subst h
-  exact ⟨r, h1, e', rfl, rfl, rfl⟩
-
 /-! ### The subquery body, and the statement -/
 
 /-- A `FROM` clause of the fragment has no derived table, so the subquery elaborator is not used. -/
@@ -251,16 +221,6 @@ theorem elabSelectF_fuel (N : NamedSchema) (a b : ℕ) {items : List SqlEquiv.Se
   cases wh with
   | none => simp only [elabWhere]
   | some w => simp only [elabWhere, subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil, ↓reduceIte]
-
-theorem typeOf_attach_inSub {S : DbSchema} {n : ℕ} {neg : Bool} {e : Expr n} {sub : Query S 1}
-    {q : Query S n} {Γ' : Fin (n + 1) → SqlType} (h : (Query.attach (.inSub neg e) sub q).typeOf = some Γ') :
-    ∃ Δ Γ, sub.typeOf = some Δ ∧ q.typeOf = some Γ ∧ Γ' = Fin.append Γ ![.bool] := by
-  simp only [Query.typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
-  obtain ⟨Δ, hΔ, Γ, hΓ, h⟩ := h
-  split at h
-  · simp only [Option.some.injEq] at h
-    exact ⟨Δ, Γ, hΔ, hΓ, h.symm⟩
-  · cases h
 
 /-! ### Weakening, the pipeline for any predicate, and `WhereOk` -/
 
@@ -464,174 +424,8 @@ theorem attachFilter_rel {n : ℕ} (cols : Fin n → Column) (fold : String → 
       exact .cons hru (attachFilter_rel cols fold pred hpt hrest hE' hF'' hR'')
 
 
-theorem typeOf_attachWhere {S : DbSchema} {n : ℕ} {neg : Bool} {e : Expr n} {sub : Query S 1}
-    {q : Query S n} {P : Expr (n + 1)} {Γ : Fin n → SqlType}
-    (h : (Query.project (fun i : Fin n => Expr.col (Fin.castLE (Nat.le_succ n) i))
-      (.select P (.attach (.inSub neg e) sub q))).typeOf = some Γ) :
-    q.typeOf = some Γ ∧ sub.typeOf.isSome ∧
-      (Query.attach (.inSub neg e) sub q).typeOf = some (Fin.append Γ ![.bool]) := by
-  obtain ⟨Γ', hsel, hproj⟩ := Query.typeOf_project_eq_some.mp h
-  obtain ⟨hatt, -⟩ := Query.typeOf_select_eq_some.mp hsel
-  obtain ⟨Δ, Γq, hΔ, hΓq, rfl⟩ := typeOf_attach_inSub hatt
-  have hΓ : Γq = Γ := by
-    funext i
-    have := hproj i
-    have hC : Fin.castLE (Nat.le_succ n) i = Fin.castAdd 1 i := by ext; simp
-    simp only [Expr.typeOf, hC, Fin.append_left, Option.some.injEq] at this
-    exact this
-  subst hΓ
-  exact ⟨hΓq, by simp [hΔ], hatt⟩
-
-/-- **A `WHERE` that reads one attached `IN` subquery provides `WhereOk`**, when its typed
-    predicate `P` relates to the untyped clause `w` on every row, given that the attached column
-    relates to the subquery node's value. -/
-theorem whereOk_attach (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
-    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
-    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
-    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
-    {n : ℕ} {cf : Fin n → Column} {qf : Query N.S n}
-    {e : SqlEquiv.Expr} {neg : Bool} {items : List SqlEquiv.SelectItem}
-    {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
-    (he : isFragment e = true) (hit : itemsFragment items = true) (hff : fromFragment f = true)
-    (hw : ∀ w ∈ wh, isFragment w = true)
-    {w : SqlEquiv.Expr} {P : Expr (n + 1)} {e' : Expr n} {rq : Query N.S 1} {rc : Fin 1 → Column}
-    (hsub : elabSubQuery N 15 (.simple (.mk false items (some f) wh [] none [] none none)) =
-      .ok ⟨1, rq, rc⟩)
-    (he' : elabExpr cf N.fold noHook e = .ok e') (hPdiv : P.divSafe = true)
-    (hctx : ∀ Γ, qf.typeOf = some Γ → NoBoolOrder (Fin.append Γ ![SqlType.bool]) P →
-      ∀ r u, RowRel cf N.fold r u → r.Conforms Γ → ∀ d vn,
-        SqlEquiv.evalExprWithDb db u
-          (.inSubquery e neg (.simple (.mk false items (some f) wh [] none [] none none))) =
-            some vn → DatumRel d vn →
-        ∀ dp, P.eval (Fin.append r ![d]) = .ok dp →
-          ∃ v, SqlEquiv.evalExprWithDb db u w = some v ∧ DatumRel dp v) :
-    WhereOk cf N.fold db D (some w) qf
-      (.project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
-        (.select P (.attach (.inSub neg e') rq qf))) := by
-  have htp := translates_of_elab cf N.fold e he he'
-  have hleaf : rq.typeOf.isSome → QNoBoolOrder rq → rq.IsSafe ∧ ∃ ss, rq.eval D = .ok ss ∧
-      ∀ ctx, List.Forall₂ OutRel ss (SqlEquiv.evalSelectWithContext db ctx
-        (.mk false items (some f) wh [] none [] none none)) := by
-    intro hty hnbq
-    have hst : elabStmt N (joinStmt items f wh [] none none) = .ok ⟨1, rq, rc⟩ := by
-      rw [elabSubQuery] at hsub
-      simp only [joinStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
-      rw [elabSelectF_fuel N 16 14 hff hw, hsub]
-      simp [hty, bind, Except.bind, pure, Except.pure]
-    obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD
-      hrel hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) (by simp) (by simp) hst hnbq
-    exact ⟨hs, ss, hss, hctx' rfl⟩
-  refine ⟨fun Γ hΓ => (typeOf_attachWhere hΓ).1, fun h => h.2.2.2.2, ?_, ?_⟩
-  · intro Γ hΓ hnb hd
-    obtain ⟨hs, -⟩ := hleaf (typeOf_attachWhere hΓ).2.1 hnb.2.2.2.1
-    simp [Query.divSafe, SubKind.divSafe, Expr.divSafe, hd, hs.2, Translates.divSafe _ _ htp, hPdiv]
-  · intro Γ Rf R U hΓ hnb hRf hR hrows
-    obtain ⟨hqfT, hsubT, hattT⟩ := typeOf_attachWhere hΓ
-    obtain ⟨-, ss, hss, hctx'⟩ := hleaf hsubT hnb.2.2.2.1
-    rw [Query.eval_project, Query.eval_select, Query.eval_attach] at hR
-    obtain ⟨F, hF, hR⟩ := bind_ok hR
-    obtain ⟨E, hE, hF⟩ := bind_ok hF
-    obtain ⟨ss', hss', hE⟩ := bind_ok hE
-    rw [hss] at hss'
-    cases hss'
-    obtain ⟨x, hx, hE⟩ := bind_ok hE
-    simp only [SubKind.extra, Except.ok.injEq] at hx
-    subst hx
-    obtain ⟨Rf', hRf', hE⟩ := bind_ok hE
-    rw [hRf] at hRf'
-    cases hRf'
-    have hsubrows : ∀ u, List.Forall₂ SubRowRel (ss.map (· 0))
-        (SqlEquiv.evalSubQueryWithContext db u
-          (.simple (.mk false items (some f) wh [] none [] none none))) := by
-      intro u
-      rw [SqlEquiv.evalSubQuery_simple, List.forall₂_map_left_iff]
-      exact (hctx' u).imp fun _ _ h => subRowRel_of_outRel h
-    refine attachFilter_rel cf N.fold (fun u => SqlEquiv.evalExprWithDb db u w)
-      (fun r u hru hc d hd dp hdp => ?_) hrows hE hF hR
-    obtain ⟨vn, hvn, hrn⟩ := inExpr_eval_rel cf N.fold db hru hc htp (hnb.2.2.1 Γ hqfT)
-      (hsubrows u) hd
-    exact hctx Γ hqfT (hnb.2.1 _ hattT) r u hru hc d vn hvn hrn dp hdp
-
-/-- The body of the subqueries this file takes. -/
-abbrev plainBody (items : List SqlEquiv.SelectItem) (f : SqlEquiv.FromClause)
-    (wh : Option SqlEquiv.Expr) : SqlEquiv.SubQuery :=
-  .simple (.mk false items (some f) wh [] none [] none none)
-
 /-- The hidden column the elaborator appends for an attached subquery. -/
 def subCol (ty : SqlType) : Column := { qualifier := none, name := "?subquery?", type := ty }
-
-/-- The elaborated `WHERE a AND e [NOT] IN (sq)`, `a` in the expression fragment and not
-    referring to the hidden column's name. -/
-theorem elabWhere_and_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
-    {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {a e : SqlEquiv.Expr} {neg : Bool}
-    {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n} (ha : isFragment a = true)
-    (hna : noRefTo N.fold "?subquery?" a = true)
-    (h : elabWhere N sub cols q (some (.binOp .and a (.inSubquery e neg sq))) = .ok q₀) :
-    ∃ (r : Elaborated N.S) (h1 : r.n = 1) (e' a₀ : Expr n), sub sq = .ok r ∧
-      elabExpr cols N.fold noHook e = .ok e' ∧ elabExpr cols N.fold noHook a = .ok a₀ ∧
-      q₀ = .project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
-        (.select (.binary .and
-            (retypeNull (Fin.append cols ![subCol .bool]) (a₀.rename (Fin.castAdd 1))
-              (.col (Fin.last n)))
-            (retypeNull (Fin.append cols ![subCol .bool]) (.col (Fin.last n))
-              (a₀.rename (Fin.castAdd 1))))
-          (.attach (.inSub neg e') (h1 ▸ r.q) q)) := by
-  simp only [elabWhere, subsOf, subsOf_frag a ha, List.nil_append, List.foldl_cons, List.foldl_nil,
-    List.any_nil, Bool.false_eq_true, ↓reduceIte, List.isEmpty_cons, List.mapM_cons,
-    List.mapM_nil] at h
-  rcases hs : sub sq with err | r
-  · rw [hs] at h
-    cases err <;> first
-      | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
-      | (dsimp only at h; split at h <;>
-          simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
-  rw [hs] at h
-  by_cases h1 : r.n = 1
-  swap
-  · simp [h1, throw, throwThe, MonadExceptOf.throw, bind, Except.bind, pure, Except.pure] at h
-  simp only [h1, ↓reduceDIte, pure, Except.pure, bind, Except.bind, List.foldlM_cons,
-    List.foldlM_nil] at h
-  rcases he : elabExpr cols N.fold noHook e with err | e'
-  · simp [he] at h
-  simp only [he] at h
-  have hbeq : ∀ x : SqlEquiv.Expr, isFragment x = true →
-      (SqlEquiv.Expr.inSubquery e neg sq == x) = false := by
-    intro x hx
-    rw [beq_eq_false_iff_ne]
-    rintro rfl
-    simp [isFragment] at hx
-  have hnode : (SqlEquiv.Expr.inSubquery e neg sq ==
-      SqlEquiv.Expr.binOp .and a (.inSubquery e neg sq)) = false := by
-    rw [beq_eq_false_iff_ne]
-    intro hc
-    cases hc
-  generalize hH : (fun e_1 : SqlEquiv.Expr =>
-    match List.findIdx? (fun x => x.1 == e_1) [(e.inSubquery neg sq, sq)] with
-    | some j => if h : n + j < n + 1 then some (Expr.col (⟨n + j, h⟩ : Fin (n + 1))) else none
-    | none => none) = hook at h
-  have hhook : ∀ x, isFragment x = true → hook x = none := by
-    intro x hx
-    rw [← hH]
-    simp [List.findIdx?_cons, hbeq x hx]
-  have hhookW : hook (.binOp .and a (.inSubquery e neg sq)) = none := by
-    rw [← hH]
-    simp [List.findIdx?_cons, hnode]
-  have hhookN : hook (.inSubquery e neg sq) = some (.col (Fin.last n)) := by
-    rw [← hH]
-    simp [List.findIdx?_cons, Fin.last]
-  rw [elabExpr] at h
-  have hsc : ({ qualifier := none, name := "?subquery?", type := SqlType.bool } : Column) =
-      subCol .bool := rfl
-  simp only [hhookW, elabBinOp, pure, Except.pure, bind, Except.bind, hsc] at h
-  rcases hea : elabExpr (Fin.append cols ![subCol .bool]) N.fold hook a with err | a'
-  · simp [hea] at h
-  obtain ⟨a₀, ha₀, rfl⟩ := elabExpr_weaken cols N.fold (subCol .bool) hook hhook a ha hna hea
-  have hen : elabExpr (Fin.append cols ![subCol .bool]) N.fold hook (.inSubquery e neg sq) =
-      .ok (.col (Fin.last n)) := by
-    rw [elabExpr]; simp [hhookN, pure, Except.pure]
-  simp only [hea, hen, Nat.le_add_right, ↓reduceDIte, Except.ok.injEq] at h
-  subst h
-  exact ⟨r, h1, e', a₀, rfl, rfl, ha₀, rfl⟩
 
 theorem noBoolOrder_rename {n m : ℕ} (ρ : Fin n → Fin m) (Γ : Fin m → SqlType) :
     ∀ e : Expr n, NoBoolOrder Γ (e.rename ρ) → NoBoolOrder (Γ ∘ ρ) e := by
@@ -651,100 +445,533 @@ theorem eval_col_last_append {n : ℕ} (r : Row n) (d : Datum) :
   have hL : Fin.last n = Fin.natAdd n (0 : Fin 1) := by ext; simp
   rw [Expr.eval_col, hL, Fin.append_right]; rfl
 
-/-- `e [NOT] IN (plain subquery)` provides `WhereOk` (the bare clause). -/
-theorem whereOk_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
-    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
-    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
-    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
-    {n : ℕ} {cf : Fin n → Column} {qf q₀ : Query N.S n}
-    {e : SqlEquiv.Expr} {neg : Bool} {items : List SqlEquiv.SelectItem}
-    {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
-    (he : isFragment e = true) (hit : itemsFragment items = true) (hff : fromFragment f = true)
-    (hw : ∀ w ∈ wh, isFragment w = true)
-    (h : elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf
-      (some (.inSubquery e neg (plainBody items f wh))) = .ok q₀) :
-    WhereOk cf N.fold db D (some (.inSubquery e neg (plainBody items f wh))) qf q₀ := by
-  obtain ⟨r, h1, e', hsub, he', rfl⟩ := elabWhere_inSub N _ cf qf h
-  obtain ⟨m, rq, rc⟩ := r
-  dsimp only at h1
-  subst h1
-  refine whereOk_attach N hfold hfoldCI hwn hfix hD hrel he hit hff hw hsub he' rfl ?_
-  intro Γ _ _ r u _ _ d vn hvn hrn dp hdp
-  rw [eval_col_last_append, Except.ok.injEq] at hdp
-  exact ⟨vn, hvn, hdp ▸ hrn⟩
+/-! ### Predicates with one subquery node (step 6c) -/
 
-/-- `a AND e [NOT] IN (plain subquery)` provides `WhereOk`, `a` in the expression fragment and
-    not referring to the hidden column's name. -/
-theorem whereOk_and_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
-    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
-    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
-    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
-    {n : ℕ} {cf : Fin n → Column} {qf q₀ : Query N.S n}
-    {a e : SqlEquiv.Expr} {neg : Bool} {items : List SqlEquiv.SelectItem}
-    {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
-    (ha : isFragment a = true) (hna : noRefTo N.fold "?subquery?" a = true)
-    (he : isFragment e = true) (hit : itemsFragment items = true) (hff : fromFragment f = true)
-    (hw : ∀ w ∈ wh, isFragment w = true)
-    (h : elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf
-      (some (.binOp .and a (.inSubquery e neg (plainBody items f wh)))) = .ok q₀) :
-    WhereOk cf N.fold db D (some (.binOp .and a (.inSubquery e neg (plainBody items f wh))))
-      qf q₀ := by
-  obtain ⟨r, h1, e', a₀, hsub, he', ha₀, rfl⟩ := elabWhere_and_inSub N _ cf qf ha hna h
-  obtain ⟨m, rq, rc⟩ := r
-  dsimp only at h1
-  subst h1
-  have hta := translates_of_elab cf N.fold a ha ha₀
-  refine whereOk_attach N hfold hfoldCI hwn hfix hD hrel he hit hff hw hsub he' ?_ ?_
-  · simp [Expr.divSafe, divSafe_retypeNull, Translates.divSafe _ _ hta, BinOp.isDivision]
-  · intro Γ _ hnbP r u hru hc d vn hvn hrn dp hdp
-    obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok hdp
-    rw [eval_retypeNull] at hea heb
-    rw [Expr.eval_rename_castAdd] at hea
-    rw [eval_col_last_append, Except.ok.injEq] at heb
-    subst heb
+/-- A predicate with one subquery node `node` and otherwise in the expression fragment:
+    `node`, `a op node` for a comparison `op`, `C AND b`, `a AND C`. -/
+inductive HoleCtx (fold : String → String) (node : SqlEquiv.Expr) : SqlEquiv.Expr → Prop
+  | hole : HoleCtx fold node node
+  | cmpR {op : SqlEquiv.BinOp} {a : SqlEquiv.Expr} {c : CmpOp} (hop : elabBinOp op = .ok (.cmp c))
+      (ha : isFragment a = true) (hna : noRefTo fold "?subquery?" a = true) :
+      HoleCtx fold node (.binOp op a node)
+  | andL {w b : SqlEquiv.Expr} (hw : HoleCtx fold node w) (hb : isFragment b = true)
+      (hnb : noRefTo fold "?subquery?" b = true) : HoleCtx fold node (.binOp .and w b)
+  | andR {a w : SqlEquiv.Expr} (ha : isFragment a = true)
+      (hna : noRefTo fold "?subquery?" a = true) (hw : HoleCtx fold node w) :
+      HoleCtx fold node (.binOp .and a w)
+
+theorem elabExpr_hook_some {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+    (hook : SqlEquiv.Expr → Option (Expr n)) {e : SqlEquiv.Expr} {e' : Expr n}
+    (h : hook e = some e') : elabExpr cols fold hook e = .ok e' := by
+  cases e <;> (unfold elabExpr; simp [h, pure, Except.pure])
+
+section Hole
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String) (τc τ : SqlType)
+  (hook : SqlEquiv.Expr → Option (Expr (n + 1))) (node : SqlEquiv.Expr)
+  (hhookN : hook node = some (.col (Fin.last n)))
+  (hhook : ∀ x, x ≠ node → hook x = none) (hnf : isFragment node = false)
+  (hnbin : ∀ op a b, node ≠ .binOp op a b)
+include hhookN hhook hnf hnbin
+
+/-- What the elaboration `P` of a `HoleCtx` predicate `w` gives: it is safe, and it relates to
+    `w` row by row, given that the attached column relates to the node's value. -/
+theorem holeCtx_elab (db : SqlEquiv.Database) :
+    ∀ {w : SqlEquiv.Expr}, HoleCtx fold node w → ∀ {P : Expr (n + 1)},
+      elabExpr (Fin.append cols ![subCol τc]) fold hook w = .ok P →
+      P.divSafe = true ∧
+      ∀ (Γ : Fin n → SqlType), NoBoolOrder (Fin.append Γ ![τ]) P →
+        ∀ (r : Row n) (u : SqlEquiv.Row), RowRel cols fold r u → r.Conforms Γ →
+        ∀ (d : Datum) (vn : SqlEquiv.Value), SqlEquiv.evalExprWithDb db u node = some vn →
+          DatumRel d vn → Row.Conforms (Fin.append Γ ![τ]) (Fin.append r ![d] : Row (n + 1)) →
+        ∀ dp, P.eval (Fin.append r ![d]) = .ok dp →
+          ∃ v, SqlEquiv.evalExprWithDb db u w = some v ∧ DatumRel dp v := by
+  have hfragHook : ∀ x, isFragment x = true → hook x = none := fun x hx =>
+    hhook x (fun h => by rw [h, hnf] at hx; cases hx)
+  have hΓ' : ∀ Γ : Fin n → SqlType, (Fin.append Γ ![τ]) ∘ Fin.castAdd 1 = Γ := fun Γ => by
+    funext i; simp [Fin.append_left]
+  intro w hw
+  induction hw with
+  | hole =>
+    intro P h
+    rw [elabExpr_hook_some _ _ _ hhookN, Except.ok.injEq] at h
+    subst h
+    refine ⟨rfl, fun Γ _ r u _ _ d vn hvn hrn _ dp hdp => ?_⟩
+    rw [eval_col_last_append, Except.ok.injEq] at hdp
+    exact ⟨vn, hvn, hdp ▸ hrn⟩
+  | @cmpR op a c hop ha hna =>
+    intro P h
+    simp only [elabExpr, hhook _ (Ne.symm (hnbin op a node)), hop, pure, Except.pure, bind,
+      Except.bind] at h
+    rcases hea : elabExpr (Fin.append cols ![subCol τc]) fold hook a with err | a'
+    · simp [hea] at h
+    obtain ⟨a₀, ha₀, rfl⟩ := elabExpr_weaken cols fold (subCol τc) hook hfragHook a ha hna hea
+    simp only [hea, elabExpr_hook_some _ _ _ hhookN, Except.ok.injEq] at h
+    subst h
+    have hta := translates_of_elab cols fold a ha ha₀
+    refine ⟨by simp [Expr.divSafe, divSafe_retypeNull, Translates.divSafe _ _ hta,
+      BinOp.isDivision], fun Γ hnbP r u hru hc d vn hvn hrn hcx dp hdp => ?_⟩
+    obtain ⟨hcc, hna', -⟩ := hnbP
+    obtain ⟨da, db', hea1, heb1, hd⟩ := eval_binary_ok hdp
+    have hea' := hea1
+    rw [eval_retypeNull, Expr.eval_rename_castAdd] at hea'
+    rw [eval_retypeNull, eval_col_last_append, Except.ok.injEq] at heb1
+    subst heb1
     have hnba : NoBoolOrder Γ a₀ := by
-      have h1 := noBoolOrder_of_retypeNull _ _ hnbP.1
-      have h2 := noBoolOrder_rename _ _ _ h1
-      have hΓ' : (Fin.append Γ ![SqlType.bool]) ∘ Fin.castAdd 1 = Γ := by
-        funext i; simp [Fin.append_left]
+      have h2 := noBoolOrder_rename _ _ _ (noBoolOrder_of_retypeNull _ _ hna')
       rwa [hΓ'] at h2
-    obtain ⟨va, hva, hra⟩ := Translates.eval_rel cf N.fold db hru hc hta hnba hea
-    obtain ⟨v, hv, hrel⟩ := and_agree hra hrn hd
+    obtain ⟨va, hva, hra⟩ := Translates.eval_rel cols fold db hru hc hta hnba hea'
+    obtain ⟨v, hv, hrel⟩ := cmp_agree hop hra hrn (fun h1 h2 x y hxy => by
+      rcases hcc with hcc | hcc | ⟨τa, hτ, hτb⟩
+      · exact h1 hcc
+      · exact h2 hcc
+      · rcases Expr.eval_ok_or_divisionByZero hcx hτ with ⟨d', hd', hty⟩ | ⟨hdz, _⟩
+        · rw [hea1] at hd'; cases hd'
+          rw [hxy.1] at hty
+          exact hτb (by simpa [Datum.HasType, Value.type] using hty.symm)
+        · rw [hea1] at hdz; cases hdz) hd
     exact ⟨v, by rw [SqlEquiv.evalExprWithDb_binOp, hva, hvn, hv], hrel⟩
+  | @andL w b hw hb hnb ih =>
+    intro P h
+    simp only [elabExpr, hhook _ (Ne.symm (hnbin .and w b)), elabBinOp, pure, Except.pure, bind,
+      Except.bind] at h
+    rcases hew : elabExpr (Fin.append cols ![subCol τc]) fold hook w with err | Pw
+    · simp [hew] at h
+    rcases heb : elabExpr (Fin.append cols ![subCol τc]) fold hook b with err | b'
+    · simp [hew, heb] at h
+    obtain ⟨b₀, hb₀, rfl⟩ := elabExpr_weaken cols fold (subCol τc) hook hfragHook b hb hnb heb
+    simp only [hew, heb, Except.ok.injEq] at h
+    subst h
+    obtain ⟨hdivw, hrelw⟩ := ih hew
+    have htb := translates_of_elab cols fold b hb hb₀
+    refine ⟨by simp [Expr.divSafe, divSafe_retypeNull, Translates.divSafe _ _ htb, hdivw,
+      BinOp.isDivision], fun Γ hnbP r u hru hc d vn hvn hrn hcx dp hdp => ?_⟩
+    obtain ⟨hnw, hnb'⟩ := hnbP
+    obtain ⟨dw, db', hew1, heb1, hd⟩ := eval_binary_ok hdp
+    rw [eval_retypeNull] at hew1 heb1
+    rw [Expr.eval_rename_castAdd] at heb1
+    obtain ⟨vw, hvw, hrw⟩ := hrelw Γ (noBoolOrder_of_retypeNull _ _ hnw) r u hru hc d vn hvn hrn
+      hcx dw hew1
+    have hnbb : NoBoolOrder Γ b₀ := by
+      have h2 := noBoolOrder_rename _ _ _ (noBoolOrder_of_retypeNull _ _ hnb')
+      rwa [hΓ'] at h2
+    obtain ⟨vb, hvb, hrb⟩ := Translates.eval_rel cols fold db hru hc htb hnbb heb1
+    obtain ⟨v, hv, hrel⟩ := and_agree hrw hrb hd
+    exact ⟨v, by rw [SqlEquiv.evalExprWithDb_binOp, hvw, hvb, hv], hrel⟩
+  | @andR a w ha hna hw ih =>
+    intro P h
+    simp only [elabExpr, hhook _ (Ne.symm (hnbin .and a w)), elabBinOp, pure, Except.pure, bind,
+      Except.bind] at h
+    rcases hea : elabExpr (Fin.append cols ![subCol τc]) fold hook a with err | a'
+    · simp [hea] at h
+    rcases hew : elabExpr (Fin.append cols ![subCol τc]) fold hook w with err | Pw
+    · simp [hea, hew] at h
+    obtain ⟨a₀, ha₀, rfl⟩ := elabExpr_weaken cols fold (subCol τc) hook hfragHook a ha hna hea
+    simp only [hea, hew, Except.ok.injEq] at h
+    subst h
+    obtain ⟨hdivw, hrelw⟩ := ih hew
+    have hta := translates_of_elab cols fold a ha ha₀
+    refine ⟨by simp [Expr.divSafe, divSafe_retypeNull, Translates.divSafe _ _ hta, hdivw,
+      BinOp.isDivision], fun Γ hnbP r u hru hc d vn hvn hrn hcx dp hdp => ?_⟩
+    obtain ⟨hna', hnw⟩ := hnbP
+    obtain ⟨da, dw, hea1, hew1, hd⟩ := eval_binary_ok hdp
+    rw [eval_retypeNull] at hea1 hew1
+    rw [Expr.eval_rename_castAdd] at hea1
+    obtain ⟨vw, hvw, hrw⟩ := hrelw Γ (noBoolOrder_of_retypeNull _ _ hnw) r u hru hc d vn hvn hrn
+      hcx dw hew1
+    have hnba : NoBoolOrder Γ a₀ := by
+      have h2 := noBoolOrder_rename _ _ _ (noBoolOrder_of_retypeNull _ _ hna')
+      rwa [hΓ'] at h2
+    obtain ⟨va, hva, hra⟩ := Translates.eval_rel cols fold db hru hc hta hnba hea1
+    obtain ⟨v, hv, hrel⟩ := and_agree hra hrw hd
+    exact ⟨v, by rw [SqlEquiv.evalExprWithDb_binOp, hva, hvw, hv], hrel⟩
 
-/-- The `WHERE` clauses of step 6b: `e [NOT] IN (SELECT e' FROM f' [WHERE p'])`, alone or after
-    `a AND`, with `e`, `a` and the body in the fragment of `elabStmt_correct_join` (the body
-    without `ORDER BY`, `LIMIT` or `OFFSET`), and `a` not referring to the name of the column the
-    elaborator attaches (`?subquery?`; the parser cannot produce it). -/
-inductive InSubWhere (N : NamedSchema) : SqlEquiv.Expr → Prop
-  | bare {e : SqlEquiv.Expr} {neg : Bool} {items : List SqlEquiv.SelectItem}
-      {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} (he : isFragment e = true)
-      (hit : itemsFragment items = true) (hff : fromFragment f = true)
-      (hw : ∀ w ∈ wh, isFragment w = true) :
-      InSubWhere N (.inSubquery e neg (plainBody items f wh))
-  | and {a e : SqlEquiv.Expr} {neg : Bool} {items : List SqlEquiv.SelectItem}
-      {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} (ha : isFragment a = true)
-      (hna : noRefTo N.fold "?subquery?" a = true) (he : isFragment e = true)
-      (hit : itemsFragment items = true) (hff : fromFragment f = true)
-      (hw : ∀ w ∈ wh, isFragment w = true) :
-      InSubWhere N (.binOp .and a (.inSubquery e neg (plainBody items f wh)))
+end Hole
 
-/-- Such a clause provides `WhereOk`. -/
-theorem whereOk_of_inSubWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+/-- The hook the elaborator uses for a `WHERE` with the single subquery node `node`: the node
+    reads the attached last column. -/
+def hookOf (n : ℕ) (node : SqlEquiv.Expr) (sq : SqlEquiv.SubQuery) :
+    SqlEquiv.Expr → Option (Expr (n + 1)) := fun e₁ =>
+  match List.findIdx? (fun x => x.1 == e₁) [(node, sq)] with
+  | some j => if h : n + j < n + 1 then some (.col ⟨n + j, h⟩) else none
+  | none => none
+
+theorem hookOf_node (n : ℕ) (node : SqlEquiv.Expr) (sq : SqlEquiv.SubQuery) :
+    hookOf n node sq node = some (.col (Fin.last n)) := by
+  simp [hookOf, List.findIdx?_cons, Fin.last]
+
+theorem hookOf_ne (n : ℕ) (node : SqlEquiv.Expr) (sq : SqlEquiv.SubQuery) {x : SqlEquiv.Expr}
+    (hx : x ≠ node) : hookOf n node sq x = none := by
+  have : (node == x) = false := by rw [beq_eq_false_iff_ne]; exact fun h => hx h.symm
+  simp [hookOf, List.findIdx?_cons, this]
+
+/-- The subqueries of a `HoleCtx` predicate: its node. -/
+theorem holeCtx_subs {fold : String → String} {node : SqlEquiv.Expr} {sq : SqlEquiv.SubQuery}
+    (hn : subsOf node = [(node, sq)]) :
+    ∀ {w : SqlEquiv.Expr}, HoleCtx fold node w → subsOf w = [(node, sq)] := by
+  intro w hw
+  induction hw with
+  | hole => exact hn
+  | cmpR _ ha _ => simp [subsOf, subsOf_frag _ ha, hn]
+  | andL _ hb _ ih => simp [subsOf, subsOf_frag _ hb, ih]
+  | andR ha _ _ ih => simp [subsOf, subsOf_frag _ ha, ih]
+
+/-- The elaborated `WHERE w` when `w`'s one subquery is the `IN` node. -/
+theorem elabWhere_one_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
+    {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {w e : SqlEquiv.Expr} {neg : Bool}
+    {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n}
+    (hs : subsOf w = [(.inSubquery e neg sq, sq)])
+    (h : elabWhere N sub cols q (some w) = .ok q₀) :
+    ∃ (r : Elaborated N.S) (h1 : r.n = 1) (e' : Expr n) (P : Expr (n + 1)), sub sq = .ok r ∧
+      elabExpr cols N.fold noHook e = .ok e' ∧
+      elabExpr (Fin.append cols ![subCol .bool]) N.fold (hookOf n (.inSubquery e neg sq) sq) w =
+        .ok P ∧
+      q₀ = .project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
+        (.select P (.attach (.inSub neg e') (h1 ▸ r.q) q)) := by
+  simp only [elabWhere, hs, List.foldl_cons, List.foldl_nil, List.any_nil, Bool.false_eq_true,
+    ↓reduceIte, List.nil_append, List.isEmpty_cons, List.mapM_cons, List.mapM_nil] at h
+  rcases hsb : sub sq with err | r
+  · rw [hsb] at h
+    cases err <;> first
+      | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
+      | (dsimp only at h; split at h <;>
+          simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
+  rw [hsb] at h
+  by_cases h1 : r.n = 1
+  swap
+  · simp [h1, throw, throwThe, MonadExceptOf.throw, bind, Except.bind, pure, Except.pure] at h
+  simp only [h1, ↓reduceDIte, pure, Except.pure, bind, Except.bind, List.foldlM_cons,
+    List.foldlM_nil] at h
+  rcases he : elabExpr cols N.fold noHook e with err | e'
+  · simp [he] at h
+  simp only [he] at h
+  have hsc : ({ qualifier := none, name := "?subquery?", type := SqlType.bool } : Column) =
+      subCol .bool := rfl
+  simp only [hsc] at h
+  generalize hH : (fun e_1 : SqlEquiv.Expr =>
+    match List.findIdx? (fun x => x.1 == e_1) [(e.inSubquery neg sq, sq)] with
+    | some j => if h : n + j < n + 1 then some (Expr.col (⟨n + j, h⟩ : Fin (n + 1))) else none
+    | none => none) = hook at h
+  have hhk : hook = hookOf n (.inSubquery e neg sq) sq := hH.symm
+  subst hhk
+  rcases hP : elabExpr (Fin.append cols ![subCol .bool]) N.fold
+      (hookOf n (.inSubquery e neg sq) sq) w with err | P
+  · simp [hP] at h
+  simp only [hP, Nat.le_add_right, ↓reduceDIte, Except.ok.injEq] at h
+  subst h
+  exact ⟨r, h1, e', P, rfl, rfl, rfl, rfl⟩
+
+/-- The elaborated `WHERE w` when `w`'s one subquery is a scalar subquery. -/
+theorem elabWhere_one_scalar (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
+    {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {w : SqlEquiv.Expr}
+    {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n}
+    (hs : subsOf w = [(.subquery sq, sq)])
+    (h : elabWhere N sub cols q (some w) = .ok q₀) :
+    ∃ (r : Elaborated N.S) (h1 : r.n = 1) (P : Expr (n + 1)), sub sq = .ok r ∧
+      elabExpr (Fin.append cols ![subCol (r.cols ⟨0, by omega⟩).type]) N.fold
+        (hookOf n (.subquery sq) sq) w = .ok P ∧
+      q₀ = .project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
+        (.select P (.attach (.scalar (N.config.scalarSubqueryRows == .firstRow))
+          (h1 ▸ r.q) q)) := by
+  simp only [elabWhere, hs, List.foldl_cons, List.foldl_nil, List.any_nil, Bool.false_eq_true,
+    ↓reduceIte, List.nil_append, List.isEmpty_cons, List.mapM_cons, List.mapM_nil] at h
+  rcases hsb : sub sq with err | r
+  · rw [hsb] at h
+    cases err <;> first
+      | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
+      | (dsimp only at h; split at h <;>
+          simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
+  rw [hsb] at h
+  by_cases h1 : r.n = 1
+  swap
+  · simp [h1, throw, throwThe, MonadExceptOf.throw, bind, Except.bind, pure, Except.pure] at h
+  simp only [h1, ↓reduceDIte, pure, Except.pure, bind, Except.bind, List.foldlM_cons,
+    List.foldlM_nil] at h
+  have hsc : ∀ τ : SqlType, ({ qualifier := none, name := "?subquery?", type := τ } : Column) =
+      subCol τ := fun _ => rfl
+  simp only [hsc] at h
+  generalize hH : (fun e_1 : SqlEquiv.Expr =>
+    match List.findIdx? (fun x => x.1 == e_1) [(SqlEquiv.Expr.subquery sq, sq)] with
+    | some j => if h : n + j < n + 1 then some (Expr.col (⟨n + j, h⟩ : Fin (n + 1))) else none
+    | none => none) = hook at h
+  have hhk : hook = hookOf n (.subquery sq) sq := hH.symm
+  subst hhk
+  rcases hP : elabExpr (Fin.append cols ![subCol (r.cols ⟨0, by omega⟩).type]) N.fold
+      (hookOf n (.subquery sq) sq) w with err | P
+  · simp [hP] at h
+  simp only [hP, Nat.le_add_right, ↓reduceDIte, Except.ok.injEq] at h
+  subst h
+  exact ⟨r, h1, P, rfl, hP, rfl⟩
+
+theorem conforms_append_single {n : ℕ} {Γ : Fin n → SqlType} {r : Row n} {τ : SqlType} {d : Datum}
+    (hr : r.Conforms Γ) (hd : d.HasType τ) :
+    Row.Conforms (Fin.append Γ ![τ]) (Fin.append r ![d] : Row (n + 1)) := by
+  intro i
+  induction i using Fin.addCases with
+  | left j => simpa [Fin.append_left] using hr j
+  | right j =>
+    have : j = 0 := Subsingleton.elim _ _
+    subst this
+    simpa [Fin.append_right] using hd
+
+/-- The type of the elaborated `WHERE` over an attached subquery of either kind. -/
+theorem typeOf_attachWhere {S : DbSchema} {n : ℕ} {kind : SubKind n} {sub : Query S 1}
+    {q : Query S n} {P : Expr (n + 1)} {Γ : Fin n → SqlType}
+    (h : (Query.project (fun i : Fin n => Expr.col (Fin.castLE (Nat.le_succ n) i))
+      (.select P (.attach kind sub q))).typeOf = some Γ) :
+    q.typeOf = some Γ ∧ ∃ Δ τ, sub.typeOf = some Δ ∧
+      (Query.attach kind sub q).typeOf = some (Fin.append Γ ![τ]) ∧
+      (∀ fr, kind = .scalar fr → τ = Δ 0) ∧ (∀ neg e, kind = .inSub neg e → τ = .bool) := by
+  obtain ⟨Γ', hsel, hproj⟩ := Query.typeOf_project_eq_some.mp h
+  obtain ⟨hatt, -⟩ := Query.typeOf_select_eq_some.mp hsel
+  have hatt' := hatt
+  simp only [Query.typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at hatt
+  obtain ⟨Δ, hΔ, Γq, hΓq, hk⟩ := hatt
+  have key : ∃ τ, Γ' = Fin.append Γq ![τ] ∧ (∀ fr, kind = .scalar fr → τ = Δ 0) ∧
+      (∀ neg e, kind = .inSub neg e → τ = .bool) := by
+    cases kind with
+    | scalar fr =>
+      simp only [Option.some.injEq] at hk
+      exact ⟨Δ 0, hk.symm, (fun _ _ => rfl), (fun _ _ h => (by cases h))⟩
+    | inSub neg e =>
+      dsimp only at hk
+      split at hk
+      · simp only [Option.some.injEq] at hk
+        exact ⟨.bool, hk.symm, (fun _ h => (by cases h)), (fun _ _ _ => rfl)⟩
+      · cases hk
+  obtain ⟨τ, rfl, hk1, hk2⟩ := key
+  have hΓ : Γq = Γ := by
+    funext i
+    have := hproj i
+    have hC : Fin.castLE (Nat.le_succ n) i = Fin.castAdd 1 i := by ext; simp
+    simp only [Expr.typeOf, hC, Fin.append_left, Option.some.injEq] at this
+    exact this
+  subst hΓ
+  exact ⟨hΓq, Δ, τ, hΔ, hatt', hk1, hk2⟩
+
+/-- **A `WHERE` that reads one attached subquery, of either kind, provides `WhereOk`.** -/
+theorem whereOk_attach {S : DbSchema} {n : ℕ} (cf : Fin n → Column) (fold : String → String)
+    (db : SqlEquiv.Database) (D : Database S) {qf : Query S n} {kind : SubKind n}
+    {rq : Query S 1} {P : Expr (n + 1)} {w node : SqlEquiv.Expr}
+    (hkdiv : kind.divSafe = true) (hPdiv : P.divSafe = true)
+    (hbody : rq.typeOf.isSome → QNoBoolOrder rq → rq.divSafe = true)
+    (hnode : ∀ (Γ : Fin n → SqlType) (Δ : Fin 1 → SqlType) (τ : SqlType), qf.typeOf = some Γ →
+      rq.typeOf = some Δ → (Query.attach kind rq qf).typeOf = some (Fin.append Γ ![τ]) →
+      QNoBoolOrder (Query.attach kind rq qf) →
+      (∀ fr, kind = .scalar fr → τ = Δ 0) → (∀ neg e, kind = .inSub neg e → τ = .bool) →
+      ∀ ss x, rq.eval D = .ok ss → kind.extra (ss.map (· 0)) = .ok x →
+      ∀ r u, RowRel cf fold r u → r.Conforms Γ → ∀ d, x.eval r = .ok d →
+        ∃ vn, SqlEquiv.evalExprWithDb db u node = some vn ∧ DatumRel d vn ∧
+          Row.Conforms (Fin.append Γ ![τ]) (Fin.append r ![d] : Row (n + 1)))
+    (hctx : ∀ (Γ : Fin n → SqlType) (τ : SqlType), NoBoolOrder (Fin.append Γ ![τ]) P →
+      ∀ (r : Row n) (u : SqlEquiv.Row), RowRel cf fold r u → r.Conforms Γ →
+      ∀ (d : Datum) (vn : SqlEquiv.Value), SqlEquiv.evalExprWithDb db u node = some vn →
+        DatumRel d vn → Row.Conforms (Fin.append Γ ![τ]) (Fin.append r ![d] : Row (n + 1)) →
+      ∀ dp, P.eval (Fin.append r ![d]) = .ok dp →
+        ∃ v, SqlEquiv.evalExprWithDb db u w = some v ∧ DatumRel dp v) :
+    WhereOk cf fold db D (some w) qf
+      (.project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
+        (.select P (.attach kind rq qf))) := by
+  refine ⟨fun Γ hΓ => (typeOf_attachWhere hΓ).1, fun h => h.2.2.2.2, ?_, ?_⟩
+  · intro Γ hΓ hnb hd
+    obtain ⟨-, Δ, τ, hΔ, -, -, -⟩ := typeOf_attachWhere hΓ
+    have hs := hbody (by simp [hΔ]) hnb.2.2.2.1
+    simp [Query.divSafe, Expr.divSafe, hd, hs, hkdiv, hPdiv]
+  · intro Γ Rf R U hΓ hnb hRf hR hrows
+    obtain ⟨hqfT, Δ, τ, hΔ, hattT, hk1, hk2⟩ := typeOf_attachWhere hΓ
+    rw [Query.eval_project, Query.eval_select, Query.eval_attach] at hR
+    obtain ⟨F, hF, hR⟩ := bind_ok hR
+    obtain ⟨E, hE, hF⟩ := bind_ok hF
+    obtain ⟨ss, hss, hE⟩ := bind_ok hE
+    obtain ⟨x, hx, hE⟩ := bind_ok hE
+    obtain ⟨Rf', hRf', hE⟩ := bind_ok hE
+    rw [hRf] at hRf'
+    cases hRf'
+    refine attachFilter_rel cf fold (fun u => SqlEquiv.evalExprWithDb db u w)
+      (fun r u hru hc d hd dp hdp => ?_) hrows hE hF hR
+    obtain ⟨vn, hvn, hrn, hcx⟩ := hnode Γ Δ τ hqfT hΔ hattT hnb.2.2 hk1 hk2 ss x hss hx r u hru
+      hc d hd
+    exact hctx Γ τ (hnb.2.1 _ hattT) r u hru hc d vn hvn hrn hcx dp hdp
+
+/-- The subquery bodies of steps 6b and 6c: a statement of `elabStmt_correct_join` or of
+    `elabStmt_correct_agg`, without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+inductive BodyOk : SqlEquiv.SelectStmt → Prop
+  | plain {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
+      {wh : Option SqlEquiv.Expr} (hit : itemsFragment items = true)
+      (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
+      BodyOk (.mk false items (some f) wh [] none [] none none)
+  | agg {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
+      {wh : Option SqlEquiv.Expr} (hai : CorrectAgg.aggItems items = true) (hne : items ≠ [])
+      (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
+      BodyOk (.mk false items (some f) wh [] none [] none none)
+
+/-- Such a body, elaborated as a subquery, is safe, evaluates, and its rows relate to the rows
+    `SqlEquiv` computes for it under every outer row. -/
+theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {body : SqlEquiv.SelectStmt} (hb : BodyOk body) {rq : Query N.S 1} {rc : Fin 1 → Column}
+    (hsub : elabSubQuery N 15 (.simple body) = .ok ⟨1, rq, rc⟩)
+    (hty : rq.typeOf.isSome) (hnbq : QNoBoolOrder rq) :
+    rq.IsSafe ∧ ∃ ss, rq.eval D = .ok ss ∧
+      ∀ ctx, List.Forall₂ OutRel ss (SqlEquiv.evalSelectWithContext db ctx body) := by
+  cases hb with
+  | @plain items f wh hit hff hw =>
+    have hst : elabStmt N (joinStmt items f wh [] none none) = .ok ⟨1, rq, rc⟩ := by
+      rw [elabSubQuery] at hsub
+      simp only [joinStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
+      rw [elabSelectF_fuel N 16 14 hff hw, hsub]
+      simp [hty, bind, Except.bind, pure, Except.pure]
+    obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD
+      hrel hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) (by simp) (by simp) hst hnbq
+    exact ⟨hs, ss, hss, hctx' rfl⟩
+  | @agg items f wh hai hne hff hw =>
+    have hst : elabStmt N (CorrectAgg.aggStmt items f wh) = .ok ⟨1, rq, rc⟩ := by
+      rw [elabSubQuery] at hsub
+      simp only [CorrectAgg.aggStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
+      rw [elabSelectF_fuel N 16 14 hff hw, hsub]
+      simp [hty, bind, Except.bind, pure, Except.pure]
+    obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn
+      hfix hD hrel hai hne hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hst hnbq
+    exact ⟨hs, ss, hss, hctx'⟩
+
+/-- The typed value of `e [NOT] IN (vals)` is a truth value. -/
+theorem inExpr_hasType {n : ℕ} {neg : Bool} {e' : Expr n} {vals : List Datum} {r : Row n}
+    {d : Datum} (h : (inExpr neg e' vals).eval r = .ok d) : d.HasType .bool := by
+  unfold inExpr at h
+  cases neg
+  · simp only [Bool.false_eq_true, ↓reduceIte, Expr.eval_inList] at h
+    obtain ⟨de, -, h⟩ := bind_ok h
+    obtain ⟨t, -, h⟩ := bind_ok h
+    simp only [pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact Truth.toDatum_hasType t
+  · simp only [↓reduceIte, Expr.eval] at h
+    obtain ⟨dl, hdl, h⟩ := bind_ok h
+    obtain ⟨de, -, hdl⟩ := bind_ok hdl
+    obtain ⟨t, -, hdl⟩ := bind_ok hdl
+    simp only [pure, Except.pure, Except.ok.injEq] at hdl
+    subst hdl
+    simp [SqlCore.evalUnOp, Except.map, Functor.map] at h
+    subst h; exact Truth.toDatum_hasType _
+
+
+/-- The subquery nodes of steps 6b and 6c, with their bodies: `e [NOT] IN (body)` with the probe
+    in the expression fragment, or the scalar subquery `(body)` in a dialect that takes the
+    first row of several (sqlite, `DialectConfig.scalarSubqueryRows`; the typed core's safety
+    check asks for it, though a `BodyOk.agg` body has exactly one row). -/
+inductive NodeOk (N : NamedSchema) : SqlEquiv.Expr → SqlEquiv.SubQuery → Prop
+  | inSub {e : SqlEquiv.Expr} {neg : Bool} {body : SqlEquiv.SelectStmt}
+      (he : isFragment e = true) (hb : BodyOk body) :
+      NodeOk N (.inSubquery e neg (.simple body)) (.simple body)
+  | scalar {body : SqlEquiv.SelectStmt} (hcfg : N.config.scalarSubqueryRows = .firstRow)
+      (hb : BodyOk body) : NodeOk N (.subquery (.simple body)) (.simple body)
+
+/-- The `WHERE` clauses of steps 6b and 6c: a `HoleCtx` predicate over such a node: the node,
+    `a op node` for a comparison, or either under `AND` next to fragment conjuncts. The other
+    expressions must not refer to the name of the column the elaborator attaches (`?subquery?`;
+    the parser cannot produce it). -/
+def SubWhere (N : NamedSchema) (w : SqlEquiv.Expr) : Prop :=
+  ∃ node sq, NodeOk N node sq ∧ HoleCtx N.fold node w
+
+/-- **Such a clause provides `WhereOk`.** -/
+theorem whereOk_of_subWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {n : ℕ} {cf : Fin n → Column} {qf q₀ : Query N.S n} {w : SqlEquiv.Expr}
-    (hw : InSubWhere N w)
+    (hw : SubWhere N w)
     (h : elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf (some w) = .ok q₀) :
     WhereOk cf N.fold db D (some w) qf q₀ := by
-  cases hw with
-  | bare he hit hff hw => exact whereOk_inSub N hfold hfoldCI hwn hfix hD hrel he hit hff hw h
-  | and ha hna he hit hff hw =>
-    exact whereOk_and_inSub N hfold hfoldCI hwn hfix hD hrel ha hna he hit hff hw h
+  obtain ⟨node, sq, hnode, hctxW⟩ := hw
+  cases hnode with
+  | @inSub e neg body he hb =>
+    have hs := holeCtx_subs (fold := N.fold) (node := .inSubquery e neg (.simple body))
+      (sq := .simple body) (by simp [subsOf]) hctxW
+    obtain ⟨r, h1, e', P, hsub, he', hP, rfl⟩ := elabWhere_one_inSub N _ cf qf hs h
+    obtain ⟨m, rq, rc⟩ := r
+    dsimp only at h1
+    subst h1
+    have htp := translates_of_elab cf N.fold e he he'
+    have hel := fun τ => holeCtx_elab cf N.fold .bool τ
+      (hookOf n (.inSubquery e neg (.simple body)) (.simple body))
+      (.inSubquery e neg (.simple body)) (hookOf_node ..) (fun x hx => hookOf_ne _ _ _ hx) rfl
+      (fun _ _ _ hc => by cases hc) db hctxW hP
+    refine whereOk_attach cf N.fold db D (Translates.divSafe _ _ htp) (hel .bool).1
+      (fun hty hnb => (body_ctx N hfold hfoldCI hwn hfix hD hrel hb hsub hty hnb).1.2) ?_
+      (fun Γ τ => (hel τ).2 Γ)
+    intro Γ Δ τ hqf hΔ _ hnbA _ hk2 ss x hss hx r u hru hc d hd
+    simp only [SubKind.extra, Except.ok.injEq] at hx
+    subst hx
+    obtain ⟨-, ss', hss', hctx'⟩ := body_ctx N hfold hfoldCI hwn hfix hD hrel hb hsub
+      (by simp [hΔ]) hnbA.2.1
+    rw [hss] at hss'
+    cases hss'
+    have hsubrows : List.Forall₂ SubRowRel (ss.map (· 0))
+        (SqlEquiv.evalSubQueryWithContext db u (.simple body)) := by
+      rw [SqlEquiv.evalSubQuery_simple, List.forall₂_map_left_iff]
+      exact (hctx' u).imp fun _ _ h => subRowRel_of_outRel h
+    obtain ⟨vn, hvn, hrn⟩ := inExpr_eval_rel cf N.fold db hru hc htp (hnbA.1 Γ hqf) hsubrows hd
+    refine ⟨vn, hvn, hrn, conforms_append_single hc ?_⟩
+    rw [hk2 neg e' rfl]
+    exact inExpr_hasType hd
+  | @scalar body hcfg hb =>
+    have hs := holeCtx_subs (fold := N.fold) (node := .subquery (.simple body))
+      (sq := .simple body) (by simp [subsOf]) hctxW
+    obtain ⟨r, h1, P, hsub, hP, rfl⟩ := elabWhere_one_scalar N _ cf qf hs h
+    obtain ⟨m, rq, rc⟩ := r
+    dsimp only at h1
+    subst h1
+    have hel := fun τ => holeCtx_elab cf N.fold (rc ⟨0, by omega⟩).type τ
+      (hookOf n (.subquery (.simple body)) (.simple body))
+      (.subquery (.simple body)) (hookOf_node ..) (fun x hx => hookOf_ne _ _ _ hx) rfl
+      (fun _ _ _ hc => by cases hc) db hctxW hP
+    refine whereOk_attach cf N.fold db D (by simp only [SubKind.divSafe, hcfg]; decide) (hel .bool).1
+      (fun hty hnb => (body_ctx N hfold hfoldCI hwn hfix hD hrel hb hsub hty hnb).1.2) ?_
+      (fun Γ τ => (hel τ).2 Γ)
+    intro Γ Δ τ hqf hΔ _ hnbA hk1 _ ss x hss hx r u hru hc d hd
+    obtain ⟨-, ss', hss', hctx'⟩ := body_ctx N hfold hfoldCI hwn hfix hD hrel hb hsub
+      (by simp [hΔ]) hnbA.2.1
+    rw [hss] at hss'
+    cases hss'
+    have hτ := hk1 _ rfl
+    have hconf := Query.conforms_of_eval_eq_ok hD hΔ hss
+    simp only [SubKind.extra] at hx
+    rcases hsc : scalarOf (N.config.scalarSubqueryRows == .firstRow) (ss.map (· 0)) with err | dv
+    · simp [hsc] at hx
+    simp only [hsc, Functor.map, Except.map, Except.ok.injEq] at hx
+    subst hx
+    rw [Expr.eval_ofDatum, Except.ok.injEq] at hd
+    subst hd
+    rw [SqlEquiv.evalExprWithDb_subquery_simple]
+    have hfa := hctx' u
+    generalize SqlEquiv.evalSelectWithContext db u body = outs at hfa ⊢
+    match ss, hfa, hsc, hconf with
+    | [], hfa, hsc, _ =>
+      cases hfa
+      simp only [List.map_nil, scalarOf, Except.ok.injEq] at hsc
+      subst hsc
+      exact ⟨.null none, rfl, ⟨none, rfl⟩, conforms_append_single hc (Datum.hasType_none _)⟩
+    | s :: rest, hfa, hsc, hconf =>
+      cases hfa with
+      | cons hsu hrest =>
+        obtain ⟨nm, val, rfl, hsv⟩ := subRowRel_of_outRel hsu
+        have hdv : dv = s 0 := by
+          cases rest with
+          | nil => simpa [scalarOf] using hsc.symm
+          | cons s' rest' =>
+            simp only [List.map_cons, scalarOf] at hsc
+            split at hsc
+            · simpa using hsc.symm
+            · cases hsc
+        subst hdv
+        refine ⟨val, rfl, hsv, conforms_append_single hc ?_⟩
+        rw [hτ]
+        exact hconf s List.mem_cons_self 0
+
+/-! ### The statement theorems -/
 
 /-- **Elaborator correctness for `WHERE … e [NOT] IN (SELECT …)` (#352, step 6b).** For
-    `SELECT e₁, …, eₖ FROM f WHERE w [ORDER BY …] [LIMIT n] [OFFSET m]` with `w` an `InSubWhere`
+    `SELECT e₁, …, eₖ FROM f WHERE w [ORDER BY …] [LIMIT n] [OFFSET m]` with `w` a `SubWhere`
     clause and the rest as in `elabStmt_correct_join`, the subquery uncorrelated (the elaborator
     rejects a correlated one): when the statement elaborates, the typed query evaluates, and its
     rows relate, in order, to `SqlEquiv`'s. `SqlEquiv` re-evaluates the body for every outer row,
@@ -756,7 +983,7 @@ theorem elabStmt_correct_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
     {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ} {w : SqlEquiv.Expr}
-    (hit : itemsFragment items = true) (hff : fromFragment f = true) (hw : InSubWhere N w)
+    (hit : itemsFragment items = true) (hff : fromFragment f = true) (hw : SubWhere N w)
     (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c)
     (hnamed : orderBy ≠ [] → itemsNamed items = true)
     {el : Elaborated N.S}
@@ -766,7 +993,7 @@ theorem elabStmt_correct_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
       ∃ out, (SqlEquiv.evalStmt db (joinStmt items f (some w) orderBy lim off)).2 = some out ∧
         List.Forall₂ OutRel rs out := by
   obtain ⟨-, rs, hrs, out, hout, hr, -⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD
-    hrel hit hff (fun _ _ _ _ hq => whereOk_of_inSubWhere N hfold hfoldCI hwn hfix hD hrel hw hq)
+    hrel hit hff (fun _ _ _ _ hq => whereOk_of_subWhere N hfold hfoldCI hwn hfix hD hrel hw hq)
     hcols hnamed h hnb
   exact ⟨rs, hrs, out, hout, hr⟩
 
@@ -777,7 +1004,7 @@ theorem elabStmt_correct_distinct_inSub (N : NamedSchema) (hfold : ∀ s, (N.fol
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause} {w : SqlEquiv.Expr}
-    (hit : itemsFragment items = true) (hff : fromFragment f = true) (hw : InSubWhere N w)
+    (hit : itemsFragment items = true) (hff : fromFragment f = true) (hw : SubWhere N w)
     {el : Elaborated N.S}
     (h : elabStmt N (CorrectDistinct.distinctStmt items f (some w)) = .ok el)
     (hnb : QNoBoolOrder el.q) :
@@ -785,7 +1012,7 @@ theorem elabStmt_correct_distinct_inSub (N : NamedSchema) (hfold : ∀ s, (N.fol
       ∃ out, (SqlEquiv.evalStmt db (CorrectDistinct.distinctStmt items f (some w))).2 = some out ∧
         ∃ rs', rs.Perm rs' ∧ List.Forall₂ OutRel rs' out :=
   CorrectDistinct.elabStmt_correct_distinct_w N hfold hfoldCI hwn hfix hD hrel hit hff
-    (fun _ _ _ _ hq => whereOk_of_inSubWhere N hfold hfoldCI hwn hfix hD hrel hw hq) h hnb
+    (fun _ _ _ _ hq => whereOk_of_subWhere N hfold hfoldCI hwn hfix hD hrel hw hq) h hnb
 
 /-- **The same under aggregates without `GROUP BY`** (as `elabStmt_correct_agg`): one row,
     related to `SqlEquiv`'s one row. -/
@@ -795,14 +1022,16 @@ theorem elabStmt_correct_agg_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause} {w : SqlEquiv.Expr}
     (hai : CorrectAgg.aggItems items = true) (hne : items ≠ []) (hff : fromFragment f = true)
-    (hw : InSubWhere N w)
+    (hw : SubWhere N w)
     {el : Elaborated N.S}
     (h : elabStmt N (CorrectAgg.aggStmt items f (some w)) = .ok el) (hnb : QNoBoolOrder el.q) :
     ∃ rs, el.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (CorrectAgg.aggStmt items f (some w))).2 = some out ∧
-        List.Forall₂ OutRel rs out :=
-  CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn hfix hD hrel hai hne hff
-    (fun _ _ _ _ hq => whereOk_of_inSubWhere N hfold hfoldCI hwn hfix hD hrel hw hq) h hnb
+        List.Forall₂ OutRel rs out := by
+  obtain ⟨-, rs, hrs, out, hout, hr, -⟩ := CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn
+    hfix hD hrel hai hne hff
+    (fun _ _ _ _ hq => whereOk_of_subWhere N hfold hfoldCI hwn hfix hD hrel hw hq) h hnb
+  exact ⟨rs, hrs, out, hout, hr⟩
 
 /-- **The same under aggregates next to bare columns or `AVG`, without `GROUP BY`** (as
     `elabStmt_correct_aggBare`): one row, an `AVG` item related up to rounding (`OutRelI`). -/
@@ -814,7 +1043,7 @@ theorem elabStmt_correct_aggBare_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold
     (hgi : CorrectGrouped.groupedItems items = true)
     (hai : ∃ it ∈ items, CorrectGrouped.itemAggFragment (itemExpr it) = true)
     (hff : fromFragment f = true) (hbf : CorrectGrouped.BareOk N items [] none [])
-    (hw : InSubWhere N w)
+    (hw : SubWhere N w)
     {el : Elaborated N.S}
     (h : elabStmt N (CorrectGrouped.groupedStmt items f (some w) [] none [] none none) = .ok el)
     (hnb : QNoBoolOrder el.q) :
@@ -823,6 +1052,6 @@ theorem elabStmt_correct_aggBare_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold
         (CorrectGrouped.groupedStmt items f (some w) [] none [] none none)).2 = some out ∧
         List.Forall₂ (CorrectGrouped.OutRelI items) rs out :=
   CorrectAggBare.elabStmt_correct_aggBare_w N hfold hfoldCI hwn hfix hD hrel hgi hai hff
-    (fun _ _ _ _ hq => whereOk_of_inSubWhere N hfold hfoldCI hwn hfix hD hrel hw hq) hbf h hnb
+    (fun _ _ _ _ hq => whereOk_of_subWhere N hfold hfoldCI hwn hfix hD hrel hw hq) hbf h hnb
 
 end SqlBridge.CorrectSub
