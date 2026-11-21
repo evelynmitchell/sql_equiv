@@ -800,9 +800,11 @@ theorem elabStmt_correct_agg_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).
     (h : elabStmt N (CorrectAgg.aggStmt items f (some w)) = .ok el) (hnb : QNoBoolOrder el.q) :
     ∃ rs, el.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (CorrectAgg.aggStmt items f (some w))).2 = some out ∧
-        List.Forall₂ OutRel rs out :=
-  CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn hfix hD hrel hai hne hff
+        List.Forall₂ OutRel rs out := by
+  obtain ⟨-, rs, hrs, out, hout, hr, -⟩ := CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn
+    hfix hD hrel hai hne hff
     (fun _ _ _ _ hq => whereOk_of_inSubWhere N hfold hfoldCI hwn hfix hD hrel hw hq) h hnb
+  exact ⟨rs, hrs, out, hout, hr⟩
 
 /-- **The same under aggregates next to bare columns or `AVG`, without `GROUP BY`** (as
     `elabStmt_correct_aggBare`): one row, an `AVG` item related up to rounding (`OutRelI`). -/

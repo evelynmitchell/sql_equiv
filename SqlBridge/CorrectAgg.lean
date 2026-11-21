@@ -944,6 +944,30 @@ theorem evalSelectCore_agg (db : Database)
       ((bareSampleRow (exprEval db) (selectMinMaxCalls items none) src).getD []))] := by
   rw [evalSelectCore_eq_afterFilter]
   cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hAgg] <;> rfl
+
+/-- `evalSelectCore_agg` under an outer row: the source rows carry it at the end. -/
+theorem evalSelectCore_agg_ctx (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
+    (hAgg : hasAgg items = true) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk false items (some from_) wh [] none [] none none) =
+    let base := (fromEval db from_).map fun row => row ++ outerRow
+    let src := match wh with
+      | some c => base.filter fun row => exprEval db row c == some (Value.bool true)
+      | none => base
+    [items.flatMap (selectItemWithAggEval db src
+      ((bareSampleRow (exprEval db) (selectMinMaxCalls items none) src).getD []))] := by
+  rw [evalSelectCore_eq_afterFilter]
+  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hAgg] <;> rfl
 open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder SqlBridge.CorrectJoin
 
 theorem selectHasAggregate_aggItems : ∀ {items : List SqlEquiv.SelectItem}, aggItems items = true →
@@ -1026,9 +1050,11 @@ theorem elabStmt_correct_agg_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
       elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf wh = .ok q₀ →
       WhereOk cf N.fold db D wh qf q₀)
     {e : Elaborated N.S} (h : elabStmt N (aggStmt items fr wh) = .ok e) (hnb : QNoBoolOrder e.q) :
-    ∃ rs, e.q.eval D = .ok rs ∧
+    e.q.IsSafe ∧ ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (aggStmt items fr wh)).2 = some out ∧
-        List.Forall₂ OutRel rs out := by
+        List.Forall₂ OutRel rs out ∧
+        ∀ ctx, List.Forall₂ OutRel rs (SqlEquiv.evalSelectWithContext db ctx
+          (.mk false items (some fr) wh [] none [] none none)) := by
   obtain ⟨hty, n, qf, cf, hf, q₀, hq₀, a, aggs, keys, its, haggs, hits, rfl⟩ :=
     elab_agg_shape N hai hne h
   have hwo' := hwo qf q₀ cf hf hq₀
@@ -1081,14 +1107,6 @@ theorem elabStmt_correct_agg_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
   set r : Row its.length := fun i => (hex i).choose with hr
   have hrow : Expr.evalRow (fun i : Fin its.length => (its[i.1]).1) row0 = .ok r :=
     Expr.evalRow_eq_ok_iff.mpr fun i => (hex i).choose_spec
-  refine ⟨[r], by rw [Query.eval_project, hagg]; simp [hrow, pure, Except.pure, bind, Except.bind], _, rfl, ?_⟩
-  -- `SqlEquiv`'s side: one row of the items' values
-  simp only [SqlEquiv.evalQuery]
-  rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_agg _ _ _ _ _ _ _ _ _ _ _ _ _
-    (selectHasAggregate_aggItems hai hne)]
-  refine .cons ?_ .nil
-  unfold OutRel
-  rw [items_vals db _ _ hai]
   -- each item's value, over any related source rows
   have final : ∀ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U →
       ∀ sample, List.Forall₂ DatumRel (List.ofFn r) (items.map fun it =>
@@ -1115,8 +1133,39 @@ theorem elabStmt_correct_agg_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
     obtain ⟨v, hv, hvr⟩ := agg_rel cf N.fold db hRU sample x hfr hel (hnbAgg j) (has j) (evalAll_get hA j)
     rw [hv]
     exact hvr
-  apply final
-  exact hwo'.rel hq₀ty hnbq₀ hRf hR hrows
+  have hsafe : (Query.project (fun i : Fin its.length => (its[i]).1)
+      (Query.aggregate keys aggs q₀)).IsSafe := by
+    refine ⟨hty, ?_⟩
+    have h1 : ∀ i : Fin its.length, ((its[i]).1).divSafe = true := fun i => by
+      obtain ⟨j, -, hj⟩ := hcol i
+      show ((its[i.1]).1).divSafe = true
+      rw [hj]; rfl
+    have h2 : ∀ j, (aggs j).divSafe = true := fun j => by
+      obtain ⟨x, hx, hel⟩ := haggs j
+      exact agg_divSafe cf N.fold x hx hel
+    simp only [Query.divSafe, h2, hdivq₀, Bool.and_true, decide_true, Bool.and_self,
+      decide_eq_true_eq, implies_true, IsEmpty.forall_iff]
+    exact fun i => h1 i
+  refine ⟨hsafe, [r], by rw [Query.eval_project, hagg]; simp [hrow, pure, Except.pure, bind, Except.bind], _, rfl, ?_, fun ctx => ?_⟩
+  · -- `SqlEquiv`'s side: one row of the items' values
+    simp only [SqlEquiv.evalQuery]
+    rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_agg _ _ _ _ _ _ _ _ _ _ _ _ _
+      (selectHasAggregate_aggItems hai hne)]
+    refine .cons ?_ .nil
+    unfold OutRel
+    rw [items_vals db _ _ hai]
+    apply final
+    exact hwo'.rel hq₀ty hnbq₀ hRf hR hrows
+  · -- under an outer row (a subquery body)
+    rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore, evalSelectCore_agg_ctx _ _ _ _ _ _ _ _ _
+      _ _ _ _ _ (selectHasAggregate_aggItems hai hne)]
+    refine .cons ?_ .nil
+    unfold OutRel
+    rw [items_vals db _ _ hai]
+    apply final
+    refine hwo'.rel hq₀ty hnbq₀ hRf hR ?_
+    rw [List.forall₂_map_right_iff]
+    exact hrows.imp fun r u h => ⟨rowRel_append ctx h.1, h.2⟩
 
 /-- **Elaborator correctness for aggregates without `GROUP BY` (#352, roadmap step 3a).**
     `elabStmt_correct_agg_w` with a `WHERE` in the expression fragment. -/
@@ -1130,8 +1179,9 @@ theorem elabStmt_correct_agg (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLowe
     {e : Elaborated N.S} (h : elabStmt N (aggStmt items fr wh) = .ok e) (hnb : QNoBoolOrder e.q) :
     ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (aggStmt items fr wh)).2 = some out ∧
-        List.Forall₂ OutRel rs out :=
-  elabStmt_correct_agg_w N hfold hfoldCI hwn hfix hD hrel hai hne hff
-    (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) h hnb
+        List.Forall₂ OutRel rs out := by
+  obtain ⟨-, rs, hrs, out, hout, hr, -⟩ := elabStmt_correct_agg_w N hfold hfoldCI hwn hfix hD hrel
+    hai hne hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) h hnb
+  exact ⟨rs, hrs, out, hout, hr⟩
 
 end SqlBridge.CorrectAgg
