@@ -32,14 +32,19 @@ engines.
   SqlBridge`, #307): no theorem whose two sides are the same text.
 - **Generated code** (`tools/gen_ast_deceq.py --check`): the AST's `DecidableEq` block is
   current.
-- **Axiom ratchet** (`tools/axiom_coverage_validator.py --runtime`,
-  `tools/axiom_count_minimum.txt` = 0): a leftover from when the library had axioms. With none
-  left it finds no declarations and passes `0 >= 0`, so it checks nothing today; pointing it at
-  theorems is #181. Do not read its green as coverage. The validator has two kinds of mode:
-  with `--runtime` it only matches names in text files; without it, it comments declarations
-  out in the source files one at a time and rebuilds (hours with `--theorems`). Never edit the
-  tree while the second kind runs. If that happens anyway, the restore step keeps the edit and
-  stops the run (`--self-test` checks this in CI).
+- **Theorem test-coverage ratchet** (`tools/axiom_coverage_validator.py --runtime --theorems`,
+  #181): every public theorem in `SqlEquiv/Equiv/` must be named by a unit test or by an LSpec
+  `-- covers:` annotation, or be listed in `tools/theorem_coverage_uncovered.txt` (43 names
+  when it was introduced, of 386 theorems). CI fails on a new uncovered theorem and on a
+  listed name that is now covered or gone, so the list only shrinks by intent. It is a
+  name-matching check: it shows a test mentions the theorem, not that the test would fail if
+  the theorem were wrong (#210).
+- **Axiom count** (`--runtime` alone, `tools/axiom_count_minimum.txt` = 0): passes `0 >= 0`
+  now that no axioms are left; kept so a reintroduced axiom is counted.
+- **The validator's two kinds of mode:** with `--runtime` it only matches names in text files;
+  without it, it comments declarations out in the source files one at a time and rebuilds
+  (hours with `--theorems`). Never edit the tree while the second kind runs. If that happens
+  anyway, the restore step keeps the edit and stops the run (`--self-test` checks this in CI).
 
 ### 3. Unit tests (`lake exe sql_equiv_test`)
 
@@ -165,7 +170,7 @@ Never run `lake clean` (a full rebuild takes over twenty minutes).
 
 ## Known gaps
 
-- The axiom ratchet checks nothing (#181).
+- 43 public `Equiv/` theorems have no test naming them (`tools/theorem_coverage_uncovered.txt`).
 - Exact Spider matches are not ratcheted on their own (#266).
 - Property tests use fixture databases, not generated ones (#245).
 - No mutation testing: nothing shows that every evaluator arm has a test that would notice it

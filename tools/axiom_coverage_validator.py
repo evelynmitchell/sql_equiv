@@ -62,6 +62,9 @@ DEFAULT_TEST_TIMEOUT = 120    # 2 minutes
 CHECKPOINT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_checkpoint.json"
 REPORT_FILE = PROJECT_ROOT / "tools" / "axiom_coverage_report.json"
 RATCHET_FILE = PROJECT_ROOT / "tools" / "axiom_count_minimum.txt"
+# Public `Equiv/` theorems that no test names and no LSpec `-- covers:` annotation mentions
+# (#181). The theorem ratchet: a theorem outside this list must be covered.
+UNCOVERED_ALLOWLIST = PROJECT_ROOT / "tools" / "theorem_coverage_uncovered.txt"
 
 AXIOM_FILES = sorted(SQLEQUIV_DIR.rglob("*.lean"))
 
@@ -958,6 +961,49 @@ def main() -> None:
         report_path = Path(args.report)
         save_runtime_report(analysis, report_path)
         print(f"Full report: {report_path}")
+
+        # Theorem ratchet (#181): every uncovered public theorem must be on the allowlist, and
+        # the allowlist must not name theorems that are now covered or gone (so it only shrinks
+        # by intent). With no axioms left, this is the check that does the work.
+        if include_theorems:
+            uncovered_now = sorted({a.name for a in analysis["uncovered"]})
+            if args.update_ratchet:
+                UNCOVERED_ALLOWLIST.write_text(
+                    "# Public Equiv/ theorems without a test or an LSpec `-- covers:` annotation.\n"
+                    "# Checked by `axiom_coverage_validator.py --runtime --theorems` (#181).\n"
+                    "# Remove a name when you add its test; regenerate with --update-ratchet.\n"
+                    + "".join(f"{n}\n" for n in uncovered_now))
+                print(f"Updated {UNCOVERED_ALLOWLIST} ({len(uncovered_now)} uncovered theorems)")
+            else:
+                allowed = set()
+                if UNCOVERED_ALLOWLIST.exists():
+                    allowed = {ln.strip() for ln in UNCOVERED_ALLOWLIST.read_text().splitlines()
+                               if ln.strip() and not ln.startswith("#")}
+                new_uncovered = [n for n in uncovered_now if n not in allowed]
+                stale = sorted(allowed - set(uncovered_now))
+                if analysis["total_axioms"] < 100:
+                    print(f"\nERROR: only {analysis['total_axioms']} declarations found; "
+                          f"the scan is not reading Equiv/.", file=sys.stderr)
+                    sys.exit(1)
+                if new_uncovered or stale:
+                    if new_uncovered:
+                        print(f"\nERROR: {len(new_uncovered)} public theorem(s) have no test and no "
+                              f"LSpec `-- covers:` annotation:", file=sys.stderr)
+                        for n in new_uncovered:
+                            print(f"  {n}", file=sys.stderr)
+                        print("  Add a test named after the theorem, or a `-- covers:` annotation.",
+                              file=sys.stderr)
+                    if stale:
+                        print(f"\nERROR: {len(stale)} name(s) in {UNCOVERED_ALLOWLIST.name} are now "
+                              f"covered or no longer exist; remove them:", file=sys.stderr)
+                        for n in stale:
+                            print(f"  {n}", file=sys.stderr)
+                    print("  (`--runtime --theorems --update-ratchet` rewrites the list; review "
+                          "the diff.)", file=sys.stderr)
+                    sys.exit(1)
+                print(f"Theorem coverage ratchet passed: {analysis['covered_count']} covered, "
+                      f"{len(uncovered_now)} uncovered and allowlisted")
+            return
 
         # Ratchet: update or check (axiom count only, not theorem count)
         if args.update_ratchet:

@@ -1,0 +1,46 @@
+# Public Equiv/ theorems without a test or an LSpec `-- covers:` annotation.
+# Checked by `axiom_coverage_validator.py --runtime --theorems` (#181).
+# Remove a name when you add its test; regenerate with --update-ratchet.
+ExprEquiv.toEmptyDb
+QueryBagEquiv.toBagEquivV
+QueryBagEquivV.toSetEquivV
+QuerySetEquiv.toSetEquivV
+Row.valueKey_renameTo
+Trilean.toOptionValue_isBoolOrNull
+Value.toTrilean_ofTrilean
+closed_expr_eval_independent
+contains_eraseDups
+contains_filter
+decideGroundExprEquiv_sound_closed
+dedupByKey_dedupByKey
+eraseDups_eq_self_of_nodup
+eraseDups_eraseDups
+evalBinOp_and_comm_via_trilean
+evalBinOp_or_comm_via_trilean
+evalCaseHelper_map_congr
+evalExprWithDb_qcol_append_comm
+evalUnaryOp_not_not_via_trilean
+exists_where_congr
+filter_dedupByKey
+filter_eraseDups
+foldl_append_singleton_eq_map
+inSubquery_where_congr
+map_dedupByKey
+map_valueKey_renameTo
+map_valueKey_union
+map_valueKey_unionAll
+mem_map_dedupByKey
+mem_valueKey_except
+mem_valueKey_intersect
+mem_valueKey_union
+mismatched_types_error
+not_equiv_of_eval_ne
+query_bag_equiv_v_refl
+query_bag_equiv_v_symm
+query_bag_equiv_v_trans
+query_set_equiv_v_refl
+query_set_equiv_v_symm
+query_set_equiv_v_trans
+selectWithContext_where_congr
+select_where_congr
+subQueryGround_eval_independent

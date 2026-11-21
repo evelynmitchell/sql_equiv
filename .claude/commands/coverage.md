@@ -24,6 +24,14 @@ Run the axiom/theorem coverage validator and report gaps.
    uv run python tools/axiom_coverage_validator.py --runtime --theorems 2>&1
    ```
 
+   CI runs this command as a ratchet (#181): an uncovered public theorem must be listed in
+   `tools/theorem_coverage_uncovered.txt`, and a listed name that is now covered must be
+   removed. After adding tests, regenerate the list with `--runtime --theorems --update-ratchet`
+   and review the diff.
+
+   The build-based mode below edits source files in place and takes hours with `--theorems`;
+   never edit the tree while it runs.
+
    To run the full build-based coverage validation (which comments out axioms and runs `lake build`/tests), use:
    ```bash
    uv run python tools/axiom_coverage_validator.py 2>&1

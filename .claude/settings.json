@@ -1,4 +1,9 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(python3 tools/axiom_coverage_validator.py --runtime --theorems:*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {
