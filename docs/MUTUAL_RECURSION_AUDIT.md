@@ -1,6 +1,6 @@
 # Mutual Recursion Audit and Refactoring Plan
 
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **689 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. Category D below is out of date: see the correction there.
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **697 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. Category D below is out of date: see the correction there.
 
 This document catalogs every `mutual` block in the codebase, classifies each by
 whether the mutual recursion is necessary, and proposes a prioritized refactoring
