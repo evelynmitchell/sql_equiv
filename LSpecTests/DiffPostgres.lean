@@ -242,6 +242,39 @@ private def diffDiverges (description : String) (sql : String) : IO (String × B
       IO.eprintln s!"  Expected a divergence for '{description}', both gave {repr (sortTable theirs)}"
       return (description, false)
 
+/-- `DISTINCT … LIMIT 1` without `ORDER BY` (registry T18): which distinct row comes first is the
+    implementation's choice. `SqlEquiv` keeps first occurrences, as sqlite does; the typed core keeps
+    last occurrences; Postgres hashes, so its row depends on the plan and the version. The test
+    asserts what must hold on every engine and logs what Postgres chose:
+    * without the `LIMIT`, Postgres and we return the same set of rows;
+    * with it, each side returns exactly one row, and that row is one of the distinct rows.
+    The order Postgres returned is printed, for the registry; it is not asserted. -/
+private def distinctLimitTest (description : String) (distinctSql : String) :
+    IO (String × Bool) := do
+  let limitSql := distinctSql ++ " LIMIT 1"
+  match parse distinctSql (dialect := .postgres), parse limitSql (dialect := .postgres) with
+  | .ok full, .ok limited =>
+    let oursFull := ((evalStmt db full).2).getD []
+    let oursLimited := ((evalStmt db limited).2).getD []
+    match ← runPostgresRaw distinctSql, ← runPostgresRaw limitSql with
+    | .ok outFull, .ok outLimited =>
+      let pgFull := parsePostgresOutput outFull
+      let pgLimited := parsePostgresOutput outLimited
+      let key (r : Row) := rowSortKey (normalizeRow r)
+      IO.println s!"  [DiffPostgres] {description}: Postgres order {pgFull.map key}, LIMIT 1 {pgLimited.map key}; SqlEquiv order {oursFull.map key}, LIMIT 1 {oursLimited.map key}"
+      let sameSet := sortTable oursFull == sortTable pgFull
+      let member (one : Table) := one.length == 1 && one.all fun r => (pgFull.map key).contains (key r)
+      if sameSet && member pgLimited && member oursLimited && pgFull.length > 1 then
+        return (description, true)
+      IO.eprintln s!"  DISTINCT/LIMIT check failed for '{description}': sameSet={sameSet} postgres={repr pgLimited} ours={repr oursLimited}"
+      return (description, false)
+    | .error err, _ | _, .error err =>
+      IO.eprintln s!"  Postgres error for '{description}': {err}"
+      return (description, false)
+  | _, _ =>
+    IO.eprintln s!"  Our parser failed for '{description}'"
+    return (description, false)
+
 private def postgresAvailable : IO Bool := do
   try
     let r ← IO.Process.output { cmd := "psql", args := #["-X", "-At", "-c", "select 1"] }
@@ -304,6 +337,9 @@ def runAllTests : IO TestSeq := do
       "SELECT DISTINCT name FROM items ORDER BY price",
     diffTest "DISTINCT + ORDER BY a selected key"
       "SELECT DISTINCT department FROM users ORDER BY department LIMIT 2",
+    -- T18: which distinct row a LIMIT keeps without ORDER BY is implementation-defined
+    distinctLimitTest "DISTINCT order and LIMIT 1 (T18)"
+      "SELECT DISTINCT department FROM users WHERE id > 1",
     -- Row 15: a compound's ORDER BY sees the first branch's names only
     diffTest "compound ORDER BY first branch's name (row 15)"
       "SELECT name AS x FROM users UNION ALL SELECT department AS y FROM users ORDER BY x LIMIT 2",

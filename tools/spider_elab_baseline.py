@@ -44,8 +44,9 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # ORDER BY a key column), 3c (AVG items, up to rounding) and 4 (BETWEEN) are done and counted
 # in "Today". Step 4's other operators (IS NULL, negation, arithmetic, IN list) add no Spider
 # query and are left for later (decided 21 Nov 2026).
+# Step 5 (plain DISTINCT, up to row order) is done too.
 ROADMAP = [
-    ("5. DISTINCT", {"DISTINCT"}),
+    ("DISTINCT with an unselected sort key and LIMIT", {"DISTINCT"}),
 ]
 
 
@@ -92,6 +93,8 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "`elabStmt_correct_aggBare` (`SqlBridge/CorrectAggBare.lean`) for aggregates next to bare",
         "columns without `GROUP BY`; both take `AVG` items, related up to `SqlEquiv`'s rounding",
         "(`SqlBridge/CorrectAvg.lean`). `BETWEEN` is in the expression and `HAVING` fragments.",
+        "`elabStmt_correct_distinct` (`SqlBridge/CorrectDistinct.lean`) covers plain",
+        "`SELECT DISTINCT`, relating the rows up to their order (registry T18).",
         "Counts are of the",
         "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
@@ -111,7 +114,7 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
     for f in features:
         for x in f - lifted:
             rest[x] += 1
-    lines += ["", "Still outside after step 5 (queries using each feature):", ""]
+    lines += ["", "Still outside after that (queries using each feature):", ""]
     lines += [f"- {x}: {c}" for x, c in sorted(rest.items(), key=lambda kv: -kv[1])]
     return lines + [""]
 

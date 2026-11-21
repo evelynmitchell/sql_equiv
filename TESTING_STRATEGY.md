@@ -62,13 +62,13 @@ engines.
   simplifier.
 - **Differential against `SqlEquiv`** (`ScalarDiffTest`, `ExprDiffTest`, `BridgeDiffTest`): the
   same inputs through both semantics. Each corpus entry states what is expected: `agree`,
-  `rejected` (with the error category), `agreeRounded` (a repeating `AVG`, equal after
+  `rejected` (with the error category), `orderDiffers` and `rowsDiffer` (plain `DISTINCT`, registry T18), `agreeRounded` (a repeating `AVG`, equal after
   `SqlEquiv`'s 16-place rounding) or a documented `SqlEquiv` bug.
 - **Differential against engines** (`DuckdbDiffTest`, `SqliteDiffTest`): parsed SQL through the
   bridge against DuckDB, and the sqlite-only bare-column rule against sqlite.
 - **Elaborator-correctness guards** (`CorrectExamples`): the hypotheses of the elaborator
   theorems (#352) are satisfiable by queries that elaborate, and the fragment's shapes
-  (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`) are spot-checked inside and outside.
+  (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`, `distinctShape`) are spot-checked inside and outside.
 - **Coverage report against the theorems** (`CoverageAgreeTest`): the Spider coverage count
   (`SqlBridge.Coverage`) agrees with the theorems' shapes on every query of
   `benchmarks/spider/dev_queries.jsonl`. It fails on any disagreement and if fewer than 500

@@ -992,6 +992,7 @@ def QNoBoolOrder {S : DbSchema} : {n : ℕ} → Query S n → Prop
       NoBoolOrder (Fin.append Γ Δ) θ) ∧ QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
   | _, .aggregate keys aggs q => (∀ Γ, q.typeOf = some Γ →
       (∀ i, NoBoolOrder Γ (keys i)) ∧ ∀ j, AggNoBool Γ (aggs j)) ∧ QNoBoolOrder q
+  | _, .distinct q => QNoBoolOrder q
   | _, _ => True
 
 /-- The statements of #309: `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`. -/

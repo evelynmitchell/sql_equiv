@@ -10,6 +10,7 @@ import SqlBridge.CorrectAgg
 import SqlBridge.CorrectGroup
 import SqlBridge.CorrectGroupOrder
 import SqlBridge.CorrectGrouped
+import SqlBridge.CorrectDistinct
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -122,6 +123,18 @@ def aggBareShape : SqlEquiv.Stmt → Bool
       stmt == groupedStmt items f wh [] none [] none none
   | _ => false
 
+/-- The shape of `elabStmt_correct_distinct` (roadmap step 5): `SELECT DISTINCT` of fragment
+    items over a `FROM` tree, an optional `WHERE`, nothing after it. -/
+def distinctShape : SqlEquiv.Stmt → Bool
+  | stmt@(.query (.simple (.mk true items (some f) wh [] none [] none none))) =>
+    itemsFragment items && fromFragment f && wh.all isFragment &&
+      stmt == SqlBridge.CorrectDistinct.distinctStmt items f wh
+  | _ => false
+
+/-- A statement has the shape of one of the elaborator-correctness theorems. -/
+def anyShape (s : SqlEquiv.Stmt) : Bool :=
+  stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s
+
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
     `itemsNamed` agrees with the theorem's. -/
@@ -129,7 +142,7 @@ def coverageAgrees (sql : String) : Bool :=
   match SqlEquiv.parse sql with
   | .ok stmt =>
     (SqlBridge.Coverage.outsideFragment stmt).isEmpty ==
-      (stmtShape stmt || aggShape stmt || aggBareShape stmt || groupedShape stmt) &&
+      anyShape stmt &&
       match stmt with
       | .query (.simple s) => SqlBridge.Coverage.itemsNamed s.items == itemsNamed s.items
       | _ => true
@@ -191,6 +204,15 @@ def features (sql : String) : List String :=
 #guard features "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id" == []
 #guard features "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id" == ["outer join"]
 #guard features "SELECT COUNT(*), MAX(age) FROM users WHERE age > 1" == []
+-- plain `DISTINCT` is in the fragment (step 5, up to row order); not with `ORDER BY`, `LIMIT`,
+-- `GROUP BY` or an aggregate item
+#guard features "SELECT DISTINCT department FROM users WHERE age > 20" == []
+#guard features "SELECT DISTINCT u.name FROM users u JOIN orders o ON u.id = o.user_id" == []
+#guard features "SELECT DISTINCT department FROM users LIMIT 1" == ["DISTINCT"]
+#guard features "SELECT DISTINCT department FROM users ORDER BY department" == ["DISTINCT"]
+#guard features "SELECT DISTINCT department FROM users GROUP BY department" ==
+  ["DISTINCT", "aggregate/GROUP BY"]
+#guard features "SELECT DISTINCT COUNT(*) FROM users" == ["aggregate/GROUP BY"]
 -- `BETWEEN` is in the fragment (step 4), in `WHERE` and in `HAVING`; `IN (list)` is not
 #guard features "SELECT name FROM users WHERE age BETWEEN 25 AND 30" == []
 #guard features "SELECT department FROM users GROUP BY department HAVING COUNT(*) BETWEEN 1 AND 2" == []
@@ -214,7 +236,7 @@ def featuresSqlite (sql : String) : List String :=
   match SqlEquiv.parse sql (dialect := .sqlite) with
   | .ok s =>
     let fs := SqlBridge.Coverage.outsideFragment s
-    if fs.isEmpty == (stmtShape s || aggShape s || aggBareShape s || groupedShape s) then fs else ["disagrees"]
+    if fs.isEmpty == anyShape s then fs else ["disagrees"]
   | .error _ => ["parse error"]
 
 #guard featuresSqlite "SELECT name, MAX(age) FROM users GROUP BY department" == []
@@ -435,5 +457,19 @@ example : SqlBridge.CorrectAvg.AvgRel (some (.decimal (4 / 3)))
     rw [SqlBridge.CorrectAvg.roundHalfAway, if_pos (by norm_num)]
     congr 1
     rw [eq_comm, Int.floor_eq_iff]; norm_num⟩
+
+/-- Spider-shaped plain `SELECT DISTINCT` queries (roadmap step 5) have the shape of
+    `elabStmt_correct_distinct` and elaborate under the folding schema. -/
+def distinctSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => distinctShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+#guard distinctSpider "SELECT DISTINCT age FROM singer WHERE age > 20"
+#guard distinctSpider ("SELECT DISTINCT T1.name FROM singer AS T1 JOIN song AS T2 ON " ++
+  "T1.singer_id = T2.singer_id WHERE T1.age BETWEEN 20 AND 30")
+#guard !distinctSpider "SELECT DISTINCT age FROM singer LIMIT 1"
+#guard !distinctSpider "SELECT DISTINCT age FROM singer ORDER BY age"
+#guard !distinctSpider "SELECT DISTINCT count(*) FROM singer"
 
 end SqlCoreTest.CorrectExamples

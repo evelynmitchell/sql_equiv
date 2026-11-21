@@ -32,6 +32,13 @@ inductive Expect where
   /-- `SqlEquiv`'s rows equal the typed rows with every decimal rounded half away from zero to 16
   places: a repeating `AVG` (registry row 7; `SqlBridge.CorrectAvg.AvgRel`, step 3c). -/
   | agreeRounded
+  /-- The two evaluators return the same rows in a different order (registry T18: plain
+  `DISTINCT` keeps the last copy of a row in the typed core, the first in `SqlEquiv`). The test
+  fails if the orders ever coincide, so the registry row stays true. -/
+  | orderDiffers
+  /-- The two evaluators return different rows, by a documented, implementation-defined choice
+  (the registry row is cited). The test fails if they ever agree. -/
+  | rowsDiffer (registry : String)
 
 def corpus : List (String × Expect) := [
   -- projection, selection, star
@@ -59,6 +66,13 @@ def corpus : List (String × Expect) := [
   ("SELECT CASE WHEN age > 30 THEN 1 WHEN age > 25 THEN 2 ELSE 3 END FROM users", .agree),
   ("SELECT CASE WHEN age > 30 THEN name END FROM users", .agree),
   ("SELECT DISTINCT department FROM users", .agree),
+  -- plain DISTINCT: the same rows, in a different order; with LIMIT and no ORDER BY, different
+  -- rows (registry T18). Rows 2..5 are Sales, Engineering, Marketing, Sales.
+  ("SELECT DISTINCT department FROM users WHERE id > 1", .orderDiffers),
+  ("SELECT DISTINCT department FROM users WHERE id > 1 LIMIT 1",
+    .rowsDiffer "T18: DISTINCT keeps the last copy in the typed core, the first in SqlEquiv"),
+  ("SELECT DISTINCT u.department, o.product FROM users u JOIN orders o ON u.id = o.user_id", .agree),
+  ("SELECT DISTINCT staff FROM museum", .agree),
   ("SELECT u.name FROM users u WHERE u.age = 30", .agree),
   -- NULLs and decimals
   ("SELECT name, staff FROM museum WHERE staff IS NULL", .agree),
@@ -283,6 +297,24 @@ def run : Nat × List String := Id.run do
       | .sqlEquivBug _, .error err => fails := s!"{sql}: did not elaborate: {err.category}" :: fails
       | .sqlEquivBug _, .ok e =>
         if (newRows e).toOption.isNone then fails := s!"{sql}: SqlCore error" :: fails
+      | .orderDiffers, .error err | .rowsDiffer _, .error err =>
+        fails := s!"{sql}: did not elaborate: {err.category}" :: fails
+      | .orderDiffers, .ok e =>
+        let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
+        match newRows e, old with
+        | .ok nr, some or_ =>
+          if bag nr != bag or_ then
+            fails := s!"{sql}: different rows:\n    SqlCore {bag nr}\n    SqlEquiv {bag or_}" :: fails
+          if nr == or_ then
+            fails := s!"{sql}: the orders agree (update registry T18 and use .agree)" :: fails
+        | _, _ => fails := s!"{sql}: evaluation failed" :: fails
+      | .rowsDiffer _, .ok e =>
+        let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
+        match newRows e, old with
+        | .ok nr, some or_ =>
+          if bag nr == bag or_ then
+            fails := s!"{sql}: the rows agree (update the registry and use .agree)" :: fails
+        | _, _ => fails := s!"{sql}: evaluation failed" :: fails
       | .agreeRounded, .error err => fails := s!"{sql}: did not elaborate: {err.category}" :: fails
       | .agreeRounded, .ok e =>
         let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))

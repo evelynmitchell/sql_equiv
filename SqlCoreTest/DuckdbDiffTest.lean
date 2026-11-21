@@ -119,6 +119,8 @@ def run : IO (Option (Nat × Nat × List String)) := do
   for (sql, ex) in corpus do
     match ex with
     | .rejected _ => continue
+    -- implementation-defined row choice (DISTINCT ... LIMIT without ORDER BY): no engine to match
+    | .rowsDiffer _ => continue
     | _ => pure ()
     let .ok stmt := SqlEquiv.parse sql | fails := s!"{sql}: parse error" :: fails
     let .ok e := elabStmt named stmt | fails := s!"{sql}: did not elaborate" :: fails

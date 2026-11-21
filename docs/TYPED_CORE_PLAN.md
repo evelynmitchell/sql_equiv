@@ -119,7 +119,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       `TranslatesH.between`). Spider coverage **407**, up from 403
     - [ ] Step 4's other operators (`IS NULL`, negation, arithmetic, `IN (list)`): no Spider
       query needs them; left until the bar for phase 9 is set (decided 2026-11-21)
-    - [ ] Step 5: `DISTINCT`
+    - [x] Step 5: plain `SELECT DISTINCT`, up to the order of the rows
+      (`SqlBridge/CorrectDistinct.lean`, `elabStmt_correct_distinct`; registry T18). Spider
+      coverage **428**, up from 407
+    - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`)
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
   - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)
@@ -197,10 +200,11 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3b-5. Bare columns at a `MIN`/`MAX` under `GROUP BY` (done) | 381 |
 | 3b-6. Bare columns without `GROUP BY`, ordering by a key column (done) | 384 |
 | 3c. `AVG` items, up to rounding (done) | 403 |
-| Today: 4. `BETWEEN` (done) | 407 |
-| 5. `DISTINCT` | 429 |
+| 4. `BETWEEN` (done) | 407 |
+| Today: 5. Plain `DISTINCT`, up to row order (done) | 428 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 429 |
 
-Still outside after step 5: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2),
+Still outside after that: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
@@ -373,8 +377,21 @@ follows coverage instead (decided 20 Nov 2026):
    nonzero-literal-divisor condition (division by zero is a typed error and a quiet `none` in
    `SqlEquiv`, registry T2); decimal `/` and `%` cannot be related, `SqlEquiv` not implementing
    them (#201). They wait for the phase 9 bar (#298).
-5. **`DISTINCT`.** The output relation becomes a bag or set relation, since dedup keeps the first
-   occurrence and NULL tags differ.
+5. **Plain `DISTINCT`, done up to row order** (21 queries; decided 2026-11-21, registry T18).
+   The two evaluators remove the same duplicates (rows equal column by column, `NULL` tags
+   erased, numbers by value: `row_eq_iff_valueKey`, from `COUNT(DISTINCT)`'s `trel_iff`) and
+   keep different copies: the typed core the last (`List.dedup`, as in cslib-frontier),
+   `SqlEquiv` the first (`dedupByKey`, as sqlite); DuckDB and Postgres hash. SQL fixes no order
+   without `ORDER BY`, so the theorem relates the typed rows to `SqlEquiv`'s up to a
+   permutation and changes neither evaluator: the elaborated query is `Query.distinct` of the
+   plain statement's (`elab_distinct_shape`), `SqlEquiv`'s result is `dedupByKey` of the plain
+   statement's (`evalSelectCore_distinct`), and `elabStmt_correct_join` relates the two plain
+   results in order (`distinct_rel`). The options not taken: elaborating `DISTINCT` as a
+   grouping (first-copy order, but the core's `DISTINCT` operator would go unused) and changing
+   the core's `DISTINCT` (diverges from the frontier). `DISTINCT … LIMIT` without `ORDER BY`
+   can keep a different row in each evaluator and stays outside, as does the one Spider query
+   with an unselected sort key. `QNoBoolOrder` now looks through `Query.distinct` (it was
+   vacuously true there).
 
 Each step lands with its theorem, `CorrectExamples` checks that its new hypotheses are
 satisfiable, and an update of this table (the report regenerates it).
