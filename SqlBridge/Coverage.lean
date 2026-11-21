@@ -147,7 +147,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
-  -- grouped (roadmap steps 3b-1 to 3b-6, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
+  -- grouped (roadmap steps 3b-1 to 3b-6, 3c, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
   -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates or key columns,
   -- `LIMIT`/`OFFSET`.
   -- With sort keys, no output name may capture `SqlEquiv`'s sort-key columns `__group_orderkey_k`

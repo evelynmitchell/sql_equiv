@@ -96,7 +96,7 @@ def keyColB (items : List SqlEquiv.SelectItem) (groupBy : List SqlEquiv.Expr) : 
         itemExpr it == .col c
   | _ => false
 
-/-- The shape of `elabStmt_correct_grouped` (roadmap steps 3b-1 to 3b-6): column keys, items
+/-- The shape of `elabStmt_correct_grouped` (roadmap steps 3b-1 to 3b-6, 3c): column keys, items
     aggregates or columns, an optional `HAVING` in `havingFragment`, `ORDER BY` aggregates, an
     optional `LIMIT`/`OFFSET`; with sort keys, no output name dotted or starting with
     `__group_orderkey_` (ignoring case); with a bare column (an item column not grouped), no
@@ -113,7 +113,7 @@ def groupedShape : SqlEquiv.Stmt → Bool
       stmt == groupedStmt items f wh groupBy having orderBy lim off
   | _ => false
 
-/-- The shape of `elabStmt_correct_aggBare` (roadmap step 3b-6): no `GROUP BY`, items aggregates or
+/-- The shape of `elabStmt_correct_aggBare` (roadmap steps 3b-6, 3c): no `GROUP BY`, items aggregates or
     columns, at least one aggregate, bare columns as `BareOk` allows, nothing after `WHERE`. -/
 def aggBareShape : SqlEquiv.Stmt → Bool
   | stmt@(.query (.simple (.mk false items (some f) wh [] none [] none none))) =>
