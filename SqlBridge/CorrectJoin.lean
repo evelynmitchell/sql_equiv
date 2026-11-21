@@ -421,7 +421,7 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
     (hnamed : orderBy ≠ [] → itemsNamed items = true)
     {e : Elaborated N.S} (h : elabStmt N (joinStmt items f wh orderBy lim off) = .ok e)
     (hnb : QNoBoolOrder e.q) :
-    ∃ rs, e.q.eval D = .ok rs ∧
+    e.q.IsSafe ∧ ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (joinStmt items f wh orderBy lim off)).2 = some out ∧
         List.Forall₂ OutRel rs out ∧
         (orderBy = [] → ∀ ctx, List.Forall₂ OutRel rs
@@ -513,7 +513,7 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
         obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
         exact hnbIt ⟨i, hi⟩) hcols hk (hkty hk0)
     exact hkr
-  refine ⟨rs, hrs, _, rfl, ?_, ?_⟩
+  refine ⟨hsafe, rs, hrs, _, rfl, ?_, ?_⟩
   · -- `SqlEquiv`'s side, in closed form
     simp only [SqlEquiv.evalQuery]
     rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
@@ -557,7 +557,7 @@ theorem elabStmt_correct_join (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLow
     ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (joinStmt items f wh orderBy lim off)).2 = some out ∧
         List.Forall₂ OutRel rs out := by
-  obtain ⟨rs, hrs, out, hout, hr, -⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD hrel
+  obtain ⟨-, rs, hrs, out, hout, hr, -⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD hrel
     hit hff hw hcols hnamed h hnb
   exact ⟨rs, hrs, out, hout, hr⟩
 

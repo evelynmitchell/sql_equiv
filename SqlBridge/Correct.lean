@@ -1017,6 +1017,10 @@ def QNoBoolOrder {S : DbSchema} : {n : ℕ} → Query S n → Prop
   | _, .unionAll q₁ q₂ => QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
   | _, .intersect q₁ q₂ => QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
   | _, .difference q₁ q₂ => QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
+  | _, .attach kind sub q =>
+    (∀ Γ, q.typeOf = some Γ → match kind with
+      | .inSub _ e => NoBoolOrder Γ e
+      | .scalar _ => True) ∧ QNoBoolOrder sub ∧ QNoBoolOrder q
   | _, _ => True
 
 /-- The statements of #309: `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`. -/
