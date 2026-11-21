@@ -607,6 +607,35 @@ theorem evalSelectCore_project_ordered (db : Database)
   cases wh <;>
   simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin]
 
+/-- `evalSelectCore_project_ordered` under an outer row, without `ORDER BY`: the source rows are
+    the `FROM` rows with the outer row appended. (With `ORDER BY`, `SqlEquiv` aligns the sort on
+    the rows without the outer row, so the two closed forms differ there.) -/
+theorem evalSelectCore_project_ctx (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
+    (lim off : Option Nat)
+    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk false items (some from_) wh [] none [] lim off) =
+    let base := (fromEval db from_).map fun row => row ++ outerRow
+    let src := match wh with
+      | some c => base.filter fun row => exprEval db row c == some (Value.bool true)
+      | none => base
+    applyOrderByLimitOffsetAligned compareEval db [] lim off true src
+      (src.map fun row => items.flatMap (selectItemEval db row)) := by
+  rw [evalSelectCore_eq_afterFilter]
+  cases wh <;>
+  simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin,
+    applyOrderByLimitOffsetAligned]
+
 end SqlBridge.CorrectOrder
 
 namespace SqlBridge.CorrectOrder
