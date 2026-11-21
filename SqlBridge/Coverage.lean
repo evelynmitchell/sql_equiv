@@ -8,8 +8,8 @@
   (`ON` included) is a literal, a column, a comparison, `AND`, `OR` or `NOT`, every `ORDER BY`
   key is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
   alias (`itemsNamed`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
-  `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)` (`AVG` is its own feature, pending the
-  decision on its rounding, registry row 7); or the same grouped by columns, `GROUP BY c₁, …`,
+  `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`, and as an item `AVG(e)` (step 3c, up to
+  rounding; elsewhere `AVG` is its own feature); or the same grouped by columns, `GROUP BY c₁, …`,
   each item a key column or such an aggregate, with an optional `HAVING` of key columns, such
   aggregates, literals, comparisons, `AND`, `OR`, `NOT`, ordered by such aggregates with an
   optional `LIMIT`/`OFFSET`, no output name able to capture `SqlEquiv`'s sort-key columns, and
@@ -78,6 +78,12 @@ def aggCallOk : Expr → Bool
   | .agg (.max _) (some _) false => true
   | _ => false
 
+/-- An aggregate item (mirrors `SqlBridge.CorrectGrouped.itemAggFragment`): those of `aggCallOk`,
+    or `AVG` without `DISTINCT` (step 3c, items only; related up to rounding). -/
+def itemCallOk : Expr → Bool
+  | .agg (.avg _) (some _) false => true
+  | e => aggCallOk e
+
 /-- Mirrors `SqlBridge.CorrectGroup.havingFragment`'s shape (aggregate arguments are checked
     separately): literals, key columns, aggregates, comparisons, `AND`, `OR`, `NOT`. -/
 def havingOk (groupBy : List Expr) : Expr → Bool
@@ -141,7 +147,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
-  -- grouped (roadmap steps 3b-1 to 3b-6, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
+  -- grouped (roadmap steps 3b-1 to 3b-6, 3c, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
   -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates or key columns,
   -- `LIMIT`/`OFFSET`.
   -- With sort keys, no output name may capture `SqlEquiv`'s sort-key columns `__group_orderkey_k`
@@ -181,15 +187,15 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   -- least one aggregate, no `HAVING`, `ORDER BY`, `LIMIT` or `OFFSET`
   let plainAggBare := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && bareOk &&
-    s.items.any (fun | .exprItem e _ => aggCallOk e | .star _ => false) &&
+    s.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
     s.items.all fun
-      | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
+      | .exprItem e _ => itemCallOk e || (match e with | .col _ => true | _ => false)
       | .star _ => false
   let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.all (havingOk s.groupBy) &&
     orderOk && bareOk &&
     s.groupBy.all (fun | .col _ => true | _ => false) &&
     s.items.all fun
-      | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
+      | .exprItem e _ => itemCallOk e || (match e with | .col _ => true | _ => false)
       | .star _ => false
   (if s.distinct then [distinct] else []) ++
   (if plainAgg || plainAggBare || plainGroup then

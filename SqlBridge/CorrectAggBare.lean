@@ -22,14 +22,14 @@ theorem col_on_empty (db : SqlEquiv.Database) (U : SqlEquiv.Table) (c : SqlEquiv
 
 /-- An aggregate item makes `SqlEquiv` take its aggregate path. -/
 theorem selectHasAggregate_of_agg {items : List SqlEquiv.SelectItem}
-    (hgi : groupedItems items = true) (hai : ∃ it ∈ items, aggFragment (itemExpr it) = true) :
+    (hgi : groupedItems items = true) (hai : ∃ it ∈ items, itemAggFragment (itemExpr it) = true) :
     SqlEquiv.selectHasAggregate items = true := by
   obtain ⟨it, hit, hag⟩ := hai
   obtain ⟨x, al, rfl, -⟩ := groupedItems_mem hgi it hit
   simp only [SqlEquiv.selectHasAggregate, List.any_eq_true]
   refine ⟨_, hit, ?_⟩
   simp only [itemExpr] at hag
-  cases x <;> simp_all [aggFragment, SqlEquiv.hasAggregate]
+  cases x <;> simp_all [itemAggFragment, aggFragment, CorrectAvg.avgFragment, SqlEquiv.hasAggregate]
 
 /-- `first` and `atExtreme` over no rows are `NULL`. -/
 theorem bare_eval_nil {n : ℕ} {c : AggCall n} (hc : (∃ e, c = .first e) ∨ ∃ p k e, c = .atExtreme p k e)
@@ -41,20 +41,21 @@ set_option maxHeartbeats 8000000 in
 /-- **Elaborator correctness for aggregates without `GROUP BY`, with bare columns (#352, roadmap
     step 3b-6).** For `SELECT … FROM f [WHERE p]`, every item an aggregate of step 3a or a column,
     at least one an aggregate, the bare columns as `BareOk` allows (no `MIN`/`MAX`, or exactly
-    one): when the statement elaborates, the typed query's one row relates to `SqlEquiv`'s. -/
+    one): when the statement elaborates, the typed query's one row relates to `SqlEquiv`'s, an
+    `AVG` item (step 3c) up to `SqlEquiv`'s rounding (`OutRelI`). -/
 theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
-    (hgi : groupedItems items = true) (hai : ∃ it ∈ items, aggFragment (itemExpr it) = true)
+    (hgi : groupedItems items = true) (hai : ∃ it ∈ items, itemAggFragment (itemExpr it) = true)
     (hff : fromFragment fr = true) (hw : ∀ w ∈ wh, isFragment w = true)
     (hbf : BareOk N items [] none [])
     {e : Elaborated N.S} (h : elabStmt N (groupedStmt items fr wh [] none [] none none) = .ok e)
     (hnb : QNoBoolOrder e.q) :
     ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh [] none [] none none)).2 = some out ∧
-        List.Forall₂ OutRel rs out := by
+        List.Forall₂ (OutRelI items) rs out := by
   obtain ⟨hty, sub, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
     qh, hqh, rfl⟩ := elab_grouped_shape N hfoldCI hgi (.inr hai) (by simp) (by simp) (by simp) hbf hw h
   simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hk
@@ -112,7 +113,7 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   -- every aggregate is safe
   have hda : ∀ j, (aggs j).divSafe = true := fun j => by
     rcases haggs j with ⟨x, hx, hel⟩ | ⟨c, e', hc, he', -, hj⟩
-    · exact agg_divSafe cf N.fold x hx hel
+    · exact itemAgg_divSafe cf N.fold x hx hel
     · obtain ⟨idx, rfl⟩ := elab_col_is_col cf N.fold c he'
       rcases hmkC c _ hc he' with ⟨hfst, -⟩ | ⟨w, m, arg, k', -, -, hfrag, hk', hat⟩
       · rw [hj, hfst]; rfl
@@ -158,15 +159,16 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     obtain ⟨e, al, h, -⟩ := groupedItems_mem hgi it hit; exact ⟨e, al, h⟩
   -- each item's value, over any related input rows, on their sample row
   have final : ∀ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U →
-      List.Forall₂ DatumRel (List.ofFn r) (items.map fun it =>
+      List.Forall₂ (fun (x : SqlEquiv.SelectItem × Datum) v => ItemRel x.1 x.2 v)
+        (items.zip (List.ofFn r)) (items.map fun it =>
         (SqlEquiv.evalExprWithAggParam ee db U
           ((SqlEquiv.bareSampleRow (fun r e => SqlEquiv.evalExprWithDb db r e)
             (SqlEquiv.selectMinMaxCalls items none) U).getD []) (itemExpr it)).getD (.null none)) := by
     intro U hRU
     apply List.forall₂_iff_get.mpr
     refine ⟨by simp [hits.length_eq], fun i h1 h2 => ?_⟩
-    simp only [List.get_eq_getElem, List.getElem_ofFn, List.getElem_map]
-    have hi : i < its.length := by simpa using h1
+    simp only [List.get_eq_getElem, List.getElem_zip, List.getElem_ofFn, List.getElem_map]
+    have hi : i < its.length := by simp at h1; omega
     have hi' : i < items.length := by simpa using h2
     obtain ⟨j, hj, hcase⟩ := hcol ⟨i, hi⟩
     have hri : r ⟨i, hi⟩ = A j := by
@@ -180,14 +182,21 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     rcases hcase with hel | ⟨c, e', hc, hel, hjf⟩
     · -- an aggregate
       obtain ⟨x, al, hx, hcase'⟩ := groupedItems_mem hgi _ (List.getElem_mem hi')
-      have hfr : aggFragment (itemExpr items[i]) = true := by
+      have hfr' : itemAggFragment (itemExpr items[i]) = true := by
         rw [hx]; simp only [itemExpr]
         rcases hcase' with h | ⟨c, rfl⟩
         · exact h
         · rw [hx] at hel; simp [itemExpr, elabAgg, throw, throwThe, MonadExceptOf.throw] at hel
-      obtain ⟨v, hv, hvr⟩ := agg_rel cf N.fold db hRU _ _ hfr hel (hnbAgg j) (has j)
-        (evalAll_get hA j)
-      rw [hv]; exact hvr
+      simp only [itemAggFragment, Bool.or_eq_true] at hfr'
+      rcases hfr' with hfr | hfr
+      · rw [ItemRel, if_neg (by simp [avgFragment_false_of_agg hfr])]
+        obtain ⟨v, hv, hvr⟩ := agg_rel cf N.fold db hRU _ _ hfr hel (hnbAgg j) (has j)
+          (evalAll_get hA j)
+        rw [hv]; exact hvr
+      · rw [ItemRel, if_pos hfr]
+        obtain ⟨v, hv, hvr⟩ := CorrectAvg.avg_rel cf N.fold db hRU _ _ hfr hel (hnbAgg j) (has j)
+          (evalAll_get hA j)
+        rw [hv]; exact hvr
     · -- a bare column
       have hcr : c ∈ colRefs items := by
         obtain ⟨x, al, hx, -⟩ := groupedItems_mem hgi _ (List.getElem_mem hi')
@@ -198,7 +207,7 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
         obtain ⟨idx, rfl⟩ := elab_col_is_col cf N.fold c hel; trivial
       have hfe := evalAll_get hA j
       rw [hjf] at hfe
-      rw [hc]
+      rw [ItemRel, hc, if_neg (by simp [CorrectAvg.avgFragment])]
       rcases hmkC c e' hcr hel with ⟨hfst, hcalls⟩ |
         ⟨wantMax, mode, arg, k', hm, hcalls, hfrag, hk', hat⟩
       · -- no `MIN`/`MAX`: `first`, on the first row
@@ -241,8 +250,7 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   simp only [SqlEquiv.evalQuery]
   rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_agg _ _ _ _ _ _ _ _ _ _ _ _ _
     (selectHasAggregate_of_agg hgi hai)]
-  refine .cons ?_ .nil
-  unfold OutRel
+  refine .cons ⟨hits.length_eq, ?_⟩ .nil
   rw [items_vals_group db _ _ hitems]
   apply final
   rcases hq₀ with ⟨rfl, rfl⟩ | ⟨w, p, rfl, hp, rfl⟩

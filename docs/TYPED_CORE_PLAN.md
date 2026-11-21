@@ -112,7 +112,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 3b-6: the same without `GROUP BY` (`SqlBridge/CorrectAggBare.lean`,
       `elabStmt_correct_aggBare`), and ordering a grouped query by a key column (`OrderKeyOk`, in
       `elabStmt_correct_grouped`). Spider coverage **384**, up from 381
-    - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
+    - [x] Step 3c: `AVG` as an item, grouped or not, its value related up to `SqlEquiv`'s rounding
+      (`SqlBridge/CorrectAvg.lean`, `AvgRel`; decided 2026-11-21). Spider coverage **403**, up
+      from 384. `AVG` in `HAVING` or `ORDER BY` stays outside (2 queries)
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
@@ -190,13 +192,13 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3b-3. Ordered by aggregates, `LIMIT` (done) | 333 |
 | 3b-4. Bare columns on the first row, all combinations (done) | 380 |
 | 3b-5. Bare columns at a `MIN`/`MAX` under `GROUP BY` (done) | 381 |
-| Today: 3b-6. Bare columns without `GROUP BY`, ordering by a key column (done) | 384 |
-| 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
-| 5. `DISTINCT` | 410 |
+| 3b-6. Bare columns without `GROUP BY`, ordering by a key column (done) | 384 |
+| Today: 3c. `AVG` items, up to rounding (done) | 403 |
+| 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 407 |
+| 5. `DISTINCT` | 429 |
 
-Still outside after step 5: subqueries, set operations and CTEs (80), `AVG` (24, pending the
-rounding decision), `LIKE` (8), `*` (2). (With `AVG`, the rows after steps 3b–5 were 405, 409
-and 431.)
+Still outside after step 5: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2),
+`AVG` in `HAVING` (2).
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
 does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are
@@ -341,10 +343,22 @@ follows coverage instead (decided 20 Nov 2026):
        (`keyCol_lookup`). The unified proof now relates each sort key through its output
        column (`idx`), an aggregate's or a key's. The key is matched as written: `ORDER BY Age`
        after `GROUP BY age` stays outside.
-   - **`AVG`, a design decision.** `AVG` is an exact rational in the typed core (T10) and
-     rounded to 16 places in `SqlEquiv` when it does not terminate (row 7): the theorem can
-     leave it out, assume the averages terminate, or relate values up to rounding. Left out
-     for now (24 Spider queries).
+   - **3c, `AVG` up to rounding, done** (19 queries; decided 2026-11-21). `AVG` is an exact
+     rational in the typed core (T10) and rounded half away from zero to `max 16 s` places in
+     `SqlEquiv` when it does not terminate (row 7); the engines differ too (sqlite and DuckDB a
+     float, Postgres a numeric of about 16 digits), the standard leaving it to the
+     implementation. Of the options (leave it out; assume the averages terminate, a condition on
+     the data; make one evaluator round like the other; relate the values up to rounding) the
+     theorem takes the last and changes neither evaluator: an `AVG` item's untyped value is the
+     typed quotient rounded half away from zero to some `p ≥ 16` places (`CorrectAvg.AvgRel`;
+     equal when the quotient terminates within them). `divRoundHalfAway_eq` shows `SqlEquiv`'s
+     integer rounding is `roundHalfAway` of the rational quotient, and `avg_agree` that the
+     scaled sums agree (as for `SUM`). The output relation becomes per item (`ItemRel`,
+     `OutRelI`): exact for every column but `AVG` items, so 3b-1 to 3b-3 keep their exact
+     statements (`outRel_of_outRelI`). `AVG` in `HAVING` or `ORDER BY` stays outside: rounding
+     can flip a comparison when the compared value is the rounded one (`1.3333333333333333 <
+     avg` with the average 4/3); a bound on the row count (rows × 10^scale below about 10^16)
+     would rule that out, a later step if wanted.
 4. **Unary operators, arithmetic, `IN (list)`, `BETWEEN`.** As in #352's first steps: division
    by zero (a typed error, an untyped NULL) and decimal `%` need a hypothesis or a design
    decision. These come in wherever an earlier step's queries need them.
