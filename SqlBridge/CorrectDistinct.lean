@@ -130,7 +130,7 @@ theorem finishSelect_plain {S : DbSchema} (fold : String → String) (sc : Scope
     without `DISTINCT`, which elaborates too. -/
 theorem elab_distinct_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} (hit : itemsFragment items = true)
-    (hw : ∀ w ∈ wh, isFragment w = true) {e : Elaborated N.S}
+    {e : Elaborated N.S}
     (h : elabStmt N (distinctStmt items f wh) = .ok e) :
     ∃ e₀ : Elaborated N.S, elabStmt N (joinStmt items f wh [] none none) = .ok e₀ ∧
       e = ⟨e₀.n, .distinct e₀.q, e₀.cols⟩ := by
@@ -156,53 +156,43 @@ theorem elab_distinct_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     simp [this, pure, Except.pure]
   simp only [elabQueryRaw, elabSelect] at hraw ⊢
   rw [elabSelectF] at hraw ⊢
-  unfold elabWhere at hraw ⊢
   obtain ⟨⟨n, qf, cf⟩, hf, hraw⟩ := bind_ok hraw
   simp only [hf, bind, Except.bind]
   dsimp only at hraw ⊢
-  cases wh with
-  | none =>
-    simp only [pure, Except.pure, bind, Except.bind] at hraw ⊢
-    rw [aggsOfList_items (fun _ _ => rfl) items hit] at hraw ⊢
-    simp only [List.map_nil, aggsOfList, List.isEmpty_nil, aggsOfOpt, List.append_nil,
-      List.eraseDups_nil, Option.isNone_none, Bool.and_self, ↓reduceIte] at hraw ⊢
-    rcases hits : elabItems N cf items with _ | its
-    · simp [hits] at hraw
-    simp only [hits, finishSelect_plain, ↓reduceIte, Bool.false_eq_true, Except.ok.injEq] at hraw ⊢
-    exact ⟨_, rfl, hraw.symm⟩
-  | some w =>
-    simp only [subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil, ↓reduceIte] at hraw ⊢
-    rcases hp : elabExpr cf N.fold noHook w with _ | p
-    · simp [hp, bind, Except.bind] at hraw
-    simp only [hp, bind, Except.bind, pure, Except.pure] at hraw ⊢
-    rw [aggsOfList_items (fun _ _ => rfl) items hit] at hraw ⊢
-    simp only [List.map_nil, aggsOfList, List.isEmpty_nil, aggsOfOpt, List.append_nil,
-      List.eraseDups_nil, Option.isNone_none, Bool.and_self, ↓reduceIte] at hraw ⊢
-    rcases hits : elabItems N cf items with _ | its
-    · simp [hits] at hraw
-    simp only [hits, finishSelect_plain, ↓reduceIte, Bool.false_eq_true, Except.ok.injEq] at hraw ⊢
-    exact ⟨_, rfl, hraw.symm⟩
+  obtain ⟨q₀, hq₀, hraw⟩ := bind_ok hraw
+  simp only [hq₀]
+  rw [aggsOfList_items (fun _ _ => rfl) items hit] at hraw ⊢
+  simp only [List.map_nil, aggsOfList, List.isEmpty_nil, aggsOfOpt, List.append_nil,
+    List.eraseDups_nil, Option.isNone_none, Bool.and_self, ↓reduceIte, bind, Except.bind] at hraw ⊢
+  rcases hits : elabItems N cf items with _ | its
+  · simp [hits] at hraw
+  simp only [hits, finishSelect_plain, ↓reduceIte, Bool.false_eq_true, Except.ok.injEq] at hraw ⊢
+  exact ⟨_, rfl, hraw.symm⟩
 
 /-- **Elaborator correctness for `SELECT DISTINCT` (#352, roadmap step 5).** For
     `SELECT DISTINCT e₁, …, eₖ FROM f [WHERE p]`, `f` and the expressions as in
     `elabStmt_correct_join`: when the statement elaborates, the typed query evaluates, and its
     rows are, up to their order, related to `SqlEquiv`'s. (The order differs: the typed core keeps
     the last copy of each row, `SqlEquiv` the first; SQL fixes none without `ORDER BY`.) -/
-theorem elabStmt_correct_distinct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+theorem elabStmt_correct_distinct_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
     (hit : itemsFragment items = true) (hff : fromFragment f = true)
-    (hw : ∀ w ∈ wh, isFragment w = true)
+    (hwo : ∀ {n : ℕ} (qf q₀ : Query N.S n) (cf : Fin n → Column),
+      elabFrom N (fun sq => elabSubQuery N 15 sq) f = .ok ⟨n, qf, cf⟩ →
+      elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf wh = .ok q₀ →
+      WhereOk cf N.fold db D wh qf q₀)
     {e : Elaborated N.S} (h : elabStmt N (distinctStmt items f wh) = .ok e)
     (hnb : QNoBoolOrder e.q) :
     ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (distinctStmt items f wh)).2 = some out ∧
         ∃ rs', rs.Perm rs' ∧ List.Forall₂ OutRel rs' out := by
-  obtain ⟨e₀, he₀, rfl⟩ := elab_distinct_shape N hit hw h
-  obtain ⟨rs₀, hrs₀, out₀, hout₀, hrel₀⟩ := elabStmt_correct_join N hfold hfoldCI hwn hfix hD hrel
-    hit hff hw (by simp) (by simp) he₀ hnb
+  obtain ⟨e₀, he₀, rfl⟩ := elab_distinct_shape N hit h
+  obtain ⟨-, rs₀, hrs₀, out₀, hout₀, hrel₀, -⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn
+    hfix hD hrel hit hff hwo (orderBy := []) (lim := none) (off := none) (by simp) (by simp)
+    he₀ hnb
   -- the plain statement's rows conform to its type
   obtain ⟨Γ, hΓ⟩ : ∃ Γ, e₀.q.typeOf = some Γ := by
     simp only [joinStmt, elabStmt, elabQuery, bind, Except.bind] at he₀
@@ -223,5 +213,21 @@ theorem elabStmt_correct_distinct (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
   rw [evalSelectCore_distinct]
   simp only [Option.some.injEq] at hout₀ ⊢
   rw [hout₀]
+
+/-- `elabStmt_correct_distinct_w` with a `WHERE` in the expression fragment. -/
+theorem elabStmt_correct_distinct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    (hit : itemsFragment items = true) (hff : fromFragment f = true)
+    (hw : ∀ w ∈ wh, isFragment w = true)
+    {e : Elaborated N.S} (h : elabStmt N (distinctStmt items f wh) = .ok e)
+    (hnb : QNoBoolOrder e.q) :
+    ∃ rs, e.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (distinctStmt items f wh)).2 = some out ∧
+        ∃ rs', rs.Perm rs' ∧ List.Forall₂ OutRel rs' out :=
+  elabStmt_correct_distinct_w N hfold hfoldCI hwn hfix hD hrel hit hff
+    (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) h hnb
 
 end SqlBridge.CorrectDistinct

@@ -52,6 +52,16 @@ def inList := "IN list"
 def distinct := "DISTINCT"
 def subquery := "subquery/set operation/CTE"
 def setOpBranch := "set operation branch with ORDER BY/LIMIT, AVG or a bare column"
+def hiddenName := "reference to the hidden column name ?subquery?"
+
+/-- Whether an expression refers to a column named like the column the elaborator attaches for a
+    subquery (mirrors `SqlBridge.CorrectSub.noRefTo`, negated; names fold to lowercase). -/
+def refsHidden : Expr → Bool
+  | .col c => c.column.toLower == "?subquery?"
+  | .binOp _ a b => refsHidden a || refsHidden b
+  | .unaryOp _ a => refsHidden a
+  | .between e lo hi => refsHidden e || refsHidden lo || refsHidden hi
+  | _ => false
 def like := "LIKE"
 def function := "scalar function"
 def caseExpr := "CASE"
@@ -217,22 +227,27 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   (match s.fromClause with
    | none => [noFrom]
    | some f => fromFeatures f) ++
-  -- `WHERE e [NOT] IN (SELECT …)` on a plain outer query or under aggregates without `GROUP BY`
-  -- (step 6b, `elabStmt_correct_inSub`, `elabStmt_correct_agg_inSub`,
-  -- `elabStmt_correct_aggBare_inSub`):
-  -- inside when the probe and the body are; the body a plain statement without `ORDER BY`
-  (match s.whereClause with
-   | some (.inSubquery e _ (.simple b)) =>
-     if !s.distinct && s.groupBy.isEmpty && s.having.isNone &&
-         (plainAgg || plainAggBare || !plainGroup) then
-       exprFeatures e ++ selectFeatures b ++
+  -- `WHERE [a AND] e [NOT] IN (SELECT …)` (step 6b, `SqlBridge.CorrectSub.InSubWhere`) on a plain
+  -- outer query, under plain `DISTINCT`, or under aggregates without `GROUP BY`
+  -- (`elabStmt_correct_inSub`, `_distinct_inSub`, `_agg_inSub`, `_aggBare_inSub`): inside when
+  -- `a`, the probe and the body are; the body a plain statement without `ORDER BY`
+  (match (match s.whereClause with
+      | some (.inSubquery e _ (.simple b)) => some (none, e, b)
+      | some (.binOp .and a (.inSubquery e _ (.simple b))) => some (some a, e, b)
+      | _ => none), s.whereClause with
+   | some (a, e, b), _ =>
+     if s.groupBy.isEmpty && s.having.isNone &&
+         (if s.distinct then plainDistinct else (plainAgg || plainAggBare || !plainGroup)) then
+       (a.map exprFeatures).getD [] ++
+         (if (a.map refsHidden).getD false then [hiddenName] else []) ++
+         exprFeatures e ++ selectFeatures b ++
          (if b.distinct || !b.groupBy.isEmpty || b.having.isSome || !b.orderBy.isEmpty ||
              b.limitVal.isSome || b.offsetVal.isSome ||
              b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false)
           then [subquery] else [])
-     else subquery :: exprFeatures e
-   | some w => exprFeatures w
-   | none => []) ++
+     else subquery :: ((a.map exprFeatures).getD [] ++ exprFeatures e)
+   | none, some w => exprFeatures w
+   | none, none => []) ++
   (if (s.groupBy.isEmpty && s.having.isNone) || plainGroup then [] else [aggregate]) ++
   (s.groupBy.flatMap exprFeatures) ++
   ((s.having.map (if plainGroup then havingFeatures else exprFeatures)).getD []) ++

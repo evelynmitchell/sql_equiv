@@ -135,8 +135,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       - [x] The same next to an `AVG` or a bare column (`elabStmt_correct_aggBare_inSub`; the
         grouped and bare-column theorems take their `WHERE` abstractly too). Spider coverage
         **486**, up from 483
-      - [ ] Under `AND` (2 queries, one of them `DISTINCT`), and with a grouped or
-        set-operation body (2)
+      - [x] Under `a AND …` and under plain `DISTINCT` (`InSubWhere`,
+        `elabStmt_correct_distinct_inSub`). Spider coverage **488**, up from 486
+      - [ ] With a grouped or set-operation body (2 queries): needs those theorems under an
+        outer row, and the membership test up to the order of the body's rows
     - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries; 5 compare
       against an `AVG`, which needs its own decision)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
@@ -225,10 +227,11 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 6a. Set operations, up to row order (done) | 466 |
 | 6b (part). `WHERE e [NOT] IN (plain subquery)`, plain outer query (done) | 475 |
 | 6b (part). The same under aggregates without `GROUP BY` (done) | 483 |
-| Today: 6b (part). The same next to `AVG` or bare columns (done) | 486 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 487 |
+| 6b (part). The same next to `AVG` or bare columns (done) | 486 |
+| Today: 6b (part). The clause under `AND`, and under `DISTINCT` (done) | 488 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 489 |
 
-Still outside after that: `IN`/`NOT IN` and scalar subqueries (21, of which 2 also need a set
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (19, of which 2 also need a set
 operation in a subquery or in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
@@ -466,10 +469,19 @@ follows coverage instead (decided 20 Nov 2026):
      So do the grouped and bare-column theorems (`elabStmt_correct_grouped_w`,
      `elabStmt_correct_aggBare_w`; `elabStmt_correct_aggBare_inSub`, 3 queries).
 
-     Still to do in 6b: the clause under `AND` (2 queries; the elaborator's hidden column is named
-     `?subquery?`, which the predicate must not reference: unreachable through the parser,
-     which has no quoted identifiers, but a side condition for hand-built ASTs); bodies that
-     are grouped or set operations (2 queries).
+     *The clause under `AND`.* The elaborator elaborates the whole predicate among the columns
+     with the attached one appended (named `?subquery?`), a hook replacing the subquery node by
+     that column. A fragment expression elaborated there is its elaboration among the original
+     columns, re-indexed (`elabExpr_weaken`), provided it does not refer to that name
+     (`noRefTo`; the parser has no quoted identifiers, so SQL text cannot, but a hand-built AST
+     could, and would read the attached column in the typed core and an unknown column in
+     `SqlEquiv`). The pipeline lemma takes any predicate over the extended row
+     (`attachFilter_rel`), and `whereOk_attach` turns "the predicate relates to the clause,
+     given the attached column relates to the subquery node" into `WhereOk`; `InSubWhere` names
+     the two clause forms. The `DISTINCT` theorem takes `WhereOk` too
+     (`elabStmt_correct_distinct_w`).
+
+     Still to do in 6b: bodies that are grouped or set operations (2 queries).
    - **6c. Scalar subqueries** (16 queries): reuses 6b's machinery; in the sqlite dialect both
      evaluators take the first row. Five compare against an `AVG` (rounded in `SqlEquiv`, exact
      in the typed core), a decision to make then.
