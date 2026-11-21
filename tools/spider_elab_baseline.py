@@ -45,9 +45,9 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # in "Today". Step 4's other operators (IS NULL, negation, arithmetic, IN list) add no Spider
 # query and are left for later (decided 21 Nov 2026).
 # Step 5 (plain DISTINCT, up to row order) is done too.
-# Step 6a (set operations over covered branches, up to row order) is done, and of 6b the plain
-# case (WHERE e [NOT] IN (plain subquery) on a plain outer query). The rest of 6b and 6c (scalar
-# subqueries) share the subquery feature.
+# Step 6a (set operations over covered branches, up to row order) is done, 6b (WHERE with an
+# IN subquery) except grouped and set-operation bodies, and of 6c scalar subqueries over plain
+# and MIN/MAX/COUNT/SUM bodies. What is left of both shares the subquery feature.
 # The one entry left is not planned (decided 21 Nov 2026: one query, a full step); it stays
 # listed so the report shows what it would add.
 ROADMAP = [
@@ -100,6 +100,9 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "(`SqlBridge/CorrectAvg.lean`). `BETWEEN` is in the expression and `HAVING` fragments.",
         "`elabStmt_correct_distinct` (`SqlBridge/CorrectDistinct.lean`) covers plain",
         "`SELECT DISTINCT`, relating the rows up to their order (registry T18).",
+        "Set operations over such statements (`SqlBridge/CorrectSetOp.lean`) are covered up to",
+        "row order, and a `WHERE` with one uncorrelated subquery, `e [NOT] IN (SELECT …)` or",
+        "`a op (SELECT …)`, alone or under `AND` (`SqlBridge/CorrectSub.lean`).",
         "Counts are of the",
         "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",

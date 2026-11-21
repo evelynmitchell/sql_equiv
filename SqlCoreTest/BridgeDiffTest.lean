@@ -154,6 +154,15 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders) ORDER BY name LIMIT 2", .agree),
   ("SELECT name FROM users WHERE id IN (SELECT o.user_id FROM orders o JOIN users u ON o.user_id = u.id WHERE u.age > 26) ORDER BY name", .agree),
   ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE amount > 100000)", .agree),
+  -- step 6c (`SubWhere`): the node on either side of `AND`, scalar subqueries on the right of a
+  -- comparison, over an empty body (NULL), under DISTINCT and under aggregates
+  ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders) AND age > 20", .agree),
+  ("SELECT name FROM users WHERE id IN (SELECT MAX(user_id) FROM orders)", .agree),
+  ("SELECT name FROM users WHERE age = (SELECT MIN(age) FROM users) AND id > 0 ORDER BY name", .agree),
+  ("SELECT name FROM users WHERE age < (SELECT MAX(age) FROM users WHERE id > 99)", .agree),
+  ("SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount = (SELECT MAX(amount) FROM orders)", .agree),
+  ("SELECT COUNT(*), MAX(age) FROM users WHERE age > (SELECT MIN(age) FROM users)", .agree),
+  ("SELECT DISTINCT department FROM users WHERE age <> (SELECT MAX(age) FROM users)", .orderDiffers),
   -- set operations keep the same rows in a different order (T18, `elabStmt_correct_setOp`): the
   -- typed core keeps the last copy of a duplicate, SqlEquiv the first; with LIMIT and no ORDER
   -- BY the rows differ

@@ -139,8 +139,15 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
         `elabStmt_correct_distinct_inSub`). Spider coverage **488**, up from 486
       - [ ] With a grouped or set-operation body (2 queries): needs those theorems under an
         outer row, and the membership test up to the order of the body's rows
-    - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries; 5 compare
-      against an `AVG`, which needs its own decision)
+    - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries)
+      - [x] `a op (SELECT …)` over a plain body or one of aggregates other than `AVG`, alone
+        or under `AND`, in a dialect that takes the first row of several (sqlite); the `IN`
+        clauses get the same forms (`SubWhere`, replacing `InSubWhere`). Spider coverage
+        **497**, up from 488
+      - [ ] Bodies that are an `AVG` (5 queries). **Decided 2026-11-21:** prove them under a
+        bound on the table's size (`SqlEquiv` rounds the quotient to 16 places; against an
+        integer that cannot change the comparison unless the row count is astronomical)
+      - [ ] Bodies with `ORDER BY … LIMIT 1` (2 queries, one grouped)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
       **Left outside, decided 2026-11-21:** a full step (the `AggCall.first` shape has no
       correctness lemma) for one query that Postgres rejects (registry row 5). Both
@@ -228,11 +235,12 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 6b (part). `WHERE e [NOT] IN (plain subquery)`, plain outer query (done) | 475 |
 | 6b (part). The same under aggregates without `GROUP BY` (done) | 483 |
 | 6b (part). The same next to `AVG` or bare columns (done) | 486 |
-| Today: 6b (part). The clause under `AND`, and under `DISTINCT` (done) | 488 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 489 |
+| 6b (part). The clause under `AND`, and under `DISTINCT` (done) | 488 |
+| Today: 6c (part). Scalar subqueries over plain, `MIN`, `MAX`, `COUNT`, `SUM` bodies (done) | 497 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 498 |
 
-Still outside after that: `IN`/`NOT IN` and scalar subqueries (19, of which 2 also need a set
-operation in a subquery or in `FROM`), `LIKE` (8), `*` (2),
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (10: 5 over an `AVG` body, 2 over
+`ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
@@ -477,14 +485,25 @@ follows coverage instead (decided 20 Nov 2026):
      could, and would read the attached column in the typed core and an unknown column in
      `SqlEquiv`). The pipeline lemma takes any predicate over the extended row
      (`attachFilter_rel`), and `whereOk_attach` turns "the predicate relates to the clause,
-     given the attached column relates to the subquery node" into `WhereOk`; `InSubWhere` names
-     the two clause forms. The `DISTINCT` theorem takes `WhereOk` too
-     (`elabStmt_correct_distinct_w`).
+     given the attached column relates to the subquery node" into `WhereOk`. The `DISTINCT`
+     theorem takes `WhereOk` too (`elabStmt_correct_distinct_w`).
 
      Still to do in 6b: bodies that are grouped or set operations (2 queries).
-   - **6c. Scalar subqueries** (16 queries): reuses 6b's machinery; in the sqlite dialect both
-     evaluators take the first row. Five compare against an `AVG` (rounded in `SqlEquiv`, exact
-     in the typed core), a decision to make then.
+   - **6c. Scalar subqueries** (16 queries), **the first part done** (9 queries). A clause is
+     now a context around one subquery node (`HoleCtx`: the node, `a op node` for a comparison,
+     either under `AND` on either side), and `holeCtx_elab` relates the elaborated clause to
+     the untyped one given only that the attached column relates to the node's value. So the
+     two node kinds differ in one lemma each (`NodeOk`, inside `whereOk_of_subWhere`): an `IN`
+     node attaches the membership test, a scalar node the body's first value, `NULL` for an
+     empty body, as `SqlEquiv` reads it. The typed core's safety check wants the dialect to
+     take the first of several rows (`scalarSubqueryRows = firstRow`, sqlite), so the theorem
+     assumes it; in Postgres or DuckDB a body with two rows is an error there and a value in
+     `SqlEquiv`. Bodies (`BodyOk`): a plain statement or one of aggregates
+     (`elabStmt_correct_agg_w`, which now also holds under every outer row), both without
+     `ORDER BY`/`LIMIT`; the `IN` clauses gain the aggregate body and the other `AND` order.
+
+     Still to do: `AVG` bodies under a size bound (5 queries, decided 2026-11-21), and
+     `ORDER BY … LIMIT 1` bodies (2 queries).
 
 Each step lands with its theorem, `CorrectExamples` checks that its new hypotheses are
 satisfiable, and an update of this table (the report regenerates it).
