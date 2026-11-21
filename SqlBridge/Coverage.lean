@@ -5,7 +5,7 @@
   `elabStmt_correct_agg`, for aggregates without `GROUP BY`) for a fragment of SQL:
   `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]` where `f` nests
   tables (optionally aliased) under inner joins and cross joins without `ON`, every expression
-  (`ON` included) is a literal, a column, a comparison, `AND`, `OR` or `NOT`, every `ORDER BY`
+  (`ON` included) is a literal, a column, a comparison, `BETWEEN`, `AND`, `OR` or `NOT`, every `ORDER BY`
   key is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
   alias (`itemsNamed`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
   `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`, and as an item `AVG(e)` (step 3c, up to
@@ -48,7 +48,7 @@ def aggregate := "aggregate/GROUP BY"
 def avg := "AVG"
 def unaryArith := "IS NULL/negation"
 def arithmetic := "arithmetic"
-def inBetween := "IN list/BETWEEN"
+def inList := "IN list"
 def distinct := "DISTINCT"
 def subquery := "subquery/set operation/CTE"
 def like := "LIKE"
@@ -94,6 +94,7 @@ def havingOk (groupBy : List Expr) : Expr → Bool
      | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
      | _ => false) && havingOk groupBy x && havingOk groupBy y
   | .unaryOp .not x => havingOk groupBy x
+  | .between x lo hi => havingOk groupBy x && havingOk groupBy lo && havingOk groupBy hi
   | e => aggCallOk e
 
 mutual
@@ -102,6 +103,7 @@ mutual
 partial def havingFeatures : Expr → List String
   | .binOp _ x y => havingFeatures x ++ havingFeatures y
   | .unaryOp _ x => havingFeatures x
+  | .between x lo hi => havingFeatures x ++ havingFeatures lo ++ havingFeatures hi
   | .agg _ (some a) _ => exprFeatures a
   | _ => []
 
@@ -123,8 +125,9 @@ partial def exprFeatures : Expr → List String
   | .countStar => [aggregate]
   | .case bs e => caseExpr :: (bs.flatMap fun (c, r) => exprFeatures c ++ exprFeatures r) ++
       (e.map exprFeatures).getD []
-  | .inList e _ vs => inBetween :: exprFeatures e ++ vs.flatMap exprFeatures
-  | .between e lo hi => inBetween :: exprFeatures e ++ exprFeatures lo ++ exprFeatures hi
+  | .inList e _ vs => inList :: exprFeatures e ++ vs.flatMap exprFeatures
+  -- `BETWEEN` is in the fragment (roadmap step 4): `e >= lo AND e <= hi` in both evaluators
+  | .between e lo hi => exprFeatures e ++ exprFeatures lo ++ exprFeatures hi
   | .inSubquery e _ _ => subquery :: exprFeatures e
   | .exists _ _ | .subquery _ => [subquery]
   | .windowFn _ _ _ => [window]

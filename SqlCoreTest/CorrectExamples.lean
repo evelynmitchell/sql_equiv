@@ -191,6 +191,11 @@ def features (sql : String) : List String :=
 #guard features "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id" == []
 #guard features "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id" == ["outer join"]
 #guard features "SELECT COUNT(*), MAX(age) FROM users WHERE age > 1" == []
+-- `BETWEEN` is in the fragment (step 4), in `WHERE` and in `HAVING`; `IN (list)` is not
+#guard features "SELECT name FROM users WHERE age BETWEEN 25 AND 30" == []
+#guard features "SELECT department FROM users GROUP BY department HAVING COUNT(*) BETWEEN 1 AND 2" == []
+#guard features "SELECT name FROM users WHERE age BETWEEN 25 AND age + 1" == ["arithmetic"]
+#guard features "SELECT name FROM users WHERE age IN (1, 2)" == ["IN list"]
 -- `AVG` as an item is in the fragment (step 3c), not in `HAVING`/`ORDER BY`
 #guard features "SELECT AVG(age) FROM users" == []
 #guard features "SELECT department, AVG(age) FROM users GROUP BY department" == []
@@ -349,6 +354,10 @@ def groupedSpider (sql : String) : Bool :=
 #guard groupedSpider "SELECT age, count(*) FROM singer GROUP BY age ORDER BY age"
 #guard groupedSpider "SELECT count(*) FROM singer GROUP BY age ORDER BY age DESC LIMIT 2"
 #guard groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*), age"
+-- 4: `BETWEEN` in `HAVING`, over an aggregate or a key
+#guard groupedSpider "SELECT age FROM singer GROUP BY age HAVING count(*) BETWEEN 1 AND 2"
+#guard groupedSpider "SELECT age, count(*) FROM singer GROUP BY age HAVING age BETWEEN 20 AND 30"
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING avg(singer_id) BETWEEN 1 AND 2"
 -- 3c: `AVG` items, grouped or not (related up to rounding)
 #guard groupedSpider "SELECT age, avg(singer_id) FROM singer GROUP BY age"
 #guard groupedSpider "SELECT age, avg(singer_id) FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"

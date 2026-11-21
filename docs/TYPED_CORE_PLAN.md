@@ -115,7 +115,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 3c: `AVG` as an item, grouped or not, its value related up to `SqlEquiv`'s rounding
       (`SqlBridge/CorrectAvg.lean`, `AvgRel`; decided 2026-11-21). Spider coverage **403**, up
       from 384. `AVG` in `HAVING` or `ORDER BY` stays outside (2 queries)
-    - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
+    - [x] Step 4: `BETWEEN`, in expressions and in `HAVING` (`Translates.between`,
+      `TranslatesH.between`). Spider coverage **407**, up from 403
+    - [ ] Step 4's other operators (`IS NULL`, negation, arithmetic, `IN (list)`): no Spider
+      query needs them; left until the bar for phase 9 is set (decided 2026-11-21)
     - [ ] Step 5: `DISTINCT`
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
@@ -162,7 +165,7 @@ sqlite, DuckDB and Postgres. It is also the precondition for retiring the untype
 (phase 9, #298). Its fragment today (steps 1 to 3b-6 done) is
 `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`
 (`elabStmt_correct_join`), where `f` nests tables (optionally aliased) under inner joins and
-cross joins without `ON`, with literals, columns, comparisons, `AND`, `OR` and `NOT` (in `ON`
+cross joins without `ON`, with literals, columns, comparisons, `BETWEEN`, `AND`, `OR` and `NOT` (in `ON`
 too), where the `ORDER BY` keys are column references and, when there is an `ORDER BY`, every
 item is a column or has an alias; and `SELECT agg₁, …, aggₖ FROM f [WHERE p]`
 (`elabStmt_correct_agg`) with `COUNT(*)`, `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`;
@@ -193,8 +196,8 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3b-4. Bare columns on the first row, all combinations (done) | 380 |
 | 3b-5. Bare columns at a `MIN`/`MAX` under `GROUP BY` (done) | 381 |
 | 3b-6. Bare columns without `GROUP BY`, ordering by a key column (done) | 384 |
-| Today: 3c. `AVG` items, up to rounding (done) | 403 |
-| 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 407 |
+| 3c. `AVG` items, up to rounding (done) | 403 |
+| Today: 4. `BETWEEN` (done) | 407 |
 | 5. `DISTINCT` | 429 |
 
 Still outside after step 5: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2),
@@ -359,9 +362,17 @@ follows coverage instead (decided 20 Nov 2026):
      can flip a comparison when the compared value is the rounded one (`1.3333333333333333 <
      avg` with the average 4/3); a bound on the row count (rows × 10^scale below about 10^16)
      would rule that out, a later step if wanted.
-4. **Unary operators, arithmetic, `IN (list)`, `BETWEEN`.** As in #352's first steps: division
-   by zero (a typed error, an untyped NULL) and decimal `%` need a hypothesis or a design
-   decision. These come in wherever an earlier step's queries need them.
+4. **`BETWEEN`, done** (4 queries; the other operators of this step add none). Both evaluators
+   read `e BETWEEN lo AND hi` as `e >= lo AND e <= hi`: the elaborator desugars it, `SqlEquiv`
+   evaluates it so, with or without an aggregate inside. So the proof is the comparison and
+   `AND` cases composed (`Translates.between`), and in `HAVING` the same over the aggregate's
+   output (`TranslatesH.between`; without an aggregate inside, `SqlEquiv` hands the predicate
+   to its row evaluator, `evalWithAgg_of_noAgg`). No new hypothesis.
+   **Left out, decided 2026-11-21:** `IS NULL`, unary minus, `+ - *` and `IN (list)` have no
+   known divergence but add no Spider query; integer `/` and `%` would ride on the existing
+   nonzero-literal-divisor condition (division by zero is a typed error and a quiet `none` in
+   `SqlEquiv`, registry T2); decimal `/` and `%` cannot be related, `SqlEquiv` not implementing
+   them (#201). They wait for the phase 9 bar (#298).
 5. **`DISTINCT`.** The output relation becomes a bag or set relation, since dedup keeps the first
    occurrence and NULL tags differ.
 

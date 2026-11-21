@@ -235,8 +235,16 @@ theorem minMaxCalls_of_aggsOf_having {groupBy : List SqlEquiv.Expr} : ∀ (h : S
     all_goals simp [aggFragment] at hf
   | .countStar, _, hm, x, hx => by simp [aggsOf] at hx; subst hx; exact hm
   | .agg fn a d, _, hm, x, hx => by simp [aggsOf] at hx; subst hx; exact hm
+  | .between p lo hi, hf, hm, x, hx => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [SqlEquiv.minMaxCalls, List.append_eq_nil_iff] at hm
+    simp only [aggsOf, List.mem_append] at hx
+    rcases hx with (hx | hx) | hx
+    · exact minMaxCalls_of_aggsOf_having p hf.1.1 hm.1.1 x hx
+    · exact minMaxCalls_of_aggsOf_having lo hf.1.2 hm.1.2 x hx
+    · exact minMaxCalls_of_aggsOf_having hi hf.2 hm.2 x hx
   | .func _ _, hf, _, _, _ | .case _ _, hf, _, _, _ | .inList _ _ _, hf, _, _, _
-  | .between _ _ _, hf, _, _, _ | .inSubquery _ _ _, hf, _, _, _ | .exists _ _, hf, _, _, _
+  | .inSubquery _ _ _, hf, _, _, _ | .exists _ _, hf, _, _, _
   | .subquery _, hf, _, _, _ | .windowFn _ _ _, hf, _, _, _ => by
     simp [havingFragment, aggFragment] at hf
 

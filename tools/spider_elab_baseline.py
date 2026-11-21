@@ -41,13 +41,10 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # and cross joins), 3a (aggregates without GROUP BY, AVG aside), 3b-1 (GROUP BY columns, items
 # keys or aggregates), 3b-2 (HAVING), 3b-3 (ORDER BY aggregates, LIMIT), 3b-4 (bare columns on
 # the first row), 3b-5 (bare columns at the one MIN/MAX) and 3b-6 (the same without GROUP BY,
-# ORDER BY a key column) and 3c (AVG items, up to rounding) are done and counted in "Today".
+# ORDER BY a key column), 3c (AVG items, up to rounding) and 4 (BETWEEN) are done and counted
+# in "Today". Step 4's other operators (IS NULL, negation, arithmetic, IN list) add no Spider
+# query and are left for later (decided 21 Nov 2026).
 ROADMAP = [
-    # Grouped or aggregate queries still outside step 3 combine an aggregate with a feature of
-    # step 4, so step 4 lifts the aggregate features too.
-    ("4. IS NULL, negation, arithmetic, IN list, BETWEEN",
-     {"IS NULL/negation", "arithmetic", "IN list/BETWEEN",
-      "aggregate/GROUP BY", "ORDER BY expression", "unnamed item with ORDER BY"}),
     ("5. DISTINCT", {"DISTINCT"}),
 ]
 
@@ -94,7 +91,8 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "optional `HAVING`, ordered by such aggregates or key columns, with `LIMIT`/`OFFSET`, and",
         "`elabStmt_correct_aggBare` (`SqlBridge/CorrectAggBare.lean`) for aggregates next to bare",
         "columns without `GROUP BY`; both take `AVG` items, related up to `SqlEquiv`'s rounding",
-        "(`SqlBridge/CorrectAvg.lean`). Counts are of the",
+        "(`SqlBridge/CorrectAvg.lean`). `BETWEEN` is in the expression and `HAVING` fragments.",
+        "Counts are of the",
         "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",
         "`docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to",

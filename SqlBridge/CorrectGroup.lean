@@ -306,6 +306,46 @@ section Having
 variable {n g a : ℕ} (cols : Fin n → Column) (out : Fin (g + a) → Column) (fold : String → String)
   (keys : Fin g → Expr n) (aggs : Fin a → AggCall n)
 
+omit cols out fold keys aggs in
+/-- Without an aggregate inside, the aggregate-aware evaluator's value is the row evaluator's. -/
+theorem evalWithAgg_of_noAgg (db : SqlEquiv.Database) (us : List SqlEquiv.Row) (s : SqlEquiv.Row) :
+    ∀ (e : SqlEquiv.Expr) {v : SqlEquiv.Value}, SqlEquiv.hasAggregate e = false →
+      SqlEquiv.evalExprWithAggParam ee db us s e = some v → SqlEquiv.evalExprWithDb db s e = some v
+  | .binOp op l r, v, hag, h => by
+    simp only [SqlEquiv.hasAggregate, Bool.or_eq_false_iff] at hag
+    simp only [SqlEquiv.evalExprWithAggParam] at h
+    split at h
+    · rename_i a b ha hb
+      rw [SqlEquiv.evalExprWithDb_binOp, evalWithAgg_of_noAgg db us s l hag.1 ha,
+        evalWithAgg_of_noAgg db us s r hag.2 hb]
+      exact h
+    · cases h
+  | .unaryOp op x, v, hag, h => by
+    simp only [SqlEquiv.hasAggregate] at hag
+    simp only [SqlEquiv.evalExprWithAggParam] at h
+    split at h
+    · rename_i a ha
+      rw [SqlEquiv.evalExprWithDb_unaryOp, evalWithAgg_of_noAgg db us s x hag ha]
+      exact h
+    · cases h
+  | .agg .., _, hag, _ | .countStar, _, hag, _ => by simp [SqlEquiv.hasAggregate] at hag
+  | .func name args, v, hag, h => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
+    exact h
+  | .case bs els, v, hag, h => by
+    unfold SqlEquiv.evalExprWithAggParam at h
+    rw [if_neg (by simp [hag])] at h
+    exact h
+  | .inList x neg vs, v, hag, h => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
+    exact h
+  | .between x lo hi, v, hag, h => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
+    exact h
+  | .lit _, v, _, h | .col _, v, _, h | .inSubquery .., v, _, h | .exists .., v, _, h
+  | .subquery _, v, _, h | .windowFn .., v, _, h => by
+    simpa [SqlEquiv.evalExprWithAggParam, ee] using h
+
 /-- A `HAVING` predicate over the aggregate's output elaborates the untyped one: literals,
     aggregates of step 3a (their output column), key columns (their key column), comparisons,
     `AND`, `OR`, `NOT`. -/
@@ -326,6 +366,12 @@ inductive TranslatesH : SqlEquiv.Expr → Expr (g + a) → Prop
       TranslatesH (.binOp .or x y) (.binary .or (retypeNull out x' y') (retypeNull out y' x'))
   | not {x : SqlEquiv.Expr} {x' : Expr (g + a)} : TranslatesH x x' →
       TranslatesH (.unaryOp .not x) (.unary .not x')
+  /-- `x BETWEEN lo AND hi` (roadmap step 4): `x >= lo AND x <= hi` in both evaluators. -/
+  | between {x lo hi : SqlEquiv.Expr} {x' lo' hi' : Expr (g + a)} :
+      TranslatesH x x' → TranslatesH lo lo' → TranslatesH hi hi' →
+      TranslatesH (.between x lo hi)
+        (.binary .and (.binary (.cmp .ge) x' (retypeNull out lo' x'))
+          (.binary (.cmp .le) x' (retypeNull out hi' x')))
 
 /-- On a group's output row, a `HAVING` predicate that evaluates relates to `SqlEquiv`'s value of
     it over the group's rows and sample row. -/
@@ -415,8 +461,47 @@ theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {
     obtain ⟨va, hva, hra⟩ := iha hn hea
     obtain ⟨v, hv, hrel⟩ := not_agree hra hd
     exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hv], hrel⟩
+  | @between x lo hi x' lo' hi' _ _ _ ihx ihlo ihhi =>
+    intro hnb d h
+    obtain ⟨⟨hc₁, hnx, hnlo⟩, ⟨hc₂, -, hnhi⟩⟩ := hnb
+    obtain ⟨d₁, d₂, h₁, h₂, hd⟩ := eval_binary_ok h
+    obtain ⟨dx, dlo, hex, helo, hd₁⟩ := eval_binary_ok h₁
+    obtain ⟨dx', dhi, hex', hehi, hd₂⟩ := eval_binary_ok h₂
+    rw [hex, Except.ok.injEq] at hex'; subst hex'
+    rw [eval_retypeNull] at helo hehi
+    obtain ⟨vx, hvx, hrx⟩ := ihx hnx hex
+    obtain ⟨vlo, hvlo, hrlo⟩ := ihlo (noBoolOrder_of_retypeNull out x' hnlo) helo
+    obtain ⟨vhi, hvhi, hrhi⟩ := ihhi (noBoolOrder_of_retypeNull out x' hnhi) hehi
+    have hnobool : ∀ {c : CmpOp} (_ : c = .eq ∨ c = .ne ∨ ∃ τ, x'.typeOf Δ = some τ ∧ τ ≠ .bool),
+        c ≠ .eq → c ≠ .ne → ∀ (p q : Bool) (o : Datum),
+          ¬ (dx = some (.bool p) ∧ o = some (.bool q)) := by
+      intro c hc h1 h2 p q o hpq
+      rcases hc with hc | hc | ⟨τ, hτ, hτb⟩
+      · exact h1 hc
+      · exact h2 hc
+      · rcases Expr.eval_ok_or_divisionByZero hconf hτ with ⟨d', hd', hty⟩ | ⟨hdz, _⟩
+        · rw [hex] at hd'; cases hd'
+          rw [hpq.1] at hty
+          exact hτb (by simpa [Datum.HasType, Value.type] using hty.symm)
+        · rw [hex] at hdz; cases hdz
+    obtain ⟨v₁, hv₁, hr₁⟩ := cmp_agree (op := .ge) rfl hrx hrlo
+      (fun h1 h2 p q => hnobool hc₁ h1 h2 p q dlo) hd₁
+    obtain ⟨v₂, hv₂, hr₂⟩ := cmp_agree (op := .le) rfl hrx hrhi
+      (fun h1 h2 p q => hnobool hc₂ h1 h2 p q dhi) hd₂
+    obtain ⟨v, hv, hrel⟩ := and_agree hr₁ hr₂ hd
+    refine ⟨v, ?_, hrel⟩
+    by_cases hag : SqlEquiv.hasAggregate (.between x lo hi) = true
+    · simp only [SqlEquiv.evalExprWithAggParam, hag, ↓reduceIte, hvx, hvlo, hvhi, hv₁, hv₂, hv]
+    · have hag' : SqlEquiv.hasAggregate (.between x lo hi) = false := by simpa using hag
+      have hparts := hag'
+      simp only [SqlEquiv.hasAggregate, Bool.or_eq_false_iff] at hparts
+      simp only [SqlEquiv.evalExprWithAggParam, hag', Bool.false_eq_true, ↓reduceIte, ee]
+      rw [SqlEquiv.evalExprWithDb_between]
+      simp only [evalWithAgg_of_noAgg db us s x hparts.1.1 hvx,
+        evalWithAgg_of_noAgg db us s lo hparts.1.2 hvlo,
+        evalWithAgg_of_noAgg db us s hi hparts.2 hvhi, hv₁, hv₂, hv]
 /-- The `HAVING` predicates of step 3b-2: literals, key columns, aggregates of step 3a,
-    comparisons, `AND`, `OR`, `NOT`. -/
+    comparisons, `AND`, `OR`, `NOT`, and (roadmap step 4) `BETWEEN`. -/
 def havingFragment (groupBy : List SqlEquiv.Expr) : SqlEquiv.Expr → Bool
   | .lit _ => true
   | .col c => decide (SqlEquiv.Expr.col c ∈ groupBy)
@@ -425,7 +510,22 @@ def havingFragment (groupBy : List SqlEquiv.Expr) : SqlEquiv.Expr → Bool
      | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
      | _ => false) && havingFragment groupBy x && havingFragment groupBy y
   | .unaryOp .not x => havingFragment groupBy x
+  | .between x lo hi =>
+    havingFragment groupBy x && havingFragment groupBy lo && havingFragment groupBy hi
   | e => aggFragment e
+
+omit out keys aggs in
+theorem elab_between_not_col (x lo hi : SqlEquiv.Expr) {e'' : Expr n}
+    (h : elabExpr cols fold noHook (.between x lo hi) = .ok e'') : ∀ idx, e'' ≠ .col idx := by
+  simp only [elabExpr, noHook] at h
+  rcases hx : elabExpr cols fold noHook x with _ | x'
+  · simp [hx, bind, Except.bind] at h
+  rcases hlo : elabExpr cols fold noHook lo with _ | lo'
+  · simp [hx, hlo, bind, Except.bind] at h
+  rcases hhi : elabExpr cols fold noHook hi with _ | hi'
+  · simp [hx, hlo, hhi, bind, Except.bind] at h
+  simp only [hx, hlo, hhi, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+  subst h; simp
 
 omit out keys aggs in
 theorem elab_lit_not_col (v : SqlEquiv.Value) {e'' : Expr n}
@@ -588,8 +688,31 @@ theorem translatesH_of_elab : ∀ (h : SqlEquiv.Expr) {e' : Expr (keyList.length
       (by simpa [havingFragment] using hf) hsub h
   | .agg fn arg d, e', hf, hsub, h => agg_leaf cols fold keyList out aggs X hXa
       (by simpa [havingFragment] using hf) hsub h
+  | .between x lo hi, e', hf, hsub, h => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    obtain ⟨⟨hx, hlo⟩, hhi⟩ := hf
+    have hsx : ∀ z ∈ aggsOf x, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
+    have hslo : ∀ z ∈ aggsOf lo, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
+    have hshi : ∀ z ∈ aggsOf hi, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
+    unfold elabExpr at h
+    rw [aggHook_none cols fold _ X (findIdx_none_of_not_agg X groupBy hXf (by simp [aggFragment]) (by simp))
+      (fun i => hkc i) (fun _ h => elab_between_not_col cols fold x lo hi h)] at h
+    dsimp only at h
+    rcases hex : elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) x
+      with _ | x'
+    · simp_all [bind, Except.bind, pure, Except.pure]
+    rcases helo : elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) lo
+      with _ | lo'
+    · simp_all [bind, Except.bind, pure, Except.pure]
+    rcases hehi : elabExpr out fold (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) hi
+      with _ | hi'
+    · simp_all [bind, Except.bind, pure, Except.pure]
+    simp only [hex, helo, hehi, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    exact .between (translatesH_of_elab x hx hsx hex) (translatesH_of_elab lo hlo hslo helo)
+      (translatesH_of_elab hi hhi hshi hehi)
   | .func _ _, _, hf, _, _ | .case _ _, _, hf, _, _ | .inList _ _ _, _, hf, _, _
-  | .between _ _ _, _, hf, _, _ | .inSubquery _ _ _, _, hf, _, _ | .exists _ _, _, hf, _, _
+  | .inSubquery _ _ _, _, hf, _, _ | .exists _ _, _, hf, _, _
   | .subquery _, _, hf, _, _ | .windowFn _ _ _, _, hf, _, _ => by
     simp [havingFragment, aggFragment] at hf
 
@@ -620,8 +743,15 @@ theorem having_aggs {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
     all_goals simp [aggFragment] at hf
   | .countStar, hf, x, hx => by simp only [aggsOf, List.mem_singleton] at hx; subst hx; rfl
   | .agg _ _ _, hf, x, hx => by simp only [aggsOf, List.mem_singleton] at hx; subst hx; simpa [havingFragment] using hf
+  | .between p lo hi, hf, x, hx => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [aggsOf, List.mem_append] at hx
+    rcases hx with (hx | hx) | hx
+    · exact having_aggs p hf.1.1 x hx
+    · exact having_aggs lo hf.1.2 x hx
+    · exact having_aggs hi hf.2 x hx
   | .func _ _, hf, _, _ | .case _ _, hf, _, _ | .inList _ _ _, hf, _, _
-  | .between _ _ _, hf, _, _ | .inSubquery _ _ _, hf, _, _ | .exists _ _, hf, _, _
+  | .inSubquery _ _ _, hf, _, _ | .exists _ _, hf, _, _
   | .subquery _, hf, _, _ | .windowFn _ _ _, hf, _, _ => by simp [havingFragment, aggFragment] at hf
 
 theorem having_cols {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
@@ -641,8 +771,15 @@ theorem having_cols {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
     · exact having_cols p hf c (by simpa [colsOutsideAggs] using hc)
     all_goals simp [aggFragment] at hf
   | .countStar, _, c, hc | .agg _ _ _, _, c, hc => by simp [colsOutsideAggs] at hc
+  | .between p lo hi, hf, c, hc => by
+    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [colsOutsideAggs, List.mem_append] at hc
+    rcases hc with (hc | hc) | hc
+    · exact having_cols p hf.1.1 c hc
+    · exact having_cols lo hf.1.2 c hc
+    · exact having_cols hi hf.2 c hc
   | .func _ _, hf, _, _ | .case _ _, hf, _, _ | .inList _ _ _, hf, _, _
-  | .between _ _ _, hf, _, _ | .inSubquery _ _ _, hf, _, _ | .exists _ _, hf, _, _
+  | .inSubquery _ _ _, hf, _, _ | .exists _ _, hf, _, _
   | .subquery _, hf, _, _ | .windowFn _ _ _, hf, _, _ => by simp [havingFragment, aggFragment] at hf
 
 end SqlBridge.CorrectGroup
@@ -670,6 +807,8 @@ theorem TranslatesH.divSafe {n g a : ℕ} {cols : Fin n → Column} {out : Fin (
   | cmp _ _ _ iha ihb | and _ _ iha ihb | or _ _ iha ihb =>
     simp [Expr.divSafe, divSafe_retypeNull, iha, ihb, BinOp.isDivision]
   | not _ iha => simpa [Expr.divSafe] using iha
+  | between _ _ _ ihx ihlo ihhi =>
+    simp [Expr.divSafe, divSafe_retypeNull, ihx, ihlo, ihhi, BinOp.isDivision]
 
 end SqlBridge.CorrectGroup
 
