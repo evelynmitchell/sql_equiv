@@ -11,6 +11,7 @@ import SqlBridge.CorrectGroup
 import SqlBridge.CorrectGroupOrder
 import SqlBridge.CorrectGrouped
 import SqlBridge.CorrectDistinct
+import SqlBridge.CorrectSetOp
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -131,9 +132,35 @@ def distinctShape : SqlEquiv.Stmt → Bool
       stmt == SqlBridge.CorrectDistinct.distinctStmt items f wh
   | _ => false
 
+/-- `SqlBridge.CorrectSetOp.Leaf`: a branch of a set operation is a statement of
+    `elabStmt_correct_join`, `_distinct`, `_agg` or `_grouped` without `ORDER BY`, `LIMIT` or
+    `OFFSET`, and in the grouped case without an `AVG` item. -/
+def leafShape : SqlEquiv.Query → Bool
+  | q@(.simple (.mk _ items _ _ _ _ [] none none)) =>
+    stmtShape (.query q) || distinctShape (.query q) || aggShape (.query q) ||
+      (groupedShape (.query q) &&
+        items.all fun it => !SqlBridge.CorrectAvg.avgFragment (itemExpr it))
+  | _ => false
+
+/-- `SqlBridge.CorrectSetOp.SetOpTree Leaf`, with at least one set operation. -/
+partial def setOpTreeShape : SqlEquiv.Query → Bool
+  | .compound l _ r => subTree l && subTree r
+  | _ => false
+where
+  subTree : SqlEquiv.Query → Bool
+    | .compound l _ r => subTree l && subTree r
+    | q => leafShape q
+
+/-- The shape of `elabStmt_correct_setOp`: `UNION [ALL]`, `INTERSECT` and `EXCEPT`, nested, over
+    such branches; no `ORDER BY`/`LIMIT` over the whole. -/
+def setOpShape : SqlEquiv.Stmt → Bool
+  | .query q => setOpTreeShape q
+  | _ => false
+
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
-  stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s
+  stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
+    setOpShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -471,5 +498,76 @@ def distinctSpider (sql : String) : Bool :=
 #guard !distinctSpider "SELECT DISTINCT age FROM singer LIMIT 1"
 #guard !distinctSpider "SELECT DISTINCT age FROM singer ORDER BY age"
 #guard !distinctSpider "SELECT DISTINCT count(*) FROM singer"
+
+/-- Spider-shaped set operations have the shape of `elabStmt_correct_setOp` and elaborate under
+    the folding schema. -/
+def setOpSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => setOpShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+#guard setOpSpider ("SELECT name FROM singer WHERE age > 40 INTERSECT " ++
+  "SELECT name FROM singer WHERE age < 30")
+#guard setOpSpider ("SELECT name FROM singer EXCEPT SELECT T1.name FROM singer AS T1 " ++
+  "JOIN song AS T2 ON T1.singer_id = T2.singer_id")
+#guard setOpSpider "SELECT name FROM singer UNION ALL SELECT name FROM singer WHERE age > 20"
+-- a chain, and DISTINCT, aggregate and grouped branches (a bare column next to the key)
+#guard setOpSpider ("SELECT name FROM singer UNION SELECT title FROM song EXCEPT " ++
+  "SELECT name FROM singer WHERE age > 20")
+#guard setOpSpider "SELECT DISTINCT name FROM singer INTERSECT SELECT name FROM singer"
+#guard setOpSpider "SELECT count(*) FROM singer UNION SELECT max(age) FROM singer"
+#guard setOpSpider ("SELECT singer_id, name FROM singer GROUP BY singer_id HAVING count(*) >= 1 " ++
+  "INTERSECT SELECT singer_id, name FROM singer GROUP BY singer_id HAVING count(*) > 3")
+-- outside: a trailing ORDER BY or LIMIT (the kept rows can differ, T18), an AVG branch (related
+-- only up to rounding), a bare column without GROUP BY, a single SELECT
+#guard !setOpSpider "SELECT name FROM singer UNION SELECT name FROM singer ORDER BY 1"
+#guard !setOpSpider "SELECT name FROM singer UNION SELECT name FROM singer LIMIT 1"
+#guard !setOpSpider "SELECT avg(age) FROM singer UNION SELECT avg(age) FROM singer"
+#guard !setOpSpider ("SELECT name, avg(age) FROM singer GROUP BY name UNION " ++
+  "SELECT name, age FROM singer")
+#guard !setOpSpider "SELECT name, max(age) FROM singer UNION SELECT name, age FROM singer"
+#guard !setOpSpider "SELECT name FROM singer"
+-- the coverage report agrees on each, and names the branch that keeps a query outside
+#guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer" == []
+#guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer ORDER BY 1" ==
+  [SqlBridge.Coverage.orderCompound]
+#guard featuresSqlite "SELECT avg(age) FROM singer UNION SELECT avg(age) FROM singer" ==
+  [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite "SELECT name, max(age) FROM singer UNION SELECT name, age FROM singer" ==
+  [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer WHERE name LIKE 'A%'" ==
+  [SqlBridge.Coverage.like]
+-- branch shapes on which the report and the theorem's leaves could drift apart: a grouped
+-- branch with an AVG item, a bare column next to COUNT without GROUP BY, DISTINCT over an
+-- aggregate, a nested set operation with a bad branch (`featuresSqlite` says "disagrees" if so)
+#guard featuresSqlite ("SELECT name, avg(age) FROM singer GROUP BY name UNION " ++
+  "SELECT name, age FROM singer") == [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite "SELECT name, count(*) FROM singer UNION SELECT name, age FROM singer" ==
+  [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite "SELECT DISTINCT name, max(age) FROM singer UNION SELECT name, age FROM singer"
+  != []
+#guard featuresSqlite ("SELECT name FROM singer UNION SELECT name FROM singer EXCEPT " ++
+  "SELECT avg(age) FROM singer") == [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite ("SELECT name, count(*) FROM singer GROUP BY name INTERSECT " ++
+  "SELECT name, count(*) FROM singer GROUP BY name HAVING count(*) > 1") == []
+#guard featuresSqlite "SELECT count(*) FROM singer UNION SELECT count(DISTINCT name) FROM singer" == []
+
+/-- `elabStmt_correct_setOp`'s hypothesis is satisfiable: a plain branch and a `DISTINCT` branch
+    under `INTERSECT` form a `SetOpTree` of `Leaf`s, and the statement elaborates. -/
+def setOpExample : SqlEquiv.Query :=
+  .compound
+    (.simple (.mk false [.exprItem (.col ⟨none, "name"⟩) none]
+      (some (.table ⟨"singer", none⟩)) none [] none [] none none))
+    .intersect
+    (.simple (.mk true [.exprItem (.col ⟨none, "name"⟩) none]
+      (some (.table ⟨"singer", none⟩)) none [] none [] none none))
+
+example : SqlBridge.CorrectSetOp.SetOpTree (SqlBridge.CorrectSetOp.Leaf singerSchema)
+    setOpExample :=
+  .node _ (.leaf (.plain rfl rfl (by simp))) (.leaf (.distinct rfl rfl (by simp)))
+
+#guard SqlEquiv.parse "SELECT name FROM singer INTERSECT SELECT DISTINCT name FROM singer"
+  (dialect := .sqlite) == .ok (.query setOpExample)
+#guard (elabStmt singerSchema (.query setOpExample)).toBool
 
 end SqlCoreTest.CorrectExamples

@@ -51,6 +51,7 @@ def arithmetic := "arithmetic"
 def inList := "IN list"
 def distinct := "DISTINCT"
 def subquery := "subquery/set operation/CTE"
+def setOpBranch := "set operation branch with ORDER BY/LIMIT, AVG or a bare column"
 def like := "LIKE"
 def function := "scalar function"
 def caseExpr := "CASE"
@@ -227,12 +228,34 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     if plainGroup then (match o.expr with | .agg _ (some a) _ => exprFeatures a | _ => [])
     else exprFeatures o.expr)
 
-/-- Features of a query outside the fragment. -/
+/-- A branch of a set operation (mirrors `SqlBridge.CorrectSetOp.Leaf`): a statement of the
+    earlier steps whose result is related exactly or up to order. So besides its own features:
+    no `ORDER BY`, `LIMIT` or `OFFSET`, no `AVG` item (related only up to rounding), and no bare
+    column without `GROUP BY` (`elabStmt_correct_aggBare` is not among the leaves). -/
+partial def branchFeatures (s : SelectStmt) : List String :=
+  let hasAvg := s.items.any fun
+    | .exprItem (.agg (.avg _) _ _) _ => true
+    | _ => false
+  let bareNoGroup := !s.distinct && s.groupBy.isEmpty &&
+    s.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
+    s.items.any (fun | .exprItem (.col _) _ => true | _ => false)
+  selectFeatures s ++
+    (if !s.orderBy.isEmpty || s.limitVal.isSome || s.offsetVal.isSome || hasAvg || bareNoGroup
+     then [setOpBranch] else [])
+
+/-- Features of a query outside the fragment. A set operation (`elabStmt_correct_setOp`) is in
+    the fragment when its branches are; one under a trailing `ORDER BY`/`LIMIT` is not. -/
 partial def queryFeatures : Query → List String
   | .simple s => selectFeatures s
-  | .compound l _ r => subquery :: queryFeatures l ++ queryFeatures r
+  | .compound l _ r => branchQueryFeatures l ++ branchQueryFeatures r
   | .withCTE _ q => subquery :: queryFeatures q
   | .ordered q _ _ _ => orderCompound :: queryFeatures q
+
+/-- The same for a branch of a set operation. -/
+partial def branchQueryFeatures : Query → List String
+  | .simple s => branchFeatures s
+  | .compound l _ r => branchQueryFeatures l ++ branchQueryFeatures r
+  | q => subquery :: queryFeatures q
 
 end
 
