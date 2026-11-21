@@ -9,8 +9,12 @@ Validates that each axiom/theorem is exercised by the test suite by:
 4. Reporting which axioms have no test coverage
 
 Additional modes:
-- --runtime: Static runtime coverage (test-name matching, no build)
+- --runtime: Static runtime coverage (test-name matching, no build, no file edits)
 - --theorems: Include public theorems from Equiv/ and LSpec `-- covers:` annotations
+
+WARNING: without --runtime, the script edits source files in place (it comments out one
+declaration at a time, rebuilds, and restores the file), and with --theorems that takes hours.
+Do not edit the tree while it runs. Use `--runtime --theorems` for the static report.
 
 Usage:
     python tools/axiom_coverage_validator.py                    # Run all axioms
@@ -431,18 +435,45 @@ def save_runtime_report(analysis: dict, path: Path) -> None:
 # File manipulation (comment-out / restore)
 # ---------------------------------------------------------------------------
 
-def comment_out_axiom(file_path: Path, axiom: AxiomLocation) -> str:
-    """Comment out an axiom. Returns original file content for restoration."""
+class ConcurrentEditError(RuntimeError):
+    """The file under test was edited by someone else while a declaration was commented out."""
+
+
+def comment_out_axiom(file_path: Path, axiom: AxiomLocation) -> tuple[str, str]:
+    """Comment out a declaration. Returns (original, mutated) file contents for restoration."""
     original = file_path.read_text()
     lines = original.splitlines(keepends=True)
     for idx in range(axiom.start_line, axiom.end_line + 1):
         lines[idx] = "-- " + lines[idx]
-    file_path.write_text("".join(lines))
-    return original
+    mutated = "".join(lines)
+    file_path.write_text(mutated)
+    return original, mutated
 
 
-def restore_file(file_path: Path, original: str) -> None:
-    """Restore a file and verify the restoration succeeded."""
+def restore_file(file_path: Path, original: str, mutated: str | None = None) -> None:
+    """Restore a file and verify the restoration succeeded.
+
+    If `mutated` is given and the file no longer holds it, someone edited the file while the
+    declaration was commented out (this happened on 19 Nov 2026: the restore overwrote an edit).
+    Then the edit is kept: only the commented-out block is put back, if it is still there
+    unchanged, and `ConcurrentEditError` is raised so the run stops (its line numbers are stale).
+    """
+    current = file_path.read_text()
+    if mutated is not None and current != mutated:
+        o_lines = original.splitlines(keepends=True)
+        m_lines = mutated.splitlines(keepends=True)
+        changed = [i for i, (a, b) in enumerate(zip(o_lines, m_lines)) if a != b]
+        o_block = "".join(o_lines[changed[0]:changed[-1] + 1]) if changed else ""
+        m_block = "".join(m_lines[changed[0]:changed[-1] + 1]) if changed else ""
+        if m_block and current.count(m_block) == 1:
+            file_path.write_text(current.replace(m_block, o_block))
+            raise ConcurrentEditError(
+                f"{file_path} was edited during the run. The edit was kept and the "
+                f"commented-out declaration restored. Stopping: line numbers are stale.")
+        raise ConcurrentEditError(
+            f"CRITICAL: {file_path} was edited during the run and the commented-out "
+            f"declaration could not be located. The file was left as it is; check it for a "
+            f"block of lines starting with '-- ' and compare with `git diff`.")
     file_path.write_text(original)
     if file_path.read_text() != original:
         raise RuntimeError(f"CRITICAL: failed to restore {file_path}")
@@ -480,10 +511,11 @@ def test_single_axiom(
     """Comment out one axiom, build, optionally run tests, restore."""
     fpath = Path(axiom.file_path)
     original: str | None = None
+    mutated: str | None = None
     t0 = time.time()
 
     try:
-        original = comment_out_axiom(fpath, axiom)
+        original, mutated = comment_out_axiom(fpath, axiom)
 
         # -- build --
         try:
@@ -517,7 +549,7 @@ def test_single_axiom(
 
     finally:
         if original is not None:
-            restore_file(fpath, original)
+            restore_file(fpath, original, mutated)
 
 
 def _result(
@@ -661,6 +693,14 @@ def run_axiom_tests(
 
     signal.signal(signal.SIGINT, on_sigint)
 
+    # A terminated run (SIGTERM, e.g. a stopped background task) must still restore the file:
+    # raising here unwinds through `test_single_axiom`'s `finally`.
+    def on_sigterm(signum, frame):
+        raise SystemExit("Terminated: restoring the file under test and stopping.")
+
+    orig_term = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, on_sigterm)
+
     total = len(axioms)
     for i, axiom in enumerate(axioms):
         if axiom.name in completed_names:
@@ -671,7 +711,11 @@ def run_axiom_tests(
         label = f"[{i + 1}/{total}] {axiom.name} ({axiom.short_file}:{axiom.start_line + 1})"
         print(f"{label} ...", end=" ", flush=True)
 
-        result = test_single_axiom(axiom, args.build_timeout, args.test_timeout)
+        try:
+            result = test_single_axiom(axiom, args.build_timeout, args.test_timeout)
+        except ConcurrentEditError as exc:
+            save_checkpoint(results, checkpoint_path)
+            sys.exit(f"\n{exc}")
         results.append(result)
 
         tag = {
@@ -685,6 +729,7 @@ def run_axiom_tests(
         save_checkpoint(results, checkpoint_path)
 
     signal.signal(signal.SIGINT, orig_handler)
+    signal.signal(signal.SIGTERM, orig_term)
     return results
 
 
@@ -795,6 +840,8 @@ def parse_args() -> argparse.Namespace:
                    help="Only parse and list all declarations")
     p.add_argument("--ci", action="store_true",
                    help="CI mode: skip interactive prompts")
+    p.add_argument("--self-test", action="store_true",
+                   help="Check the comment-out/restore logic on a temporary file and exit")
     p.add_argument("--runtime", action="store_true",
                    help="Static runtime coverage: match test names to axiom names (no build)")
     p.add_argument("--theorems", action="store_true",
@@ -808,8 +855,52 @@ def parse_args() -> argparse.Namespace:
 # Main
 # ---------------------------------------------------------------------------
 
+def self_test() -> None:
+    """The restore logic on a temporary file: a plain round trip, an edit made elsewhere in the
+    file during the run (kept; the block is restored; the run stops), and an edit of the
+    commented-out block itself (the file is left alone, with a loud error)."""
+    import tempfile
+    src = ("theorem a : True := trivial\n\ntheorem b : True :=\n  trivial\n\n"
+           "theorem c : True := trivial\n")
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "a.lean"
+        loc = AxiomLocation(name="b", file_path=str(f), start_line=2, end_line=3,
+                            kind="theorem", source_lines=[])
+        f.write_text(src)
+        original, mutated = comment_out_axiom(f, loc)
+        assert "-- theorem b" in f.read_text()
+        restore_file(f, original, mutated)
+        assert f.read_text() == src, "round trip"
+
+        f.write_text(src)
+        original, mutated = comment_out_axiom(f, loc)
+        f.write_text(f.read_text().replace("theorem c ", "theorem c2 "))
+        try:
+            restore_file(f, original, mutated)
+            raise AssertionError("an edit during the run was not detected")
+        except ConcurrentEditError:
+            pass
+        assert f.read_text() == src.replace("theorem c ", "theorem c2 "), "edit kept, block restored"
+
+        f.write_text(src)
+        original, mutated = comment_out_axiom(f, loc)
+        edited = f.read_text().replace("--   trivial", "--   by trivial")
+        f.write_text(edited)
+        try:
+            restore_file(f, original, mutated)
+            raise AssertionError("an edit of the block was not detected")
+        except ConcurrentEditError as exc:
+            assert "CRITICAL" in str(exc)
+        assert f.read_text() == edited, "file left alone"
+    print("Self-test passed: restore keeps concurrent edits (3 cases)")
+
+
 def main() -> None:
     args = parse_args()
+
+    if args.self_test:
+        self_test()
+        return
 
     include_theorems = getattr(args, "theorems", False)
 

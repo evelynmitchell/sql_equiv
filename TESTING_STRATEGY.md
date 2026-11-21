@@ -35,7 +35,11 @@ engines.
 - **Axiom ratchet** (`tools/axiom_coverage_validator.py --runtime`,
   `tools/axiom_count_minimum.txt` = 0): a leftover from when the library had axioms. With none
   left it finds no declarations and passes `0 >= 0`, so it checks nothing today; pointing it at
-  theorems is #181. Do not read its green as coverage.
+  theorems is #181. Do not read its green as coverage. The validator has two kinds of mode:
+  with `--runtime` it only matches names in text files; without it, it comments declarations
+  out in the source files one at a time and rebuilds (hours with `--theorems`). Never edit the
+  tree while the second kind runs. If that happens anyway, the restore step keeps the edit and
+  stops the run (`--self-test` checks this in CI).
 
 ### 3. Unit tests (`lake exe sql_equiv_test`)
 
