@@ -45,6 +45,12 @@ def corpus : List (String × Expect) := [
   ("SELECT name || '!' FROM users", .agree),
   ("SELECT name FROM users WHERE age BETWEEN 25 AND 30", .agree),
   ("SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30", .agree),
+  -- BETWEEN with a NULL bound or operand: `e >= lo AND e <= hi` in three-valued logic
+  ("SELECT name FROM users WHERE age BETWEEN NULL AND 30", .agree),
+  ("SELECT name FROM users WHERE NOT (age BETWEEN 28 AND NULL)", .agree),
+  ("SELECT name, staff BETWEEN 10 AND 30 FROM museum", .agree),
+  ("SELECT department FROM users GROUP BY department HAVING COUNT(*) BETWEEN 2 AND 3", .agree),
+  ("SELECT department, COUNT(*) FROM users GROUP BY department HAVING department BETWEEN 'A' AND 'N'", .agree),
   ("SELECT name FROM users WHERE department IN ('Sales', 'Marketing')", .agree),
   ("SELECT name FROM users WHERE department NOT IN ('Sales', 'Marketing')", .agree),
   ("SELECT name FROM users WHERE age IN (25, NULL)", .agree),

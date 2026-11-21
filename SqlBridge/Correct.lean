@@ -268,7 +268,7 @@ open SqlCore
 variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
 
 /-- The typed expression elaborates the untyped one, in the fragment of #309: literals, columns,
-    comparisons, `AND`, `OR` and `NOT`. `retypeNull` only gives an untyped `NULL` operand a type. -/
+    comparisons, `AND`, `OR`, `NOT` and (roadmap step 4) `BETWEEN`. `retypeNull` only gives an untyped `NULL` operand a type. -/
 inductive Translates : SqlEquiv.Expr → Expr n → Prop
   | lit {v : SqlEquiv.Value} {w : Value} : elabValue v = some w → Translates (.lit v) (.lit w)
   | litNull {v : SqlEquiv.Value} (τ : SqlType) : elabValue v = none →
@@ -285,6 +285,12 @@ inductive Translates : SqlEquiv.Expr → Expr n → Prop
       Translates (.binOp .or a b) (.binary .or (retypeNull cols a' b') (retypeNull cols b' a'))
   | not {a : SqlEquiv.Expr} {a' : Expr n} : Translates a a' →
       Translates (.unaryOp .not a) (.unary .not a')
+  /-- `e BETWEEN lo AND hi` (roadmap step 4): both evaluators read it as `e >= lo AND e <= hi`. -/
+  | between {e lo hi : SqlEquiv.Expr} {e' lo' hi' : Expr n} :
+      Translates e e' → Translates lo lo' → Translates hi hi' →
+      Translates (.between e lo hi)
+        (.binary .and (.binary (.cmp .ge) e' (retypeNull cols lo' e'))
+          (.binary (.cmp .le) e' (retypeNull cols hi' e')))
 
 /-- No ordering comparison (`<`, `<=`, `>`, `>=`) has boolean operands: the typed core orders
     `false < true`, `SqlEquiv` does not order booleans (#309 excludes this case). -/
@@ -421,9 +427,44 @@ theorem Translates.eval_rel {Γ : Fin n → SqlType} (db : SqlEquiv.Database) {r
     obtain ⟨va, hva, hra⟩ := iha hn hea
     obtain ⟨v, hv, hrel⟩ := not_agree hra hd
     exact ⟨v, by rw [SqlEquiv.evalExprWithDb_unaryOp, hva, hv], hrel⟩
+  | @between e lo hi e' lo' hi' _ _ _ ihe ihlo ihhi =>
+    intro hnb d h
+    obtain ⟨⟨hc₁, hne, hnlo⟩, ⟨hc₂, -, hnhi⟩⟩ := hnb
+    obtain ⟨d₁, d₂, h₁, h₂, hd⟩ := eval_binary_ok h
+    obtain ⟨de, dlo, hee, helo, hd₁⟩ := eval_binary_ok h₁
+    obtain ⟨de', dhi, hee', hehi, hd₂⟩ := eval_binary_ok h₂
+    rw [hee, Except.ok.injEq] at hee'; subst hee'
+    rw [eval_retypeNull] at helo hehi
+    obtain ⟨ve, hve, hre⟩ := ihe hne hee
+    obtain ⟨vlo, hvlo, hrlo⟩ := ihlo (noBoolOrder_of_retypeNull cols e' hnlo) helo
+    obtain ⟨vhi, hvhi, hrhi⟩ := ihhi (noBoolOrder_of_retypeNull cols e' hnhi) hehi
+    -- an ordering comparison: the operand `e'` is not boolean
+    have hnobool : ∀ (hc : CmpOp.ge = .eq ∨ CmpOp.ge = .ne ∨ ∃ τ, e'.typeOf Γ = some τ ∧ τ ≠ .bool)
+        (x y : Bool) (o : Datum), ¬ (de = some (.bool x) ∧ o = some (.bool y)) := by
+      intro hc x y o hxy
+      rcases hc with hc | hc | ⟨τ, hτ, hτb⟩
+      · cases hc
+      · cases hc
+      · rcases Expr.eval_ok_or_divisionByZero hr hτ with ⟨d', hd', hty⟩ | ⟨hdz, _⟩
+        · rw [hee] at hd'; cases hd'
+          rw [hxy.1] at hty
+          exact hτb (by simpa [Datum.HasType, Value.type] using hty.symm)
+        · rw [hee] at hdz; cases hdz
+    have hc₂' : CmpOp.ge = .eq ∨ CmpOp.ge = .ne ∨ ∃ τ, e'.typeOf Γ = some τ ∧ τ ≠ .bool := by
+      rcases hc₂ with hc | hc | h3
+      · cases hc
+      · cases hc
+      · exact .inr (.inr h3)
+    obtain ⟨v₁, hv₁, hr₁⟩ := cmp_agree (op := .ge) rfl hre hrlo
+      (fun _ _ x y => hnobool hc₁ x y dlo) hd₁
+    obtain ⟨v₂, hv₂, hr₂⟩ := cmp_agree (op := .le) rfl hre hrhi
+      (fun _ _ x y => hnobool hc₂' x y dhi) hd₂
+    obtain ⟨v, hv, hrel⟩ := and_agree hr₁ hr₂ hd
+    exact ⟨v, by rw [SqlEquiv.evalExprWithDb_between]; simp only [hve, hvlo, hvhi, hv₁, hv₂, hv],
+      hrel⟩
 
-/-- The untyped expressions of the #309 fragment: literals, columns, comparisons, `AND`, `OR` and
-    `NOT`. -/
+/-- The untyped expressions of the #309 fragment: literals, columns, comparisons, `AND`, `OR`,
+    `NOT` and (roadmap step 4) `BETWEEN`. -/
 def isFragment : SqlEquiv.Expr → Bool
   | .lit _ => true
   | .col _ => true
@@ -432,6 +473,7 @@ def isFragment : SqlEquiv.Expr → Bool
      | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
      | _ => false) && isFragment a && isFragment b
   | .unaryOp .not a => isFragment a
+  | .between e lo hi => isFragment e && isFragment lo && isFragment hi
   | _ => false
 
 /-- Elaborating a fragment expression (without a hook, names folded by `fold`) gives a translation. -/
@@ -484,8 +526,22 @@ theorem translates_of_elab : ∀ (e : SqlEquiv.Expr) {e' : Expr n}, isFragment e
     exact .not (translates_of_elab a hf hea)
   | .func _ _, _, hf, _ | .agg _ _ _, _, hf, _ | .countStar, _, hf, _
   | .«case» _ _, _, hf, _ | .inList _ _ _, _, hf, _ | .inSubquery _ _ _, _, hf, _
-  | .exists _ _, _, hf, _ | .subquery _, _, hf, _ | .between _ _ _, _, hf, _
+  | .exists _ _, _, hf, _ | .subquery _, _, hf, _
   | .windowFn _ _ _, _, hf, _ => by simp [isFragment] at hf
+  | .between x lo hi, e', hf, h => by
+    simp only [isFragment, Bool.and_eq_true] at hf
+    obtain ⟨⟨hx, hlo⟩, hhi⟩ := hf
+    simp only [elabExpr, noHook] at h
+    rcases hex : elabExpr cols fold noHook x with _ | x'
+    · simp [hex, bind, Except.bind] at h
+    rcases helo : elabExpr cols fold noHook lo with _ | lo'
+    · simp [hex, helo, bind, Except.bind] at h
+    rcases hehi : elabExpr cols fold noHook hi with _ | hi'
+    · simp [hex, helo, hehi, bind, Except.bind] at h
+    simp only [hex, helo, hehi, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    exact .between (translates_of_elab x hx hex) (translates_of_elab lo hlo helo)
+      (translates_of_elab hi hhi hehi)
 
 end Exprs
 
@@ -652,7 +708,10 @@ theorem aggsOf_frag : ∀ e, isFragment e = true → aggsOf e = []
   | .unaryOp .not a, h => by simp [aggsOf, aggsOf_frag a (by simpa [isFragment] using h)]
   | .unaryOp .neg _, h | .unaryOp .isNull _, h | .unaryOp .isNotNull _, h => by simp [isFragment] at h
   | .func .., h | .agg .., h | .countStar, h | .«case» .., h | .inList .., h | .inSubquery .., h
-  | .exists .., h | .subquery .., h | .between .., h | .windowFn .., h => by simp [isFragment] at h
+  | .exists .., h | .subquery .., h | .windowFn .., h => by simp [isFragment] at h
+  | .between x lo hi, h => by
+    simp only [isFragment, Bool.and_eq_true] at h
+    simp [aggsOf, aggsOf_frag x h.1.1, aggsOf_frag lo h.1.2, aggsOf_frag hi h.2]
 
 def itemsFragment : List SqlEquiv.SelectItem → Bool
   | [] => true
@@ -668,7 +727,10 @@ theorem subsOf_frag : ∀ e, isFragment e = true → subsOf e = []
   | .unaryOp .not a, h => by simp [subsOf, subsOf_frag a (by simpa [isFragment] using h)]
   | .unaryOp .neg _, h | .unaryOp .isNull _, h | .unaryOp .isNotNull _, h => by simp [isFragment] at h
   | .func .., h | .agg .., h | .countStar, h | .«case» .., h | .inList .., h | .inSubquery .., h
-  | .exists .., h | .subquery .., h | .between .., h | .windowFn .., h => by simp [isFragment] at h
+  | .exists .., h | .subquery .., h | .windowFn .., h => by simp [isFragment] at h
+  | .between x lo hi, h => by
+    simp only [isFragment, Bool.and_eq_true] at h
+    simp [subsOf, subsOf_frag x h.1.1, subsOf_frag lo h.1.2, subsOf_frag hi h.2]
 
 theorem aggsOfList_items {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
     (hf : ∀ e al, f (.exprItem e al) = some e) : ∀ items, itemsFragment items = true →
@@ -848,7 +910,10 @@ theorem hasAggregate_frag : ∀ e, isFragment e = true → SqlEquiv.hasAggregate
     simp [SqlEquiv.hasAggregate, hasAggregate_frag a (by simpa [isFragment] using h)]
   | .unaryOp .neg _, h | .unaryOp .isNull _, h | .unaryOp .isNotNull _, h => by simp [isFragment] at h
   | .func .., h | .agg .., h | .countStar, h | .«case» .., h | .inList .., h | .inSubquery .., h
-  | .exists .., h | .subquery .., h | .between .., h | .windowFn .., h => by simp [isFragment] at h
+  | .exists .., h | .subquery .., h | .windowFn .., h => by simp [isFragment] at h
+  | .between x lo hi, h => by
+    simp only [isFragment, Bool.and_eq_true] at h
+    simp [SqlEquiv.hasAggregate, hasAggregate_frag x h.1.1, hasAggregate_frag lo h.1.2, hasAggregate_frag hi h.2]
 
 theorem hasWindowFn_frag : ∀ e, isFragment e = true → SqlEquiv.exprHasWindowFn e = false
   | .lit _, _ => by simp [SqlEquiv.exprHasWindowFn]
@@ -860,7 +925,10 @@ theorem hasWindowFn_frag : ∀ e, isFragment e = true → SqlEquiv.exprHasWindow
     simp [SqlEquiv.exprHasWindowFn, hasWindowFn_frag a (by simpa [isFragment] using h)]
   | .unaryOp .neg _, h | .unaryOp .isNull _, h | .unaryOp .isNotNull _, h => by simp [isFragment] at h
   | .func .., h | .agg .., h | .countStar, h | .«case» .., h | .inList .., h | .inSubquery .., h
-  | .exists .., h | .subquery .., h | .between .., h | .windowFn .., h => by simp [isFragment] at h
+  | .exists .., h | .subquery .., h | .windowFn .., h => by simp [isFragment] at h
+  | .between x lo hi, h => by
+    simp only [isFragment, Bool.and_eq_true] at h
+    simp [SqlEquiv.exprHasWindowFn, hasWindowFn_frag x h.1.1, hasWindowFn_frag lo h.1.2, hasWindowFn_frag hi h.2]
 
 theorem selectHasAggregate_frag : ∀ items, itemsFragment items = true →
     SqlEquiv.selectHasAggregate items = false

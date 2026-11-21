@@ -29,7 +29,8 @@ on the row where its argument is extreme), with an
 optional `HAVING`, ordered by such aggregates or key columns, with `LIMIT`/`OFFSET`, and
 `elabStmt_correct_aggBare` (`SqlBridge/CorrectAggBare.lean`) for aggregates next to bare
 columns without `GROUP BY`; both take `AVG` items, related up to `SqlEquiv`'s rounding
-(`SqlBridge/CorrectAvg.lean`). Counts are of the
+(`SqlBridge/CorrectAvg.lean`). `BETWEEN` is in the expression and `HAVING` fragments.
+Counts are of the
 elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
 `docs/TYPED_CORE_PLAN.md`. The theorem covers Spider's schemas, which fold names to
@@ -38,8 +39,7 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 403 |
-| after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 407 |
+| Today | 407 |
 | after 5. DISTINCT | 429 |
 
 Still outside after step 5 (queries using each feature):
@@ -48,6 +48,7 @@ Still outside after step 5 (queries using each feature):
 - LIKE: 8
 - *: 2
 - AVG: 2
+- aggregate/GROUP BY: 2
 
 ## Failure classes (largest first)
 
