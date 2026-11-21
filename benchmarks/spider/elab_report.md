@@ -34,7 +34,7 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 380 |
+| Today | 381 |
 | after 3b-5. bare columns at a MIN/MAX, ordering by a key column | 384 |
 | after 4. IS NULL, negation, arithmetic, IN list, BETWEEN | 388 |
 | after 5. DISTINCT | 410 |

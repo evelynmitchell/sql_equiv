@@ -20,7 +20,7 @@ open SqlBridge.CorrectOrder (itemsNamed outName)
 open SqlBridge.CorrectJoin (fromFragment joinStmt)
 open SqlBridge.CorrectAgg (aggItems aggStmt itemExpr)
 open SqlBridge.CorrectGroup (groupItems groupStmt havingFragment colRefs)
-open SqlBridge.CorrectGrouped (groupedItems groupedStmt)
+open SqlBridge.CorrectGrouped (groupedItems groupedStmt isMinMax)
 open SqlBridge.CorrectAgg (aggFragment)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
@@ -72,11 +72,11 @@ def aggShape : SqlEquiv.Stmt → Bool
       stmt == aggStmt items f wh
   | _ => false
 
-/-- The shape of `elabStmt_correct_grouped` (roadmap steps 3b-1 to 3b-4): column keys, items
+/-- The shape of `elabStmt_correct_grouped` (roadmap steps 3b-1 to 3b-5): column keys, items
     aggregates or columns, an optional `HAVING` in `havingFragment`, `ORDER BY` aggregates, an
     optional `LIMIT`/`OFFSET`; with sort keys, no output name dotted or starting with
     `__group_orderkey_` (ignoring case); with a bare column (an item column not grouped), no
-    `MIN`/`MAX` anywhere (`BareFirst`). -/
+    `MIN`/`MAX` anywhere, or exactly one, not DISTINCT, in a mode that picks a row (`BareOk`). -/
 def groupedShape : SqlEquiv.Stmt → Bool
   | stmt@(.query (.simple (.mk false items (some f) wh groupBy having orderBy lim off))) =>
     groupedItems items && !groupBy.isEmpty &&
@@ -87,7 +87,13 @@ def groupedShape : SqlEquiv.Stmt → Bool
       ((colRefs items).all (fun c => groupBy.contains (.col c)) ||
         (items.all (fun it => (SqlEquiv.minMaxCalls (itemExpr it)).isEmpty) &&
           having.all (fun h => (SqlEquiv.minMaxCalls h).isEmpty) &&
-          orderBy.all (fun o => (SqlEquiv.minMaxCalls o.expr).isEmpty))) &&
+          orderBy.all (fun o => (SqlEquiv.minMaxCalls o.expr).isEmpty)) ||
+        (match SqlEquiv.selectMinMaxCalls items having with
+         | [(w, m, some arg, false)] =>
+           m.bareRow && ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+             orderBy.map SqlEquiv.OrderByItem.expr).eraseDups.filter isMinMax ==
+               [.agg (if w then .max m else .min m) (some arg) false]
+         | _ => false)) &&
       stmt == groupedStmt items f wh groupBy having orderBy lim off
   | _ => false
 
@@ -163,9 +169,31 @@ def features (sql : String) : List String :=
 #guard features "SELECT AVG(age) FROM users" == ["AVG", "aggregate/GROUP BY"]
 #guard features "SELECT SUM(age + 1) FROM users" == ["arithmetic"]
 #guard features "SELECT department, COUNT(*) FROM users GROUP BY department" == []
--- a bare column (step 3b-4): in the fragment without MIN/MAX, outside next to one
+-- a bare column (steps 3b-4, 3b-5): in the fragment without MIN/MAX; next to one MIN/MAX only in
+-- the sqlite dialect, whose MIN/MAX picks the row (`MinMaxMode.bareRow`), and not next to two, or
+-- to one DISTINCT
 #guard features "SELECT name, COUNT(*) FROM users GROUP BY department" == []
 #guard features "SELECT name, MAX(age) FROM users GROUP BY department" == ["aggregate/GROUP BY"]
+
+/-- `features` under the sqlite dialect, with the check that the report agrees with the shape. -/
+def featuresSqlite (sql : String) : List String :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok s =>
+    let fs := SqlBridge.Coverage.outsideFragment s
+    if fs.isEmpty == (stmtShape s || aggShape s || groupedShape s) then fs else ["disagrees"]
+  | .error _ => ["parse error"]
+
+#guard featuresSqlite "SELECT name, MAX(age) FROM users GROUP BY department" == []
+#guard featuresSqlite "SELECT name, MAX(age) FROM users GROUP BY department HAVING MAX(age) > 1" == []
+-- `ORDER BY MIN(age)` alone: `SqlEquiv` reads the first row, sqlite the extreme one (T9, open)
+#guard featuresSqlite "SELECT name FROM users GROUP BY department ORDER BY MIN(age)" ==
+  ["ORDER BY expression", "aggregate/GROUP BY"]
+#guard featuresSqlite "SELECT name, MAX(age), MIN(age) FROM users GROUP BY department" ==
+  ["aggregate/GROUP BY"]
+#guard featuresSqlite "SELECT name, MAX(DISTINCT age) FROM users GROUP BY department" ==
+  ["aggregate/GROUP BY"]
+#guard featuresSqlite "SELECT name, MAX(age) FROM users GROUP BY department ORDER BY MIN(age)" ==
+  ["ORDER BY expression", "aggregate/GROUP BY", "unnamed item with ORDER BY"]
 #guard features "SELECT department FROM users GROUP BY department HAVING COUNT(*) > 1 AND MAX(age) < 60" == []
 #guard features "SELECT department FROM users GROUP BY department HAVING SUM(age + 1) > 1" == ["arithmetic"]
 
@@ -255,7 +283,7 @@ def aggSpider (sql : String) : Bool :=
 #guard !aggSpider "SELECT max(age), name FROM singer"
 #guard !aggSpider "SELECT sum(name) FROM singer"
 
-/-- Spider-shaped grouped queries (roadmap steps 3b-1 to 3b-4) have the shape of
+/-- Spider-shaped grouped queries (roadmap steps 3b-1 to 3b-5) have the shape of
     `elabStmt_correct_grouped` and elaborate under the folding schema. -/
 def groupedSpider (sql : String) : Bool :=
   match SqlEquiv.parse sql (dialect := .sqlite) with
@@ -284,12 +312,34 @@ def groupedSpider (sql : String) : Bool :=
   "T1.singer_id = T2.singer_id GROUP BY T1.singer_id HAVING count(*) >= 2")
 #guard groupedSpider "SELECT age FROM singer GROUP BY age HAVING count(*) > 1 ORDER BY count(*)"
 #guard groupedSpider "SELECT age FROM singer GROUP BY age LIMIT 2"
+-- 3b-5: a bare column next to one `MIN`/`MAX` reads the row where its argument is extreme
+#guard groupedSpider "SELECT name, max(age) FROM singer GROUP BY singer_id"
+#guard groupedSpider "SELECT Name, Singer_ID, min(Age) FROM singer GROUP BY Singer_ID"
+#guard groupedSpider "SELECT name FROM singer GROUP BY age HAVING max(singer_id) > 1 ORDER BY max(singer_id)"
 -- Outside: a key column as sort key, `AVG`, a `HAVING` column that is no key; a bare column next
--- to a `MIN`/`MAX` (it reads the extreme row, a later sub-step).
+-- to two `MIN`/`MAX` calls, or to one with DISTINCT
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY age"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY avg(singer_id)"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
-#guard !groupedSpider "SELECT name, max(age) FROM singer GROUP BY singer_id"
-#guard !groupedSpider "SELECT name FROM singer GROUP BY age ORDER BY min(singer_id)"
+#guard !groupedSpider "SELECT name, max(age), min(age) FROM singer GROUP BY singer_id"
+#guard !groupedSpider "SELECT name, max(DISTINCT age) FROM singer GROUP BY singer_id"
+#guard !groupedSpider "SELECT name, max(age) FROM singer GROUP BY age ORDER BY min(singer_id)"
+
+/-- `BareOk`'s third case (step 3b-5) is satisfiable by a statement that elaborates: a bare
+    `name` next to the one `max(age)`, parsed in the sqlite dialect (`bareRow`). -/
+def extremeMode : SqlEquiv.MinMaxMode := { mixed := .typeClass, bools := .asInt, bareRow := true }
+def extremeItems : List SqlEquiv.SelectItem :=
+  [.exprItem (.col ⟨none, "name"⟩) none,
+   .exprItem (.agg (.max extremeMode) (some (.col ⟨none, "age"⟩)) false) none]
+
+example : SqlBridge.CorrectGrouped.BareOk singerSchema extremeItems
+    [.col ⟨none, "singer_id"⟩] none [] :=
+  .inr (.inr ⟨rfl, true, extremeMode, .col ⟨none, "age"⟩, rfl, by decide, by decide⟩)
+
+#guard SqlEquiv.parse "SELECT name, max(age) FROM singer GROUP BY singer_id" (dialect := .sqlite) ==
+  .ok (.query (.simple (.mk false extremeItems (some (.table ⟨"singer", none⟩)) none
+    [.col ⟨none, "singer_id"⟩] none [] none none)))
+#guard (elabStmt singerSchema (groupedStmt extremeItems (.table ⟨"singer", none⟩) none
+  [.col ⟨none, "singer_id"⟩] none [] none none)).toBool
 
 end SqlCoreTest.CorrectExamples
