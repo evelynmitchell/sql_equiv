@@ -396,6 +396,27 @@ example : ∀ T j, singerSchema.fold (singerSchema.S.columns T j).name =
     (singerSchema.S.columns T j).name := by
   simp only [singerSchema, SqlBridge.Spider.schemaOf]; decide +kernel
 
+/-- The two hypotheses of an `AVG` comparison (`SqlBridge.CorrectSub.AvgWhere`) hold here: no
+    column is a decimal, so a column is not one among the columns of any `FROM` tree
+    (`NonDecimalIn`); and over a table of at most `10¹⁶` rows the average of a column has a
+    denominator within the bound (`AvgBound`). -/
+theorem singerSchema_noDecimal : ∀ T j, (singerSchema.S.columns T j).type ≠ .decimal := by
+  simp only [singerSchema, SqlBridge.Spider.schemaOf]; decide +kernel
+
+example (f : SqlEquiv.FromClause) (hff : fromFragment f = true) (c : SqlEquiv.ColumnRef) :
+    SqlBridge.CorrectSub.NonDecimalIn singerSchema f (.col c) :=
+  SqlBridge.CorrectSub.nonDecimalIn_col singerSchema singerSchema_noDecimal hff c
+
+example {D : SqlCore.Database singerSchema.S} (hD : D.Conforms)
+    (hB : ∀ T, (D T).length ≤ 10 ^ SqlEquiv.avgPlaces) :
+    SqlBridge.CorrectSub.AvgBound singerSchema D
+      (.mk false [.exprItem (.agg (.avg .asInt) (some (.col ⟨none, "age"⟩)) false) none]
+        (some (.table ⟨"singer", none⟩)) none [] none [] none none) :=
+  SqlBridge.CorrectSub.avgBound_of_rows singerSchema (fun _ _ => Iff.rfl) hD rfl rfl
+    (fun _ h => by cases h)
+    (SqlBridge.CorrectSub.nonDecimalIn_col singerSchema singerSchema_noDecimal rfl _)
+    (fun qf cf Rf h hRf => SqlBridge.CorrectSub.fromRows_table singerSchema _ hB _ qf cf Rf h hRf)
+
 /-- Mixed-case references, as Spider writes them, are in the fragment and elaborate under the
     folding schema, so `elabStmt_correct` applies to them. -/
 def inFragmentSpider (sql : String) : Bool :=

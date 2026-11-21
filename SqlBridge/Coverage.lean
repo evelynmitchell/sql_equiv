@@ -269,9 +269,10 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   -- that takes the first row of several (sqlite, as Spider is). Under `GROUP BY` too
   -- (`elabStmt_correct_grouped_inSub`).
   -- A scalar node over an `AVG` body (`AvgWhere`): compared with a column or an integer literal.
-  -- The theorem also wants that operand not a decimal and the average's denominator at most
-  -- `10¹⁶`, which the shape cannot see: the count assumes no decimal columns (Spider's typing
-  -- has none) and tables under that size.
+  -- The theorem also wants that operand not a decimal (`nonDecimalIn_col`: true of a column
+  -- in a schema without decimal columns, as Spider's typing is) and the average's denominator
+  -- at most `10¹⁶` (`avgBound_of_rows`: true when `FROM` has at most that many rows), which
+  -- the shape cannot see: the count assumes that schema and that size.
   (match s.whereClause.bind holeSplit, s.whereClause with
    | some (xs, cmp, nd), _ =>
      let probe := match nd with | .inSubquery e _ _ => exprFeatures e | _ => []
