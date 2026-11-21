@@ -12,6 +12,7 @@ import SqlBridge.CorrectGroupOrder
 import SqlBridge.CorrectGrouped
 import SqlBridge.CorrectDistinct
 import SqlBridge.CorrectSetOp
+import SqlBridge.CorrectSub
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -157,22 +158,51 @@ def setOpShape : SqlEquiv.Stmt → Bool
   | .query q => setOpTreeShape q
   | _ => false
 
-/-- The shape of `elabStmt_correct_inSub` (step 6b): a statement of `elabStmt_correct_join` whose
-    `WHERE` is `e [NOT] IN (SELECT …)`, the probe in the expression fragment and the body a
-    statement of `elabStmt_correct_join` without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+/-- `SqlBridge.CorrectSub.InSubWhere` (step 6b, names folded to lowercase):
+    `[a AND] e [NOT] IN (SELECT …)`, `a` and the probe in the expression fragment, `a` not
+    referring to the hidden column's name, and the body a statement of `elabStmt_correct_join`
+    without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+def inSubWhereB : SqlEquiv.Expr → Bool
+  | .inSubquery e _ (.simple (.mk false items' (some f') wh' [] none [] none none)) =>
+    isFragment e && itemsFragment items' && fromFragment f' && wh'.all isFragment
+  | .binOp .and a (.inSubquery e _ (.simple (.mk false items' (some f') wh' [] none [] none none))) =>
+    isFragment a && SqlBridge.CorrectSub.noRefTo String.toLower "?subquery?" a &&
+      isFragment e && itemsFragment items' && fromFragment f' && wh'.all isFragment
+  | _ => false
+
+/-- The shape of `elabStmt_correct_inSub`: a statement of `elabStmt_correct_join` with such a
+    `WHERE`. -/
 def inSubShape : SqlEquiv.Stmt → Bool
-  | .query (.simple (.mk false items (some f) (some (.inSubquery e _
-      (.simple (.mk false items' (some f') wh' [] none [] none none)))) [] none orderBy _ _)) =>
-    itemsFragment items && fromFragment f && isFragment e &&
-      itemsFragment items' && fromFragment f' && wh'.all isFragment &&
+  | .query (.simple (.mk false items (some f) (some w) [] none orderBy _ _)) =>
+    itemsFragment items && fromFragment f && inSubWhereB w &&
       orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) &&
       (orderBy.isEmpty || itemsNamed items)
+  | _ => false
+
+/-- The shape of `elabStmt_correct_distinct_inSub`. -/
+def distinctInSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk true items (some f) (some w) [] none [] none none)) =>
+    itemsFragment items && fromFragment f && inSubWhereB w
+  | _ => false
+
+/-- The shape of `elabStmt_correct_agg_inSub`. -/
+def aggInSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some f) (some w) [] none [] none none)) =>
+    aggItems items && !items.isEmpty && fromFragment f && inSubWhereB w
+  | _ => false
+
+/-- The shape of `elabStmt_correct_aggBare_inSub`. -/
+def aggBareInSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some f) (some w) [] none [] none none)) =>
+    groupedItems items && items.any (fun it => itemAggFragment (itemExpr it)) && fromFragment f &&
+      bareOkB items [] none [] && inSubWhereB w
   | _ => false
 
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
   stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
-    setOpShape s || inSubShape s
+    setOpShape s || inSubShape s || distinctInSubShape s || aggInSubShape s ||
+    aggBareInSubShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -594,11 +624,18 @@ def inSubSpider (sql : String) : Bool :=
   "singer AS T1 JOIN song AS T2 ON T1.singer_id = T2.singer_id WHERE T1.age > 20)")
 #guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song) " ++
   "ORDER BY name LIMIT 2")
--- outside for now: the subquery under AND, an aggregate or DISTINCT outer query, and a body
+-- outside `inSubShape`: an aggregate or DISTINCT outer query (their own shapes), and a body
 -- that is not a plain statement (DISTINCT, GROUP BY, LIMIT, an aggregate, a set operation)
-#guard !inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
+#guard inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)")
+-- the other order, and OR, are not `InSubWhere` clauses
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song) AND age > 20")
+#guard !inSubSpider ("SELECT name FROM singer WHERE age > 20 OR singer_id NOT IN " ++
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider "SELECT count(*) FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)"
+#guard !inSubSpider ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)")
 #guard !inSubSpider ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
@@ -616,9 +653,31 @@ def inSubSpider (sql : String) : Bool :=
 -- the coverage report agrees on each (`featuresSqlite` says "disagrees" otherwise)
 #guard featuresSqlite "SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)" == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT count(*) FROM singer WHERE age > 20 AND singer_id IN " ++
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song) AND age > 20") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 OR singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song) LIMIT 1") != []
+#guard featuresSqlite ("SELECT name FROM singer WHERE name LIKE 'A%' AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.like]
+-- under aggregates without GROUP BY (`elabStmt_correct_agg_inSub`), also next to an AVG or a
+-- bare column (`elabStmt_correct_aggBare_inSub`): inside; with GROUP BY, not yet
 #guard featuresSqlite ("SELECT count(*) FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT min(age), count(DISTINCT name) FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song WHERE title = 'x')") == []
+#guard featuresSqlite ("SELECT avg(age) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song) GROUP BY name") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT DISTINCT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
@@ -628,7 +687,5 @@ def inSubSpider (sql : String) : Bool :=
 -- (parenthesised: the parser reads `a + 1 NOT IN (…)` as `a + (1 NOT IN (…))`, #400)
 #guard featuresSqlite ("SELECT name FROM singer WHERE (singer_id + 1) NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.arithmetic]
-#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song) GROUP BY name") != []
 
 end SqlCoreTest.CorrectExamples
