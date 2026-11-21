@@ -9,7 +9,7 @@
 import SqlBridge.CorrectSetOp
 
 namespace SqlBridge.CorrectSub
-open SqlCore SqlBridge SqlBridge.Correct
+open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder
 
 /-- The untyped value of a truth value. -/
 def truthValue : Truth → SqlEquiv.Value
@@ -130,7 +130,7 @@ theorem inExpr_eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : R
       obtain ⟨t, ht', h⟩ := SqlBridge.CorrectOrder.bind_ok h
       simp only [pure, Except.pure, Except.ok.injEq] at h
       exact ⟨de, t, hde, ht', by simp [h]⟩
-    · simp only [↓reduceIte, Expr.eval, Expr.eval_inList] at h
+    · simp only [↓reduceIte, Expr.eval] at h
       obtain ⟨dl, hdl, h⟩ := SqlBridge.CorrectOrder.bind_ok h
       obtain ⟨de, hde, hdl⟩ := SqlBridge.CorrectOrder.bind_ok hdl
       obtain ⟨t, ht', hdl⟩ := SqlBridge.CorrectOrder.bind_ok hdl
@@ -176,5 +176,110 @@ theorem filter_rel_of {Γ : Fin n → SqlType} {x : Expr n}
     · exact .cons hru ih
 
 end Pred
+
+/-! ### Part 3: the elaborated `WHERE e [NOT] IN (…)` -/
+
+/-- The elaborated `WHERE e [NOT] IN (sq)`: the subquery body elaborates to a one-column query,
+    the probe elaborates over the `FROM` columns, and the result attaches the membership test as
+    a last column, filters on it and projects it away. -/
+theorem elabWhere_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
+    {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {e : SqlEquiv.Expr} {neg : Bool}
+    {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n}
+    (h : elabWhere N sub cols q (some (.inSubquery e neg sq)) = .ok q₀) :
+    ∃ (r : Elaborated N.S) (h1 : r.n = 1) (e' : Expr n), sub sq = .ok r ∧
+      elabExpr cols N.fold noHook e = .ok e' ∧
+      q₀ = .project (fun i : Fin n => .col (Fin.castLE (Nat.le_succ n) i))
+        (.select (.col (Fin.last n)) (.attach (.inSub neg e') (h1 ▸ r.q) q)) := by
+  simp only [elabWhere, subsOf, List.foldl_cons, List.foldl_nil, List.any_nil, Bool.false_eq_true,
+    ↓reduceIte, List.nil_append, List.isEmpty_cons, List.mapM_cons, List.mapM_nil] at h
+  rcases hs : sub sq with err | r
+  · rw [hs] at h
+    cases err <;> first
+      | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
+      | (dsimp only at h; split at h <;>
+          simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
+  rw [hs] at h
+  by_cases h1 : r.n = 1
+  swap
+  · simp [h1, throw, throwThe, MonadExceptOf.throw, bind, Except.bind, pure, Except.pure] at h
+  simp only [h1, ↓reduceDIte, pure, Except.pure, bind, Except.bind, List.foldlM_cons,
+    List.foldlM_nil] at h
+  rcases he : elabExpr cols N.fold noHook e with err | e'
+  · simp [he] at h
+  simp only [he] at h
+  rw [elabExpr] at h
+  simp only [List.findIdx?_cons, beq_self_eq_true, ↓reduceIte, Nat.add_zero, Nat.lt_add_one,
+    ↓reduceDIte, pure, Except.pure, Nat.le_add_right] at h
+  simp only [Except.ok.injEq] at h
+  subst h
+  exact ⟨r, h1, e', rfl, rfl, rfl⟩
+
+/-- **The attach–filter–project pipeline keeps the rows `SqlEquiv` keeps.** The input rows get
+    the value of `x` as a last column, the rows where it is TRUE are kept, and the column is
+    dropped; when `x` relates row by row to an untyped predicate, the result relates to the
+    untyped rows filtered by it. -/
+theorem attachFilter_rel {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+    {Γ : Fin n → SqlType} {x : Expr n}
+    (pred : SqlEquiv.Row → Option SqlEquiv.Value)
+    (hpt : ∀ r u, RowRel cols fold r u → r.Conforms Γ → ∀ d, x.eval r = .ok d →
+      ∃ v, pred u = some v ∧ DatumRel d v) :
+    ∀ {R : List (Row n)} {U : List SqlEquiv.Row},
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U →
+      ∀ {E F : List (Row (n + 1))} {R' : List (Row n)},
+      R.mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x])) = .ok E →
+      (Expr.col (Fin.last n)).filterRows E = .ok F →
+      F.mapM (Expr.evalRow (fun i : Fin n => Expr.col (Fin.castLE (Nat.le_succ n) i))) = .ok R' →
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R'
+        (U.filter fun u => pred u == some (.bool true))
+  | _, _, .nil, E, F, R', hE, hF, hR' => by
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hE
+    subst hE
+    simp only [Expr.filterRows, List.filterMapM_nil, pure, Except.pure, Except.ok.injEq] at hF
+    subst hF
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hR'
+    subst hR'
+    exact .nil
+  | r :: R, u :: U, .cons hru hrest, E, F, R', hE, hF, hR' => by
+    rw [List.mapM_cons] at hE
+    obtain ⟨e₁, he₁, hE⟩ := bind_ok hE
+    obtain ⟨E', hE', hE⟩ := bind_ok hE
+    simp only [pure, Except.pure, Except.ok.injEq] at hE
+    subst hE
+    obtain ⟨t, F'', hte, hF'', rfl⟩ := filterRows_cons_ok hF
+    have hcells := Expr.evalRow_eq_ok_iff.mp he₁
+    have hL : Fin.last n = Fin.natAdd n (0 : Fin 1) := by ext; simp
+    have hlast : x.eval r = .ok (e₁ (Fin.last n)) := by
+      have := hcells (Fin.last n)
+      rw [hL, Fin.append_right] at this
+      rw [hL]; simpa using this
+    have hinit : ∀ j : Fin n, e₁ (Fin.castLE (Nat.le_succ n) j) = r j := by
+      intro j
+      have hC : Fin.castLE (Nat.le_succ n) j = Fin.castAdd 1 j := by ext; simp
+      have := hcells (Fin.castAdd 1 j)
+      rw [Fin.append_left] at this
+      rw [hC]
+      simpa using this.symm
+    have hdt : (e₁ (Fin.last n)).toTruth = .ok t := by
+      simpa [Expr.evalTruth, bind, Except.bind] using hte
+    obtain ⟨v, hv, hrel⟩ := hpt r u hru.1 hru.2 _ hlast
+    have key := isTrue_iff_where hrel hdt
+    rw [← hv] at key
+    simp only [List.filter_cons, ← key]
+    cases htt : t.isTrue
+    · simp only [htt, Bool.false_eq_true, ↓reduceIte] at hR' ⊢
+      exact attachFilter_rel cols fold pred hpt hrest hE' hF'' hR'
+    · simp only [htt, ↓reduceIte] at hR' ⊢
+      rw [List.mapM_cons] at hR'
+      obtain ⟨r₁, hr₁, hR'⟩ := bind_ok hR'
+      obtain ⟨R'', hR'', hR'⟩ := bind_ok hR'
+      simp only [pure, Except.pure, Except.ok.injEq] at hR'
+      subst hR'
+      have hr₁' : r₁ = r := by
+        funext j
+        have := Expr.evalRow_eq_ok_iff.mp hr₁ j
+        simp only [Expr.eval_col, Except.ok.injEq] at this
+        rw [← this, hinit]
+      subst hr₁'
+      exact .cons hru (attachFilter_rel cols fold pred hpt hrest hE' hF'' hR'')
 
 end SqlBridge.CorrectSub
