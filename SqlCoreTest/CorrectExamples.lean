@@ -20,7 +20,7 @@ open SqlBridge.CorrectOrder (itemsNamed outName)
 open SqlBridge.CorrectJoin (fromFragment joinStmt)
 open SqlBridge.CorrectAgg (aggItems aggStmt itemExpr)
 open SqlBridge.CorrectGroup (groupItems groupStmt havingFragment colRefs)
-open SqlBridge.CorrectGrouped (groupedItems groupedStmt isMinMax)
+open SqlBridge.CorrectGrouped (groupedItems groupedStmt isMinMax itemAggFragment)
 open SqlBridge.CorrectAgg (aggFragment)
 
 /-- The test schema's column names have no dots and are distinct ignoring case. -/
@@ -82,7 +82,7 @@ def bareOkB (items : List SqlEquiv.SelectItem) (groupBy : List SqlEquiv.Expr)
       orderBy.all (fun o => (SqlEquiv.minMaxCalls o.expr).isEmpty)) ||
     (match SqlEquiv.selectMinMaxCalls items having with
      | [(w, m, some arg, false)] =>
-       m.bareRow && ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+       m.bareRow && ((items.map itemExpr).filter itemAggFragment ++ aggsOfOpt having ++
          orderBy.map SqlEquiv.OrderByItem.expr).eraseDups.filter isMinMax ==
            [.agg (if w then .max m else .min m) (some arg) false]
      | _ => false)
@@ -117,7 +117,7 @@ def groupedShape : SqlEquiv.Stmt → Bool
     columns, at least one aggregate, bare columns as `BareOk` allows, nothing after `WHERE`. -/
 def aggBareShape : SqlEquiv.Stmt → Bool
   | stmt@(.query (.simple (.mk false items (some f) wh [] none [] none none))) =>
-    groupedItems items && items.any (fun it => aggFragment (itemExpr it)) && fromFragment f &&
+    groupedItems items && items.any (fun it => itemAggFragment (itemExpr it)) && fromFragment f &&
       wh.all isFragment && bareOkB items [] none [] &&
       stmt == groupedStmt items f wh [] none [] none none
   | _ => false
@@ -191,7 +191,11 @@ def features (sql : String) : List String :=
 #guard features "SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id" == []
 #guard features "SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id" == ["outer join"]
 #guard features "SELECT COUNT(*), MAX(age) FROM users WHERE age > 1" == []
-#guard features "SELECT AVG(age) FROM users" == ["AVG", "aggregate/GROUP BY"]
+-- `AVG` as an item is in the fragment (step 3c), not in `HAVING`/`ORDER BY`
+#guard features "SELECT AVG(age) FROM users" == []
+#guard features "SELECT department, AVG(age) FROM users GROUP BY department" == []
+#guard features "SELECT department FROM users GROUP BY department HAVING AVG(age) > 1" ==
+  ["AVG", "aggregate/GROUP BY"]
 #guard features "SELECT SUM(age + 1) FROM users" == ["arithmetic"]
 #guard features "SELECT department, COUNT(*) FROM users GROUP BY department" == []
 -- a bare column (steps 3b-4, 3b-5): in the fragment without MIN/MAX; next to one MIN/MAX only in
@@ -345,13 +349,18 @@ def groupedSpider (sql : String) : Bool :=
 #guard groupedSpider "SELECT age, count(*) FROM singer GROUP BY age ORDER BY age"
 #guard groupedSpider "SELECT count(*) FROM singer GROUP BY age ORDER BY age DESC LIMIT 2"
 #guard groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY count(*), age"
--- Outside: a sort key column captured by another item's name or not a key, `AVG`, a `HAVING`
+-- 3c: `AVG` items, grouped or not (related up to rounding)
+#guard groupedSpider "SELECT age, avg(singer_id) FROM singer GROUP BY age"
+#guard groupedSpider "SELECT age, avg(singer_id) FROM singer GROUP BY age ORDER BY count(*) DESC LIMIT 1"
+-- Outside: a sort key column captured by another item's name or not a key, `AVG` in `ORDER BY`
+-- or `HAVING`, a `HAVING`
 -- column that is no key; a bare column next to two `MIN`/`MAX` calls, or to one with DISTINCT
 #guard !groupedSpider "SELECT count(*) AS age FROM singer GROUP BY age ORDER BY age"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY name"
 -- (the key is matched as written: `ORDER BY Age` after `GROUP BY age` stays outside)
 #guard !groupedSpider "SELECT count(*) FROM singer GROUP BY age ORDER BY Age"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY avg(singer_id)"
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING avg(singer_id) > 1"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
 #guard !groupedSpider "SELECT name, max(age), min(age) FROM singer GROUP BY singer_id"
 #guard !groupedSpider "SELECT name, max(DISTINCT age) FROM singer GROUP BY singer_id"
@@ -368,6 +377,9 @@ def aggBareSpider (sql : String) : Bool :=
 #guard aggBareSpider "select max(age), name from singer"
 #guard aggBareSpider "SELECT min(Singer_ID), Name FROM Singer WHERE age > 20"
 #guard aggBareSpider "SELECT count(*), name FROM singer"
+-- 3c: `AVG` items without `GROUP BY`, not with `DISTINCT`
+#guard aggBareSpider "SELECT avg(age), max(age), min(age) FROM singer"
+#guard !aggBareSpider "SELECT avg(DISTINCT age) FROM singer"
 -- Outside: no aggregate at all, two `MIN`/`MAX`, a `GROUP BY` (`groupedShape` instead), `LIMIT`
 #guard !aggBareSpider "SELECT name FROM singer"
 #guard !aggBareSpider "SELECT max(age), min(age), name FROM singer"

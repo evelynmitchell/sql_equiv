@@ -14,6 +14,7 @@
     alike (`TranslatesH.eval_rel`).
 -/
 import SqlBridge.CorrectAgg
+import SqlBridge.CorrectAvg
 
 namespace SqlBridge.CorrectGroup
 open SqlCore SqlBridge SqlBridge.Correct
@@ -474,7 +475,8 @@ section HavingElab
 variable {n a : ℕ} (cols : Fin n → Column) (fold : String → String) (keyList : List (Expr n))
   (out : Fin (keyList.length + a) → Column) (aggs : Fin a → AggCall n) (X : List SqlEquiv.Expr)
   (groupBy : List SqlEquiv.Expr)
-  (hXf : ∀ x ∈ X, aggFragment x = true ∨ ∃ c, x = .col c ∧ SqlEquiv.Expr.col c ∉ groupBy)
+  (hXf : ∀ x ∈ X, aggFragment x = true ∨ CorrectAvg.avgFragment x = true ∨
+    ∃ c, x = .col c ∧ SqlEquiv.Expr.col c ∉ groupBy)
   (hXa : ∀ j (hj : j < X.length), aggFragment X[j] = true →
     ∃ hja : j < a, elabAgg cols fold X[j] = .ok (aggs ⟨j, hja⟩))
   (hkc : ∀ i : Fin keyList.length, ∃ idx, keyList[i] = .col idx)
@@ -486,13 +488,15 @@ omit hXa hkc hkey in
 /-- An expression that is neither an aggregate nor a column outside `GROUP BY` (a bare column) is
     not in the aggregates' list. -/
 theorem findIdx_none_of_not_agg {e : SqlEquiv.Expr} (he : aggFragment e = false)
-    (hc : ∀ c, e = .col c → SqlEquiv.Expr.col c ∈ groupBy) :
+    (hc : ∀ c, e = .col c → SqlEquiv.Expr.col c ∈ groupBy)
+    (hv : CorrectAvg.avgFragment e = false := by simp [CorrectAvg.avgFragment]) :
     X.findIdx? (· == e) = none := by
   rw [List.findIdx?_eq_none_iff]
   intro y hy
   have hne : y ≠ e := by
     rintro rfl
-    rcases hXf y hy with h | ⟨c, rfl, hn⟩
+    rcases hXf y hy with h | h | ⟨c, rfl, hn⟩
+    · simp_all
     · simp_all
     · exact hn (hc c rfl)
   simpa using hne

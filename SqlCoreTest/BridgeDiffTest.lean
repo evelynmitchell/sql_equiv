@@ -11,6 +11,7 @@
 -/
 import SqlBridge.Elab
 import SqlCoreTest.SchemaDiffTest
+import SqlBridge.CorrectAvg
 
 namespace SqlCoreTest.BridgeDiff
 open SqlCore SqlBridge SqlCoreTest.SchemaExamples
@@ -28,6 +29,9 @@ inductive Expect where
   /-- `SqlEquiv` is wrong here (the issue is cited); the query must elaborate and evaluate, and
   `DuckdbDiffTest` checks it against DuckDB instead. -/
   | sqlEquivBug (issue : String)
+  /-- `SqlEquiv`'s rows equal the typed rows with every decimal rounded half away from zero to 16
+  places: a repeating `AVG` (registry row 7; `SqlBridge.CorrectAvg.AvgRel`, step 3c). -/
+  | agreeRounded
 
 def corpus : List (String × Expect) := [
   -- projection, selection, star
@@ -176,11 +180,13 @@ def corpus : List (String × Expect) := [
   ("SELECT COUNT(*) FROM users WHERE age > 100", .agree),
   -- AVG and decimal `/` (phase 8d): exact rationals (registry T3, T10). `SqlEquiv`'s AVG is exact
   -- when the quotient terminates within 16 places and rounded to 16 otherwise (registry row 7), so
-  -- terminating averages agree and a repeating one is checked against DuckDB instead; decimal `/`
-  -- is unimplemented there (#201).
+  -- terminating averages agree and a repeating one agrees once rounded (`AvgRel`, step 3c);
+  -- decimal `/` is unimplemented there (#201).
   ("SELECT AVG(age) FROM users", .agree),
   ("SELECT department, AVG(age) FROM users GROUP BY department", .agree),
-  ("SELECT AVG(age) FROM users WHERE id IN (1, 2, 4)", .sqlEquivBug "registry row 7: 83/3 is rounded to 16 places there"),
+  ("SELECT AVG(age) FROM users WHERE id IN (1, 2, 4)", .agreeRounded),
+  ("SELECT u.department, AVG(u.age), COUNT(*) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.department",
+    .agreeRounded),
   ("SELECT AVG(price), AVG(DISTINCT id) FROM items", .agree),
   ("SELECT department FROM users GROUP BY department HAVING AVG(age) > 26", .agree),
   ("SELECT AVG(staff) FROM museum WHERE staff > 100", .agree),
@@ -222,6 +228,15 @@ def newRows (e : Elaborated schema) : Except EvalError (List (List SqlEquiv.Valu
   (e.q.eval db).map fun rs => rs.map fun r =>
     (List.finRange e.n).map fun i => (ScalarDiff.datumToOld (r i)).getD (.null none)
 
+/-- The typed rows with every decimal rounded half away from zero to 16 places, as `SqlEquiv`
+rounds a repeating `AVG` (registry row 7). -/
+def newRowsRounded (e : Elaborated schema) : Except EvalError (List (List SqlEquiv.Value)) :=
+  (e.q.eval db).map fun rs => rs.map fun r =>
+    (List.finRange e.n).map fun i => match r i with
+      | some (.decimal q) =>
+        SqlEquiv.Value.mkDecimal (SqlBridge.CorrectAvg.roundHalfAway (q * 10 ^ 16)) 16
+      | d => (ScalarDiff.datumToOld d).getD (.null none)
+
 /-- Queries parsed in the `sqlite` dialect: `LIKE` is ASCII case-insensitive there (registry
 row 8; `BinOp.like true`). -/
 def sqliteCorpus : List String := [
@@ -262,6 +277,17 @@ def run : Nat × List String := Id.run do
       | .sqlEquivBug _, .error err => fails := s!"{sql}: did not elaborate: {err.category}" :: fails
       | .sqlEquivBug _, .ok e =>
         if (newRows e).toOption.isNone then fails := s!"{sql}: SqlCore error" :: fails
+      | .agreeRounded, .error err => fails := s!"{sql}: did not elaborate: {err.category}" :: fails
+      | .agreeRounded, .ok e =>
+        let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
+        match newRowsRounded e, newRows e, old with
+        | .ok nr, .ok exact, some or_ =>
+          if rowsFor sql nr != rowsFor sql or_ then
+            fails := s!"{sql}:\n    SqlCore rounded {rowsFor sql nr}\n    SqlEquiv {rowsFor sql or_}" :: fails
+          -- the case must exercise the rounding: the exact rows differ
+          if rowsFor sql exact == rowsFor sql or_ then
+            fails := s!"{sql}: no repeating AVG (use .agree)" :: fails
+        | _, _, _ => fails := s!"{sql}: evaluation failed" :: fails
       | .agree, .ok e =>
         let old := (SqlEquiv.evalStmt SemanticsTest.testDb stmt).2.map fun t => t.map (·.map (·.2))
         match newRows e, old with
