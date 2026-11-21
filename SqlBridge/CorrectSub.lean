@@ -102,4 +102,79 @@ theorem inSub_agree {d : Datum} {v : SqlEquiv.Value} (hd : DatumRel d v) {ss : L
     simp_all [Truth.not, Truth.toDatum, DatumRel] <;>
     exact ValRel.bool _
 
+/-! ### Part 3: the predicate, row by row -/
+
+section Pred
+variable {n : ℕ} (cols : Fin n → Column) (fold : String → String)
+
+/-- The typed expression of `e [NOT] IN (vals)`, as `SubKind.extra` builds it. -/
+def inExpr (neg : Bool) (e' : Expr n) (vals : List Datum) : Expr n :=
+  if neg then .unary .not (.inList e' vals) else .inList e' vals
+
+/-- **`e [NOT] IN (subquery)` on one row.** With the row related, the probe translated and the
+    subquery's values related to the rows `SqlEquiv` computes for this outer row, the typed
+    value relates to `SqlEquiv`'s. -/
+theorem inExpr_eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n}
+    {u : SqlEquiv.Row} (hrow : RowRel cols fold r u) (hr : r.Conforms Γ)
+    {e : SqlEquiv.Expr} {e' : Expr n} (ht : Translates cols fold e e') (hnb : NoBoolOrder Γ e')
+    {neg : Bool} {sq : SqlEquiv.SubQuery} {vals : List Datum}
+    (hsub : List.Forall₂ SubRowRel vals (SqlEquiv.evalSubQueryWithContext db u sq))
+    {d : Datum} (h : (inExpr neg e' vals).eval r = .ok d) :
+    ∃ v, SqlEquiv.evalExprWithDb db u (.inSubquery e neg sq) = some v ∧ DatumRel d v := by
+  have key : ∃ de t, e'.eval r = .ok de ∧ de.inList vals = .ok t ∧
+      d = if neg then t.not.toDatum else t.toDatum := by
+    unfold inExpr at h
+    cases neg
+    · simp only [Bool.false_eq_true, ↓reduceIte, Expr.eval_inList] at h
+      obtain ⟨de, hde, h⟩ := SqlBridge.CorrectOrder.bind_ok h
+      obtain ⟨t, ht', h⟩ := SqlBridge.CorrectOrder.bind_ok h
+      simp only [pure, Except.pure, Except.ok.injEq] at h
+      exact ⟨de, t, hde, ht', by simp [h]⟩
+    · simp only [↓reduceIte, Expr.eval, Expr.eval_inList] at h
+      obtain ⟨dl, hdl, h⟩ := SqlBridge.CorrectOrder.bind_ok h
+      obtain ⟨de, hde, hdl⟩ := SqlBridge.CorrectOrder.bind_ok hdl
+      obtain ⟨t, ht', hdl⟩ := SqlBridge.CorrectOrder.bind_ok hdl
+      simp only [pure, Except.pure, Except.ok.injEq] at hdl
+      subst hdl
+      simp [SqlCore.evalUnOp, Except.map, Functor.map] at h
+      exact ⟨de, t, hde, ht', by simp [h]⟩
+  obtain ⟨de, t, hde, ht', rfl⟩ := key
+  obtain ⟨v, hv, hd⟩ := Translates.eval_rel cols fold db hrow hr ht hnb hde
+  refine ⟨SqlEquiv.inSubqueryResult neg v (SqlEquiv.evalSubQueryWithContext db u sq), ?_,
+    inSub_agree hd hsub ht' neg⟩
+  rw [SqlEquiv.evalExprWithDb_inSubquery, hv]
+
+/-- `filter_rel` for any typed predicate that relates, row by row, to an untyped one. -/
+theorem filter_rel_of {Γ : Fin n → SqlType} {x : Expr n}
+    (pred : SqlEquiv.Row → Option SqlEquiv.Value)
+    (hpt : ∀ r u, RowRel cols fold r u → r.Conforms Γ → ∀ d, x.eval r = .ok d →
+      ∃ v, pred u = some v ∧ DatumRel d v) :
+    ∀ {R : List (Row n)} {U : List SqlEquiv.Row},
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R U →
+      ∀ {R' : List (Row n)}, x.filterRows R = .ok R' →
+      List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R'
+        (U.filter fun u => pred u == some (.bool true))
+  | _, _, .nil, R', h => by
+    simp only [Expr.filterRows, List.filterMapM_nil, pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact .nil
+  | r :: R, u :: U, .cons hru hrest, R', h => by
+    obtain ⟨t, R'', hte, hrs, rfl⟩ := filterRows_cons_ok h
+    have ih := filter_rel_of pred hpt hrest hrs
+    have hev : ∃ d, x.eval r = .ok d ∧ d.toTruth = .ok t := by
+      unfold Expr.evalTruth at hte
+      rcases he : x.eval r with _ | d
+      · simp [he, bind, Except.bind] at hte
+      · simp only [he, bind, Except.bind] at hte
+        exact ⟨d, rfl, hte⟩
+    obtain ⟨d, hd, hdt⟩ := hev
+    obtain ⟨v, hv, hrel⟩ := hpt r u hru.1 hru.2 d hd
+    have key := isTrue_iff_where hrel hdt
+    rw [← hv] at key
+    simp only [List.filter_cons, ← key]
+    cases t.isTrue
+    · exact ih
+    · exact .cons hru ih
+
+end Pred
+
 end SqlBridge.CorrectSub
