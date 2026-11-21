@@ -163,6 +163,13 @@ def corpus : List (String × Expect) := [
   ("SELECT u.name FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount = (SELECT MAX(amount) FROM orders)", .agree),
   ("SELECT COUNT(*), MAX(age) FROM users WHERE age > (SELECT MIN(age) FROM users)", .agree),
   ("SELECT DISTINCT department FROM users WHERE age <> (SELECT MAX(age) FROM users)", .orderDiffers),
+  -- an `AVG` body (`AvgWhere`): SqlEquiv compares with the average rounded to 16 places, the
+  -- typed core with the exact one; against an integer the outcome is the same
+  ("SELECT name FROM users WHERE age < (SELECT AVG(age) FROM users WHERE id < 4)", .agree),
+  ("SELECT name FROM users WHERE id > 1 AND age >= (SELECT AVG(age) FROM users)", .agree),
+  ("SELECT name FROM users WHERE 27 > (SELECT AVG(age) FROM users WHERE id > 99)", .agree),
+  ("SELECT department, COUNT(*) FROM users WHERE age > (SELECT AVG(age) FROM users) GROUP BY department", .agree),
+  ("SELECT COUNT(*) FROM users WHERE age <> (SELECT AVG(age) FROM users)", .agree),
   -- set operations keep the same rows in a different order (T18, `elabStmt_correct_setOp`): the
   -- typed core keeps the last copy of a duplicate, SqlEquiv the first; with LIMIT and no ORDER
   -- BY the rows differ

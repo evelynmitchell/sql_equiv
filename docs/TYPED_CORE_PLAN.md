@@ -144,9 +144,13 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
         or under `AND`, in a dialect that takes the first row of several (sqlite); the `IN`
         clauses get the same forms (`SubWhere`, replacing `InSubWhere`). Spider coverage
         **497**, up from 488
-      - [ ] Bodies that are an `AVG` (5 queries). **Decided 2026-11-21:** prove them under a
-        bound on the table's size (`SqlEquiv` rounds the quotient to 16 places; against an
-        integer that cannot change the comparison unless the row count is astronomical)
+      - [x] Bodies that are an `AVG` (5 queries; **decided 2026-11-21:** under a size bound).
+        `AvgWhere`: the compared expression is not a decimal (`NonDecimalIn`) and the average's
+        denominator is at most `10¹⁶` (`AvgBound`; with an integer argument it is at most the
+        number of rows averaged). `SqlEquiv` rounds the quotient to 16 places; against an
+        integer that cannot change the comparison under the bound (`cmp_agree_avg`). Also under
+        `GROUP BY` (`elabStmt_correct_grouped_inSub`, for every `AnySubWhere` clause). Spider
+        coverage **502**, up from 497
       - [ ] Bodies with `ORDER BY … LIMIT 1` (2 queries, one grouped)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
       **Left outside, decided 2026-11-21:** a full step (the `AggCall.first` shape has no
@@ -236,10 +240,11 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 6b (part). The same under aggregates without `GROUP BY` (done) | 483 |
 | 6b (part). The same next to `AVG` or bare columns (done) | 486 |
 | 6b (part). The clause under `AND`, and under `DISTINCT` (done) | 488 |
-| Today: 6c (part). Scalar subqueries over plain, `MIN`, `MAX`, `COUNT`, `SUM` bodies (done) | 497 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 498 |
+| 6c (part). Scalar subqueries over plain, `MIN`, `MAX`, `COUNT`, `SUM` bodies (done) | 497 |
+| Today: 6c (part). Scalar subqueries over an `AVG` body, under a size bound (done) | 502 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 503 |
 
-Still outside after that: `IN`/`NOT IN` and scalar subqueries (10: 5 over an `AVG` body, 2 over
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (5: 2 over
 `ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
@@ -502,8 +507,23 @@ follows coverage instead (decided 20 Nov 2026):
      (`elabStmt_correct_agg_w`, which now also holds under every outer row), both without
      `ORDER BY`/`LIMIT`; the `IN` clauses gain the aggregate body and the other `AND` order.
 
-     Still to do: `AVG` bodies under a size bound (5 queries, decided 2026-11-21), and
-     `ORDER BY … LIMIT 1` bodies (2 queries).
+     *`AVG` bodies* (5 queries, done). The typed core keeps the exact quotient, `SqlEquiv`
+     rounds it to at least 16 places, so the attached column relates to the node's value only
+     up to rounding (`AvgRel`). `holeCtx_elab` therefore takes the relation at the attached
+     column as a parameter: it must decide a comparison (`hRcmp`) and be exact on what an `AND`
+     accepts (`hRbool`). For an integer `z` and a quotient `q` with denominator at most `10ᵖ`,
+     `z ≠ q` puts them at least `10⁻ᵖ` apart, and rounding to `p` places moves `q` by at most
+     half of that (`compare_int_round`), so both evaluators order `z` and the average alike.
+     The two hypotheses this adds are not syntactic. `NonDecimalIn`: the compared expression
+     does not have type decimal (a decimal could sit between the average and its rounding);
+     it is proved for integer literals (`nonDecimalIn_lit`) and assumed for columns, which is
+     right for a schema without decimal columns, as all of Spider's are. `AvgBound`: the
+     denominator bound, a condition on the data. The coverage count assumes both. The body
+     theorem is `elabStmt_correct_aggBare_ctx`, the bare-column aggregate theorem under an
+     outer row.
+
+     Still to do: `ORDER BY … LIMIT 1` bodies (2 queries), and proving `NonDecimalIn` for
+     columns from "the schema has no decimal column".
 
 Each step lands with its theorem, `CorrectExamples` checks that its new hypotheses are
 satisfiable, and an update of this table (the report regenerates it).

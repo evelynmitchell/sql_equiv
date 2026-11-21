@@ -115,14 +115,22 @@ def plainAggOf (s : SelectStmt) : Bool :=
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
 
+/-- `SELECT AVG(e) FROM … [WHERE …]` (mirrors `SqlBridge.CorrectSub.AvgBody`). -/
+def avgBodyOf (b : SelectStmt) : Bool :=
+  !b.distinct && b.groupBy.isEmpty && b.having.isNone && b.orderBy.isEmpty &&
+    b.limitVal.isNone && b.offsetVal.isNone &&
+    match b.items with
+    | [.exprItem (.agg (.avg _) (some _) false) _] => true
+    | _ => false
+
 /-- A `WHERE` with one subquery node in a position `SqlBridge.CorrectSub.HoleCtx` allows (the
-    node, `a op node` for a comparison, either under `AND`): the other expressions and the
-    node. -/
-def holeSplit : Expr → Option (List Expr × Expr)
+    node, `a op node` for a comparison, either under `AND`): the other expressions, the
+    compared one if any, and the node. -/
+def holeSplit : Expr → Option (List Expr × Option Expr × Expr)
   | .binOp .and a b =>
     match holeSplit a with
-    | some (xs, nd) => some (b :: xs, nd)
-    | none => (holeSplit b).map fun (xs, nd) => (a :: xs, nd)
+    | some (xs, c, nd) => some (b :: xs, c, nd)
+    | none => (holeSplit b).map fun (xs, c, nd) => (a :: xs, c, nd)
   | .binOp op a nd =>
     match op, nd with
     | .eq, .inSubquery _ _ (.simple _) | .ne, .inSubquery _ _ (.simple _)
@@ -130,10 +138,10 @@ def holeSplit : Expr → Option (List Expr × Expr)
     | .gt, .inSubquery _ _ (.simple _) | .ge, .inSubquery _ _ (.simple _)
     | .eq, .subquery (.simple _) | .ne, .subquery (.simple _) | .lt, .subquery (.simple _)
     | .le, .subquery (.simple _) | .gt, .subquery (.simple _) | .ge, .subquery (.simple _) =>
-      some ([a], nd)
+      some ([a], some a, nd)
     | _, _ => none
-  | .inSubquery e neg (.simple b) => some ([], .inSubquery e neg (.simple b))
-  | .subquery (.simple b) => some ([], .subquery (.simple b))
+  | .inSubquery e neg (.simple b) => some ([], none, .inSubquery e neg (.simple b))
+  | .subquery (.simple b) => some ([], none, .subquery (.simple b))
   | _ => none
 
 mutual
@@ -258,12 +266,20 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   -- (`elabStmt_correct_inSub`, `_distinct_inSub`, `_agg_inSub`, `_aggBare_inSub`): inside when
   -- the other expressions, the probe of an `IN` and the body are; the body a plain statement
   -- or one of aggregates only (`BodyOk`), without `ORDER BY`. A scalar node assumes a dialect
-  -- that takes the first row of several (sqlite, as Spider is).
+  -- that takes the first row of several (sqlite, as Spider is). Under `GROUP BY` too
+  -- (`elabStmt_correct_grouped_inSub`).
+  -- A scalar node over an `AVG` body (`AvgWhere`): compared with a column or an integer literal.
+  -- The theorem also wants that operand not a decimal and the average's denominator at most
+  -- `10¹⁶`, which the shape cannot see: the count assumes no decimal columns (Spider's typing
+  -- has none) and tables under that size.
   (match s.whereClause.bind holeSplit, s.whereClause with
-   | some (xs, nd), _ =>
+   | some (xs, cmp, nd), _ =>
      let probe := match nd with | .inSubquery e _ _ => exprFeatures e | _ => []
-     if s.groupBy.isEmpty && s.having.isNone &&
-         (if s.distinct then plainDistinct else (plainAgg || plainAggBare || !plainGroup)) then
+     let avgOk := match nd, cmp with
+       | .subquery (.simple b), some (.col _) | .subquery (.simple b), some (.lit (.int _)) =>
+         avgBodyOf b
+       | _, _ => false
+     if (s.groupBy.isEmpty && s.having.isNone && (!s.distinct || plainDistinct)) || plainGroup then
        xs.flatMap exprFeatures ++ (if xs.any refsHidden then [hiddenName] else []) ++ probe ++
          (match nd with
           | .inSubquery _ _ (.simple b) | .subquery (.simple b) =>
@@ -271,7 +287,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
             (if b.distinct || !b.groupBy.isEmpty || b.having.isSome || !b.orderBy.isEmpty ||
                 b.limitVal.isSome || b.offsetVal.isSome ||
                 (b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
-                  !plainAggOf b)
+                  !plainAggOf b && !avgOk)
              then [subquery] else [])
           | _ => [subquery])
      else subquery :: (xs.flatMap exprFeatures ++ probe)

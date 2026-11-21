@@ -9,6 +9,8 @@
     `roundHalfAway` of the rational quotient.
   * `avg_agree`: over related values, `SqlEquiv`'s `AVG` is the typed one rounded.
   * `avg_rel`: the same over related rows, for `AVG(e)` with `e` in the fragment.
+  * `cmp_agree_avg`: comparing an integer with an `AVG` agrees exactly when the quotient's
+    denominator is at most `10¹⁶` (`compare_int_round`): the rounding cannot cross the integer.
 -/
 import SqlBridge.CorrectAgg
 import Mathlib.Data.Rat.Floor
@@ -174,5 +176,105 @@ theorem avg_rel {Γ : Fin n → SqlType} {R : List (Row n)} {U : List SqlEquiv.R
     simp only [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalAggOverTableParam, ee, Bool.false_eq_true,
       ↓reduceIte]
     exact ⟨v, hv, hvr⟩
+
+/-! ### Comparing an integer with an `AVG` (step 6c) -/
+
+theorem roundHalfAway_sub_le (x : ℚ) : |(roundHalfAway x : ℚ) - x| ≤ 1 / 2 := by
+  unfold roundHalfAway
+  split
+  · have h1 := Int.floor_le (x + 1 / 2)
+    have h2 := Int.lt_floor_add_one (x + 1 / 2)
+    rw [abs_le]; constructor <;> linarith
+  · have h1 := Int.floor_le (-x + 1 / 2)
+    have h2 := Int.lt_floor_add_one (-x + 1 / 2)
+    push_cast
+    rw [abs_le]; constructor <;> linarith
+
+theorem roundHalfAway_intCast (m : ℤ) : roundHalfAway (m : ℚ) = m := by
+  have h := roundHalfAway_sub_le (m : ℚ)
+  rw [abs_le] at h
+  have h1 : ((roundHalfAway (m : ℚ) - m : ℤ) : ℚ) ≤ 1 / 2 := by push_cast; linarith
+  have h2 : (-(1 / 2) : ℚ) ≤ ((roundHalfAway (m : ℚ) - m : ℤ) : ℚ) := by push_cast; linarith
+  have h3 : roundHalfAway (m : ℚ) - m < 1 := by
+    have : ((roundHalfAway (m : ℚ) - m : ℤ) : ℚ) < ((1 : ℤ) : ℚ) := by push_cast at h1 ⊢; linarith
+    exact_mod_cast this
+  have h4 : -1 < roundHalfAway (m : ℚ) - m := by
+    have : ((-1 : ℤ) : ℚ) < ((roundHalfAway (m : ℚ) - m : ℤ) : ℚ) := by push_cast at h2 ⊢; linarith
+    exact_mod_cast this
+  omega
+
+/-- An integer and a rational with a small denominator differ by at least `10⁻ᵖ`, or not at
+    all. -/
+theorem int_sub_ge (z : ℤ) (q : ℚ) (p : ℕ) (hden : q.den ≤ 10 ^ p) (hne : (z : ℚ) ≠ q) :
+    1 ≤ |q * 10 ^ p - z * 10 ^ p| := by
+  have hd : (0 : ℚ) < q.den := by exact_mod_cast q.den_pos
+  have hq : q = (q.num : ℚ) / q.den := (Rat.num_div_den q).symm
+  have hk : q.num - z * q.den ≠ 0 := by
+    intro h0
+    apply hne
+    have : (q.num : ℚ) = z * q.den := by exact_mod_cast sub_eq_zero.mp h0
+    rw [hq, this, mul_div_cancel_right₀ _ hd.ne']
+  have hk1 : (1 : ℚ) ≤ |((q.num - z * q.den : ℤ) : ℚ)| := by
+    rw [← Int.cast_abs]; exact_mod_cast Int.one_le_abs hk
+  have hp : (q.den : ℚ) ≤ 10 ^ p := by exact_mod_cast hden
+  have he : q * 10 ^ p - z * 10 ^ p = ((q.num - z * q.den : ℤ) : ℚ) * (10 ^ p / q.den) := by
+    conv_lhs => rw [hq]
+    push_cast; field_simp
+  rw [he, abs_mul, abs_of_pos (div_pos (by positivity) hd)]
+  have h1 : (1 : ℚ) ≤ 10 ^ p / q.den := by rw [le_div_iff₀ hd]; linarith
+  calc (1 : ℚ) = 1 * 1 := by ring
+    _ ≤ _ := mul_le_mul hk1 h1 (by norm_num) (abs_nonneg _)
+
+/-- **Rounding to `p` places does not move a rational across an integer** when its denominator is
+    at most `10ᵖ`. -/
+theorem compare_int_round (z : ℤ) (q : ℚ) (p : ℕ) (hden : q.den ≤ 10 ^ p) :
+    compare (z : ℚ) ((roundHalfAway (q * 10 ^ p) : ℚ) / (10 ^ p : ℕ)) = compare (z : ℚ) q := by
+  have hP : (0 : ℚ) < 10 ^ p := by positivity
+  have hr := roundHalfAway_sub_le (q * 10 ^ p)
+  rw [abs_le] at hr
+  push_cast
+  rcases lt_trichotomy (z : ℚ) q with h | h | h
+  · have hg := int_sub_ge z q p hden h.ne
+    rw [abs_of_pos (by nlinarith)] at hg
+    rw [compare_lt_iff_lt.mpr h, compare_lt_iff_lt, lt_div_iff₀ hP]
+    linarith
+  · subst h
+    have : (z : ℚ) * 10 ^ p = ((z * 10 ^ p : ℤ) : ℚ) := by push_cast; ring
+    rw [this, roundHalfAway_intCast]
+    push_cast
+    rw [mul_div_cancel_right₀ _ hP.ne']
+  · have hg := int_sub_ge z q p hden h.ne'
+    rw [abs_of_neg (by nlinarith)] at hg
+    rw [compare_gt_iff_gt.mpr h, compare_gt_iff_gt, div_lt_iff₀ hP]
+    linarith
+
+/-- **A comparison of a non-decimal value with an `AVG`** agrees across the evaluators when the
+    quotient's denominator is at most `10¹⁶`: `SqlEquiv`'s rounding cannot move it across an
+    integer (and anything else than a number does not compare). A decimal could sit between the
+    quotient and its rounding. -/
+theorem cmp_agree_avg {op : SqlEquiv.BinOp} {c : CmpOp} (hop : elabBinOp op = .ok (.cmp c))
+    {a b : Datum} {a' b' : SqlEquiv.Value} (ha : DatumRel a a') (hat : ∀ q, a ≠ some (.decimal q))
+    (hb : AvgRel b b') (hden : ∀ q, b = some (.decimal q) → q.den ≤ 10 ^ SqlEquiv.avgPlaces)
+    {d : Datum} (h : SqlCore.evalBinOp (.cmp c) a b = .ok d) :
+    ∃ v, SqlEquiv.evalBinOp op (some a') (some b') = some v ∧ DatumRel d v := by
+  rcases hb with ⟨rfl, t, rfl⟩ | ⟨q, p, rfl, hp, rfl⟩
+  · exact cmp_agree hop ha (show DatumRel none (.null t) from ⟨t, rfl⟩) (fun _ _ x y hxy => by cases hxy.2) h
+  · obtain ⟨u', s', he, hq, -⟩ := CorrectAgg.mkDecimal_spec p (roundHalfAway (q * 10 ^ p))
+    rw [he]
+    have hbr : DatumRel (some (.decimal ((u' : ℚ) / (10 ^ s' : ℕ)))) (.decimal u' s') :=
+      ValRel.decimal u' s'
+    refine cmp_agree hop ha hbr (fun _ _ x y hxy => by cases hxy.2) ?_
+    rw [← h, hq]
+    rcases a with _ | x
+    · rfl
+    · cases x with
+      | decimal r => exact absurd rfl (hat r)
+      | text t => simp [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp] at h
+      | bool t => simp [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp] at h
+      | int z =>
+      have hden' : q.den ≤ 10 ^ p :=
+        (hden q rfl).trans (Nat.pow_le_pow_right (by norm_num) hp)
+      simp only [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp, compareDec,
+        compare_int_round z q p hden']
 
 end SqlBridge.CorrectAvg
