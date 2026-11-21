@@ -4,6 +4,8 @@
 - **76 property checks** across 3 suites (ExprAlgebra, NullSemantics, OptimizerEquiv)
 - **1000 samples** per check (76,000 total) — previously 100 samples (7,600 total)
 - Sample count configurable via `LSPEC_SAMPLES` env var (e.g., `LSPEC_SAMPLES=100` for CI)
+- Run seed configurable via `LSPEC_SEED` (default 0, used by pull-request CI); a daily workflow
+  runs a new seed and files failures as issues (#395)
 - Coverage limited to: expression algebra identities, NULL propagation, and 8 optimizer passes
 
 ## Coverage Gaps (prioritized)

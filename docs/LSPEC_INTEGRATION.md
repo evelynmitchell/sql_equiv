@@ -748,7 +748,7 @@ def test_not_null_returns_null : TestResult :=
 
 ```bash
 $ lake exe sql_equiv_test      # Fast, deterministic (includes new regression tests)
-$ lake exe sql_equiv_lspec     # Randomized (should now pass)
+$ lake exe sql_equiv_lspec     # Seeded (LSPEC_SEED, default 0; #395); should now pass
 ```
 
 ## Running the Test Suites

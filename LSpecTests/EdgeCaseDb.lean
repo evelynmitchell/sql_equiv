@@ -172,19 +172,19 @@ private def aggTests (cfg : Configuration) : TestSeq :=
   test "sum of [] = 0" (
     ([] : List Int).foldl (· + ·) 0 == 0) $
   -- covers: sum_singleton
-  check (cfg := cfg) "sum of [n] = n" (∀ n : Int,
+  checkS (cfg := cfg) "sum of [n] = n" (∀ n : Int,
     [n].foldl (· + ·) 0 == n) $
   -- covers: sum_add_zero
   test "sum of [1,1,1,0] = sum of [1,1,1]" (
     ([1, 1, 1, 0] : List Int).foldl (· + ·) 0 == ([1, 1, 1] : List Int).foldl (· + ·) 0) $
   -- covers: min_singleton
-  check (cfg := cfg) "min of [n] = n" (∀ n : Int,
+  checkS (cfg := cfg) "min of [n] = n" (∀ n : Int,
     [n].foldl min n == n) $
   -- covers: max_singleton
-  check (cfg := cfg) "max of [n] = n" (∀ n : Int,
+  checkS (cfg := cfg) "max of [n] = n" (∀ n : Int,
     [n].foldl max n == n) $
   -- covers: count_distinct_le_count
-  check (cfg := cfg) "count distinct ≤ count" (∀ a b c : Value,
+  checkS (cfg := cfg) "count distinct ≤ count" (∀ a b c : Value,
     decide (([a, b, c]).eraseDups.length ≤ [a, b, c].length))
 
 -- ============================================================================

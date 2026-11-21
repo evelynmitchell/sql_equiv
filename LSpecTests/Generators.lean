@@ -15,9 +15,48 @@ open SqlEquiv
     CI sets LSPEC_SAMPLES=100000 for thorough coverage. -/
 def defaultNumSamples : Nat := 10000
 
-/-- Build a SlimCheck configuration with the given sample count. -/
-def mkSlimCfg (numSamples : Nat := defaultNumSamples) : Configuration :=
-  { numInst := numSamples }
+/-- Run seed used when `LSPEC_SEED` is not set. Pull-request CI uses it, so a PR is tested on
+    the same samples every time; the scheduled workflow passes a fresh seed (#395). -/
+def defaultSeed : Nat := 0
+
+/-- Build a SlimCheck configuration with the given sample count and run seed. -/
+def mkSlimCfg (numSamples : Nat := defaultNumSamples) (seed : Nat := defaultSeed) : Configuration :=
+  { numInst := numSamples, randomSeed := some seed }
+
+/-- The seed of one property: the run seed mixed with the property's name, so that properties
+    do not share a sample stream. (`String`'s hash is a fixed function, not salted per run;
+    a toolchain that changed it would change which samples each seed draws.) -/
+def propertySeed (runSeed : Nat) (descr : String) : Nat :=
+  (mixHash (hash runSeed) (hash descr)).toNat
+
+/-- Run a property's samples from its seed. Returns the result and the number of samples that
+    passed before it. LSpec's own `check` ignores `cfg.randomSeed` and always starts from
+    `mkStdGen`, so every run used to draw the same samples. -/
+def seededResult (p : Prop) [Checkable p] (cfg : Configuration) (descr : String) :
+    TestResult p × Nat :=
+  let runSeed := cfg.randomSeed.getD defaultSeed
+  (ReaderT.run (Checkable.runSuite p cfg) (.up (mkStdGen (propertySeed runSeed descr)))).1
+
+abbrev instTestableSeeded (p : Prop) (cfg : Configuration) (descr : String) [Checkable p] :
+    Testable p :=
+  let runSeed := cfg.randomSeed.getD defaultSeed
+  match seededResult p cfg descr with
+  | (.success (.inr h), _) => .isTrue h
+  | (.success (.inl _), numSamples) => .isPassed numSamples
+  | (.gaveUp n, _) => .isFailure 0 cfg.numInst s!"Gave up {n} times"
+  | (.failure h xs n, numSamples) =>
+    .isFalse h (numSamples + 1) cfg.numInst <| Checkable.formatFailure
+      s!"Found problems at sample {numSamples + 1}! Replay: LSPEC_SEED={runSeed} LSPEC_SAMPLES={cfg.numInst} lake exe sql_equiv_lspec"
+      xs n
+
+open SlimCheck Decorations in
+/-- `LSpec.check` with the samples drawn from `cfg.randomSeed` and the property's name (#395).
+    Every property test in this suite uses it. -/
+def checkS (descr : String) (p : Prop) (next : TestSeq := .done) (cfg : Configuration := {})
+    (propString : Option String := none)
+    (p' : DecorationsOf p := by mk_decorations) [Checkable p'] : TestSeq :=
+  haveI : Testable p' := instTestableSeeded p' cfg descr
+  .individual descr p' propString inferInstance next
 
 -- ============================================================================
 -- Simple enum generators
