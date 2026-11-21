@@ -46,8 +46,9 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # query and are left for later (decided 21 Nov 2026).
 # Step 5 (plain DISTINCT, up to row order) is done too.
 # Step 6a (set operations over covered branches, up to row order) is done, 6b (WHERE with an
-# IN subquery) except grouped and set-operation bodies, and of 6c scalar subqueries over plain
-# and MIN/MAX/COUNT/SUM bodies. What is left of both shares the subquery feature.
+# IN subquery) except grouped and set-operation bodies, and of 6c scalar subqueries over plain,
+# MIN/MAX/COUNT/SUM and AVG bodies (the last under a size bound and for non-decimal operands,
+# which the count assumes). What is left of both shares the subquery feature.
 # The one entry left is not planned (decided 21 Nov 2026: one query, a full step); it stays
 # listed so the report shows what it would add.
 ROADMAP = [
@@ -102,7 +103,10 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "`SELECT DISTINCT`, relating the rows up to their order (registry T18).",
         "Set operations over such statements (`SqlBridge/CorrectSetOp.lean`) are covered up to",
         "row order, and a `WHERE` with one uncorrelated subquery, `e [NOT] IN (SELECT …)` or",
-        "`a op (SELECT …)`, alone or under `AND` (`SqlBridge/CorrectSub.lean`).",
+        "`a op (SELECT …)`, alone or under `AND` (`SqlBridge/CorrectSub.lean`). A comparison",
+        "with a subquery `AVG` is counted on two assumptions the theorem states: the compared",
+        "expression is not a decimal (no Spider column is), and the average's denominator is",
+        "at most 10^16 (true of any table with fewer rows than that, for an integer argument).",
         "Counts are of the",
         "elaborated",
         "queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in",

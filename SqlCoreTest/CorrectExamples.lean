@@ -184,11 +184,40 @@ def subWhereB : SqlEquiv.Expr → Bool
     (match elabBinOp op with | .ok (.cmp _) => true | _ => false) && besideB a && nodeOkB nd
   | w => nodeOkB w
 
+/-- `SqlBridge.CorrectSub.AvgBody`: `SELECT AVG(e) FROM f [WHERE p]`. -/
+def avgBodyB : SqlEquiv.SelectStmt → Bool
+  | .mk false [.exprItem a _] (some f) wh [] none [] none none =>
+    SqlBridge.CorrectAvg.avgFragment a && fromFragment f && wh.all isFragment
+  | _ => false
+
+/-- The syntactic part of `SqlBridge.CorrectSub.AvgWhere` (sqlite assumed): a scalar node over
+    an `AVG` body on the right of a comparison with a column or an integer literal, alone or
+    under `AND`. The theorem also asks that the operand is not a decimal (`NonDecimalIn`; no
+    column of the test schemas, or of Spider's, is one) and that the average's denominator is
+    at most `10¹⁶` (`AvgBound`), which depends on the data. -/
+def avgWhereB : SqlEquiv.Expr → Bool
+  | .binOp .and a b => (avgWhereB a && besideB b) || (besideB a && avgWhereB b)
+  | .binOp op a (.subquery (.simple b)) =>
+    (match elabBinOp op with | .ok (.cmp _) => true | _ => false) && besideB a &&
+      (match a with | .col _ | .lit (.int _) => true | _ => false) && avgBodyB b
+  | _ => false
+
+/-- `SqlBridge.CorrectSub.AnySubWhere`, as far as a shape can tell. -/
+def anySubWhereB (w : SqlEquiv.Expr) : Bool := subWhereB w || avgWhereB w
+
+/-- The shape of `elabStmt_correct_grouped_inSub`: a statement of `elabStmt_correct_grouped`
+    with such a `WHERE`. -/
+def groupedInSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some f) (some w) groupBy having orderBy lim off)) =>
+    anySubWhereB w &&
+      groupedShape (.query (.simple (.mk false items (some f) none groupBy having orderBy lim off)))
+  | _ => false
+
 /-- The shape of `elabStmt_correct_inSub`: a statement of `elabStmt_correct_join` with such a
     `WHERE`. -/
 def inSubShape : SqlEquiv.Stmt → Bool
   | .query (.simple (.mk false items (some f) (some w) [] none orderBy _ _)) =>
-    itemsFragment items && fromFragment f && subWhereB w &&
+    itemsFragment items && fromFragment f && anySubWhereB w &&
       orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) &&
       (orderBy.isEmpty || itemsNamed items)
   | _ => false
@@ -196,27 +225,27 @@ def inSubShape : SqlEquiv.Stmt → Bool
 /-- The shape of `elabStmt_correct_distinct_inSub`. -/
 def distinctInSubShape : SqlEquiv.Stmt → Bool
   | .query (.simple (.mk true items (some f) (some w) [] none [] none none)) =>
-    itemsFragment items && fromFragment f && subWhereB w
+    itemsFragment items && fromFragment f && anySubWhereB w
   | _ => false
 
 /-- The shape of `elabStmt_correct_agg_inSub`. -/
 def aggInSubShape : SqlEquiv.Stmt → Bool
   | .query (.simple (.mk false items (some f) (some w) [] none [] none none)) =>
-    aggItems items && !items.isEmpty && fromFragment f && subWhereB w
+    aggItems items && !items.isEmpty && fromFragment f && anySubWhereB w
   | _ => false
 
 /-- The shape of `elabStmt_correct_aggBare_inSub`. -/
 def aggBareInSubShape : SqlEquiv.Stmt → Bool
   | .query (.simple (.mk false items (some f) (some w) [] none [] none none)) =>
     groupedItems items && items.any (fun it => itemAggFragment (itemExpr it)) && fromFragment f &&
-      bareOkB items [] none [] && subWhereB w
+      bareOkB items [] none [] && anySubWhereB w
   | _ => false
 
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
   stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
     setOpShape s || inSubShape s || distinctInSubShape s || aggInSubShape s ||
-    aggBareInSubShape s
+    aggBareInSubShape s || groupedInSubShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -659,7 +688,15 @@ def inSubSpider (sql : String) : Bool :=
 #guard !inSubSpider "SELECT name FROM singer WHERE age = (SELECT max(age) FROM singer) - 1"
 #guard !inSubSpider ("SELECT name FROM singer WHERE age > (SELECT min(age) FROM singer) AND " ++
   "age < (SELECT max(age) FROM singer)")
-#guard !inSubSpider "SELECT name FROM singer WHERE age > (SELECT avg(age) FROM singer)"
+-- an `AVG` body: compared with a column or an integer literal (`AvgWhere`; the theorem also
+-- takes the size bound `AvgBound`)
+#guard inSubSpider "SELECT name FROM singer WHERE age > (SELECT avg(age) FROM singer)"
+#guard inSubSpider ("SELECT name FROM singer WHERE name = 'a' AND " ++
+  "30 <= (SELECT avg(age) FROM singer WHERE age > 20)")
+#guard !inSubSpider "SELECT name FROM singer WHERE age + 1 > (SELECT avg(age) FROM singer)"
+#guard !inSubSpider "SELECT name FROM singer WHERE 1.5 > (SELECT avg(age) FROM singer)"
+#guard !inSubSpider "SELECT name FROM singer WHERE age > (SELECT avg(DISTINCT age) FROM singer)"
+#guard !inSubSpider "SELECT name FROM singer WHERE age IN (SELECT avg(age) FROM singer)"
 #guard !inSubSpider ("SELECT name FROM singer WHERE age = " ++
   "(SELECT age FROM singer ORDER BY age LIMIT 1)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE age > 20 OR singer_id NOT IN " ++
@@ -697,7 +734,8 @@ def inSubSpider (sql : String) : Bool :=
 #guard featuresSqlite ("SELECT name FROM singer WHERE name LIKE 'A%' AND singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.like]
 -- under aggregates without GROUP BY (`elabStmt_correct_agg_inSub`), also next to an AVG or a
--- bare column (`elabStmt_correct_aggBare_inSub`): inside; with GROUP BY, not yet
+-- bare column (`elabStmt_correct_aggBare_inSub`), and with GROUP BY
+-- (`elabStmt_correct_grouped_inSub`): inside
 #guard featuresSqlite ("SELECT count(*) FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == []
 #guard featuresSqlite ("SELECT min(age), count(DISTINCT name) FROM singer WHERE singer_id IN " ++
@@ -707,7 +745,7 @@ def inSubSpider (sql : String) : Bool :=
 #guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == []
 #guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song) GROUP BY name") == [SqlBridge.Coverage.subquery]
+  "(SELECT singer_id FROM song) GROUP BY name") == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT DISTINCT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
@@ -718,12 +756,21 @@ def inSubSpider (sql : String) : Bool :=
 #guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE age > 20 AND " ++
   "age < (SELECT max(age) FROM singer)") == []
 #guard featuresSqlite "SELECT count(*) FROM singer WHERE age > (SELECT min(age) FROM singer)" == []
-#guard featuresSqlite ("SELECT name FROM singer WHERE age > (SELECT avg(age) FROM singer)") ==
+#guard featuresSqlite ("SELECT name FROM singer WHERE age > (SELECT avg(age) FROM singer)") == []
+#guard featuresSqlite ("SELECT count(*), name FROM singer WHERE age > (SELECT avg(age) FROM singer) " ++
+  "GROUP BY name") == []
+#guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE age < (SELECT avg(age) FROM singer)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE 1.5 > (SELECT avg(age) FROM singer)") ==
   [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE age IN (SELECT avg(age) FROM singer)") ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE age > (SELECT avg(age) FROM singer LIMIT 1)") != []
 #guard featuresSqlite ("SELECT name FROM singer WHERE (SELECT max(age) FROM singer) = age") ==
   [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE age = (SELECT max(age) FROM singer) " ++
-  "GROUP BY name") != []
+  "GROUP BY name") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE age = (SELECT max(age) FROM singer) " ++
+  "GROUP BY name HAVING max(age + 1) > 2") != []
 #guard featuresSqlite ("SELECT name FROM singer WHERE name LIKE 'A%' AND " ++
   "age = (SELECT max(age) FROM singer)") == [SqlBridge.Coverage.like]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
