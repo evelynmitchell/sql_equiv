@@ -364,6 +364,7 @@ theorem elab_join_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   refine ⟨hty, ?_⟩
   simp only [elabQueryRaw, elabSelect] at hraw
   rw [elabSelectF] at hraw
+  unfold elabWhere at hraw
   have hcols' : ∀ o ∈ orderBy, ∃ c, (match o with | .mk e _ _ => e) = SqlEquiv.Expr.col c :=
     fun o ho => (hcols o ho).elim fun c hc => ⟨c, by cases o; simpa [SqlEquiv.OrderByItem.expr] using hc⟩
   obtain ⟨⟨n, qf, cf⟩, hf, hraw⟩ := bind_ok hraw

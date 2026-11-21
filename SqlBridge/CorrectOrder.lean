@@ -1123,6 +1123,7 @@ theorem elab_ordered_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem} 
   refine ⟨hty, ?_⟩
   simp only [elabQueryRaw, elabSelect] at hraw
   rw [elabSelectF] at hraw
+  unfold elabWhere at hraw
   have hcols' : ∀ o ∈ orderBy, ∃ c, (match o with | .mk e _ _ => e) = SqlEquiv.Expr.col c :=
     fun o ho => (hcols o ho).elim fun c hc => ⟨c, by cases o; simpa [SqlEquiv.OrderByItem.expr] using hc⟩
   rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩

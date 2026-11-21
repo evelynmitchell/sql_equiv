@@ -1052,6 +1052,7 @@ theorem elabStmt_correct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = 
         List.Forall₂ OutRel rs out := by
   simp only [fragmentStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect] at h
   rw [elabSelectF] at h
+  unfold elabWhere at h
   simp only [elabFrom, lookupTable, List.map_nil, aggsOfList, aggsOfOpt,
     List.append_nil, List.isEmpty_nil, Option.isNone_none, Bool.and_true, Bool.true_and] at h
   rw [aggsOfList_items ?hf items hit] at h

@@ -34,7 +34,6 @@ theorem eq_agree {a b : Datum} {a' b' : SqlEquiv.Value} (ha : DatumRel a a') (hb
     first
       | done
       | (cases hd; simp_all)
-      | (obtain ⟨_, hd⟩ := hd; simp_all)
 
 /-- A subquery's rows as `SqlEquiv` reads them under `IN`: one column each, its value related
     to the typed row's. (`OutRel` on one-column rows.) -/
@@ -88,7 +87,7 @@ theorem inList_agree {d : Datum} {v : SqlEquiv.Value} (hd : DatumRel d v) :
         cases t₁ <;> cases t₂ <;> decide
       rw [hu, hH, hn₁, hn₂, Ne, hm₁, Ne, hm₂]
       cases hveq : v.eq val == some true <;>
-        cases hmr : SqlEquiv.inSubqueryMatch v rows <;> simp_all <;> tauto
+        cases hmr : SqlEquiv.inSubqueryMatch v rows <;> simp_all
 
 /-- So the typed result is the datum of `SqlEquiv`'s `inSubqueryResult`, for `IN` and `NOT IN`. -/
 theorem inSub_agree {d : Datum} {v : SqlEquiv.Value} (hd : DatumRel d v) {ss : List Datum}
@@ -101,6 +100,6 @@ theorem inSub_agree {d : Datum} {v : SqlEquiv.Value} (hd : DatumRel d v) {ss : L
     cases hM : SqlEquiv.inSubqueryMatch v rows <;>
     cases hH : SqlEquiv.inSubqueryHasNull v rows <;>
     simp_all [Truth.not, Truth.toDatum, DatumRel] <;>
-    first | exact ValRel.bool _ | exact ⟨none, rfl⟩
+    exact ValRel.bool _
 
 end SqlBridge.CorrectSub

@@ -843,6 +843,7 @@ theorem elab_agg_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   refine ⟨hty, ?_⟩
   simp only [elabQueryRaw, elabSelect] at hraw
   rw [elabSelectF] at hraw
+  unfold elabWhere at hraw
   obtain ⟨⟨n, qf, cf⟩, hf, hraw'⟩ := bind_ok hraw
   clear hraw
   rename' hraw' => hraw
