@@ -169,10 +169,19 @@ def inSubShape : SqlEquiv.Stmt → Bool
       (orderBy.isEmpty || itemsNamed items)
   | _ => false
 
+/-- The shape of `elabStmt_correct_agg_inSub` (step 6b): `elabStmt_correct_agg`'s statement with
+    the same `WHERE e [NOT] IN (SELECT …)`. -/
+def aggInSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some f) (some (.inSubquery e _
+      (.simple (.mk false items' (some f') wh' [] none [] none none)))) [] none [] none none)) =>
+    aggItems items && !items.isEmpty && fromFragment f && isFragment e &&
+      itemsFragment items' && fromFragment f' && wh'.all isFragment
+  | _ => false
+
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
   stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
-    setOpShape s || inSubShape s
+    setOpShape s || inSubShape s || aggInSubShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -599,6 +608,8 @@ def inSubSpider (sql : String) : Bool :=
 #guard !inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider "SELECT count(*) FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)"
+#guard !inSubSpider ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)")
 #guard !inSubSpider ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
@@ -617,8 +628,18 @@ def inSubSpider (sql : String) : Bool :=
 #guard featuresSqlite "SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)" == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+-- under aggregates without GROUP BY (`elabStmt_correct_agg_inSub`): inside; with an AVG or a
+-- bare column (`elabStmt_correct_aggBare`'s statements) or GROUP BY, not yet
 #guard featuresSqlite ("SELECT count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == []
+#guard featuresSqlite ("SELECT min(age), count(DISTINCT name) FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song WHERE title = 'x')") == []
+#guard featuresSqlite ("SELECT avg(age) FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song) GROUP BY name") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT DISTINCT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
@@ -628,7 +649,5 @@ def inSubSpider (sql : String) : Bool :=
 -- (parenthesised: the parser reads `a + 1 NOT IN (…)` as `a + (1 NOT IN (…))`, #400)
 #guard featuresSqlite ("SELECT name FROM singer WHERE (singer_id + 1) NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.arithmetic]
-#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song) GROUP BY name") != []
 
 end SqlCoreTest.CorrectExamples

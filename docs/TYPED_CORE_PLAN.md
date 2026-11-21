@@ -129,8 +129,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       - [x] A plain outer query, `WHERE e [NOT] IN (plain subquery)`
         (`SqlBridge/CorrectSub.lean`, `elabStmt_correct_inSub`). Spider coverage **475**, up
         from 466
-      - [ ] The same under an aggregate or `DISTINCT` outer query (12 queries), under `AND`
-        (2), and with a grouped or set-operation body (2)
+      - [x] The same under aggregates without `GROUP BY` (`elabStmt_correct_agg_inSub`; the
+        aggregate theorem now takes its `WHERE` abstractly, `elabStmt_correct_agg_w`). Spider
+        coverage **483**, up from 475
+      - [ ] The same under an `AVG` or a bare column (3 queries, `elabStmt_correct_aggBare`'s
+        statements), under `AND` (2, one of them `DISTINCT`), and with a grouped or
+        set-operation body (2)
     - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries; 5 compare
       against an `AVG`, which needs its own decision)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
@@ -217,10 +221,11 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 4. `BETWEEN` (done) | 407 |
 | 5. Plain `DISTINCT`, up to row order (done) | 428 |
 | 6a. Set operations, up to row order (done) | 466 |
-| Today: 6b (part). `WHERE e [NOT] IN (plain subquery)`, plain outer query (done) | 475 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 476 |
+| 6b (part). `WHERE e [NOT] IN (plain subquery)`, plain outer query (done) | 475 |
+| Today: 6b (part). The same under aggregates without `GROUP BY` (done) | 483 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 484 |
 
-Still outside after that: `IN`/`NOT IN` and scalar subqueries (32, of which 2 also need a set
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (24, of which 2 also need a set
 operation in a subquery or in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
@@ -452,8 +457,11 @@ follows coverage instead (decided 20 Nov 2026):
        handling became the named function `elabWhere` for this (no behaviour change).
      - `QNoBoolOrder` now constrains attached subqueries (it was vacuously true there).
 
-     Still to do in 6b: thread `WhereOk` through the aggregate and `DISTINCT` theorems (12
-     queries); the clause under `AND` (2 queries; the elaborator's hidden column is named
+     The aggregate theorem takes `WhereOk` too (`elabStmt_correct_agg_w`), which gives the
+     clause under aggregates without `GROUP BY` (`elabStmt_correct_agg_inSub`, 8 queries).
+
+     Still to do in 6b: thread `WhereOk` through the grouped theorem, for `AVG` and bare
+     columns without `GROUP BY` (3 queries); the clause under `AND` (2 queries; the elaborator's hidden column is named
      `?subquery?`, which the predicate must not reference: unreachable through the parser,
      which has no quoted identifiers, but a side condition for hand-built ASTs); bodies that
      are grouped or set operations (2 queries).

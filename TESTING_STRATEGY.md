@@ -70,7 +70,7 @@ engines.
 - **Elaborator-correctness guards** (`CorrectExamples`): the hypotheses of the elaborator
   theorems (#352) are satisfiable by queries that elaborate, and the fragment's shapes
   (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`, `distinctShape`, `setOpShape`,
-  `inSubShape`) are
+  `inSubShape`, `aggInSubShape`) are
   spot-checked inside and outside.
 - **Coverage report against the theorems** (`CoverageAgreeTest`): the Spider coverage count
   (`SqlBridge.Coverage`) agrees with the theorems' shapes on every query of

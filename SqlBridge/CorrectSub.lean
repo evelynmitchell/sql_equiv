@@ -445,4 +445,30 @@ theorem elabStmt_correct_inSub (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
       hw' hq) hcols hnamed h hnb
   exact ⟨rs, hrs, out, hout, hr⟩
 
+/-- **The same under aggregates without `GROUP BY` (#352, step 6b).** For
+    `SELECT agg₁, …, aggₖ FROM f WHERE e [NOT] IN (SELECT e' FROM f' [WHERE p'])`, the
+    aggregates as in `elabStmt_correct_agg`: the typed query evaluates to one row, related to
+    `SqlEquiv`'s one row. -/
+theorem elabStmt_correct_agg_inSub (N : NamedSchema)
+    (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
+    {e : SqlEquiv.Expr} {neg : Bool} {items' : List SqlEquiv.SelectItem}
+    {f' : SqlEquiv.FromClause} {wh' : Option SqlEquiv.Expr}
+    (hai : CorrectAgg.aggItems items = true) (hne : items ≠ []) (hff : fromFragment f = true)
+    (he : isFragment e = true) (hit' : itemsFragment items' = true)
+    (hff' : fromFragment f' = true) (hw' : ∀ w ∈ wh', isFragment w = true)
+    {el : Elaborated N.S}
+    (h : elabStmt N (CorrectAgg.aggStmt items f (some (.inSubquery e neg
+      (.simple (.mk false items' (some f') wh' [] none [] none none))))) = .ok el)
+    (hnb : QNoBoolOrder el.q) :
+    ∃ rs, el.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (CorrectAgg.aggStmt items f (some (.inSubquery e neg
+        (.simple (.mk false items' (some f') wh' [] none [] none none))))).2 = some out ∧
+          List.Forall₂ OutRel rs out :=
+  CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn hfix hD hrel hai hne hff
+    (fun _ _ _ _ hq => whereOk_inSub N hfold hfoldCI hwn hfix hD hrel he hit' hff' hw' hq) h hnb
+
 end SqlBridge.CorrectSub
