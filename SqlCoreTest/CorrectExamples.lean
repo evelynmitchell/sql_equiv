@@ -393,4 +393,17 @@ example : SqlBridge.CorrectGrouped.BareOk singerSchema extremeItems
 #guard (elabStmt singerSchema (groupedStmt extremeItems (.table ⟨"singer", none⟩) none
   [.col ⟨none, "singer_id"⟩] none [] none none)).toBool
 
+/-- `OrderKeyOk`'s key-column case (step 3b-6) is satisfiable: `SELECT age … GROUP BY age ORDER BY
+    age`, where the one item named like the key is the key column. -/
+example : SqlBridge.CorrectGrouped.OrderKeyOk [.exprItem (.col ⟨none, "age"⟩) none]
+    [.col ⟨none, "age"⟩] (.col ⟨none, "age"⟩) :=
+  .inr ⟨_, rfl, by simp, fun it hit _ => by simp at hit; subst hit; rfl⟩
+
+/-- Without `GROUP BY` (step 3b-6) too: `SELECT name, max(age) FROM singer` satisfies `BareOk` and
+    elaborates. -/
+example : SqlBridge.CorrectGrouped.BareOk singerSchema extremeItems [] none [] :=
+  .inr (.inr ⟨rfl, true, extremeMode, .col ⟨none, "age"⟩, rfl, by decide, by decide⟩)
+#guard (elabStmt singerSchema (groupedStmt extremeItems (.table ⟨"singer", none⟩) none
+  [] none [] none none)).toBool
+
 end SqlCoreTest.CorrectExamples

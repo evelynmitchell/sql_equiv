@@ -1093,8 +1093,8 @@ set_option maxHeartbeats 8000000 in
 /-- **Elaborator correctness for grouped queries (#352, roadmap steps 3b-4 to 3b-6).** For
     `SELECT … FROM f [WHERE p] GROUP BY c₁, … [HAVING h] [ORDER BY a₁, …] [LIMIT n] [OFFSET m]`,
     column keys, every item an aggregate of step 3a, a key column or a bare column, `h` in
-    `havingFragment`, every sort key an aggregate or an uncaptured key column (`OrderKeyOk`): when the statement elaborates, the typed query's
-    rows relate, in order, to `SqlEquiv`'s. Bare columns read the group's first row, or the row
+    `havingFragment`, every sort key an aggregate or an uncaptured key column (`OrderKeyOk`): when
+    the statement elaborates, the typed query's rows relate, in order, to `SqlEquiv`'s. Bare columns read the group's first row, or the row
     where the one `MIN`/`MAX` argument is extreme (`BareOk`), and with sort keys no output
     name captures `SqlEquiv`'s key columns (`hnm`). -/
 theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
