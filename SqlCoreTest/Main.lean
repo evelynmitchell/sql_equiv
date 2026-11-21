@@ -7,7 +7,8 @@
   database matches the original), `SqlCoreTest.BridgeDiffTest` (parsed SQL vs
   `SqlEquiv`) and `SqlCoreTest.DuckdbDiffTest` (parsed SQL vs DuckDB) and `SqlCoreTest.SqliteDiffTest`
   (bare columns vs sqlite). `SqlCoreTest.CorrectExamples`: the hypotheses of the elaborator
-  correctness theorem (#309) hold on the bridge test schema.
+  correctness theorem (#309) hold on the bridge test schema. `SqlCoreTest.CoverageAgreeTest`: the
+  Spider coverage report agrees with the theorems' shapes on every Spider query.
 -/
 import SqlCoreTest.TrustBaseTest
 import SqlCoreTest.ScalarExamples
@@ -27,6 +28,7 @@ import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest
 import SqlCoreTest.SqliteDiffTest
 import SqlCoreTest.CorrectExamples
+import SqlCoreTest.CoverageAgreeTest
 
 def main : IO UInt32 := do
   IO.println "SqlCore tests: compile-time checks passed (trust base, runtime overrides, scalar, schema, expression and query examples)"
@@ -64,7 +66,18 @@ def main : IO UInt32 := do
       for line in sfails do
         IO.println s!"  FAIL: {line}"
       pure sfails
+  let covOk ← match ← SqlCoreTest.CoverageAgree.run with
+    | none =>
+      IO.println "Spider coverage report vs theorem shapes: SKIPPED (no benchmarks/spider/dev_queries.jsonl; run from the repo root)"
+      pure true
+    | some (cn, inside, cbad) =>
+      IO.println s!"Spider coverage report vs theorem shapes: {cn} queries, {inside} with the fragment's shape, {cbad.length} disagreements"
+      for line in cbad.take 20 do
+        IO.println s!"  DISAGREE: {line}"
+      if cn < SqlCoreTest.CoverageAgree.minParsed then
+        IO.println s!"  FAIL: only {cn} queries parsed (expected at least {SqlCoreTest.CoverageAgree.minParsed})"
+      pure (cbad.isEmpty && cn ≥ SqlCoreTest.CoverageAgree.minParsed)
   if bad.isEmpty && documented > 0 && schemaBad.isEmpty && ebad.isEmpty && en > 0 && bfails.isEmpty &&
-      duckFails.isEmpty && sqliteFails.isEmpty then
+      duckFails.isEmpty && sqliteFails.isEmpty && covOk then
     return 0
   else return 1
