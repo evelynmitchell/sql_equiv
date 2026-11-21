@@ -45,6 +45,8 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # in "Today". Step 4's other operators (IS NULL, negation, arithmetic, IN list) add no Spider
 # query and are left for later (decided 21 Nov 2026).
 # Step 5 (plain DISTINCT, up to row order) is done too.
+# The one entry left is not planned (decided 21 Nov 2026: one query, a full step); it stays
+# listed so the report shows what it would add.
 ROADMAP = [
     ("DISTINCT with an unselected sort key and LIMIT", {"DISTINCT"}),
 ]
