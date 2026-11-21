@@ -418,4 +418,13 @@ example : SqlBridge.CorrectGrouped.BareOk singerSchema extremeItems [] none [] :
 #guard (elabStmt singerSchema (groupedStmt extremeItems (.table ⟨"singer", none⟩) none
   [] none [] none none)).toBool
 
+/-- `AvgRel`'s rounding case (step 3c) holds where `SqlEquiv` rounds: `AVG` of 1, 1, 2 is the
+    typed 4/3 and `SqlEquiv`'s `1.3333333333333333` (registry row 7). -/
+example : SqlBridge.CorrectAvg.AvgRel (some (.decimal (4 / 3)))
+    (SqlEquiv.Value.mkDecimal 13333333333333333 16) :=
+  .inr ⟨4 / 3, 16, rfl, le_refl _, by
+    rw [SqlBridge.CorrectAvg.roundHalfAway, if_pos (by norm_num)]
+    congr 1
+    rw [eq_comm, Int.floor_eq_iff]; norm_num⟩
+
 end SqlCoreTest.CorrectExamples
