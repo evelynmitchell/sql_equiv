@@ -122,7 +122,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 5: plain `SELECT DISTINCT`, up to the order of the rows
       (`SqlBridge/CorrectDistinct.lean`, `elabStmt_correct_distinct`; registry T18). Spider
       coverage **428**, up from 407
-    - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`)
+    - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
+      **Left outside, decided 2026-11-21:** a full step (the `AggCall.first` shape has no
+      correctness lemma) for one query that Postgres rejects (registry row 5). Both
+      evaluators already agree on it in the differential tests; it can be proved later
 - [x] **Phase 7: certified simplifier, decision procedure, tactics** (#296)
   - [x] Simplifier `SqlCore/Simplify.lean` (`Expr.simplify`, `Query.simplify`, with certificates)
   - [x] Certified checkers `SqlCore/Check.lean` (`Expr.checkEquiv`, `Query.checkEquiv`)
