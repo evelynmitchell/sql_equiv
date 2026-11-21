@@ -166,6 +166,14 @@ partial def selectFeatures (s : SelectStmt) : List String :=
      | [(_, m, some _, false)] =>
        m.bareRow && (ih ++ s.orderBy.flatMap (fun o => minMaxCalls o.expr)).eraseDups == ih
      | _ => false)
+  -- without `GROUP BY` (step 3b-6, `elabStmt_correct_aggBare`): aggregates and bare columns, at
+  -- least one aggregate, no `HAVING`, `ORDER BY`, `LIMIT` or `OFFSET`
+  let plainAggBare := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    s.limitVal.isNone && s.offsetVal.isNone && bareOk &&
+    s.items.any (fun | .exprItem e _ => aggCallOk e | .star _ => false) &&
+    s.items.all fun
+      | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
+      | .star _ => false
   let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.all (havingOk s.groupBy) &&
     orderOk && bareOk &&
     s.groupBy.all (fun | .col _ => true | _ => false) &&
@@ -173,7 +181,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
       | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
       | .star _ => false
   (if s.distinct then [distinct] else []) ++
-  (if plainAgg || plainGroup then
+  (if plainAgg || plainAggBare || plainGroup then
     s.items.flatMap fun
       | .exprItem (.agg _ (some a) _) _ => exprFeatures a
       | _ => []

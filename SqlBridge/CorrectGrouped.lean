@@ -313,7 +313,8 @@ set_option maxHeartbeats 4000000 in
 theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} {groupBy : List SqlEquiv.Expr}
     {having : Option SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
-    (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
+    (hgi : groupedItems items = true)
+    (hgb : groupBy ≠ [] ∨ ∃ it ∈ items, aggFragment (itemExpr it) = true)
     (hob : ∀ o ∈ orderBy, aggFragment o.expr = true)
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
     (hbf : BareOk N items groupBy having orderBy)
@@ -377,10 +378,24 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   clear hraw
   rename' hraw' => hraw
   dsimp only at hraw
-  have hgbe : groupBy.isEmpty = false := by
-    cases groupBy with
-    | nil => exact absurd rfl hgb
-    | cons _ _ => rfl
+  -- not the elaborator's branch without aggregates: a key, or an aggregate item
+  have hcond : (groupBy.isEmpty && ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+      orderBy.map SqlEquiv.OrderByItem.expr).eraseDups.isEmpty && having.isNone) = false := by
+    rcases hgb with hgb | ⟨it, hit, hag⟩
+    · cases groupBy with
+      | nil => exact absurd rfl hgb
+      | cons _ _ => rfl
+    · have hmem : itemExpr it ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+          orderBy.map SqlEquiv.OrderByItem.expr).eraseDups :=
+        List.mem_eraseDups.mpr (by simp only [List.mem_append, List.mem_filter, List.mem_map]
+                                   exact .inl (.inl ⟨⟨it, hit, rfl⟩, hag⟩))
+      have : ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+          orderBy.map SqlEquiv.OrderByItem.expr).eraseDups.isEmpty = false := by
+        cases hl : ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+          orderBy.map SqlEquiv.OrderByItem.expr).eraseDups with
+        | nil => rw [hl] at hmem; simp at hmem
+        | cons _ _ => rfl
+      rw [this, Bool.and_false, Bool.false_and]
   cases wh
   case' none =>
     simp only [pure, Except.pure, bind, Except.bind] at hraw
@@ -398,7 +413,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     case hf2 => intros; rfl
     case hf3 => intro o; cases o; rfl
     case hf4 => intro o; cases o; rfl
-    simp only [hgbe, Bool.false_and, Bool.false_eq_true, ↓reduceIte, List.append_nil] at hraw
+    simp only [hcond, Bool.false_eq_true, ↓reduceIte, List.append_nil] at hraw
     split at hraw
     · cases hraw
     rename_i keyList hk
@@ -898,7 +913,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
       ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh groupBy having orderBy lim off)).2 =
         some out ∧ List.Forall₂ OutRel rs out := by
   obtain ⟨hty, sub, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
-    qh, hqh, rfl⟩ := elab_grouped_shape N hgi hgb hob hgc hhv hbf hw h
+    qh, hqh, rfl⟩ := elab_grouped_shape N hgi (.inl hgb) hob hgc hhv hbf hw h
   -- what a bare column's aggregate is: `first` with no `MIN`/`MAX`, or `atExtreme` at the one
   have hmkC : ∀ c e', c ∈ colRefs items → elabExpr cf N.fold noHook (.col c) = .ok e' →
       e' ∉ keyList → ((∀ e, mk e = .first e) ∧ SqlEquiv.selectMinMaxCalls items having = []) ∨

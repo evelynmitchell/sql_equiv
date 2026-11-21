@@ -48,6 +48,9 @@ def corpus : List String := [
   "SELECT department, COUNT(*), name FROM users GROUP BY department",
   "SELECT department, name FROM users GROUP BY department",
   "SELECT COUNT(*), name FROM users",
+  -- no GROUP BY and no input rows: one row, the bare column NULL (roadmap step 3b-6)
+  "SELECT MAX(age), name FROM users WHERE age > 1000",
+  "SELECT COUNT(*), name FROM users WHERE age > 1000",
   "SELECT user_id, product FROM orders GROUP BY user_id",
   -- a scalar subquery with several rows: sqlite takes the first row (registry T17)
   "SELECT name FROM users WHERE age > (SELECT age FROM users)",
