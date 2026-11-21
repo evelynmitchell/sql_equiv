@@ -537,6 +537,20 @@ def setOpSpider (sql : String) : Bool :=
   [SqlBridge.Coverage.setOpBranch]
 #guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer WHERE name LIKE 'A%'" ==
   [SqlBridge.Coverage.like]
+-- branch shapes on which the report and the theorem's leaves could drift apart: a grouped
+-- branch with an AVG item, a bare column next to COUNT without GROUP BY, DISTINCT over an
+-- aggregate, a nested set operation with a bad branch (`featuresSqlite` says "disagrees" if so)
+#guard featuresSqlite ("SELECT name, avg(age) FROM singer GROUP BY name UNION " ++
+  "SELECT name, age FROM singer") == [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite "SELECT name, count(*) FROM singer UNION SELECT name, age FROM singer" ==
+  [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite "SELECT DISTINCT name, max(age) FROM singer UNION SELECT name, age FROM singer"
+  != []
+#guard featuresSqlite ("SELECT name FROM singer UNION SELECT name FROM singer EXCEPT " ++
+  "SELECT avg(age) FROM singer") == [SqlBridge.Coverage.setOpBranch]
+#guard featuresSqlite ("SELECT name, count(*) FROM singer GROUP BY name INTERSECT " ++
+  "SELECT name, count(*) FROM singer GROUP BY name HAVING count(*) > 1") == []
+#guard featuresSqlite "SELECT count(*) FROM singer UNION SELECT count(DISTINCT name) FROM singer" == []
 
 /-- `elabStmt_correct_setOp`'s hypothesis is satisfiable: a plain branch and a `DISTINCT` branch
     under `INTERSECT` form a `SetOpTree` of `Leaf`s, and the statement elaborates. -/
