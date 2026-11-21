@@ -12,6 +12,7 @@ import SqlBridge.CorrectGroupOrder
 import SqlBridge.CorrectGrouped
 import SqlBridge.CorrectDistinct
 import SqlBridge.CorrectSetOp
+import SqlBridge.CorrectSub
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -178,10 +179,20 @@ def aggInSubShape : SqlEquiv.Stmt → Bool
       itemsFragment items' && fromFragment f' && wh'.all isFragment
   | _ => false
 
+/-- The shape of `elabStmt_correct_aggBare_inSub` (step 6b): `elabStmt_correct_aggBare`'s
+    statement with the same `WHERE e [NOT] IN (SELECT …)`. -/
+def aggBareInSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some f) (some (.inSubquery e _
+      (.simple (.mk false items' (some f') wh' [] none [] none none)))) [] none [] none none)) =>
+    groupedItems items && items.any (fun it => itemAggFragment (itemExpr it)) && fromFragment f &&
+      bareOkB items [] none [] && isFragment e &&
+      itemsFragment items' && fromFragment f' && wh'.all isFragment
+  | _ => false
+
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
   stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
-    setOpShape s || inSubShape s || aggInSubShape s
+    setOpShape s || inSubShape s || aggInSubShape s || aggBareInSubShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -628,16 +639,16 @@ def inSubSpider (sql : String) : Bool :=
 #guard featuresSqlite "SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)" == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
--- under aggregates without GROUP BY (`elabStmt_correct_agg_inSub`): inside; with an AVG or a
--- bare column (`elabStmt_correct_aggBare`'s statements) or GROUP BY, not yet
+-- under aggregates without GROUP BY (`elabStmt_correct_agg_inSub`), also next to an AVG or a
+-- bare column (`elabStmt_correct_aggBare_inSub`): inside; with GROUP BY, not yet
 #guard featuresSqlite ("SELECT count(*) FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == []
 #guard featuresSqlite ("SELECT min(age), count(DISTINCT name) FROM singer WHERE singer_id IN " ++
   "(SELECT singer_id FROM song WHERE title = 'x')") == []
 #guard featuresSqlite ("SELECT avg(age) FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+  "(SELECT singer_id FROM song)") == []
 #guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+  "(SELECT singer_id FROM song)") == []
 #guard featuresSqlite ("SELECT name, count(*) FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song) GROUP BY name") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++

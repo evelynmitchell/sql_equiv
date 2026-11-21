@@ -132,8 +132,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       - [x] The same under aggregates without `GROUP BY` (`elabStmt_correct_agg_inSub`; the
         aggregate theorem now takes its `WHERE` abstractly, `elabStmt_correct_agg_w`). Spider
         coverage **483**, up from 475
-      - [ ] The same under an `AVG` or a bare column (3 queries, `elabStmt_correct_aggBare`'s
-        statements), under `AND` (2, one of them `DISTINCT`), and with a grouped or
+      - [x] The same next to an `AVG` or a bare column (`elabStmt_correct_aggBare_inSub`; the
+        grouped and bare-column theorems take their `WHERE` abstractly too). Spider coverage
+        **486**, up from 483
+      - [ ] Under `AND` (2 queries, one of them `DISTINCT`), and with a grouped or
         set-operation body (2)
     - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries; 5 compare
       against an `AVG`, which needs its own decision)
@@ -222,10 +224,11 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 5. Plain `DISTINCT`, up to row order (done) | 428 |
 | 6a. Set operations, up to row order (done) | 466 |
 | 6b (part). `WHERE e [NOT] IN (plain subquery)`, plain outer query (done) | 475 |
-| Today: 6b (part). The same under aggregates without `GROUP BY` (done) | 483 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 484 |
+| 6b (part). The same under aggregates without `GROUP BY` (done) | 483 |
+| Today: 6b (part). The same next to `AVG` or bare columns (done) | 486 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 487 |
 
-Still outside after that: `IN`/`NOT IN` and scalar subqueries (24, of which 2 also need a set
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (21, of which 2 also need a set
 operation in a subquery or in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
@@ -460,8 +463,10 @@ follows coverage instead (decided 20 Nov 2026):
      The aggregate theorem takes `WhereOk` too (`elabStmt_correct_agg_w`), which gives the
      clause under aggregates without `GROUP BY` (`elabStmt_correct_agg_inSub`, 8 queries).
 
-     Still to do in 6b: thread `WhereOk` through the grouped theorem, for `AVG` and bare
-     columns without `GROUP BY` (3 queries); the clause under `AND` (2 queries; the elaborator's hidden column is named
+     So do the grouped and bare-column theorems (`elabStmt_correct_grouped_w`,
+     `elabStmt_correct_aggBare_w`; `elabStmt_correct_aggBare_inSub`, 3 queries).
+
+     Still to do in 6b: the clause under `AND` (2 queries; the elaborator's hidden column is named
      `?subquery?`, which the predicate must not reference: unreachable through the parser,
      which has no quoted identifiers, but a side condition for hand-built ASTs); bodies that
      are grouped or set operations (2 queries).

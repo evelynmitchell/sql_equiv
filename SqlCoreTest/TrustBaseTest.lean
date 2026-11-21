@@ -13,6 +13,14 @@ import SqlBridge.CorrectAgg
 import SqlBridge.CorrectGroup
 import SqlBridge.CorrectGroupOrder
 import SqlBridge.CorrectGrouped
+import SqlBridge.CorrectExtreme
+import SqlBridge.CorrectAvg
+import SqlBridge.CorrectAggBare
+import SqlBridge.CorrectDistinct
+import SqlBridge.CorrectSetOp
+import SqlBridge.CorrectSub
+import SqlBridge.Coverage
+import SqlBridge.Spider
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore
@@ -23,6 +31,8 @@ import Test.TrustBaseCommands
 -- `SELECT … FROM t WHERE p` (#309, `SqlBridge.Correct`), with `ORDER BY` / `LIMIT` / `OFFSET`
 -- (#352 step 1, `SqlBridge.CorrectOrder`), joins (step 2, `SqlBridge.CorrectJoin`) and aggregates
 -- without `GROUP BY` (step 3a, `SqlBridge.CorrectAgg`) and `GROUP BY` (step 3b-1,
--- `SqlBridge.CorrectGroup`).
+-- `SqlBridge.CorrectGroup`), and the later steps. Every `SqlBridge/Correct*.lean` file must be
+-- imported here, or its theorems are not checked: `tools/check_trust_base_imports.py` (in CI)
+-- fails when one is missing.
 #assert_trust_base SqlBridge
 #assert_no_runtime_overrides SqlBridge

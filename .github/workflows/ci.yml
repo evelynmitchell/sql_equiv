@@ -62,6 +62,9 @@ jobs:
       - name: Check no theorem has identical sides (#307)
         run: python3 tools/rewrite-audit/scripts/lean/find_identical_sides.py SqlEquiv SqlCore SqlBridge
 
+      - name: Check the trust-base test imports every bridge proof file
+        run: python3 tools/check_trust_base_imports.py
+
       - name: Check generated AST DecidableEq block is current
         run: python3 tools/gen_ast_deceq.py --check
 

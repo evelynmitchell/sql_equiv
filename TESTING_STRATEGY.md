@@ -20,7 +20,10 @@ engines.
   `native_decide`, no `unsafe`/`implemented_by` overrides. `Test/TacticTest.lean` pins the axioms
   of `sql_equiv!`.
 - **Watch for:** these checks run only when the test targets are built (`sql_equiv_test`,
-  `sqlcore_test`), not on a plain `lake build`. `tools/rewrite-audit/scripts/lean/check_trust_base.sh`
+  `sqlcore_test`), not on a plain `lake build`. They cover only the modules the test files
+  import: `tools/check_trust_base_imports.py` (in CI) fails when a `SqlBridge` file is not
+  imported by `SqlCoreTest/TrustBaseTest.lean` (four proof files were unchecked until 21 Nov
+  2026; all pass). `tools/rewrite-audit/scripts/lean/check_trust_base.sh`
   runs the same check by hand; `/audit` covers the rewriters.
 
 ### 2. Static consistency checks (no build)
@@ -70,7 +73,7 @@ engines.
 - **Elaborator-correctness guards** (`CorrectExamples`): the hypotheses of the elaborator
   theorems (#352) are satisfiable by queries that elaborate, and the fragment's shapes
   (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`, `distinctShape`, `setOpShape`,
-  `inSubShape`, `aggInSubShape`) are
+  `inSubShape`, `aggInSubShape`, `aggBareInSubShape`) are
   spot-checked inside and outside.
 - **Coverage report against the theorems** (`CoverageAgreeTest`): the Spider coverage count
   (`SqlBridge.Coverage`) agrees with the theorems' shapes on every query of

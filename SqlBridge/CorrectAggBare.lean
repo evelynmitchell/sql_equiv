@@ -43,21 +43,26 @@ set_option maxHeartbeats 8000000 in
     at least one an aggregate, the bare columns as `BareOk` allows (no `MIN`/`MAX`, or exactly
     one): when the statement elaborates, the typed query's one row relates to `SqlEquiv`'s, an
     `AVG` item (step 3c) up to `SqlEquiv`'s rounding (`OutRelI`). -/
-theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+theorem elabStmt_correct_aggBare_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
     (hgi : groupedItems items = true) (hai : ∃ it ∈ items, itemAggFragment (itemExpr it) = true)
-    (hff : fromFragment fr = true) (hw : ∀ w ∈ wh, isFragment w = true)
+    (hff : fromFragment fr = true)
+    (hwo : ∀ {n : ℕ} (qf q₀ : Query N.S n) (cf : Fin n → Column),
+      elabFrom N (fun sq => elabSubQuery N 15 sq) fr = .ok ⟨n, qf, cf⟩ →
+      elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf wh = .ok q₀ →
+      WhereOk cf N.fold db D wh qf q₀)
     (hbf : BareOk N items [] none [])
     {e : Elaborated N.S} (h : elabStmt N (groupedStmt items fr wh [] none [] none none) = .ok e)
     (hnb : QNoBoolOrder e.q) :
     ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh [] none [] none none)).2 = some out ∧
         List.Forall₂ (OutRelI items) rs out := by
-  obtain ⟨hty, sub, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
-    qh, hqh, rfl⟩ := elab_grouped_shape N hfoldCI hgi (.inr hai) (by simp) (by simp) (by simp) hbf hw h
+  obtain ⟨hty, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
+    qh, hqh, rfl⟩ := elab_grouped_shape N hfoldCI hgi (.inr hai) (by simp) (by simp) (by simp) hbf h
+  have hwo' := hwo qf q₀ cf hf hq₀
   simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hk
   subst hk
   cases hsk
@@ -75,7 +80,7 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     intro c e' hc he'
     obtain ⟨it, hit, hite⟩ := exists_item_of_colRefs hc
     exact hmk ⟨it, hit, c, e', hite, he', List.not_mem_nil⟩
-  obtain ⟨hnames, hfrom⟩ := from_rel N hfold hfoldCI hwn hfix hD hrel sub fr hff hf
+  obtain ⟨hnames, hfrom⟩ := from_rel N hfold hfoldCI hwn hfix hD hrel _ fr hff hf
   simp only at hnames hfrom hty hnb ⊢
   -- typing
   obtain ⟨Δ, hΔ⟩ := Option.isSome_iff_exists.mp hty
@@ -83,30 +88,16 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   obtain ⟨Γ₀, Δk, Δa, hq₀ty, -, has, -⟩ := Query.typeOf_aggregate_eq_some hΓa
   obtain ⟨-, hnbA, hnbq₀⟩ := hnb
   have hnbAgg := (hnbA Γ₀ hq₀ty).2
-  have hsrc : qf.typeOf = some Γ₀ := by
-    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, -, -, rfl⟩
-    · exact hq₀ty
-    · exact (Query.typeOf_select_eq_some.mp hq₀ty).1
-  have hnbsrc : QNoBoolOrder qf := by
-    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, -, -, rfl⟩
-    · exact hnbq₀
-    · exact hnbq₀.2
+  have hsrc : qf.typeOf = some Γ₀ := hwo'.src _ hq₀ty
+  have hnbsrc : QNoBoolOrder qf := hwo'.nb hnbq₀
   obtain ⟨hdivf, Rf, hRf, hrelf⟩ := hfrom hsrc hnbsrc
   have hrows : List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) Rf
       (SqlEquiv.evalFrom db fr) := hrelf.imp fun r u h =>
     ⟨rowRel_of_keyed N.fold hfold hfoldCI (fun j => (hnames j).1) (fun j => (hnames j).2) h.1, h.2⟩
-  have hdivq₀ : q₀.divSafe = true := by
-    rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, hwp, hp, rfl⟩
-    · exact hdivf
-    · simp only [Query.divSafe, hdivf, Bool.and_true]
-      exact Translates.divSafe _ _ (translates_of_elab _ _ w (hw w hwp) hp)
+  have hdivq₀ : q₀.divSafe = true := hwo'.div _ hq₀ty hnbq₀ hdivf
   obtain ⟨R, hR⟩ := Query.IsSafe.exists_eval_eq_ok (q := q₀) ⟨by simp [hq₀ty], hdivq₀⟩ hD
-  have hRU₀ : ∃ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U := by
-    rcases hq₀ with ⟨rfl, rfl⟩ | ⟨w, p, rfl, hp, rfl⟩
-    · rw [hRf, Except.ok.injEq] at hR; subst hR; exact ⟨_, hrows⟩
-    · have hR' := hR
-      simp only [Query.eval_select, hRf, bind, Except.bind] at hR'
-      exact ⟨_, filter_rel _ _ db (translates_of_elab _ _ w (hw w rfl) hp) (hnbq₀.1 _ hsrc) hrows hR'⟩
+  have hRU₀ : ∃ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U :=
+    ⟨_, hwo'.rel hq₀ty hnbq₀ hRf hR hrows⟩
   have hRconf : ∀ r ∈ R, r.Conforms Γ₀ := fun r hr => by
     obtain ⟨U, hU⟩ := hRU₀
     obtain ⟨u, -, h⟩ := forall₂_mem_left hU hr; exact h.2
@@ -253,10 +244,23 @@ theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   refine .cons ⟨hits.length_eq, ?_⟩ .nil
   rw [items_vals_group db _ _ hitems]
   apply final
-  rcases hq₀ with ⟨rfl, rfl⟩ | ⟨w, p, rfl, hp, rfl⟩
-  · rw [hRf, Except.ok.injEq] at hR; subst hR; exact hrows
-  · have hR' := hR
-    simp only [Query.eval_select, hRf, bind, Except.bind] at hR'
-    exact filter_rel _ _ db (translates_of_elab _ _ w (hw w rfl) hp) (hnbq₀.1 _ hsrc) hrows hR'
+  exact hwo'.rel hq₀ty hnbq₀ hRf hR hrows
+
+/-- `elabStmt_correct_aggBare_w` with a `WHERE` in the expression fragment. -/
+theorem elabStmt_correct_aggBare (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {items : List SqlEquiv.SelectItem} {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    (hgi : groupedItems items = true) (hai : ∃ it ∈ items, itemAggFragment (itemExpr it) = true)
+    (hff : fromFragment fr = true) (hw : ∀ w ∈ wh, isFragment w = true)
+    (hbf : BareOk N items [] none [])
+    {e : Elaborated N.S} (h : elabStmt N (groupedStmt items fr wh [] none [] none none) = .ok e)
+    (hnb : QNoBoolOrder e.q) :
+    ∃ rs, e.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh [] none [] none none)).2 = some out ∧
+        List.Forall₂ (OutRelI items) rs out :=
+  elabStmt_correct_aggBare_w N hfold hfoldCI hwn hfix hD hrel hgi hai hff
+    (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hbf h hnb
 
 end SqlBridge.CorrectAggBare

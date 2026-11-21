@@ -85,7 +85,7 @@ This repository could become a basis for SQL support in
   rows (registry T18), the elaborator is proved correct
   against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `CorrectOrder.lean`,
   `CorrectJoin.lean`, `CorrectAgg.lean`, `CorrectGroup.lean`, `CorrectGroupOrder.lean`,
-  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`, `CorrectSetOp.lean`, `CorrectSub.lean`); 483 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
+  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`, `CorrectSetOp.lean`, `CorrectSub.lean`); 486 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features

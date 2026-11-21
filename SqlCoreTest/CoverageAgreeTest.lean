@@ -3,7 +3,7 @@
   counts the Spider queries inside the elaborator-correctness fragment by a feature list of its
   own; `SqlCoreTest.CorrectExamples` defines the fragment from the theorems' hypotheses
   (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`, `distinctShape`, `setOpShape`, `inSubShape`,
-  `aggInSubShape`). This
+  `aggInSubShape`, `aggBareInSubShape`). This
   test runs both over every query
   of `benchmarks/spider/dev_queries.jsonl`, parsed in the sqlite dialect as the report does, and
   fails on any disagreement: a report that counts a query no theorem covers (as a first draft of
