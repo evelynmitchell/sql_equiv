@@ -325,4 +325,21 @@ def groupedSpider (sql : String) : Bool :=
 #guard !groupedSpider "SELECT name, max(DISTINCT age) FROM singer GROUP BY singer_id"
 #guard !groupedSpider "SELECT name, max(age) FROM singer GROUP BY age ORDER BY min(singer_id)"
 
+/-- `BareOk`'s third case (step 3b-5) is satisfiable by a statement that elaborates: a bare
+    `name` next to the one `max(age)`, parsed in the sqlite dialect (`bareRow`). -/
+def extremeMode : SqlEquiv.MinMaxMode := { mixed := .typeClass, bools := .asInt, bareRow := true }
+def extremeItems : List SqlEquiv.SelectItem :=
+  [.exprItem (.col ⟨none, "name"⟩) none,
+   .exprItem (.agg (.max extremeMode) (some (.col ⟨none, "age"⟩)) false) none]
+
+example : SqlBridge.CorrectGrouped.BareOk singerSchema extremeItems
+    [.col ⟨none, "singer_id"⟩] none [] :=
+  .inr (.inr ⟨rfl, true, extremeMode, .col ⟨none, "age"⟩, rfl, by decide, by decide⟩)
+
+#guard SqlEquiv.parse "SELECT name, max(age) FROM singer GROUP BY singer_id" (dialect := .sqlite) ==
+  .ok (.query (.simple (.mk false extremeItems (some (.table ⟨"singer", none⟩)) none
+    [.col ⟨none, "singer_id"⟩] none [] none none)))
+#guard (elabStmt singerSchema (groupedStmt extremeItems (.table ⟨"singer", none⟩) none
+  [.col ⟨none, "singer_id"⟩] none [] none none)).toBool
+
 end SqlCoreTest.CorrectExamples

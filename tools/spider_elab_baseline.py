@@ -39,7 +39,8 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # it names (`SqlBridge.Coverage`) into the theorem's fragment. Step 0 (#351, done) let the
 # theorem apply to Spider's case-folding schemas at all; steps 1 (ORDER BY / LIMIT), 2 (inner
 # and cross joins), 3a (aggregates without GROUP BY, AVG aside), 3b-1 (GROUP BY columns, items
-# keys or aggregates) and 3b-2 (HAVING) are done and counted in "Today".
+# keys or aggregates), 3b-2 (HAVING), 3b-3 (ORDER BY aggregates, LIMIT), 3b-4 (bare columns on
+# the first row) and 3b-5 (bare columns at the one MIN/MAX) are done and counted in "Today".
 ROADMAP = [
     # On Spider, every non-column ORDER BY key and every unaliased item next to an ORDER BY is an
     # aggregate (`ORDER BY count(*)`, `SELECT x, count(*) … ORDER BY …`): step 3 extends step 1's
