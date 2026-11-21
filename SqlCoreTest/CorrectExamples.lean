@@ -458,4 +458,18 @@ example : SqlBridge.CorrectAvg.AvgRel (some (.decimal (4 / 3)))
     congr 1
     rw [eq_comm, Int.floor_eq_iff]; norm_num⟩
 
+/-- Spider-shaped plain `SELECT DISTINCT` queries (roadmap step 5) have the shape of
+    `elabStmt_correct_distinct` and elaborate under the folding schema. -/
+def distinctSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => distinctShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+#guard distinctSpider "SELECT DISTINCT age FROM singer WHERE age > 20"
+#guard distinctSpider ("SELECT DISTINCT T1.name FROM singer AS T1 JOIN song AS T2 ON " ++
+  "T1.singer_id = T2.singer_id WHERE T1.age BETWEEN 20 AND 30")
+#guard !distinctSpider "SELECT DISTINCT age FROM singer LIMIT 1"
+#guard !distinctSpider "SELECT DISTINCT age FROM singer ORDER BY age"
+#guard !distinctSpider "SELECT DISTINCT count(*) FROM singer"
+
 end SqlCoreTest.CorrectExamples
