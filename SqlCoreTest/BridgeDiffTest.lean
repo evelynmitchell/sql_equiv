@@ -149,6 +149,14 @@ def corpus : List (String × Expect) := [
   ("SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20", .agree),
   ("SELECT staff FROM museum EXCEPT SELECT staff FROM museum WHERE staff > 20", .agree),
   ("SELECT name FROM users UNION SELECT name FROM products EXCEPT SELECT name FROM users WHERE age > 26", .agree),
+  -- set operations keep the same rows in a different order (T18, `elabStmt_correct_setOp`): the
+  -- typed core keeps the last copy of a duplicate, SqlEquiv the first; with LIMIT and no ORDER
+  -- BY the rows differ
+  ("SELECT department FROM users UNION SELECT department FROM users WHERE age > 100", .orderDiffers),
+  ("SELECT department FROM users INTERSECT SELECT department FROM users", .orderDiffers),
+  ("SELECT department FROM users EXCEPT SELECT department FROM users WHERE age > 100", .orderDiffers),
+  ("SELECT department FROM users WHERE id > 1 UNION SELECT department FROM users WHERE id > 1 LIMIT 1",
+    .rowsDiffer "T18: a set operation keeps the last copy in the typed core, the first in SqlEquiv"),
   ("SELECT name FROM users WHERE name LIKE 'A%'", .agree),
   ("SELECT name FROM users WHERE name LIKE '%e'", .agree),
   ("SELECT name FROM users WHERE name LIKE '%a%'", .agree),

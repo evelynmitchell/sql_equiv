@@ -41,16 +41,16 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 428 |
-| after DISTINCT with an unselected sort key and LIMIT | 429 |
+| Today | 466 |
+| after DISTINCT with an unselected sort key and LIMIT | 467 |
 
 Still outside after that (queries using each feature):
 
-- subquery/set operation/CTE: 80
+- subquery/set operation/CTE: 41
 - LIKE: 8
 - *: 2
-- AVG: 2
 - aggregate/GROUP BY: 2
+- AVG: 2
 
 ## Failure classes (largest first)
 

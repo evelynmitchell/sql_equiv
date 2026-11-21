@@ -122,6 +122,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 5: plain `SELECT DISTINCT`, up to the order of the rows
       (`SqlBridge/CorrectDistinct.lean`, `elabStmt_correct_distinct`; registry T18). Spider
       coverage **428**, up from 407
+    - [x] Step 6a: set operations, `UNION [ALL]`, `INTERSECT`, `EXCEPT`, nested, up to the order
+      of the rows (`SqlBridge/CorrectSetOp.lean`, `elabStmt_correct_setOp`; registry T18;
+      decided 2026-11-21). Spider coverage **466**, up from 428
+    - [ ] Step 6b: `IN` / `NOT IN` with an uncorrelated subquery (23 Spider queries)
+    - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries; 5 compare
+      against an `AVG`, which needs its own decision)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
       **Left outside, decided 2026-11-21:** a full step (the `AggCall.first` shape has no
       correctness lemma) for one query that Postgres rejects (registry row 5). Both
@@ -204,10 +210,12 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3b-6. Bare columns without `GROUP BY`, ordering by a key column (done) | 384 |
 | 3c. `AVG` items, up to rounding (done) | 403 |
 | 4. `BETWEEN` (done) | 407 |
-| Today: 5. Plain `DISTINCT`, up to row order (done) | 428 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 429 |
+| 5. Plain `DISTINCT`, up to row order (done) | 428 |
+| Today: 6a. Set operations, up to row order (done) | 466 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 467 |
 
-Still outside after that: subqueries, set operations and CTEs (80), `LIKE` (8), `*` (2),
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (41, of which 2 also need a set
+operation in a subquery or in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
@@ -395,6 +403,34 @@ follows coverage instead (decided 20 Nov 2026):
    can keep a different row in each evaluator and stays outside, as does the one Spider query
    with an unselected sort key. `QNoBoolOrder` now looks through `Query.distinct` (it was
    vacuously true there).
+
+6. **Subqueries and set operations** (80 queries; none uses a CTE, `EXISTS` or a correlated
+   subquery). Three parts, in this order (decided 2026-11-21):
+   - **6a. Set operations, done up to row order** (38 queries). Both evaluators compare rows the
+     same way (`row_eq_iff_valueKey`) and, as for `DISTINCT`, keep different copies of a
+     duplicate: `SqlEquiv` the first (`dedupByKey`), the typed core the last (`List.dedup`, in
+     `Query.distinct` and `Row.setOp`). So `UNION`, `INTERSECT` and `EXCEPT` return the same rows
+     in a different order, and the theorem relates the two up to a permutation, changing
+     neither evaluator (registry T18 extended). The proof is compositional: `PermRel` (related
+     up to order) is preserved by concatenation, deduplication and filtering by membership in
+     the other branch (`permRel_append`, `permRel_dedup`, `permRel_filter_mem`); a compound
+     query that elaborates has branches that elaborate to one type (`elab_compound_shape`); so
+     related branches give a related compound query (`compound_rel`), and by induction any
+     tree of set operations over related leaves is related (`setOpTree_rel`).
+     `elabStmt_correct_setOp` instantiates the leaves (`Leaf`) with the statements of
+     `elabStmt_correct_join`, `_distinct`, `_agg` and `_grouped` that have no `ORDER BY` or
+     `LIMIT`. Left out: branches with an `AVG` item (related only up to rounding, which a row
+     comparison could tell apart), bare columns without `GROUP BY`, and a trailing
+     `ORDER BY`/`LIMIT` over the set operation (with `LIMIT` the kept rows can differ; no Spider
+     query has one). `QNoBoolOrder` now descends into set operations (it was vacuously true
+     there).
+   - **6b. `IN` / `NOT IN` subqueries** (23 queries): the three-valued results already agree;
+     the proof needs the attached-subquery machinery (`Query.attach`) and a lemma that an
+     uncorrelated subquery's result does not depend on the outer row (`SqlEquiv` re-evaluates
+     it per row, the typed core once).
+   - **6c. Scalar subqueries** (16 queries): reuses 6b's machinery; in the sqlite dialect both
+     evaluators take the first row. Five compare against an `AVG` (rounded in `SqlEquiv`, exact
+     in the typed core), a decision to make then.
 
 Each step lands with its theorem, `CorrectExamples` checks that its new hypotheses are
 satisfiable, and an update of this table (the report regenerates it).
