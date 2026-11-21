@@ -217,7 +217,20 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   (match s.fromClause with
    | none => [noFrom]
    | some f => fromFeatures f) ++
-  ((s.whereClause.map exprFeatures).getD []) ++
+  -- `WHERE e [NOT] IN (SELECT …)` on a plain outer query (step 6b, `elabStmt_correct_inSub`):
+  -- inside when the probe and the body are; the body a plain statement without `ORDER BY`
+  (match s.whereClause with
+   | some (.inSubquery e _ (.simple b)) =>
+     if !s.distinct && s.groupBy.isEmpty && s.having.isNone &&
+         !(plainAgg || plainAggBare || plainGroup) then
+       exprFeatures e ++ selectFeatures b ++
+         (if b.distinct || !b.groupBy.isEmpty || b.having.isSome || !b.orderBy.isEmpty ||
+             b.limitVal.isSome || b.offsetVal.isSome ||
+             b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false)
+          then [subquery] else [])
+     else subquery :: exprFeatures e
+   | some w => exprFeatures w
+   | none => []) ++
   (if (s.groupBy.isEmpty && s.having.isNone) || plainGroup then [] else [aggregate]) ++
   (s.groupBy.flatMap exprFeatures) ++
   ((s.having.map (if plainGroup then havingFeatures else exprFeatures)).getD []) ++
