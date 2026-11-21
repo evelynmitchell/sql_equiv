@@ -949,7 +949,7 @@ def _current_test_name(text: str, pos: int) -> str:
     # Look for .pass "name" or check ... "name" patterns
     chunk = text[:pos]
     # LSpec check pattern
-    m = list(re.finditer(r'check\s+(?:\([^)]*\)\s+)?"([^"]+)"', chunk))
+    m = list(re.finditer(r'checkS?\s+(?:\([^)]*\)\s+)?"([^"]+)"', chunk))
     if m:
         return m[-1].group(1)
     # .pass/.fail pattern

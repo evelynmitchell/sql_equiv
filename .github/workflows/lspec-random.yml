@@ -1,0 +1,141 @@
+name: LSpec random seed
+
+# Pull-request CI runs the property tests on one fixed seed, so a PR never goes red for a bug
+# its diff did not cause. This workflow explores: each scheduled run uses a new seed, and a
+# failure is reported in an issue with the command that replays it (#395).
+
+on:
+  schedule:
+    - cron: '23 3 * * *'  # daily, 03:23 UTC
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Run seed (a natural number). Leave blank to use this run's id."
+        required: false
+        default: ""
+      samples:
+        description: "Samples per property."
+        required: false
+        default: "100000"
+      self_test:
+        description: "Run only the deliberately false property, to exercise the failure report."
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: lspec-random
+  cancel-in-progress: false
+
+jobs:
+  lspec-random:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Choose the seed
+        env:
+          INPUT_SEED: ${{ inputs.seed }}
+          INPUT_SAMPLES: ${{ inputs.samples }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          seed="${INPUT_SEED:-$RUN_ID}"
+          samples="${INPUT_SAMPLES:-100000}"
+          case "$seed" in ''|*[!0-9]*) echo "seed must be a natural number, got '$seed'"; exit 1;; esac
+          case "$samples" in ''|*[!0-9]*) echo "samples must be a natural number, got '$samples'"; exit 1;; esac
+          echo "LSPEC_SEED=$seed" >> "$GITHUB_ENV"
+          echo "LSPEC_SAMPLES=$samples" >> "$GITHUB_ENV"
+          echo "Seed $seed, $samples samples per property"
+
+      - name: Install elan
+        run: |
+          curl -sSfL -o /tmp/elan.tar.gz https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/elan.tar.gz -C /tmp
+          /tmp/elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Install duckdb (differential-test oracle)
+        run: |
+          curl -sSfL -o /tmp/duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-linux-amd64.zip
+          sudo unzip -o -q /tmp/duckdb.zip -d /usr/local/bin
+          duckdb --version
+
+      - name: Restore Lake packages (read only; ci.yml writes this cache)
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.elan/toolchains
+            .lake
+            !.lake/packages/mathlib/.lake/build
+          key: ${{ runner.os }}-lake-${{ hashFiles('lakefile.toml', 'lean-toolchain') }}
+          restore-keys: |
+            ${{ runner.os }}-lake-
+
+      - name: Start Postgres (differential-test oracle, preinstalled on the runner)
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres createuser -s "$USER"
+          sudo -u postgres createdb "$USER"
+          psql -X -At -c 'select version()'
+
+      - name: Build LSpec property tests
+        run: lake build sql_equiv_lspec
+
+      - name: Run LSpec property tests on this run's seed
+        id: lspec
+        env:
+          SELF_TEST: ${{ inputs.self_test }}
+        run: |
+          set -o pipefail
+          args=""
+          if [ "$SELF_TEST" = "true" ]; then args="--must-fail"; fi
+          lake exe sql_equiv_lspec $args 2>&1 | tee lspec.log
+
+      - name: Report the failing seed in an issue
+        if: failure() && steps.lspec.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELF_TEST: ${{ inputs.self_test }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          title="LSpec random-seed run failed"
+          if [ "$SELF_TEST" = "true" ]; then title="LSpec random-seed run failed (workflow self-test, close me)"; fi
+          {
+            echo "The scheduled property-test run failed on seed \`$LSPEC_SEED\` at commit \`$SHA\`."
+            echo
+            echo "Replay:"
+            echo
+            echo '```bash'
+            echo "LSPEC_SEED=$LSPEC_SEED LSPEC_SAMPLES=$LSPEC_SAMPLES lake exe sql_equiv_lspec"
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "Failing tests (from the run's log):"
+            echo
+            echo '````'
+            sed -n '/Failing tests/,$p' lspec.log | head -c 6000
+            echo
+            echo '````'
+            echo
+            echo "A failure here is a real counterexample or an engine difference, not noise:"
+            echo "replay it, fix the cause, and add the counterexample as a regression test"
+            echo "(\`/counterexample\`). Opened by \`.github/workflows/lspec-random.yml\` (#395)."
+          } > issue-body.md
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$title\" in:title" --json number,title \
+            --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file issue-body.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body-file issue-body.md
+          fi

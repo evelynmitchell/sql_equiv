@@ -109,8 +109,14 @@ jobs:
       - name: Build LSpec property tests
         run: lake build sql_equiv_lspec
 
+      - name: Self-test the LSpec run seed (#395)
+        run: python3 tools/lspec_seed_selftest.py
+
       - name: Run LSpec property tests
+        # Fixed seed (the default, 0) on pull requests; lspec-random.yml explores other seeds.
+        # pipefail: without it the step takes tee's exit code and a failing property is green.
         run: |
+          set -o pipefail
           lake exe sql_equiv_lspec | tee test-results/lspec.log
           python3 tools/lspec_results_to_json.py test-results/lspec.log test-results/lspec.jsonl
         env:

@@ -199,7 +199,7 @@ lake build
 # Run the complete test suite
 lake exe sql_equiv_test
 
-# Run LSpec property-based tests (SlimCheck-powered)
+# Run LSpec property-based tests (SlimCheck-powered); LSPEC_SEED picks the samples (default 0)
 lake exe sql_equiv_lspec
 
 # Run the unused private checker

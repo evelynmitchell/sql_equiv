@@ -102,10 +102,21 @@ engines.
 - **Catches:** edge cases hand-written tests miss: NULL propagation, type mismatches, algebraic
   boundary conditions, rewriter soundness on generated expressions.
 - **How:** SlimCheck generates expressions (`LSpecTests/Generators.lean`); CI runs
-  `LSPEC_SAMPLES=100000`. The Context Sweep (`RewriterProperties`) runs every rewriter over
+  `LSPEC_SAMPLES=100000`.
+- **Seeds (#395):** the samples come from a run seed, `LSPEC_SEED` (default 0), mixed with each
+  property's name (`checkS`, `propertySeed`). Pull-request CI uses the default, so a PR is
+  tested on the same samples every time and cannot go red for a bug its diff did not cause.
+  `.github/workflows/lspec-random.yml` runs daily on a new seed and reports a failure in an
+  issue with the replay command. A failing property prints
+  `Replay: LSPEC_SEED=… LSPEC_SAMPLES=… lake exe sql_equiv_lspec`.
+  `tools/lspec_seed_selftest.py` (in CI) checks that the seed is read, that a false property
+  fails the run and replays at the same sample, and that no property uses LSpec's own `check`,
+  which ignores the seed (before #395 every run drew the same samples).
+- **Context Sweep:** the Context Sweep (`RewriterProperties`) runs every rewriter over
   generated contexts and includes a mutant check: an unguarded `a AND TRUE → a` rewriter must be
   caught.
-- **Watch for:** databases are fixtures, not generated (#245), so a property can go vacuous if
+- **Watch for:** the CI step pipes the runner through `tee`, so it needs `set -o pipefail` or a
+  failing property is green. Databases are fixtures, not generated (#245), so a property can go vacuous if
   its fixture does not match the query (`/test-vacuity`). Findings go in `LSPEC_FINDINGS.md`.
 
 ### 8. Review
@@ -144,6 +155,14 @@ lake exe sqlcore_test
 
 ```bash
 LSPEC_SAMPLES=1000 lake exe sql_equiv_lspec
+```
+
+```bash
+LSPEC_SEED=12345 LSPEC_SAMPLES=1000 lake exe sql_equiv_lspec
+```
+
+```bash
+python3 tools/lspec_seed_selftest.py
 ```
 
 ```bash

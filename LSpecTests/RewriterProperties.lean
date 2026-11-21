@@ -39,15 +39,15 @@ private partial def containsBetween : Expr → Bool
 
 def semanticEquivTests (cfg : Configuration) : TestSeq :=
   -- Core property: rewriting preserves evaluation
-  check (cfg := cfg) "certifiedRewrite preserves semantics (BoundedGroundExpr)"
+  checkS (cfg := cfg) "certifiedRewrite preserves semantics (BoundedGroundExpr)"
     (∀ e : BoundedGroundExpr,
       evalExpr [] (certifiedRewrite e.expr).val == evalExpr [] e.expr) $
   -- Boolean expressions
-  check (cfg := cfg) "certifiedRewrite preserves semantics (BoolGroundExpr)"
+  checkS (cfg := cfg) "certifiedRewrite preserves semantics (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       evalExpr [] (certifiedRewrite e.expr).val == evalExpr [] e.expr) $
   -- Integer expressions
-  check (cfg := cfg) "certifiedRewrite preserves semantics (IntGroundExpr)"
+  checkS (cfg := cfg) "certifiedRewrite preserves semantics (IntGroundExpr)"
     (∀ e : IntGroundExpr,
       evalExpr [] (certifiedRewrite e.expr).val == evalExpr [] e.expr)
 
@@ -60,15 +60,15 @@ def idempotencyTests (cfg : Configuration) : TestSeq :=
   -- Only SelectStmt payloads (.exists, .subquery, .inSubquery sel) are not recursed into.
   -- Since genGroundExpr generates only lit/binOp/unaryOp/CASE (no SelectStmt nodes),
   -- structural idempotency should hold for both BoolGroundExpr and BoundedGroundExpr.
-  check (cfg := cfg) "certifiedRewrite is idempotent (BoolGroundExpr)"
+  checkS (cfg := cfg) "certifiedRewrite is idempotent (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       let r1 := (certifiedRewrite e.expr).val
       (certifiedRewrite r1).val == r1) $
-  check (cfg := cfg) "certifiedRewrite is idempotent (BoundedGroundExpr)"
+  checkS (cfg := cfg) "certifiedRewrite is idempotent (BoundedGroundExpr)"
     (∀ e : BoundedGroundExpr,
       let r1 := (certifiedRewrite e.expr).val
       (certifiedRewrite r1).val == r1) $
-  check (cfg := cfg) "double rewrite preserves semantics (BoundedGroundExpr)"
+  checkS (cfg := cfg) "double rewrite preserves semantics (BoundedGroundExpr)"
     (∀ e : BoundedGroundExpr,
       let r1 := (certifiedRewrite e.expr).val
       let r2 := (certifiedRewrite r1).val
@@ -79,7 +79,7 @@ def idempotencyTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def literalTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "certifiedRewrite on literals is identity"
+  checkS (cfg := cfg) "certifiedRewrite on literals is identity"
     (∀ v : Value,
       (certifiedRewrite (.lit v)).val == .lit v)
 
@@ -88,11 +88,11 @@ def literalTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def andShortCircuitTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "e AND FALSE → FALSE"
+  checkS (cfg := cfg) "e AND FALSE → FALSE"
     (∀ e : BoundedGroundExpr,
       (certifiedRewrite (.binOp .and e.expr (.lit (.bool false)))).val ==
         .lit (.bool false)) $
-  check (cfg := cfg) "FALSE AND e → FALSE"
+  checkS (cfg := cfg) "FALSE AND e → FALSE"
     (∀ e : BoundedGroundExpr,
       (certifiedRewrite (.binOp .and (.lit (.bool false)) e.expr)).val ==
         .lit (.bool false))
@@ -102,11 +102,11 @@ def andShortCircuitTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def orShortCircuitTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "e OR TRUE → TRUE"
+  checkS (cfg := cfg) "e OR TRUE → TRUE"
     (∀ e : BoundedGroundExpr,
       (certifiedRewrite (.binOp .or e.expr (.lit (.bool true)))).val ==
         .lit (.bool true)) $
-  check (cfg := cfg) "TRUE OR e → TRUE"
+  checkS (cfg := cfg) "TRUE OR e → TRUE"
     (∀ e : BoundedGroundExpr,
       (certifiedRewrite (.binOp .or (.lit (.bool true)) e.expr)).val ==
         .lit (.bool true))
@@ -146,7 +146,7 @@ def notComparisonFlipTests : TestSeq :=
 -- ============================================================================
 
 def betweenExpansionTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "BETWEEN is always expanded (no BETWEEN in output)"
+  checkS (cfg := cfg) "BETWEEN is always expanded (no BETWEEN in output)"
     (∀ e lo hi : BoundedGroundExpr,
       !containsBetween (certifiedRewrite (.between e.expr lo.expr hi.expr)).val)
 
@@ -191,11 +191,11 @@ def caseTests : TestSeq :=
 -- ============================================================================
 
 def caseSemanticTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "CASE WHEN TRUE THEN e ELSE d preserves semantics"
+  checkS (cfg := cfg) "CASE WHEN TRUE THEN e ELSE d preserves semantics"
     (∀ e d : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.«case» [(.lit (.bool true), e.expr)] (some d.expr))).val ==
       evalExpr [] (.«case» [(.lit (.bool true), e.expr)] (some d.expr))) $
-  check (cfg := cfg) "CASE WHEN FALSE THEN e ELSE d preserves semantics"
+  checkS (cfg := cfg) "CASE WHEN FALSE THEN e ELSE d preserves semantics"
     (∀ e d : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.«case» [(.lit (.bool false), e.expr)] (some d.expr))).val ==
       evalExpr [] (.«case» [(.lit (.bool false), e.expr)] (some d.expr)))
@@ -228,19 +228,19 @@ def likeTests : TestSeq :=
 -- ============================================================================
 
 def boolIdentityTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "e AND TRUE preserves semantics (BoolGroundExpr)"
+  checkS (cfg := cfg) "e AND TRUE preserves semantics (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .and e.expr (.lit (.bool true)))).val ==
         evalExpr [] (.binOp .and e.expr (.lit (.bool true)))) $
-  check (cfg := cfg) "TRUE AND e preserves semantics (BoolGroundExpr)"
+  checkS (cfg := cfg) "TRUE AND e preserves semantics (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .and (.lit (.bool true)) e.expr)).val ==
         evalExpr [] (.binOp .and (.lit (.bool true)) e.expr)) $
-  check (cfg := cfg) "e OR FALSE preserves semantics (BoolGroundExpr)"
+  checkS (cfg := cfg) "e OR FALSE preserves semantics (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .or e.expr (.lit (.bool false)))).val ==
         evalExpr [] (.binOp .or e.expr (.lit (.bool false)))) $
-  check (cfg := cfg) "FALSE OR e preserves semantics (BoolGroundExpr)"
+  checkS (cfg := cfg) "FALSE OR e preserves semantics (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .or (.lit (.bool false)) e.expr)).val ==
         evalExpr [] (.binOp .or (.lit (.bool false)) e.expr))
@@ -250,15 +250,15 @@ def boolIdentityTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def arithIdentityTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "e + 0 preserves semantics (IntGroundExpr)"
+  checkS (cfg := cfg) "e + 0 preserves semantics (IntGroundExpr)"
     (∀ e : IntGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .add e.expr (.lit (.int 0)))).val ==
         evalExpr [] (.binOp .add e.expr (.lit (.int 0)))) $
-  check (cfg := cfg) "e * 1 preserves semantics (IntGroundExpr)"
+  checkS (cfg := cfg) "e * 1 preserves semantics (IntGroundExpr)"
     (∀ e : IntGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .mul e.expr (.lit (.int 1)))).val ==
         evalExpr [] (.binOp .mul e.expr (.lit (.int 1)))) $
-  check (cfg := cfg) "e - 0 preserves semantics (IntGroundExpr)"
+  checkS (cfg := cfg) "e - 0 preserves semantics (IntGroundExpr)"
     (∀ e : IntGroundExpr,
       evalExpr [] (certifiedRewrite (.binOp .sub e.expr (.lit (.int 0)))).val ==
         evalExpr [] (.binOp .sub e.expr (.lit (.int 0))))
@@ -268,7 +268,7 @@ def arithIdentityTests (cfg : Configuration) : TestSeq :=
 -- ============================================================================
 
 def notNotTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "NOT NOT e preserves semantics (BoolGroundExpr)"
+  checkS (cfg := cfg) "NOT NOT e preserves semantics (BoolGroundExpr)"
     (∀ e : BoolGroundExpr,
       evalExpr [] (certifiedRewrite (.unaryOp .not (.unaryOp .not e.expr))).val ==
         evalExpr [] (.unaryOp .not (.unaryOp .not e.expr)))
@@ -442,7 +442,7 @@ private def rewriteContexts (e : Expr) : List Expr := [
   .binOp .and e (.«exists» false subqNonEmpty) ]
 
 def contextPropertyTests (cfg : Configuration) : TestSeq :=
-  check (cfg := cfg) "rewrite preserves evaluation across rows and empty/real db (ColumnGroundExpr in rewrite contexts)"
+  checkS (cfg := cfg) "rewrite preserves evaluation across rows and empty/real db (ColumnGroundExpr in rewrite contexts)"
     (∀ e : ColumnGroundExpr, (rewriteContexts e.expr).all (fun c => !rewriteMismatch c))
 
 -- ============================================================================
