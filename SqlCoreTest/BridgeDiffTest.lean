@@ -93,6 +93,8 @@ def corpus : List (String × Expect) := [
   ("SELECT DISTINCT department FROM users ORDER BY department", .agree),
   ("SELECT DISTINCT department FROM users ORDER BY 1 DESC LIMIT 2", .agree),
   ("SELECT department, COUNT(*) FROM users GROUP BY department ORDER BY department", .agree),
+  ("SELECT COUNT(*) FROM users GROUP BY department ORDER BY department DESC", .agree),
+  ("SELECT COUNT(*) AS department FROM users GROUP BY department ORDER BY department", .agree),
   ("SELECT department FROM users GROUP BY department ORDER BY COUNT(*) DESC, department", .agree),
   ("SELECT department, SUM(age) AS total FROM users GROUP BY department ORDER BY total LIMIT 2", .agree),
   ("SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id ORDER BY o.amount DESC", .agree),

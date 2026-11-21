@@ -109,8 +109,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] Step 3b-5: bare columns next to one `MIN`/`MAX`, read on the row where its argument is
       extreme (`AggCall.atExtreme`, `SqlBridge/CorrectExtreme.lean`), in the same statement.
       Spider coverage **381**, up from 380
-    - [ ] Step 3b-6: the same without `GROUP BY` (2 queries, step 3a's path) and ordering by a
-      key column (1)
+    - [x] Step 3b-6: the same without `GROUP BY` (`SqlBridge/CorrectAggBare.lean`,
+      `elabStmt_correct_aggBare`), and ordering a grouped query by a key column (`OrderKeyOk`, in
+      `elabStmt_correct_grouped`). Spider coverage **384**, up from 381
     - [ ] `AVG`, after the decision on its rounding (registry rows 7 and T10)
     - [ ] Step 4: `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN`
     - [ ] Step 5: `DISTINCT`
@@ -156,7 +157,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 `elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
 the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
 sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
-(phase 9, #298). Its fragment today (steps 1 to 3b-5 done) is
+(phase 9, #298). Its fragment today (steps 1 to 3b-6 done) is
 `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`
 (`elabStmt_correct_join`), where `f` nests tables (optionally aliased) under inner joins and
 cross joins without `ON`, with literals, columns, comparisons, `AND`, `OR` and `NOT` (in `ON`
@@ -167,7 +168,9 @@ and the same with `GROUP BY c₁, …` columns, each item a key column, such an 
 column read on the group's first row (no `MIN`/`MAX` written) or on the row where the one
 `MIN`/`MAX` argument is extreme, with an optional `HAVING` of key
 columns, such aggregates, literals, comparisons, `AND`, `OR` and `NOT`, ordered by such
-aggregates, with `LIMIT`/`OFFSET` (`elabStmt_correct_grouped`).
+aggregates or by key columns no other item's name captures, with `LIMIT`/`OFFSET`
+(`elabStmt_correct_grouped`); and aggregates next to bare columns without `GROUP BY`
+(`elabStmt_correct_aggBare`).
 
 **Measured coverage.** `lake exe spider_elab` lists, for every Spider query that elaborates, the
 features that put it outside the fragment (`SqlBridge/Coverage.lean`, `outsideFragment`; checked
@@ -186,8 +189,8 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3b-2. `HAVING` (done) | 303 |
 | 3b-3. Ordered by aggregates, `LIMIT` (done) | 333 |
 | 3b-4. Bare columns on the first row, all combinations (done) | 380 |
-| Today: 3b-5. Bare columns at a `MIN`/`MAX` under `GROUP BY` (done) | 381 |
-| 3b-6. Bare columns at a `MIN`/`MAX` without `GROUP BY`, ordering by a key column | 384 |
+| 3b-5. Bare columns at a `MIN`/`MAX` under `GROUP BY` (done) | 381 |
+| Today: 3b-6. Bare columns without `GROUP BY`, ordering by a key column (done) | 384 |
 | 4. `IS NULL`, negation, arithmetic, `IN (list)`, `BETWEEN` | 388 |
 | 5. `DISTINCT` | 410 |
 
@@ -323,10 +326,21 @@ follows coverage instead (decided 20 Nov 2026):
        (counted once, not DISTINCT, in a mode that picks the row), and no other in `ORDER BY`.
        Still outside: a `MIN`/`MAX` only in `ORDER BY` picks the row in sqlite and the bridge,
        not in `SqlEquiv` (registry T9, pending a decision).
-     - **3b-6** (3 queries): the extreme row without `GROUP BY` (`select max(capacity), average
-       from stadium`; step 3a's path, which has no bare columns yet), and ordering by a key
-       column (`… GROUP BY document_id ORDER BY document_id`), which needs the sort-key relation
-       for a key column read back from the output row or the sample row.
+     - **3b-6, done** (3 queries). *Bare columns without `GROUP BY`* (`select max(capacity),
+       average from stadium`): the elaborator builds the grouped query with no keys, so
+       `elab_grouped_shape` covers it once an aggregate item rules out its plain branch
+       (`groupBy ≠ [] ∨` an aggregate item). With no keys there is one group even for no rows;
+       `SqlEquiv` then reads the bare columns on the empty sample row, `NULL`, as `first` and
+       `atExtreme` are over no rows (`bare_eval_nil`, `col_on_empty`). The statement is
+       `elabStmt_correct_aggBare` (`SqlBridge/CorrectAggBare.lean`), and `SqliteDiffTest` checks
+       the empty case against sqlite. *Ordering by a key column* (`… GROUP BY document_id ORDER
+       BY document_id`): a sort key may be a `GROUP BY` column that every item named like it (in
+       either evaluator) is (`OrderKeyOk`). The elaborator then sorts on the key's column,
+       whether the name matches an output column or not; `SqlEquiv` reads the matching output
+       value or, past the output names, the sample row's column, both the group's key
+       (`keyCol_lookup`). The unified proof now relates each sort key through its output
+       column (`idx`), an aggregate's or a key's. The key is matched as written: `ORDER BY Age`
+       after `GROUP BY age` stays outside.
    - **`AVG`, a design decision.** `AVG` is an exact rational in the typed core (T10) and
      rounded to 16 places in `SqlEquiv` when it does not terminate (row 7): the theorem can
      leave it out, assume the averages terminate, or relate values up to rounding. Left out

@@ -1,8 +1,9 @@
 /-
-  Elaborator correctness for grouped queries (#352, roadmap steps 3b-4, 3b-5): one statement for
+  Elaborator correctness for grouped queries (#352, roadmap steps 3b-4 to 3b-6): one statement for
   `SELECT … FROM f [WHERE p] GROUP BY c₁, … [HAVING h] [ORDER BY a₁, …] [LIMIT n] [OFFSET m]`,
   items aggregates of step 3a, key columns, or bare columns (registry T9), read on the group's
-  first row or, next to one `MIN`/`MAX`, on the row where its argument is extreme.
+  first row or, next to one `MIN`/`MAX`, on the row where its argument is extreme; sort keys
+  aggregates or `GROUP BY` columns that no other item's name captures (`OrderKeyOk`).
 
   * `evalSelectCore_grouped_full`: `SqlEquiv`'s grouped path in closed form, `HAVING` and the
     per-group sort keys included.
@@ -98,6 +99,20 @@ def groupedStmt (items : List SqlEquiv.SelectItem) (f : SqlEquiv.FromClause)
     (orderBy : List SqlEquiv.OrderByItem) (lim off : Option ℕ) : SqlEquiv.Stmt :=
   .query (.simple (.mk false items (some f) wh groupBy having orderBy lim off))
 
+/-- An item's output name in the elaborator (`?column?` for an unaliased expression). -/
+def itemColName : SqlEquiv.SelectItem → String
+  | .exprItem e al => al.getD (match e with | .col c => c.column | _ => "?column?")
+  | .star _ => ""
+
+/-- An `ORDER BY` key of the grouped fragment: an aggregate of step 3a, or a `GROUP BY` column
+    (step 3b-6) that no other item's output name captures: every item named like it, in either
+    evaluator, is that column. Both evaluators then read the group's key. -/
+def OrderKeyOk (items : List SqlEquiv.SelectItem) (groupBy : List SqlEquiv.Expr)
+    (o : SqlEquiv.Expr) : Prop :=
+  aggFragment o = true ∨ ∃ c, o = .col c ∧ SqlEquiv.Expr.col c ∈ groupBy ∧
+    ∀ it ∈ items, ((outName it).toLower = c.column.toLower ∨
+      (itemColName it).toLower = c.column.toLower) → itemExpr it = .col c
+
 /-- The `MIN`/`MAX` aggregates. -/
 def isMinMax : SqlEquiv.Expr → Bool
   | .agg (.min _) _ _ | .agg (.max _) _ _ => true
@@ -118,7 +133,7 @@ def BareOk (N : NamedSchema) (items : List SqlEquiv.SelectItem)
     (arg : SqlEquiv.Expr), mode.bareRow = true ∧
     SqlEquiv.selectMinMaxCalls items having = [(wantMax, mode, some arg, false)] ∧
     (((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-      orderBy.map SqlEquiv.OrderByItem.expr).eraseDups.filter isMinMax) =
+      (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups.filter isMinMax) =
       [.agg (if wantMax then .max mode else .min mode) (some arg) false])
 
 section
@@ -305,16 +320,61 @@ theorem forall₂_mapM_rel {α β γ δ ε : Type _} {P : α → β → Prop} {f
     subst h
     exact .cons (hq a b hab c hd) (forall₂_mapM_rel hq hs hr)
 
+theorem aggsOfList_orderKeys {f : SqlEquiv.OrderByItem → SqlEquiv.Expr} (hf : ∀ o, f o = o.expr) :
+    ∀ orderBy : List SqlEquiv.OrderByItem,
+      (∀ o ∈ orderBy, aggFragment o.expr = true ∨ ∃ c, o.expr = .col c) →
+      aggsOfList (orderBy.map f) = (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment
+  | [], _ => rfl
+  | o :: os, h => by
+    have ih := aggsOfList_orderKeys hf os (fun x hx => h x (List.mem_cons_of_mem _ hx))
+    rcases h o List.mem_cons_self with ho | ⟨c, hc⟩
+    · simp only [List.map_cons, aggsOfList, hf, aggsOf_aggFragment _ ho, ih, List.filter_cons, ho,
+        ↓reduceIte, List.singleton_append]
+    · simp only [List.map_cons, aggsOfList, hf, hc, ih, List.filter_cons]
+      simp [aggsOf, aggFragment]
+
+theorem colsOutsideAggsList_orderKeys {f : SqlEquiv.OrderByItem → SqlEquiv.Expr}
+    (hf : ∀ o, f o = o.expr) : ∀ orderBy : List SqlEquiv.OrderByItem,
+      (∀ o ∈ orderBy, aggFragment o.expr = true ∨ ∃ c, o.expr = .col c) →
+      ∀ c ∈ colsOutsideAggsList (orderBy.map f), ∃ o ∈ orderBy, o.expr = .col c
+  | [], _, c, hc => by simp [colsOutsideAggsList] at hc
+  | o :: os, h, c, hc => by
+    simp only [List.map_cons, colsOutsideAggsList, hf, List.mem_append] at hc
+    rcases hc with hc | hc
+    · rcases h o List.mem_cons_self with ho | ⟨c', hc'⟩
+      · rw [colsOutsideAggs_aggFragment _ ho] at hc; cases hc
+      · rw [hc'] at hc; simp only [colsOutsideAggs, List.mem_singleton] at hc; subst hc
+        exact ⟨o, List.mem_cons_self, hc'⟩
+    · obtain ⟨o', ho', h'⟩ := colsOutsideAggsList_orderKeys hf os
+        (fun x hx => h x (List.mem_cons_of_mem _ hx)) c hc
+      exact ⟨o', List.mem_cons_of_mem _ ho', h'⟩
+
+/-- A list whose elements are all `v` deduplicates to `[]` or `[v]`. -/
+theorem eraseDups_of_all_eq {α : Type _} [BEq α] [LawfulBEq α] {l : List α} {v : α}
+    (h : ∀ y ∈ l, y = v) : l.eraseDups = [] ∨ l.eraseDups = [v] := by
+  cases l with
+  | nil => left; rfl
+  | cons y ys =>
+    right
+    have hy := h y List.mem_cons_self
+    subst hy
+    rw [List.eraseDups_cons]
+    have : ys.filter (fun b => !b == y) = [] :=
+      List.filter_eq_nil_iff.mpr (fun b hb => by simp [h b (List.mem_cons_of_mem _ hb)])
+    rw [this]; rfl
+
 theorem filter_isMinMax {p : SqlEquiv.Expr → Bool} (hp : ∀ x, p x = isMinMax x)
     (l : List SqlEquiv.Expr) : l.filter p = l.filter isMinMax :=
   List.filter_congr fun x _ => hp x
 
-set_option maxHeartbeats 4000000 in
-theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
+set_option maxHeartbeats 12000000 in
+theorem elab_grouped_shape (N : NamedSchema)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) {items : List SqlEquiv.SelectItem}
     {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} {groupBy : List SqlEquiv.Expr}
     {having : Option SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
-    (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
-    (hob : ∀ o ∈ orderBy, aggFragment o.expr = true)
+    (hgi : groupedItems items = true)
+    (hgb : groupBy ≠ [] ∨ ∃ it ∈ items, aggFragment (itemExpr it) = true)
+    (hob : ∀ o ∈ orderBy, OrderKeyOk items groupBy o.expr)
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
     (hbf : BareOk N items groupBy having orderBy)
     (hw : ∀ w ∈ wh, isFragment w = true) {e : Elaborated N.S}
@@ -347,9 +407,11 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
           (∃ c, ∃ j : Fin a, ∃ e', itemExpr it = .col c ∧ elabExpr cf N.fold noHook (.col c) = .ok e' ∧
             e' ∉ keyList ∧ aggs j = mk e' ∧ x.1 = .col (Fin.natAdd _ j)))
           items its ∧
-        List.Forall₂ (fun o k => ∃ j : Fin a, elabAgg cf N.fold o.expr = .ok (aggs j) ∧
-          k.e = .col (Fin.natAdd _ j) ∧ k.desc = (o.dir == .desc) ∧
-          k.nullsFirst = (o.nulls == .first)) orderBy sk ∧
+        List.Forall₂ (fun o k =>
+          ((∃ j : Fin a, elabAgg cf N.fold o.expr = .ok (aggs j) ∧ k.e = .col (Fin.natAdd _ j)) ∨
+            ∃ c, ∃ i : Fin keyList.length, o.expr = .col c ∧
+              elabExpr cf N.fold noHook (.col c) = .ok keyList[i] ∧ k.e = .col (Fin.castAdd a i)) ∧
+          k.desc = (o.dir == .desc) ∧ k.nullsFirst = (o.nulls == .first)) orderBy sk ∧
         ∃ qh : Query N.S (keyList.length + a),
           ((having = none ∧ qh = .aggregate (fun i : Fin keyList.length => keyList[i]) aggs q₀) ∨
             ∃ hv p out, having = some hv ∧
@@ -377,10 +439,24 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   clear hraw
   rename' hraw' => hraw
   dsimp only at hraw
-  have hgbe : groupBy.isEmpty = false := by
-    cases groupBy with
-    | nil => exact absurd rfl hgb
-    | cons _ _ => rfl
+  -- not the elaborator's branch without aggregates: a key, or an aggregate item
+  have hcond : (groupBy.isEmpty && ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+      (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups.isEmpty && having.isNone) = false := by
+    rcases hgb with hgb | ⟨it, hit, hag⟩
+    · cases groupBy with
+      | nil => exact absurd rfl hgb
+      | cons _ _ => rfl
+    · have hmem : itemExpr it ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+          (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups :=
+        List.mem_eraseDups.mpr (by simp only [List.mem_append, List.mem_filter, List.mem_map]
+                                   exact .inl (.inl ⟨⟨it, hit, rfl⟩, hag⟩))
+      have : ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+          (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups.isEmpty = false := by
+        cases hl : ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
+          (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups with
+        | nil => rw [hl] at hmem; simp at hmem
+        | cons _ _ => rfl
+      rw [this, Bool.and_false, Bool.false_and]
   cases wh
   case' none =>
     simp only [pure, Except.pure, bind, Except.bind] at hraw
@@ -392,13 +468,21 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     simp only [hp, bind, Except.bind, pure, Except.pure] at hraw
     refine ⟨_, n, qf, cf, hf, .select p qf, .inr ⟨w, p, rfl, hp, rfl⟩, ?_⟩
   all_goals
+    have hob' : ∀ o ∈ orderBy, aggFragment o.expr = true ∨ ∃ c, o.expr = .col c := fun o ho =>
+      (hob o ho).imp id fun ⟨c, hc, _⟩ => ⟨c, hc⟩
+    -- the `ORDER BY` columns are keys
+    have hoK : ∀ c ∈ colsOutsideAggsList (orderBy.map fun | .mk e _ _ => e),
+        SqlEquiv.Expr.col c ∈ groupBy := fun c hc => by
+      obtain ⟨o, ho, hoc⟩ := colsOutsideAggsList_orderKeys (fun o => by cases o; rfl) orderBy hob' c hc
+      rcases hob o ho with h | ⟨c', hc', hg, -⟩
+      · rw [hoc] at h; simp [aggFragment] at h
+      · rw [hoc] at hc'; cases hc'; exact hg
     rw [aggsOfList_groupedItems ?hf items hgi, colsOutsideAggsList_groupedItems ?hf2 items hgi,
-      aggsOfList_orderBy ?hf3 orderBy hob, colsOutsideAggsList_orderBy ?hf4 orderBy hob] at hraw
+      aggsOfList_orderKeys ?hf3 orderBy hob'] at hraw
     case hf => intros; rfl
     case hf2 => intros; rfl
     case hf3 => intro o; cases o; rfl
-    case hf4 => intro o; cases o; rfl
-    simp only [hgbe, Bool.false_and, Bool.false_eq_true, ↓reduceIte, List.append_nil] at hraw
+    simp only [hcond, Bool.false_eq_true, ↓reduceIte] at hraw
     split at hraw
     · cases hraw
     rename_i keyList hk
@@ -436,23 +520,28 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
           -- a `HAVING` column is a key, so a bare column is an item column
           split at hcm
           · rcases List.mem_append.mp (mem_of_mem_eraseDups' _ le_rfl hcm) with hcm | hcm
-            · exact hcm
-            · exfalso
-              cases having with
-              | none => simp [colsOutsideAggsOpt] at hcm
-              | some hv' =>
-                obtain ⟨e'', he'', hmem⟩ := hkey c (having_cols hv' (hhv hv' rfl) c hcm)
-                rw [he'] at he''; cases he''; simp at hn; exact hn hmem
+            · rcases List.mem_append.mp hcm with hcm | hcm
+              · exact hcm
+              · exfalso
+                cases having with
+                | none => simp [colsOutsideAggsOpt] at hcm
+                | some hv' =>
+                  obtain ⟨e'', he'', hmem⟩ := hkey c (having_cols hv' (hhv hv' rfl) c hcm)
+                  rw [he'] at he''; cases he''; simp at hn; exact hn hmem
+            · -- an `ORDER BY` column is a key
+              exfalso
+              obtain ⟨e'', he'', hmem⟩ := hkey c (hoK c hcm)
+              rw [he'] at he''; cases he''; simp at hn; exact hn hmem
           · simp at hcm
       · cases hc
     -- no bare column; or no MIN/MAX (the first row); or one MIN/MAX (the extreme row)
     have hBX : B = [] ∨ ((∀ x ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-        orderBy.map SqlEquiv.OrderByItem.expr).eraseDups, SqlEquiv.minMaxCalls x = []) ∧
+        (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups, SqlEquiv.minMaxCalls x = []) ∧
         SqlEquiv.selectMinMaxCalls items having = []) ∨
         ∃ (wantMax : Bool) (mode : SqlEquiv.MinMaxMode) (arg : SqlEquiv.Expr), mode.bareRow = true ∧
           SqlEquiv.selectMinMaxCalls items having = [(wantMax, mode, some arg, false)] ∧
           (((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-        orderBy.map SqlEquiv.OrderByItem.expr).eraseDups).filter isMinMax =
+        (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups).filter isMinMax =
             [.agg (if wantMax then .max mode else .min mode) (some arg) false] := by
       rcases hbf with hall | ⟨-, hmi, hmh, hmo⟩ | ⟨-, w, m, a', hm, hcalls, hext⟩
       · left
@@ -461,10 +550,12 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
         have hcg : SqlEquiv.Expr.col c ∈ groupBy := by
           split at hc
           · rcases List.mem_append.mp (mem_of_mem_eraseDups' _ le_rfl hc) with hc | hc
-            · exact hall c hc
-            · cases having with
-              | none => simp [colsOutsideAggsOpt] at hc
-              | some hv' => exact having_cols hv' (hhv hv' rfl) c hc
+            · rcases List.mem_append.mp hc with hc | hc
+              · exact hall c hc
+              · cases having with
+                | none => simp [colsOutsideAggsOpt] at hc
+                | some hv' => exact having_cols hv' (hhv hv' rfl) c hc
+            · exact hoK c hc
           · simp at hc
         obtain ⟨e', he', hmem⟩ := hkey c hcg
         simp [he', hmem]
@@ -481,7 +572,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
           · cases having with
             | none => simp [aggsOfOpt] at hx
             | some hv' => exact minMaxCalls_of_aggsOf_having hv' (hhv hv' rfl) (hmh hv' rfl) x hx
-        · obtain ⟨o, ho, rfl⟩ := List.mem_map.mp hx
+        · obtain ⟨o, ho, rfl⟩ := List.mem_map.mp (List.mem_filter.mp hx).1
           exact hmo o ho
       · exact .inr (.inr ⟨w, m, a', hm, hcalls, hext⟩)
     split at hraw
@@ -511,10 +602,10 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
         -- the one `MIN`/`MAX`: its argument is a fragment, and elaborates
         have hmemx : SqlEquiv.Expr.agg (if wantMax then .max mode else .min mode) (some arg) false ∈
             ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-        orderBy.map SqlEquiv.OrderByItem.expr).eraseDups := by
+        (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups := by
           have : SqlEquiv.Expr.agg (if wantMax then .max mode else .min mode) (some arg) false ∈
               (((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-        orderBy.map SqlEquiv.OrderByItem.expr).eraseDups).filter isMinMax := by rw [hext]; simp
+        (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups).filter isMinMax := by rw [hext]; simp
           exact (List.mem_filter.mp this).1
         have hfrag : isFragment arg = true := by
           have hx : aggFragment (.agg (if wantMax then .max mode else .min mode) (some arg) false) := by
@@ -524,7 +615,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
               · cases having with
                 | none => simp [aggsOfOpt] at hx
                 | some hv' => exact having_aggs hv' (hhv hv' rfl) _ hx
-            · obtain ⟨o, ho, ho'⟩ := List.mem_map.mp hx; rw [← ho']; exact hob o ho
+            · exact (List.mem_filter.mp hx).2
           cases wantMax <;> simpa [aggFragment] using hx
         rw [filter_isMinMax (fun x => by
           cases x
@@ -586,7 +677,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
       rename_i out hout
       -- the aggregates' list `X`: aggregates of the items, of `HAVING` and of `ORDER BY`
       have hXf' : ∀ x ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-          orderBy.map SqlEquiv.OrderByItem.expr).eraseDups, aggFragment x = true := by
+          (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups, aggFragment x = true := by
         intro x hx
         rcases List.mem_append.mp (List.mem_eraseDups.mp hx) with hx | hx
         · rcases List.mem_append.mp hx with hx | hx
@@ -594,23 +685,25 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
           · cases having with
             | none => simp [aggsOfOpt] at hx
             | some hv' => exact having_aggs hv' (hhv hv' rfl) x hx
-        · obtain ⟨o, ho, rfl⟩ := List.mem_map.mp hx; exact hob o ho
+        · exact (List.mem_filter.mp hx).2
       have hXi : ∀ it ∈ items, aggFragment (itemExpr it) = true →
           itemExpr it ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-            orderBy.map SqlEquiv.OrderByItem.expr).eraseDups := fun it hit hfr =>
+            (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups := fun it hit hfr =>
         List.mem_eraseDups.mpr (List.mem_append_left _ (List.mem_append_left _
           (List.mem_filter.mpr ⟨List.mem_map.mpr ⟨_, hit, rfl⟩, hfr⟩)))
       have hXh : ∀ hv ∈ having, ∀ x ∈ aggsOf hv,
           x ∈ ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-            orderBy.map SqlEquiv.OrderByItem.expr).eraseDups := by
+            (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups := by
         intro hv hhv' x hx
         cases hhv'
         exact List.mem_eraseDups.mpr (List.mem_append_left _ (List.mem_append_right _ hx))
-      have hXo : ∀ o ∈ orderBy, o.expr ∈ ((items.map itemExpr).filter aggFragment ++
-          aggsOfOpt having ++ orderBy.map SqlEquiv.OrderByItem.expr).eraseDups := fun o ho =>
-        List.mem_eraseDups.mpr (List.mem_append_right _ (List.mem_map.mpr ⟨o, ho, rfl⟩))
+      have hXo : ∀ o ∈ orderBy, aggFragment o.expr = true → o.expr ∈ ((items.map itemExpr).filter
+          aggFragment ++ aggsOfOpt having ++
+            (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups := fun o ho hfr =>
+        List.mem_eraseDups.mpr (List.mem_append_right _
+          (List.mem_filter.mpr ⟨List.mem_map.mpr ⟨o, ho, rfl⟩, hfr⟩))
       generalize ((items.map itemExpr).filter aggFragment ++ aggsOfOpt having ++
-        orderBy.map SqlEquiv.OrderByItem.expr).eraseDups = X at hXf' hXi hXh hXo hV hraw hout
+        (orderBy.map SqlEquiv.OrderByItem.expr).filter aggFragment).eraseDups = X at hXf' hXi hXh hXo hV hraw hout
       clear hv hBX
       have hlenX : X.length = aggList.length := hV.length_eq
       -- the hook's list: `X`, then the bare columns
@@ -658,7 +751,7 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
           rw [he'] at he''; cases he''; exact absurd hm hkm
         all_goals
           simp only [hsq]
-          exact List.mem_eraseDups.mpr (List.mem_append_left _ hc)
+          exact List.mem_eraseDups.mpr (List.mem_append_left _ (List.mem_append_left _ hc))
       rcases having with _ | hv
       case' some =>
         simp only at hraw
@@ -707,18 +800,93 @@ theorem elab_grouped_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
         case gKeys =>
           refine forall₂_imp_mem (mapM_forall₂ hk') fun o ho k hok => ?_
           obtain ⟨oe, dir, nulls⟩ := o
-          have hfr : aggFragment oe = true := hob _ ho
-          obtain ⟨j, hj, hjl, hje⟩ := hfindX oe (hXo _ ho)
-          obtain ⟨hja, hel⟩ := hagg j hjl
-          unfold elabOrderKey at hok
-          cases oe
-          all_goals try simp [aggFragment] at hfr
-          all_goals
-            simp only [bind, Except.bind] at hok
-            rw [elab_of_hook _ _ _ (hook_agg _ _ _ _ hj hja)] at hok
-            simp only [pure, Except.pure, Except.ok.injEq] at hok
-            subst hok
-            exact ⟨⟨j, hja⟩, hje ▸ hel, rfl, rfl, rfl⟩
+          rcases hob _ ho with hfr | ⟨c, hce, hcg, hcap⟩
+          · -- an aggregate: its column among the aggregates
+            replace hfr : aggFragment oe = true := hfr
+            obtain ⟨j, hj, hjl, hje⟩ := hfindX oe (hXo _ ho hfr)
+            obtain ⟨hja, hel⟩ := hagg j hjl
+            unfold elabOrderKey at hok
+            cases oe
+            all_goals try simp [aggFragment] at hfr
+            all_goals
+              simp only [bind, Except.bind] at hok
+              rw [elab_of_hook _ _ _ (hook_agg _ _ _ _ hj hja)] at hok
+              simp only [pure, Except.pure, Except.ok.injEq] at hok
+              subst hok
+              exact ⟨.inl ⟨⟨j, hja⟩, hje ▸ hel, rfl⟩, rfl, rfl⟩
+          · -- a `GROUP BY` column: the key's column, whether or not an output name matches
+            change oe = .col c at hce
+            subst hce
+            obtain ⟨e', he', hkm⟩ := hkey c hcg
+            have hnX : ∀ y ∈ X, y ≠ .col c := fun y hy h => by
+              have := hXf' y hy; rw [h] at this; simp [aggFragment] at this
+            have hnone : (X ++ B.map (fun x => SqlEquiv.Expr.col x.1)).findIdx?
+                (· == SqlEquiv.Expr.col c) = none := by
+              rw [List.findIdx?_eq_none_iff]
+              intro y hy
+              rcases List.mem_append.mp hy with hy | hy
+              · simpa using hnX y hy
+              · obtain ⟨⟨c', e''⟩, hcB, rfl⟩ := List.mem_map.mp hy
+                rw [beq_eq_false_iff_ne, ne_eq, SqlEquiv.Expr.col.injEq]
+                rintro rfl
+                obtain ⟨he'', hn, -⟩ := hBmem _ hcB
+                rw [he'] at he''; cases he''; exact hn hkm
+            obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hkm
+            obtain ⟨i₀, hi₀⟩ : ∃ i₀, (List.finRange keyList.length).find?
+                (fun k : Fin keyList.length => keyList[k] == keyList[i]'hi) = some i₀ :=
+              Option.isSome_iff_exists.mp
+                ((List.find?_isSome (p := fun k : Fin keyList.length => keyList[k] == keyList[i]'hi)).mpr
+                  ⟨⟨i, hi⟩, List.mem_finRange _, beq_self_eq_true (keyList[i]'hi)⟩)
+            have hk₀ : keyList[i₀] = keyList[i]'hi := by
+              simpa using List.find?_some hi₀
+            have hE := elab_key keyList out cf N.fold _ hnone he' hi₀
+            -- every output column named like the key is the key's column
+            have hF : ∀ x ∈ its, N.fold x.2.name = N.fold c.column →
+                x.1 = .col (Fin.castAdd _ i₀) := by
+              intro x hx hfn
+              obtain ⟨it, hit, hix⟩ := forall₂_mem_right (mapM_forall₂ hits) hx
+              obtain ⟨e, al, rfl, -⟩ := groupedItems_mem hgi _ hit
+              dsimp only at hix
+              have hnm : x.2.name = itemColName (.exprItem e al) := by
+                split at hix
+                · cases hix
+                · split at hix
+                  · cases hix; rfl
+                  · simp [throw, throwThe, MonadExceptOf.throw] at hix
+              have hec : e = .col c := by
+                have := hcap _ hit (.inr (by rw [← hnm]; exact (hfoldCI _ _).mp hfn))
+                simpa [itemExpr] using this
+              subst hec
+              rw [hE] at hix
+              simp only at hix
+              split at hix
+              · simp only [Except.ok.injEq] at hix; subst hix; rfl
+              · simp [throw, throwThe, MonadExceptOf.throw] at hix
+            unfold elabOrderKey at hok
+            obtain ⟨q, cn⟩ := c
+            cases q with
+            | some t =>
+              simp only [bind, Except.bind] at hok
+              rw [hE] at hok
+              simp only [pure, Except.pure, Except.ok.injEq] at hok
+              subst hok
+              exact ⟨.inr ⟨_, i₀, rfl, by rw [he', hk₀], rfl⟩, rfl, rfl⟩
+            | none =>
+              have hall : ∀ y ∈ (its.filter fun it => N.fold it.2.name == N.fold cn).map (·.1),
+                  y = .col (Fin.castAdd _ i₀) := by
+                intro y hy
+                obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hy
+                obtain ⟨hx, hfn⟩ := List.mem_filter.mp hx
+                exact hF x hx (by simpa using hfn)
+              rcases eraseDups_of_all_eq hall with h0 | h1
+              · simp only [bind, Except.bind, h0] at hok
+                rw [hE] at hok
+                simp only [pure, Except.pure, Except.ok.injEq] at hok
+                subst hok
+                exact ⟨.inr ⟨_, i₀, rfl, by rw [he', hk₀], rfl⟩, rfl, rfl⟩
+              · simp only [bind, Except.bind, h1, pure, Except.pure, Except.ok.injEq] at hok
+                subst hok
+                exact ⟨.inr ⟨_, i₀, rfl, by rw [he', hk₀], rfl⟩, rfl, rfl⟩
         case gItems =>
           refine forall₂_imp_mem (mapM_forall₂ hits) fun it hit x hx => ?_
           obtain ⟨e, al, rfl, hcase⟩ := groupedItems_mem hgi _ hit
@@ -870,12 +1038,63 @@ theorem zip_rel_mem {α β γ : Type _} {P : α → β → Prop} {Q : α → γ 
       (zip_rel_mem (fun a ha b hb c => h a (List.mem_cons_of_mem _ ha) b (List.mem_cons_of_mem _ hb) c)
         hps hqs)
 
+/-- Each projected entry is an item's output name and value. -/
+theorem kv_of_items (db : SqlEquiv.Database) (U : List SqlEquiv.Row) (row : SqlEquiv.Row) :
+    ∀ {items : List SqlEquiv.SelectItem}, (∀ it ∈ items, ∃ e al, it = .exprItem e al) →
+      ∀ kv ∈ items.flatMap (SqlEquiv.evalSelectItemWithAggParam ee db U row),
+        ∃ it ∈ items, kv.1 = outName it ∧
+          kv.2 = (SqlEquiv.evalExprWithAggParam ee db U row (itemExpr it)).getD (.null none)
+  | [], _, kv, h => by simp at h
+  | it :: rest, h, kv, hkv => by
+    obtain ⟨e, al, rfl⟩ := h it List.mem_cons_self
+    rw [List.flatMap_cons, List.mem_append] at hkv
+    rcases hkv with hkv | hkv
+    · refine ⟨_, List.mem_cons_self, ?_⟩
+      simp only [SqlEquiv.evalSelectItemWithAggParam] at hkv
+      split at hkv <;> simp_all [outName, itemExpr]
+    · obtain ⟨it', hit', h'⟩ :=
+        kv_of_items db U row (fun x hx => h x (List.mem_cons_of_mem _ hx)) kv hkv
+      exact ⟨it', List.mem_cons_of_mem _ hit', h'⟩
+
+/-- An `ORDER BY` key column read on `projected ++ sample`: when every output column named like it
+    is that column, the value is the sample row's (output names have no dot). -/
+theorem keyCol_lookup (db : SqlEquiv.Database) (U : List SqlEquiv.Row) (s : SqlEquiv.Row)
+    {items : List SqlEquiv.SelectItem} (hitems : ∀ it ∈ items, ∃ e al, it = .exprItem e al)
+    (hdot : ∀ it ∈ items, '.' ∉ (outName it).toList) (c : SqlEquiv.ColumnRef)
+    (hcap : ∀ it ∈ items, (outName it).toLower = c.column.toLower → itemExpr it = .col c)
+    {v : SqlEquiv.Value} (hv : SqlEquiv.evalExprWithDb db s (.col c) = some v) :
+    SqlEquiv.evalExprWithDb db
+      (items.flatMap (SqlEquiv.evalSelectItemWithAggParam ee db U s) ++ s) (.col c) = some v := by
+  have hv' := hv
+  have hmem := kv_of_items db U s hitems
+  have hdotp : ∀ kv ∈ items.flatMap (SqlEquiv.evalSelectItemWithAggParam ee db U s),
+      '.' ∉ kv.1.toList := fun kv hkv => by
+    obtain ⟨it, hit, hn, -⟩ := hmem kv hkv
+    rw [hn]; exact hdot it hit
+  rw [SqlEquiv.evalExprWithDb_col] at hv ⊢
+  obtain ⟨q, cn⟩ := c
+  cases q with
+  | some t =>
+    rw [getQualified_append_noMatch _ s (some t) cn hdotp (by simp)]; exact hv
+  | none =>
+    rcases hf : (items.flatMap (SqlEquiv.evalSelectItemWithAggParam ee db U s)).find?
+        (fun kv => kv.1.toLower == cn.toLower) with _ | kv
+    · rw [getQualified_append_noMatch _ s none cn hdotp (fun _ kv hkv h => by
+        have := List.find?_eq_none.mp hf kv hkv; simp [h] at this)]
+      exact hv
+    · rw [getQualified_none_append_match _ s cn hdotp hf]
+      obtain ⟨it, hit, hn, hval⟩ := hmem kv (List.mem_of_find?_eq_some hf)
+      have hlow : (outName it).toLower = cn.toLower := by
+        rw [← hn]; simpa using List.find?_some hf
+      rw [hval, hcap it hit hlow]
+      simp [SqlEquiv.evalExprWithAggParam, ee, hv']
+
 set_option maxHeartbeats 8000000 in
-/-- **Elaborator correctness for grouped queries (#352, roadmap steps 3b-4, 3b-5).** For
+/-- **Elaborator correctness for grouped queries (#352, roadmap steps 3b-4 to 3b-6).** For
     `SELECT … FROM f [WHERE p] GROUP BY c₁, … [HAVING h] [ORDER BY a₁, …] [LIMIT n] [OFFSET m]`,
     column keys, every item an aggregate of step 3a, a key column or a bare column, `h` in
-    `havingFragment`, every sort key an aggregate: when the statement elaborates, the typed query's
-    rows relate, in order, to `SqlEquiv`'s. Bare columns read the group's first row, or the row
+    `havingFragment`, every sort key an aggregate or an uncaptured key column (`OrderKeyOk`): when
+    the statement elaborates, the typed query's rows relate, in order, to `SqlEquiv`'s. Bare columns read the group's first row, or the row
     where the one `MIN`/`MAX` argument is extreme (`BareOk`), and with sort keys no output
     name captures `SqlEquiv`'s key columns (`hnm`). -/
 theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
@@ -888,7 +1107,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment fr = true)
     (hw : ∀ w ∈ wh, isFragment w = true) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
-    (hob : ∀ o ∈ orderBy, aggFragment o.expr = true) (hbf : BareOk N items groupBy having orderBy)
+    (hob : ∀ o ∈ orderBy, OrderKeyOk items groupBy o.expr) (hbf : BareOk N items groupBy having orderBy)
     (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
       ∀ k, (outName it).toLower ≠ SqlEquiv.groupOrderKeyName k)
     {e : Elaborated N.S}
@@ -898,7 +1117,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
       ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh groupBy having orderBy lim off)).2 =
         some out ∧ List.Forall₂ OutRel rs out := by
   obtain ⟨hty, sub, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
-    qh, hqh, rfl⟩ := elab_grouped_shape N hgi hgb hob hgc hhv hbf hw h
+    qh, hqh, rfl⟩ := elab_grouped_shape N hfoldCI hgi (.inl hgb) hob hgc hhv hbf hw h
   -- what a bare column's aggregate is: `first` with no `MIN`/`MAX`, or `atExtreme` at the one
   have hmkC : ∀ c e', c ∈ colRefs items → elabExpr cf N.fold noHook (.col c) = .ok e' →
       e' ∉ keyList → ((∀ e, mk e = .first e) ∧ SqlEquiv.selectMinMaxCalls items having = []) ∨
@@ -916,14 +1135,22 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   rw [typeOf_limitWrap] at hty
   rw [qnb_limitWrap] at hnb
   -- the sort keys: each the column of an aggregate
-  have hskget : ∀ i : Fin sk.length, ∃ j : Fin a,
-      elabAgg cf N.fold (orderBy[i.1]'(by omega)).expr = .ok (aggs j) ∧
-      (sk[i]).e = .col (Fin.natAdd _ j) ∧ (sk[i]).desc = ((orderBy[i.1]'(by omega)).dir == .desc) ∧
-      (sk[i]).nullsFirst = ((orderBy[i.1]'(by omega)).nulls == .first) := by
+  have hskget : ∀ i : Fin sk.length, ∃ idx : Fin (keyList.length + a),
+      (sk[i]).e = .col idx ∧ (sk[i]).desc = ((orderBy[i.1]'(by omega)).dir == .desc) ∧
+      (sk[i]).nullsFirst = ((orderBy[i.1]'(by omega)).nulls == .first) ∧
+      ((∃ j : Fin a, idx = Fin.natAdd _ j ∧
+          elabAgg cf N.fold (orderBy[i.1]'(by omega)).expr = .ok (aggs j)) ∨
+        ∃ c, ∃ i' : Fin keyList.length, idx = Fin.castAdd a i' ∧
+          (orderBy[i.1]'(by omega)).expr = .col c ∧
+          elabExpr cf N.fold noHook (.col c) = .ok keyList[i']) := by
     intro i
     have := (List.forall₂_iff_get.mp hsk).2 i.1 (by omega) i.2
-    simpa using this
-  choose kj hkj using hskget
+    simp only [List.get_eq_getElem] at this
+    obtain ⟨hcase, hd, hn⟩ := this
+    rcases hcase with ⟨j, hel, he⟩ | ⟨c, i', hc, hel, he⟩
+    · exact ⟨_, he, hd, hn, .inl ⟨j, rfl, hel⟩⟩
+    · exact ⟨_, he, hd, hn, .inr ⟨c, i', rfl, hc, hel⟩⟩
+  choose idx hidx using hskget
   set aggQ : Query N.S (keyList.length + a) :=
     .aggregate (fun i : Fin keyList.length => keyList[i]) aggs q₀ with haggQ
   -- typing and the boolean side conditions, through the optional `ORDER BY`
@@ -956,10 +1183,10 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   obtain ⟨hnbA', hnbq₀⟩ := hnbA
   have hnbK := (hnbA' Γ₀ hq₀ty).1
   have hnbAgg := (hnbA' Γ₀ hq₀ty).2
-  have hτb : sk.length ≠ 0 → ∀ i : Fin sk.length, Δa (kj i) ≠ .bool := by
+  have hτb : sk.length ≠ 0 → ∀ i : Fin sk.length, Γa (idx i) ≠ .bool := by
     intro h0 i hb
     apply hnbO h0 i
-    rw [(hkj i).2.1, ← hΓeq]
+    rw [(hidx i).1]
     simp [Expr.typeOf, hb]
   have hsrc : qf.typeOf = some Γ₀ := by
     rcases hq₀ with ⟨-, rfl⟩ | ⟨w, p, -, -, rfl⟩
@@ -1028,7 +1255,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
       exact fun i => hcols i
     · simp only [h0, ↓reduceIte, Query.divSafe, hqd, Bool.and_true, Bool.and_eq_true,
         decide_eq_true_eq]
-      exact ⟨fun i => hcols i, fun i => by rw [(hkj i).2.1]; rfl⟩
+      exact ⟨fun i => hcols i, fun i => by rw [(hidx i).1]; rfl⟩
   obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok hsafe hD
   refine ⟨rs, hrs, _, rfl, ?_⟩
   -- the typed evaluation, step by step
@@ -1089,7 +1316,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     (∀ i : Fin sk.length, ∃ v, SqlEquiv.evalExprWithDb db (y.1 ++ y.2)
       ((SqlEquiv.groupOrderByItems orderBy)[i.1]'(by
         rw [length_groupOrderByItems]; omega)).expr = some v ∧
-        DatumRel (A (Fin.natAdd _ (kj i))) v) ∧
+        DatumRel (A (idx i)) v) ∧
     A.Conforms Γa
   have core : ∀ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U →
       List.Forall₂ PRA (rowsA.filter keep) (((U.foldl F []).filterMap Φ).zip
@@ -1284,9 +1511,34 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
       let p := items.flatMap (SqlEquiv.evalSelectItemWithAggParam ee db us s)
       have hval : ∀ i' : Fin orderBy.length, ∃ v,
           SqlEquiv.evalExprWithAggParam ee db us (p ++ s) (orderBy[i']).expr = some v ∧
-            DatumRel (Ag (kj ⟨i', by omega⟩)) v := fun i' =>
-        agg_rel cf N.fold db hrows' (p ++ s) _ (hob _ (List.getElem_mem _)) (hkj ⟨i', by omega⟩).1
-          (hnbAgg _) (has _) (evalAll_get hAe _)
+            DatumRel (Fin.append k Ag (idx ⟨i', by omega⟩)) v := fun i' => by
+        show ∃ v, SqlEquiv.evalExprWithAggParam ee db us (p ++ s) (orderBy[i'.1]).expr = some v ∧ _
+        rcases (hidx ⟨i', by omega⟩).2.2.2 with ⟨j, hj, hel⟩ | ⟨c, i'', hi'', hc, hel⟩
+        · -- an aggregate, over the group
+          rw [hj, Fin.append_right]
+          have hfr : aggFragment (orderBy[i'.1]).expr = true := by
+            rcases hob _ (List.getElem_mem i'.2) with hfr | ⟨c', hc', -, -⟩
+            · exact hfr
+            · exfalso
+              have hel' : elabAgg cf N.fold (orderBy[i'.1]).expr = .ok (aggs j) := hel
+              rw [hc'] at hel'
+              simp [elabAgg, throw, throwThe, MonadExceptOf.throw] at hel'
+          exact agg_rel cf N.fold db hrows' (p ++ s) _ hfr hel (hnbAgg _) (has _) (evalAll_get hAe _)
+        · -- a key column, read on the sample row (no output column captures it)
+          rw [hi'', Fin.append_left]
+          have hc' : (orderBy[i'.1]).expr = .col c := hc
+          rw [hc']
+          have hki : (keyList[i'']).eval rs_ = .ok (k i'') := Expr.evalRow_eq_ok_iff.mp hE_.2.1 i''
+          have htr := translates_of_elab cf N.fold (.col c) rfl hel
+          obtain ⟨v, hv, hvr⟩ := Translates.eval_rel cf N.fold db hE_.1.1 hE_.1.2 htr (hnbK i'') hki
+          refine ⟨v, ?_, hvr⟩
+          have hcap : ∀ it ∈ items, (outName it).toLower = c.column.toLower → itemExpr it = .col c := by
+            rcases hob _ (List.getElem_mem i'.2) with hfr | ⟨c', hc'', -, hcap⟩
+            · rw [hc'] at hfr; simp [aggFragment] at hfr
+            · rw [hc'] at hc''; cases hc''
+              exact fun it hit h => hcap it hit (.inl h)
+          simp only [SqlEquiv.evalExprWithAggParam, ee]
+          exact keyCol_lookup db us s hitems (fun it hit => (hnm hob0 it hit).1) c hcap hv
       choose vs hvs using hval
       have hkr := groupOrderKeyRow_eq db _ orderBy us s p vs (fun i => (hvs i).1)
       have hfree : KeyNameFree p := by
@@ -1299,8 +1551,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
           (.col ⟨none, SqlEquiv.groupOrderKeyName i⟩) = _
         rw [SqlEquiv.evalExprWithDb_col, hkr]
         exact keyRow_lookup p hfree vs ⟨i, by omega⟩
-      · show DatumRel (Fin.append k Ag (Fin.natAdd _ (kj i))) _
-        rw [Fin.append_right]; exact (hvs ⟨i, by omega⟩).2
+      · exact (hvs ⟨i, by omega⟩).2
   suffices hfin : ∀ U, List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ₀) R U →
       List.Forall₂ OutRel base (if (SqlEquiv.groupOrderByItems orderBy).isEmpty then
         (U.foldl F []).filterMap Φ
@@ -1332,25 +1583,23 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     have hKS : List.Forall₂ (fun A x => ∃ kk, Expr.evalRow (fun i : Fin sk.length => (sk[i]).e) A =
         .ok kk ∧ x = (kk, A)) (rowsA.filter keep) keyedS :=
       (mapM_forall₂ hkeyedS).imp fun _ _ h => bind_pure_ok h
-    let τ : Fin sk.length → SqlType := fun i => Δa (kj i)
+    let τ : Fin sk.length → SqlType := fun i => Γa (idx i)
     let PR : Row sk.length × Row (keyList.length + a) → SqlEquiv.Row × SqlEquiv.Row → Prop :=
-      fun x y => PRA x.2 y ∧ ∀ i, x.1 i = x.2 (Fin.natAdd _ (kj i))
+      fun x y => PRA x.2 y ∧ ∀ i, x.1 i = x.2 (idx i)
     have hPRz : List.Forall₂ PR keyedS (((U.foldl F []).filterMap Φ).zip
         ((U.foldl F' []).filterMap Ψ)) := zip_rel (fun A x y hx hpra => by
           obtain ⟨kk, hkk, rfl⟩ := hx
           refine ⟨hpra, fun i => ?_⟩
           have h3 := Expr.evalRow_eq_ok_iff.mp hkk i
-          rw [(hkj i).2.1] at h3
+          rw [(hidx i).1] at h3
           exact (Except.ok.inj h3).symm) hKS hPR
     obtain ⟨W, hW1, hW2, hW⟩ := sorted_gen (fun i : Fin sk.length => sk[i]) τ
       (fun p₁ p₂ => SqlEquiv.compareByOrderItemsParam
         (fun db' r e => SqlEquiv.evalExprWithDb db' r e) db (p₁.1 ++ p₁.2) (p₂.1 ++ p₂.2)
         (SqlEquiv.groupOrderByItems orderBy)) PR
       (fun x y hxy i => by
-        show (x.1 i).HasType (Δa (kj i))
-        have := hxy.1.2.2 (Fin.natAdd _ (kj i))
-        simp only [← hΓeq, Fin.append_right] at this
-        rw [hxy.2 i]; exact this)
+        show (x.1 i).HasType (Γa (idx i))
+        rw [hxy.2 i]; exact hxy.1.2.2 (idx i))
       (fun x₁ y₁ x₂ y₂ h₁ h₂ => by
         apply compareBy_agree' _ db _ _ _ (by rw [length_groupOrderByItems]; exact hlo)
         intro i
@@ -1358,11 +1607,10 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
         obtain ⟨v₂, hv₂, hr₂⟩ := h₂.1.2.1 i
         rw [hv₁, hv₂, h₁.2 i, h₂.2 i]
         refine cmpDatum_agree (sk[i]) _ ?_ ?_ hr₁ hr₂ ?_
-        · rw [getElem_groupOrderByItems]; exact (hkj i).2.2.1
-        · rw [getElem_groupOrderByItems]; exact (hkj i).2.2.2
+        · rw [getElem_groupOrderByItems]; exact (hidx i).2.1
+        · rw [getElem_groupOrderByItems]; exact (hidx i).2.2.1
         · rintro x y ⟨hx, -⟩
-          have := h₁.1.2.2 (Fin.natAdd _ (kj i))
-          simp only [← hΓeq, Fin.append_right] at this
+          have := h₁.1.2.2 (idx i)
           rw [hx] at this
           exact hτb h0 i (by simpa [Datum.HasType] using this.symm)) hPRz
     rw [hW1, List.map_map] at hout
@@ -1461,6 +1709,6 @@ theorem elabStmt_correct_group_ordered (N : NamedSchema)
       ∃ out, (SqlEquiv.evalStmt db (groupOrderStmt items fr wh groupBy orderBy lim off)).2 =
         some out ∧ List.Forall₂ OutRel rs out :=
   elabStmt_correct_grouped N hfold hfoldCI hwn hfix hD hrel (groupedItems_of_groupItems hgi) hgb hgc
-    hff hw (by simp) hob (.inl (colRefs_mem hgi)) (fun _ => hnm) h hnb
+    hff hw (by simp) (fun o ho => .inl (hob o ho)) (.inl (colRefs_mem hgi)) (fun _ => hnm) h hnb
 
 end SqlBridge.CorrectGroupOrder

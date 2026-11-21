@@ -141,12 +141,23 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   let plainAgg := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone && !s.items.isEmpty &&
     s.items.all fun | .exprItem e _ => aggCallOk e | .star _ => false
-  -- grouped (roadmap steps 3b-1 to 3b-5, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
-  -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates, `LIMIT`/`OFFSET`.
+  -- grouped (roadmap steps 3b-1 to 3b-6, mirrors `elabStmt_correct_grouped`): `GROUP BY` columns,
+  -- items aggregates or columns, an optional `HAVING`, `ORDER BY` aggregates or key columns,
+  -- `LIMIT`/`OFFSET`.
   -- With sort keys, no output name may capture `SqlEquiv`'s sort-key columns `__group_orderkey_k`
   -- (hypothesis `hnm`); a bare column (one not grouped) without any `MIN`/`MAX`, or with exactly one
   -- (`BareOk`).
-  let orderOk := s.orderBy.all (fun o => aggCallOk o.expr) &&
+  -- a sort key: an aggregate, or a `GROUP BY` column no other item's name captures (step 3b-6,
+  -- `OrderKeyOk`): every item named like it, in either evaluator, is that column
+  let keyColOk : Expr → Bool := fun
+    | .col c => s.groupBy.contains (.col c) && s.items.all fun
+      | .exprItem e al =>
+        !((al.getD (exprToName e)).toLower == c.column.toLower ||
+          (al.getD (match e with | .col c' => c'.column | _ => "?column?")).toLower ==
+            c.column.toLower) || e == .col c
+      | .star _ => true
+    | _ => false
+  let orderOk := s.orderBy.all (fun o => aggCallOk o.expr || keyColOk o.expr) &&
     (s.orderBy.isEmpty || s.items.all fun
       | .exprItem e al =>
         let nm := (al.getD (exprToName e)).toLower
@@ -166,6 +177,14 @@ partial def selectFeatures (s : SelectStmt) : List String :=
      | [(_, m, some _, false)] =>
        m.bareRow && (ih ++ s.orderBy.flatMap (fun o => minMaxCalls o.expr)).eraseDups == ih
      | _ => false)
+  -- without `GROUP BY` (step 3b-6, `elabStmt_correct_aggBare`): aggregates and bare columns, at
+  -- least one aggregate, no `HAVING`, `ORDER BY`, `LIMIT` or `OFFSET`
+  let plainAggBare := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    s.limitVal.isNone && s.offsetVal.isNone && bareOk &&
+    s.items.any (fun | .exprItem e _ => aggCallOk e | .star _ => false) &&
+    s.items.all fun
+      | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
+      | .star _ => false
   let plainGroup := !s.distinct && !s.groupBy.isEmpty && s.having.all (havingOk s.groupBy) &&
     orderOk && bareOk &&
     s.groupBy.all (fun | .col _ => true | _ => false) &&
@@ -173,7 +192,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
       | .exprItem e _ => aggCallOk e || (match e with | .col _ => true | _ => false)
       | .star _ => false
   (if s.distinct then [distinct] else []) ++
-  (if plainAgg || plainGroup then
+  (if plainAgg || plainAggBare || plainGroup then
     s.items.flatMap fun
       | .exprItem (.agg _ (some a) _) _ => exprFeatures a
       | _ => []
