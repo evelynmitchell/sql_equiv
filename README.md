@@ -81,10 +81,11 @@ This repository could become a basis for SQL support in
   `LIMIT`/`OFFSET`, and for `COUNT`/`SUM`/`MIN`/`MAX`, also under `GROUP BY` columns, with
   `HAVING`, ordered by aggregates or key columns, and with bare columns (on the first row or,
   next to one `MIN`/`MAX`, the extreme row, with or without `GROUP BY`), and `AVG` items up to
-  SqlEquiv's rounding (registry row 7), the elaborator is proved correct
+  SqlEquiv's rounding (registry row 7), and plain `SELECT DISTINCT` up to the order of the
+  rows (registry T18), the elaborator is proved correct
   against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `CorrectOrder.lean`,
   `CorrectJoin.lean`, `CorrectAgg.lean`, `CorrectGroup.lean`, `CorrectGroupOrder.lean`,
-  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`); 407 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
+  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`); 428 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features

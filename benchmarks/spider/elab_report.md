@@ -30,6 +30,8 @@ optional `HAVING`, ordered by such aggregates or key columns, with `LIMIT`/`OFFS
 `elabStmt_correct_aggBare` (`SqlBridge/CorrectAggBare.lean`) for aggregates next to bare
 columns without `GROUP BY`; both take `AVG` items, related up to `SqlEquiv`'s rounding
 (`SqlBridge/CorrectAvg.lean`). `BETWEEN` is in the expression and `HAVING` fragments.
+`elabStmt_correct_distinct` (`SqlBridge/CorrectDistinct.lean`) covers plain
+`SELECT DISTINCT`, relating the rows up to their order (registry T18).
 Counts are of the
 elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
@@ -39,10 +41,10 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 407 |
-| after 5. DISTINCT | 429 |
+| Today | 428 |
+| after DISTINCT with an unselected sort key and LIMIT | 429 |
 
-Still outside after step 5 (queries using each feature):
+Still outside after that (queries using each feature):
 
 - subquery/set operation/CTE: 80
 - LIKE: 8

@@ -200,7 +200,12 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     s.items.all fun
       | .exprItem e _ => itemCallOk e || (match e with | .col _ => true | _ => false)
       | .star _ => false
-  (if s.distinct then [distinct] else []) ++
+  -- plain `DISTINCT` (roadmap step 5, `elabStmt_correct_distinct`): no `GROUP BY`, `HAVING`,
+  -- `ORDER BY`, `LIMIT` or `OFFSET`; the items' own features (aggregates, `*`) still count. The
+  -- rows relate up to their order.
+  let plainDistinct := s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    s.limitVal.isNone && s.offsetVal.isNone
+  (if s.distinct && !plainDistinct then [distinct] else []) ++
   (if plainAgg || plainAggBare || plainGroup then
     s.items.flatMap fun
       | .exprItem (.agg _ (some a) _) _ => exprFeatures a

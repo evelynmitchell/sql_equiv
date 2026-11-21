@@ -2,7 +2,7 @@
   The Spider coverage report against the theorems' own shapes (#352). `SqlBridge.Coverage`
   counts the Spider queries inside the elaborator-correctness fragment by a feature list of its
   own; `SqlCoreTest.CorrectExamples` defines the fragment from the theorems' hypotheses
-  (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`). This test runs both over every query
+  (`stmtShape`, `aggShape`, `aggBareShape`, `groupedShape`, `distinctShape`). This test runs both over every query
   of `benchmarks/spider/dev_queries.jsonl`, parsed in the sqlite dialect as the report does, and
   fails on any disagreement: a report that counts a query no theorem covers (as a first draft of
   step 3b-5 did), or misses one.
@@ -31,7 +31,7 @@ def run : IO (Option (Nat × Nat × List String)) := do
     | .ok s =>
       n := n + 1
       let cov := (SqlBridge.Coverage.outsideFragment s).isEmpty
-      let shp := stmtShape s || aggShape s || aggBareShape s || groupedShape s
+      let shp := anyShape s
       if shp then inside := inside + 1
       if cov != shp then
         bad := s!"report says {if cov then "inside" else "outside"}, the theorems' shape says {if shp then "inside" else "outside"}: {q}" :: bad
