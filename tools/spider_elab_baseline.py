@@ -45,8 +45,9 @@ EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 # in "Today". Step 4's other operators (IS NULL, negation, arithmetic, IN list) add no Spider
 # query and are left for later (decided 21 Nov 2026).
 # Step 5 (plain DISTINCT, up to row order) is done too.
-# Step 6a (set operations over covered branches, up to row order) is done; 6b (IN / NOT IN
-# subqueries) and 6c (scalar subqueries) are next and share the subquery feature.
+# Step 6a (set operations over covered branches, up to row order) is done, and of 6b the plain
+# case (WHERE e [NOT] IN (plain subquery) on a plain outer query). The rest of 6b and 6c (scalar
+# subqueries) share the subquery feature.
 # The one entry left is not planned (decided 21 Nov 2026: one query, a full step); it stays
 # listed so the report shows what it would add.
 ROADMAP = [

@@ -149,6 +149,11 @@ def corpus : List (String × Expect) := [
   ("SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20", .agree),
   ("SELECT staff FROM museum EXCEPT SELECT staff FROM museum WHERE staff > 20", .agree),
   ("SELECT name FROM users UNION SELECT name FROM products EXCEPT SELECT name FROM users WHERE age > 26", .agree),
+  -- `elabStmt_correct_inSub` (#352 step 6b): the rows in order, ORDER BY and LIMIT on the outer
+  -- query included; a join in the body; a body with no rows
+  ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders) ORDER BY name LIMIT 2", .agree),
+  ("SELECT name FROM users WHERE id IN (SELECT o.user_id FROM orders o JOIN users u ON o.user_id = u.id WHERE u.age > 26) ORDER BY name", .agree),
+  ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE amount > 100000)", .agree),
   -- set operations keep the same rows in a different order (T18, `elabStmt_correct_setOp`): the
   -- typed core keeps the last copy of a duplicate, SqlEquiv the first; with LIMIT and no ORDER
   -- BY the rows differ

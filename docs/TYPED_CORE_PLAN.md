@@ -126,6 +126,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       of the rows (`SqlBridge/CorrectSetOp.lean`, `elabStmt_correct_setOp`; registry T18;
       decided 2026-11-21). Spider coverage **466**, up from 428
     - [ ] Step 6b: `IN` / `NOT IN` with an uncorrelated subquery (23 Spider queries)
+      - [x] A plain outer query, `WHERE e [NOT] IN (plain subquery)`
+        (`SqlBridge/CorrectSub.lean`, `elabStmt_correct_inSub`). Spider coverage **475**, up
+        from 466
+      - [ ] The same under an aggregate or `DISTINCT` outer query (12 queries), under `AND`
+        (2), and with a grouped or set-operation body (2)
     - [ ] Step 6c: an uncorrelated scalar subquery in a comparison (16 Spider queries; 5 compare
       against an `AVG`, which needs its own decision)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
@@ -211,10 +216,11 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 3c. `AVG` items, up to rounding (done) | 403 |
 | 4. `BETWEEN` (done) | 407 |
 | 5. Plain `DISTINCT`, up to row order (done) | 428 |
-| Today: 6a. Set operations, up to row order (done) | 466 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 467 |
+| 6a. Set operations, up to row order (done) | 466 |
+| Today: 6b (part). `WHERE e [NOT] IN (plain subquery)`, plain outer query (done) | 475 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 476 |
 
-Still outside after that: `IN`/`NOT IN` and scalar subqueries (41, of which 2 also need a set
+Still outside after that: `IN`/`NOT IN` and scalar subqueries (32, of which 2 also need a set
 operation in a subquery or in `FROM`), `LIKE` (8), `*` (2),
 `AVG` in `HAVING` (2).
 
@@ -424,10 +430,33 @@ follows coverage instead (decided 20 Nov 2026):
      `ORDER BY`/`LIMIT` over the set operation (with `LIMIT` the kept rows can differ; no Spider
      query has one). `QNoBoolOrder` now descends into set operations (it was vacuously true
      there).
-   - **6b. `IN` / `NOT IN` subqueries** (23 queries): the three-valued results already agree;
-     the proof needs the attached-subquery machinery (`Query.attach`) and a lemma that an
-     uncorrelated subquery's result does not depend on the outer row (`SqlEquiv` re-evaluates
-     it per row, the typed core once).
+   - **6b. `IN` / `NOT IN` subqueries** (23 queries), **the plain case done** (9 queries):
+     `SELECT … FROM f WHERE e [NOT] IN (SELECT e' FROM f' [WHERE p']) [ORDER BY …] [LIMIT n]`,
+     rows related in order (`elabStmt_correct_inSub`). The pieces, in `SqlBridge/CorrectSub.lean`
+     unless noted:
+     - *The body ignores the outer row.* `SqlEquiv` evaluates the body on rows `inner ++ outer`,
+       once per outer row. Lookups take the first match, so a row related to a typed row stays
+       related with columns appended (`rowRel_append`), and the body's result under any outer
+       row relates to the typed rows (`elabStmt_correct_join_ctx`, in `CorrectJoin.lean`; without
+       `ORDER BY`, where `SqlEquiv` aligns the sort on rows without the outer row).
+     - *The value.* The typed three-valued membership (`Datum.inList`) is TRUE exactly when
+       `SqlEquiv` finds a match and unknown exactly when it finds none and a `NULL` takes part
+       (`inList_agree`, `inSub_agree`), whatever the order of the body's rows.
+     - *The clause.* The elaborator attaches the membership test as a last column, filters on
+       it and projects it away (`elabWhere_inSub`); that pipeline keeps the rows `SqlEquiv`'s
+       filter keeps (`attachFilter_rel`).
+     - *The statement theorems take the `WHERE` abstractly.* `WhereOk` (in `CorrectJoin.lean`)
+       says what a statement theorem needs of the clause's elaboration; a fragment predicate
+       provides it (`whereOk_frag`) and so does the subquery clause (`whereOk_inSub`).
+       `elabStmt_correct_join` is unchanged, now a corollary. The elaborator's inline `WHERE`
+       handling became the named function `elabWhere` for this (no behaviour change).
+     - `QNoBoolOrder` now constrains attached subqueries (it was vacuously true there).
+
+     Still to do in 6b: thread `WhereOk` through the aggregate and `DISTINCT` theorems (12
+     queries); the clause under `AND` (2 queries; the elaborator's hidden column is named
+     `?subquery?`, which the predicate must not reference: unreachable through the parser,
+     which has no quoted identifiers, but a side condition for hand-built ASTs); bodies that
+     are grouped or set operations (2 queries).
    - **6c. Scalar subqueries** (16 queries): reuses 6b's machinery; in the sqlite dialect both
      evaluators take the first row. Five compare against an `AVG` (rounded in `SqlEquiv`, exact
      in the typed core), a decision to make then.

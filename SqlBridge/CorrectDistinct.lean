@@ -156,6 +156,7 @@ theorem elab_distinct_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     simp [this, pure, Except.pure]
   simp only [elabQueryRaw, elabSelect] at hraw ⊢
   rw [elabSelectF] at hraw ⊢
+  unfold elabWhere at hraw ⊢
   obtain ⟨⟨n, qf, cf⟩, hf, hraw⟩ := bind_ok hraw
   simp only [hf, bind, Except.bind]
   dsimp only at hraw ⊢

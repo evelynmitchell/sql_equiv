@@ -602,6 +602,27 @@ theorem lookupCI_eq_find? (u : SqlEquiv.Row) (key : String) :
     obtain ⟨k, v⟩ := kv
     by_cases h : k.toLower = key.toLower <;> simp [SqlEquiv.Row.lookupCI, h, ih]
 
+/-- A lookup that succeeds on a row finds the same value when more columns follow: lookups take
+    the first match in row order. -/
+theorem getQualified_append_of_some (u ctx : SqlEquiv.Row) (q : Option String) (c : String)
+    {v : SqlEquiv.Value} (h : u.getQualified q c = some v) :
+    (u ++ ctx).getQualified q c = some v := by
+  cases q with
+  | some t =>
+    simp only [SqlEquiv.Row.getQualified, lookupCI_eq_find?, List.find?_append] at h ⊢
+    cases hf : u.find? (fun kv => kv.1.toLower == (s!"{t}.{c}").toLower) <;> simp_all
+  | none =>
+    simp only [SqlEquiv.Row.getQualified, List.find?_append] at h ⊢
+    cases hf : u.find? (fun (x : String × SqlEquiv.Value) =>
+      x.1.toLower == c.toLower || x.1.toLower.endsWith s!".{c.toLower}") <;> simp_all
+
+/-- So a row related to a typed row stays related with an outer row appended (a subquery body
+    sees `inner ++ outer`, and every column the elaborator resolved is found in the inner part). -/
+theorem rowRel_append {r : Row n} {u : SqlEquiv.Row} (ctx : SqlEquiv.Row)
+    (h : RowRel cols fold r u) : RowRel cols fold r (u ++ ctx) := fun q name i hres =>
+  let ⟨v, hv, hd⟩ := h q name i hres
+  ⟨v, getQualified_append_of_some u ctx q name hv, hd⟩
+
 theorem find?_ofFn_of_unique {α : Type _} {m : ℕ} (f : Fin m → α) (p : α → Bool) (i : Fin m)
     (hi : p (f i) = true) (hu : ∀ j, p (f j) = true → j = i) :
     (List.ofFn f).find? p = some (f i) := by
@@ -996,6 +1017,10 @@ def QNoBoolOrder {S : DbSchema} : {n : ℕ} → Query S n → Prop
   | _, .unionAll q₁ q₂ => QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
   | _, .intersect q₁ q₂ => QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
   | _, .difference q₁ q₂ => QNoBoolOrder q₁ ∧ QNoBoolOrder q₂
+  | _, .attach kind sub q =>
+    (∀ Γ, q.typeOf = some Γ → match kind with
+      | .inSub _ e => NoBoolOrder Γ e
+      | .scalar _ => True) ∧ QNoBoolOrder sub ∧ QNoBoolOrder q
   | _, _ => True
 
 /-- The statements of #309: `SELECT e₁, …, eₖ FROM t [AS a] [WHERE p]`. -/
@@ -1031,6 +1056,7 @@ theorem elabStmt_correct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = 
         List.Forall₂ OutRel rs out := by
   simp only [fragmentStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect] at h
   rw [elabSelectF] at h
+  unfold elabWhere at h
   simp only [elabFrom, lookupTable, List.map_nil, aggsOfList, aggsOfOpt,
     List.append_nil, List.isEmpty_nil, Option.isNone_none, Bool.and_true, Bool.true_and] at h
   rw [aggsOfList_items ?hf items hit] at h

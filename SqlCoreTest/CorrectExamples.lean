@@ -157,10 +157,22 @@ def setOpShape : SqlEquiv.Stmt → Bool
   | .query q => setOpTreeShape q
   | _ => false
 
+/-- The shape of `elabStmt_correct_inSub` (step 6b): a statement of `elabStmt_correct_join` whose
+    `WHERE` is `e [NOT] IN (SELECT …)`, the probe in the expression fragment and the body a
+    statement of `elabStmt_correct_join` without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+def inSubShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some f) (some (.inSubquery e _
+      (.simple (.mk false items' (some f') wh' [] none [] none none)))) [] none orderBy _ _)) =>
+    itemsFragment items && fromFragment f && isFragment e &&
+      itemsFragment items' && fromFragment f' && wh'.all isFragment &&
+      orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) &&
+      (orderBy.isEmpty || itemsNamed items)
+  | _ => false
+
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
   stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
-    setOpShape s
+    setOpShape s || inSubShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -569,5 +581,54 @@ example : SqlBridge.CorrectSetOp.SetOpTree (SqlBridge.CorrectSetOp.Leaf singerSc
 #guard SqlEquiv.parse "SELECT name FROM singer INTERSECT SELECT DISTINCT name FROM singer"
   (dialect := .sqlite) == .ok (.query setOpExample)
 #guard (elabStmt singerSchema (.query setOpExample)).toBool
+
+/-- Spider-shaped `WHERE e [NOT] IN (SELECT …)` queries (step 6b) have the shape of
+    `elabStmt_correct_inSub` and elaborate under the folding schema. -/
+def inSubSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => inSubShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+#guard inSubSpider "SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)"
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id IN (SELECT T1.singer_id FROM " ++
+  "singer AS T1 JOIN song AS T2 ON T1.singer_id = T2.singer_id WHERE T1.age > 20)")
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song) " ++
+  "ORDER BY name LIMIT 2")
+-- outside for now: the subquery under AND, an aggregate or DISTINCT outer query, and a body
+-- that is not a plain statement (DISTINCT, GROUP BY, LIMIT, an aggregate, a set operation)
+#guard !inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)")
+#guard !inSubSpider "SELECT count(*) FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)"
+#guard !inSubSpider ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT DISTINCT singer_id FROM song)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song LIMIT 1)")
+#guard !inSubSpider "SELECT name FROM singer WHERE singer_id NOT IN (SELECT max(singer_id) FROM song)"
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song UNION SELECT singer_id FROM singer)")
+-- a correlated subquery has the shape but does not elaborate
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song WHERE title = name)")
+-- the coverage report agrees on each (`featuresSqlite` says "disagrees" otherwise)
+#guard featuresSqlite "SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)" == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT count(*) FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT DISTINCT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT max(singer_id) FROM song)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song WHERE title LIKE 'A%')") == [SqlBridge.Coverage.like]
+-- (parenthesised: the parser reads `a + 1 NOT IN (…)` as `a + (1 NOT IN (…))`, #400)
+#guard featuresSqlite ("SELECT name FROM singer WHERE (singer_id + 1) NOT IN " ++
+  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.arithmetic]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song) GROUP BY name") != []
 
 end SqlCoreTest.CorrectExamples

@@ -423,6 +423,48 @@ def finishSelect {S : DbSchema} (fold : String → String) (sc : Scoped S) (dist
     | l, off => .limit l (off.getD 0) q
   pure ⟨k, q, fun i => (its[i]).2⟩
 
+/-- Elaborate a `WHERE` clause over the `FROM` query `q` with columns `cols`. Uncorrelated
+subqueries (phase 8f, #329) each become a column of the input (`Query.attach`), which the predicate
+reads; the extra columns are projected away. `sub` elaborates a subquery body. -/
+def elabWhere (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) {n : ℕ} (cols : Fin n → Column)
+    (q : Query N.S n) : Option SqlEquiv.Expr → ElabM (Query N.S n)
+  | none => pure q
+  | some w =>
+    let subs := (subsOf w).foldl
+      (fun acc x => if acc.any (·.1 == x.1) then acc else acc ++ [x]) []
+    if subs.isEmpty then do pure (Query.select (← elabExpr cols N.fold noHook w) q)
+    else do
+      let subsE ← subs.mapM fun (node, sq) => do
+        let r ← match sub sq with
+          | .ok r => pure r
+          | .error (.unknownColumn qq c) =>
+            match resolveColumn cols (qq.map N.fold) (N.fold c) with
+            | .ok _ => throw (.unsupported "correlated subquery")
+            | .error _ => throw (.unknownColumn qq c)
+          | .error err => throw err
+        if h : r.n = 1 then
+          pure (node, (h ▸ r.q : Query N.S 1), (r.cols ⟨0, by omega⟩).type)
+        else throw (.typeError "subquery arity")
+      let acc ← subsE.foldlM (init := (⟨n, q, cols⟩ : Elaborated N.S))
+        fun acc (node, sub, τ) => do
+          let (kind, ty) ← match node with
+            | .subquery _ =>
+              pure (SubKind.scalar (N.config.scalarSubqueryRows == .firstRow), τ)
+            | .inSubquery e neg _ => do
+              pure (SubKind.inSub neg (← elabExpr acc.cols N.fold noHook e), SqlType.bool)
+            | _ => throw (.unsupported "subquery")
+          pure ⟨acc.n + 1, .attach kind sub acc.q,
+            Fin.append acc.cols ![{ qualifier := none, name := "?subquery?", type := ty }]⟩
+      let m := acc.n
+      let hook : SqlEquiv.Expr → Option (Expr m) := fun e =>
+        match subs.findIdx? (·.1 == e) with
+        | some j => if h : n + j < m then some (.col ⟨n + j, h⟩) else none
+        | none => none
+      let p ← elabExpr acc.cols N.fold hook w
+      if h : n ≤ m then
+        pure (.project (fun i : Fin n => .col (Fin.castLE h i)) (.select p acc.q))
+      else throw (.typeError "subquery scope")
+
 mutual
 
 /-- Elaborate a subquery body. `fuel` bounds the nesting of subqueries, so that elaboration is a
@@ -452,47 +494,9 @@ def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.
     let ⟨n, q, cols⟩ ← elabFrom N (fun sq => match fuel with
       | 0 => throw (.unsupported "subqueries nested too deeply")
       | f + 1 => elabSubQuery f sq) from_
-    let q : Query N.S n ← match where_ with
-      | none => pure q
-      | some w =>
-        -- Uncorrelated subqueries (phase 8f, #329): each becomes a column of the input
-        -- (`Query.attach`), which the predicate reads; the extra columns are projected away.
-        let subs := (subsOf w).foldl
-          (fun acc x => if acc.any (·.1 == x.1) then acc else acc ++ [x]) []
-        if subs.isEmpty then do pure (Query.select (← elabExpr cols N.fold noHook w) q)
-        else do
-          let subsE ← match fuel with
-            | 0 => throw (.unsupported "subqueries nested too deeply")
-            | f + 1 => subs.mapM fun (node, sq) => do
-              let r ← match elabSubQuery f sq with
-                | .ok r => pure r
-                | .error (.unknownColumn qq c) =>
-                  match resolveColumn cols (qq.map N.fold) (N.fold c) with
-                  | .ok _ => throw (.unsupported "correlated subquery")
-                  | .error _ => throw (.unknownColumn qq c)
-                | .error err => throw err
-              if h : r.n = 1 then
-                pure (node, (h ▸ r.q : Query N.S 1), (r.cols ⟨0, by omega⟩).type)
-              else throw (.typeError "subquery arity")
-          let acc ← subsE.foldlM (init := (⟨n, q, cols⟩ : Elaborated N.S))
-            fun acc (node, sub, τ) => do
-              let (kind, ty) ← match node with
-                | .subquery _ =>
-                  pure (SubKind.scalar (N.config.scalarSubqueryRows == .firstRow), τ)
-                | .inSubquery e neg _ => do
-                  pure (SubKind.inSub neg (← elabExpr acc.cols N.fold noHook e), SqlType.bool)
-                | _ => throw (.unsupported "subquery")
-              pure ⟨acc.n + 1, .attach kind sub acc.q,
-                Fin.append acc.cols ![{ qualifier := none, name := "?subquery?", type := ty }]⟩
-          let m := acc.n
-          let hook : SqlEquiv.Expr → Option (Expr m) := fun e =>
-            match subs.findIdx? (·.1 == e) with
-            | some j => if h : n + j < m then some (.col ⟨n + j, h⟩) else none
-            | none => none
-          let p ← elabExpr acc.cols N.fold hook w
-          if h : n ≤ m then
-            pure (.project (fun i : Fin n => .col (Fin.castLE h i)) (.select p acc.q))
-          else throw (.typeError "subquery scope")
+    let q : Query N.S n ← elabWhere N (fun sq => match fuel with
+      | 0 => throw (.unsupported "subqueries nested too deeply")
+      | f + 1 => elabSubQuery f sq) cols q where_
     let itemExprs := items.filterMap fun | .exprItem e _ => some e | .star _ => none
     let orderExprs := orderBy.map fun | .mk e _ _ => e
     let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having ++ aggsOfList orderExprs).eraseDups
