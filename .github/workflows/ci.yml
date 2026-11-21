@@ -51,6 +51,9 @@ jobs:
       - name: Check axiom coverage ratchet
         run: python3 tools/axiom_coverage_validator.py --runtime
 
+      - name: Self-test the coverage validator's restore logic
+        run: python3 tools/axiom_coverage_validator.py --self-test
+
       - name: Check definition coverage matrix
         run: python3 tools/definition_coverage_matrix.py --check
 
