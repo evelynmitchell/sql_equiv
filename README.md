@@ -45,6 +45,13 @@ This repository could become a basis for SQL support in
   differential oracles. Where engines legitimately differ (NULL ordering,
   LIKE case sensitivity, MIN/MAX over mixed types), the behaviour is a named
   dialect setting recorded in [`docs/IMPLEMENTATION_DEFINED.md`](docs/IMPLEMENTATION_DEFINED.md).
+- **Errors are quiet in `SqlEquiv`** ([#270](https://github.com/evelynmitchell/sql_equiv/issues/270)).
+  Where DuckDB and Postgres abort a query (a type mismatch such as `1 = 'a'`, integer division
+  by zero), the untyped evaluator returns `none` for that expression: the row is dropped in
+  `WHERE`, and shows as NULL in a `SELECT` list. The equivalences (`≃ₑ`, `≃`, `≃ᵩ`, …) compare
+  these quiet results, so a proved equivalence transfers to such an engine only for queries
+  that do not raise an error there: a rewrite may remove a subexpression that would have
+  aborted. The typed core is strict instead (errors are a separate `Except` result).
 - **Trust.** The trust base is the one described above. The certified rewriter
   and the decision procedure come with proofs (`docs/CERTIFIED_REWRITER.md`).
 - **Known gaps before a library port:**

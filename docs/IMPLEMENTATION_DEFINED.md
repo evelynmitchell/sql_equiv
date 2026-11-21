@@ -95,6 +95,13 @@ our evaluator returns `none` for the expression. In a WHERE clause that silently
 drops the row; in a SELECT list it shows as NULL. So our "error" is quieter than
 theirs. Rows below say "ours: error (row dropped)" for this.
 
+**What this means for proved equivalences (#270):** `SqlEquiv`'s equivalences compare these
+quiet results. They transfer to DuckDB or Postgres only for queries that raise no error there:
+two queries can be equivalent in the model while one aborts in the engine (a rewrite that drops
+an always-false conjunct whose other operand would have raised). The typed core (`SqlCore`) is
+strict, with errors as a separate result, so its equivalences do not carry this caveat. Whether
+`SqlEquiv` itself becomes strict, per dialect or by a side condition on theorems, is undecided.
+
 ---
 
 ## Registry
