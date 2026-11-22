@@ -35,9 +35,10 @@ columns without `GROUP BY`; both take `AVG` items, related up to `SqlEquiv`'s ro
 Set operations over such statements (`SqlBridge/CorrectSetOp.lean`) are covered up to
 row order, and a `WHERE` with one uncorrelated subquery, `e [NOT] IN (SELECT …)` or
 `a op (SELECT …)`, alone or under `AND` (`SqlBridge/CorrectSub.lean`). A comparison
-with a subquery `AVG` is counted on two assumptions the theorem states: the compared
-expression is not a decimal (no Spider column is), and the average's denominator is
-at most 10^16 (true of any table with fewer rows than that, for an integer argument).
+with a subquery `AVG` is counted under the theorem's two hypotheses: the compared
+expression is not a decimal (proved for any column of a schema without decimal
+columns, which Spider's are), and the average's denominator is at most 10^16 (proved
+when the subquery's `FROM` has at most 10^16 rows; the count assumes that of the data).
 Counts are of the
 elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in

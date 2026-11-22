@@ -18,6 +18,9 @@
     comparison and conjunctions; `holeCtx_elab` relates the elaborated clause to the untyped
     one given the node's value; `elabWhere_one_inSub` / `elabWhere_one_scalar` give the shape
     of the elaborated `WHERE`;
+  * `AVG` bodies: the attached column relates up to rounding (`whereOk_of_avgWhere`), under
+    `NonDecimalIn` (`nonDecimalIn_col`: any column of a schema without decimal columns) and
+    `AvgBound` (`avgBound_of_rows`: `FROM` has at most `10¹⁶` rows);
   * `whereOk_attach`, `whereOk_of_subWhere`: the clause provides `WhereOk`, the hypothesis the
     statement theorems take for their `WHERE`; `elabStmt_correct_inSub` and the three after it:
     the statement theorems for plain, `DISTINCT` and aggregate outer queries.
@@ -1013,6 +1016,67 @@ theorem whereOk_of_subWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower
 
 /-! ### `AVG` bodies, compared up to rounding (step 6c) -/
 
+/-- A sum of integers is an integer. -/
+theorem sumFrom_int : ∀ (vs : List Value) (a : ℤ), (∀ v ∈ vs, v.type = .int) →
+    ∃ z : ℤ, sumFrom (.int a) vs = .ok (.int z)
+  | [], a, _ => ⟨a, rfl⟩
+  | v :: vs, a, h => by
+    have hv := h v List.mem_cons_self
+    cases v <;> simp only [Value.type, reduceCtorEq] at hv
+    rename_i b
+    simp only [sumFrom, Value.add, bind, Except.bind]
+    exact sumFrom_int vs (a + b) (fun v hv => h v (List.mem_cons_of_mem _ hv))
+
+/-- The denominator of an integer divided by a positive natural is at most that natural. -/
+theorem den_div_le (z : ℤ) (k : ℕ) (hk : 0 < k) : ((z : ℚ) / k).den ≤ k := by
+  have h : ((z : ℚ) / k) = Rat.divInt z k := by rw [Rat.divInt_eq_div]; push_cast; rfl
+  rw [h]
+  exact Nat.le_of_dvd hk (Int.natCast_dvd_natCast.mp (Rat.den_dvd z k))
+
+/-- **An average of integers has a denominator at most the number of rows averaged.** -/
+theorem avg_den_le {n : ℕ} {e : Expr n} {R : List (Row n)} {q : ℚ}
+    (hint : ∀ r ∈ R, ∀ d, e.eval r = .ok d → d.HasType .int)
+    (h : (AggCall.call .avg false e).eval R = .ok (some (.decimal q))) : q.den ≤ R.length := by
+  simp only [AggCall.eval, bind, Except.bind] at h
+  rcases hds : R.mapM e.eval with err | ds
+  · simp [hds] at h
+  simp only [hds, Bool.false_eq_true, ↓reduceIte] at h
+  have hfa := mapM_forall₂ hds
+  have hlen : (ds.filterMap id).length ≤ R.length := by
+    rw [hfa.length_eq]; exact List.length_filterMap_le _ _
+  have hty : ∀ v ∈ ds.filterMap id, v.type = .int := by
+    intro v hv
+    obtain ⟨d, hd, hdv⟩ := List.mem_filterMap.mp hv
+    simp only [id] at hdv
+    subst hdv
+    obtain ⟨r, hr, hrd⟩ := CorrectAgg.forall₂_mem_right hfa hd
+    exact hint r hr _ hrd
+  rcases hvs : ds.filterMap id with _ | ⟨v, vs⟩
+  · rw [hvs] at h; simp [AggFn.apply] at h
+  rw [hvs] at h hlen hty
+  have hv := hty v List.mem_cons_self
+  cases v <;> simp only [Value.type, reduceCtorEq] at hv
+  rename_i a
+  obtain ⟨z, hz⟩ := sumFrom_int vs a (fun v hv => hty v (List.mem_cons_of_mem _ hv))
+  simp only [AggFn.apply, hz, meanOf, bind, Except.bind, pure, Except.pure, Except.ok.injEq,
+    Option.some.injEq, Value.decimal.injEq] at h
+  subst h
+  have := den_div_le z (vs.length + 1) (Nat.succ_pos _)
+  simp only [List.length_cons] at hlen
+  push_cast at this ⊢
+  omega
+
+/-- A filter keeps at most the rows it is given. -/
+theorem filterRows_length_le {n : ℕ} (p : Expr n) : ∀ {R R' : List (Row n)},
+    p.filterRows R = .ok R' → R'.length ≤ R.length
+  | [], R', h => by
+    simp only [Expr.filterRows, List.filterMapM_nil, pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact Nat.le_refl _
+  | r :: R, R', h => by
+    obtain ⟨t, R'', -, hrs, rfl⟩ := filterRows_cons_ok h
+    have ih := filterRows_length_le p hrs
+    cases t.isTrue <;> simp only [List.length_cons] <;> simp <;> omega
+
 /-- The `AVG` subquery bodies of step 6c: `SELECT AVG(e) FROM f [WHERE p]`. -/
 inductive AvgBody : SqlEquiv.SelectStmt → Prop
   | mk {a : SqlEquiv.Expr} {al : Option String} {f : SqlEquiv.FromClause}
@@ -1077,12 +1141,230 @@ theorem nonDecimalIn_lit (N : NamedSchema) (f : SqlEquiv.FromClause) (z : ℤ) :
   subst h
   exact ⟨.int, rfl, by simp⟩
 
+/-- In a schema without decimal columns, no column of a `FROM` tree is a decimal. -/
+theorem from_noDecimal (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
+    (hnd : ∀ T j, (N.S.columns T j).type ≠ .decimal) :
+    ∀ (f : SqlEquiv.FromClause), fromFragment f = true →
+    ∀ {e : Elaborated N.S}, elabFrom N sub f = .ok e →
+    ∀ {Γ}, e.q.typeOf = some Γ → ∀ i, Γ i ≠ .decimal
+  | .table ⟨name, al⟩, _, e, h => by
+    rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
+    · simp [elabFrom, lookupTable, hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+    simp only [elabFrom, lookupTable, hT, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    intro hΓ i
+    simp only [Query.typeOf_table, Option.some.injEq] at hΓ
+    subst hΓ
+    exact hnd T i
+  | .join l kind r on, hf, e, h => by
+    obtain ⟨hl, hr, hon, hk⟩ := join_kind hf
+    rw [elabFrom] at h
+    obtain ⟨⟨n, ql, cl⟩, hel, h⟩ := bind_ok h
+    obtain ⟨⟨m, qr, cr⟩, her, h⟩ := bind_ok h
+    dsimp only at h
+    have hθ : ∃ θ, e = ⟨n + m, .join θ ql qr, Fin.append cl cr⟩ := by
+      rcases hk with rfl | ⟨rfl, rfl⟩
+      · cases on with
+        | none =>
+          simp only [pure, Except.pure, bind, Except.bind, Except.ok.injEq] at h
+          exact ⟨_, h.symm⟩
+        | some c =>
+          obtain ⟨θ, -, h⟩ := bind_ok h
+          simp only [pure, Except.pure, Except.ok.injEq] at h
+          exact ⟨θ, h.symm⟩
+      · simp only [pure, Except.pure, bind, Except.bind, Except.ok.injEq] at h
+        exact ⟨_, h.symm⟩
+    obtain ⟨θ, rfl⟩ := hθ
+    intro hΓ i
+    obtain ⟨Γ₁, Δ, h₁, h₂, -, rfl⟩ := Query.typeOf_join_eq_some.mp hΓ
+    refine Fin.addCases (fun j => ?_) (fun j => ?_) i
+    · rw [Fin.append_left]; exact from_noDecimal N sub hnd l hl hel h₁ j
+    · rw [Fin.append_right]; exact from_noDecimal N sub hnd r hr her h₂ j
+  | .subquery _ _, hf, _, _ => by simp [fromFragment] at hf
+
+/-- **In a schema without decimal columns, a column is not a decimal**, among the columns of any
+    `FROM` tree of tables. -/
+theorem nonDecimalIn_col (N : NamedSchema) (hnd : ∀ T j, (N.S.columns T j).type ≠ .decimal)
+    {f : SqlEquiv.FromClause} (hff : fromFragment f = true) (c : SqlEquiv.ColumnRef) :
+    NonDecimalIn N f (.col c) := by
+  intro n qf cf a₀ Γ hf hΓ ha
+  obtain ⟨idx, rfl⟩ := CorrectGroup.elab_col_is_col cf N.fold c ha
+  exact ⟨Γ idx, rfl, from_noDecimal N _ hnd f hff hf hΓ idx⟩
+
 /-- The size bound of an `AVG` clause: the average's denominator, in lowest terms, is at most
-    `10¹⁶`. It is at most the number of rows averaged when the argument is an integer. -/
+    `10¹⁶`. It holds when `FROM` has at most `10¹⁶` rows and the argument is not a decimal
+    (`avgBound_of_rows`). -/
 def AvgBound (N : NamedSchema) (D : Database N.S) (body : SqlEquiv.SelectStmt) : Prop :=
   ∀ (rq : Query N.S 1) (rc : Fin 1 → Column) (ss : List (Row 1)),
-    elabSubQuery N 15 (.simple body) = .ok ⟨1, rq, rc⟩ → rq.eval D = .ok ss →
+    elabSubQuery N 15 (.simple body) = .ok ⟨1, rq, rc⟩ → rq.typeOf.isSome → rq.eval D = .ok ss →
     ∀ s ∈ ss, ∀ q, s 0 = some (.decimal q) → q.den ≤ 10 ^ SqlEquiv.avgPlaces
+
+/-- An aggregate without keys over rows `R`: one row, the aggregates' values. -/
+theorem eval_aggregate_noKeys {S : DbSchema} {n a : ℕ} {D : Database S} (keys : Fin 0 → Expr n)
+    (aggs : Fin a → AggCall n) {q₀ : Query S n} {R : List (Row n)} (hR : q₀.eval D = .ok R) :
+    (Query.aggregate keys aggs q₀).eval D =
+      (AggCall.evalAll aggs R).map fun A => [Fin.append (fun _ => none : Row 0) A] := by
+  have hk : ∀ r : Row n, Expr.evalRow keys r = .ok (fun _ => none) := fun r =>
+    Expr.evalRow_eq_ok_iff.mpr (fun i => i.elim0)
+  rw [Query.eval_aggregate, hR]
+  simp only [bind, Except.bind]
+  rw [CorrectAgg.mapM_ok_map (g := fun r => ((fun _ => none : Row 0), r))
+    (fun r _ => by simp [hk, pure, Except.pure])]
+  simp only [Row.groups, ↓reduceIte, List.map_map]
+  have : ((Prod.snd ∘ fun r : Row n => ((fun _ => none : Row 0), r)) : Row n → Row n) = id := rfl
+  cases hA : AggCall.evalAll aggs R <;>
+    simp [this, List.mapM_cons, hA, pure, Except.pure, Except.map, bind, Except.bind]
+
+set_option maxHeartbeats 1600000 in
+/-- The values of `SELECT AVG(e) FROM f [WHERE p]`, `e` not a decimal: their denominators are at
+    most the number of rows of `FROM f`. -/
+theorem avg_stmt_den (N : NamedSchema)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower)
+    {D : Database N.S} (hD : D.Conforms) {e : SqlEquiv.Expr} {b : SqlEquiv.BoolSumAvg}
+    {al : Option String} {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    (he : isFragment e = true) (hw : ∀ w ∈ wh, isFragment w = true) (hne : NonDecimalIn N f e)
+    {B : ℕ}
+    (hrows : ∀ {n : ℕ} (qf : Query N.S n) (cf : Fin n → Column) (Rf : List (Row n)),
+      elabFrom N (fun sq => elabSubQuery N 15 sq) f = .ok ⟨n, qf, cf⟩ → qf.eval D = .ok Rf →
+      Rf.length ≤ B)
+    {el : Elaborated N.S}
+    (hst : elabStmt N (CorrectGrouped.groupedStmt [.exprItem (.agg (.avg b) (some e) false) al]
+      f wh [] none [] none none) = .ok el)
+    (hty : el.q.typeOf.isSome) {ss : List (Row el.n)} (hss : el.q.eval D = .ok ss) :
+    ∀ s ∈ ss, ∀ i q, s i = some (.decimal q) → q.den ≤ B := by
+  have ha : CorrectAvg.avgFragment (.agg (.avg b) (some e) false) = true := by
+    simpa [CorrectAvg.avgFragment] using he
+  obtain ⟨-, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, -, -, hits, hsk,
+    qh, hqh, rfl⟩ := CorrectGrouped.elab_grouped_shape N hfoldCI
+      (items := [.exprItem (.agg (.avg b) (some e) false) al])
+      (by simp [CorrectGrouped.groupedItems, CorrectGrouped.itemAggFragment, ha])
+      (.inr ⟨_, List.mem_singleton_self _, by simp [itemExpr, CorrectGrouped.itemAggFragment, ha]⟩)
+      (by simp) (by simp) (by simp) (.inl (by simp [CorrectGroup.colRefs])) hst
+  simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hk
+  subst hk
+  cases hsk
+  rcases hqh with ⟨-, rfl⟩ | ⟨hv, p, out, hhs, -⟩
+  swap; · cases hhs
+  simp only [limitWrap, List.length_nil, ↓reduceIte] at hty hss ⊢
+  -- the one item is the aggregate `aggs j`, the `AVG` of `e`'s elaboration
+  cases hits with
+  | @cons _ x _ _ hx hrest =>
+  cases hrest
+  rcases hx with ⟨j, hel, hxj⟩ | ⟨c, i', hc, -⟩ | ⟨c, j, e', hc, -⟩
+  rotate_left
+  · simp [itemExpr] at hc
+  · simp [itemExpr] at hc
+  simp only [itemExpr, elabAgg, bind, Except.bind] at hel
+  rcases he₀ : elabExpr cf N.fold noHook e with err | e₀
+  · simp [he₀] at hel
+  simp only [he₀, pure, Except.pure, Except.ok.injEq] at hel
+  -- typing: `e₀` is an integer
+  obtain ⟨Δ, hΔ⟩ := Option.isSome_iff_exists.mp hty
+  obtain ⟨Γa, hΓa, -⟩ := Query.typeOf_project_eq_some.mp hΔ
+  obtain ⟨Γ₀, Δk, Δa, hq₀ty, -, has, -⟩ := Query.typeOf_aggregate_eq_some hΓa
+  -- the `WHERE` keeps the type and at most the rows
+  have hwf : qf.typeOf = some Γ₀ ∧ ∀ R, q₀.eval D = .ok R →
+      ∃ Rf, qf.eval D = .ok Rf ∧ R.length ≤ Rf.length := by
+    cases wh with
+    | none =>
+      simp only [elabWhere, pure, Except.pure, Except.ok.injEq] at hq₀
+      subst hq₀
+      exact ⟨hq₀ty, fun R hR => ⟨R, hR, Nat.le_refl _⟩⟩
+    | some w =>
+      simp only [elabWhere, subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil,
+        ↓reduceIte] at hq₀
+      obtain ⟨p, -, hq₀⟩ := bind_ok hq₀
+      simp only [pure, Except.pure, Except.ok.injEq] at hq₀
+      subst hq₀
+      refine ⟨(Query.typeOf_select_eq_some.mp hq₀ty).1, fun R hR => ?_⟩
+      rw [Query.eval_select] at hR
+      obtain ⟨Rf, hRf, hR⟩ := bind_ok hR
+      exact ⟨Rf, hRf, filterRows_length_le p hR⟩
+  obtain ⟨hsrc, hlen⟩ := hwf
+  obtain ⟨τ, hτ, hτne⟩ := hne qf cf e₀ Γ₀ hf hsrc he₀
+  have hτint : e₀.typeOf Γ₀ = some .int := by
+    have h1 := has j
+    rw [← hel] at h1
+    simp only [AggCall.typeOf, hτ] at h1
+    cases τ <;> simp_all
+  -- evaluation
+  rw [Query.eval_project] at hss
+  obtain ⟨G, hG, hss⟩ := bind_ok hss
+  have hG' := hG
+  rw [Query.eval_aggregate] at hG'
+  obtain ⟨R, hR, -⟩ := bind_ok hG'
+  rw [eval_aggregate_noKeys _ _ hR] at hG
+  rcases hA : AggCall.evalAll aggs R with err | A
+  · simp [hA, Except.map] at hG
+  simp only [hA, Except.map, Except.ok.injEq] at hG
+  subst hG
+  simp only [List.mapM_cons, List.mapM_nil, bind, Except.bind, pure, Except.pure] at hss
+  split at hss
+  · cases hss
+  rename_i r hrow
+  simp only [Except.ok.injEq] at hss
+  subst hss
+  intro s hs i q hq
+  rw [List.mem_singleton] at hs
+  subst hs
+  have hi := Expr.evalRow_eq_ok_iff.mp hrow i
+  have hi0 : ([x][i]).1 = x.1 := by
+    have h1 : (i : ℕ) < 1 := i.2
+    have h0 : (i : ℕ) = 0 := by omega
+    simp [h0]
+  rw [hi0, hxj] at hi
+  have hAj : s i = A j := by
+    have h2 : (Expr.col (Fin.natAdd _ j)).eval (Fin.append (fun _ => none : Row 0) A) =
+        .ok (A j) := by
+      show Except.ok ((Fin.append (fun _ => none : Row 0) A) (Fin.natAdd _ j)) = _
+      rw [Fin.append_right]
+    exact Except.ok.inj (hi.symm.trans h2)
+  have hev := CorrectAgg.evalAll_get hA j
+  rw [← hel, ← hAj, hq] at hev
+  have hconf := Query.conforms_of_eval_eq_ok hD hq₀ty hR
+  have hden := avg_den_le (fun r hr d hd => by
+    rcases Expr.eval_ok_or_divisionByZero (hconf r hr) hτint with ⟨d', hd', hty'⟩ | ⟨hdz, _⟩
+    · rw [hd] at hd'; cases hd'; exact hty'
+    · rw [hd] at hdz; cases hdz) hev
+  obtain ⟨Rf, hRf, hle⟩ := hlen R hR
+  exact hden.trans (hle.trans (hrows qf cf Rf hf hRf))
+
+/-- **The size bound from a row count.** For `SELECT AVG(e) FROM f [WHERE p]` with `e` not a
+    decimal (so an integer, for the `AVG` to type): if `FROM f` has at most `10¹⁶` rows, the
+    average's denominator is at most `10¹⁶`. -/
+theorem avgBound_of_rows (N : NamedSchema)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower)
+    {D : Database N.S} (hD : D.Conforms) {e : SqlEquiv.Expr} {b : SqlEquiv.BoolSumAvg}
+    {al : Option String} {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    (he : isFragment e = true) (hff : fromFragment f = true)
+    (hw : ∀ w ∈ wh, isFragment w = true) (hne : NonDecimalIn N f e)
+    (hrows : ∀ {n : ℕ} (qf : Query N.S n) (cf : Fin n → Column) (Rf : List (Row n)),
+      elabFrom N (fun sq => elabSubQuery N 15 sq) f = .ok ⟨n, qf, cf⟩ → qf.eval D = .ok Rf →
+      Rf.length ≤ 10 ^ SqlEquiv.avgPlaces) :
+    AvgBound N D (.mk false [.exprItem (.agg (.avg b) (some e) false) al] (some f) wh [] none []
+      none none) := by
+  intro rq rc ss hsub hty hss s hs q hq
+  have hst : elabStmt N (CorrectGrouped.groupedStmt [.exprItem (.agg (.avg b) (some e) false) al]
+      f wh [] none [] none none) = .ok ⟨1, rq, rc⟩ := by
+    rw [elabSubQuery] at hsub
+    simp only [CorrectGrouped.groupedStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
+    rw [elabSelectF_fuel N 16 14 hff hw, hsub]
+    simp [hty, bind, Except.bind, pure, Except.pure]
+  exact avg_stmt_den N hfoldCI hD he hw hne hrows hst hty hss s hs 0 q hq
+
+/-- The rows of `FROM t` are the table's: a bound on every table's size bounds them. -/
+theorem fromRows_table (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
+    {D : Database N.S} {B : ℕ} (hB : ∀ T, (D T).length ≤ B) (tr : SqlEquiv.TableRef)
+    {n : ℕ} (qf : Query N.S n) (cf : Fin n → Column) (Rf : List (Row n))
+    (h : elabFrom N sub (.table tr) = .ok ⟨n, qf, cf⟩) (hRf : qf.eval D = .ok Rf) :
+    Rf.length ≤ B := by
+  obtain ⟨name, al⟩ := tr
+  rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
+  · simp [elabFrom, lookupTable, hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+  simp only [elabFrom, lookupTable, hT, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+  cases h
+  cases hRf
+  exact hB T
 
 /-- The `WHERE` clauses of step 6c over an `AVG` body: `a op (SELECT AVG(e) FROM …)`, alone or
     under `AND` next to fragment conjuncts, with `a` not a decimal and the average under the size
@@ -1150,7 +1432,7 @@ theorem whereOk_of_avgWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower
   cases hss'
   have hτ := hk1 _ rfl
   have hconf := Query.conforms_of_eval_eq_ok hD hΔ hss
-  have hbd := hbound rq rc ss hsub hss
+  have hbd := hbound rq rc ss hsub (by simp [hΔ]) hss
   simp only [SubKind.extra] at hx
   rcases hsc : scalarOf (N.config.scalarSubqueryRows == .firstRow) (ss.map (· 0)) with err | dv
   · simp [hsc] at hx
