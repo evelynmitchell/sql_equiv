@@ -576,7 +576,19 @@ def runAllTests : IO TestSeq := do
     diffTest "window: case else"
       "SELECT name, CASE WHEN age > 100 THEN 1 ELSE MIN(age) OVER (PARTITION BY department) END AS r FROM users",
     diffTest "window: function argument"
-      "SELECT name, ABS(age - MAX(age) OVER (PARTITION BY department)) AS r FROM users"
+      "SELECT name, ABS(age - MAX(age) OVER (PARTITION BY department)) AS r FROM users",
+    -- An aggregate or a window function left of IN (subquery) (#422); non-boolean items only
+    diffTest "window: in subquery under CASE"
+      "SELECT name, CASE WHEN SUM(age) OVER (PARTITION BY department) IN (SELECT amount - 35 FROM orders) THEN 1 ELSE 0 END AS r FROM users",
+    diffTest "aggregate: HAVING in subquery"
+      "SELECT department FROM users GROUP BY department HAVING MAX(age) IN (SELECT age FROM users WHERE id > 3) ORDER BY department",
+    diffTest "aggregate: HAVING not in subquery with null"
+      "SELECT department FROM users GROUP BY department HAVING COUNT(*) NOT IN (SELECT CASE WHEN id = 1 THEN NULL ELSE id END FROM products) ORDER BY department",
+    -- registry T9: the MIN/MAX left of IN (subquery) picks the bare column's row
+    diffTest "bare column: MIN left of IN (subquery)"
+      "SELECT name, CASE WHEN MIN(age) IN (SELECT 22) THEN 1 ELSE 0 END AS r FROM users",
+    diffTest "bare column: MAX in HAVING IN (subquery), grouped"
+      "SELECT name, department FROM users GROUP BY department HAVING MAX(age) IN (SELECT age FROM users WHERE id > 2) ORDER BY department"
   ].mapM id
   -- Build TestSeq from results
   return results.foldr (fun (name, passed) acc => test name passed $ acc)
