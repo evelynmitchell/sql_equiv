@@ -282,6 +282,7 @@ inductive Leaf (N : NamedSchema) : SqlEquiv.Query → Prop
       (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
       (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment f = true)
       (hw : ∀ w ∈ wh, isFragment w = true) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
+      (hnv : ∀ h ∈ having, hasCmpAvg h = false)
       (hbf : BareOk N items groupBy having [])
       (hna : ∀ it ∈ items, CorrectAvg.avgFragment (itemExpr it) = false) :
       Leaf N (.simple (.mk false items (some f) wh groupBy having [] none none))
@@ -319,9 +320,10 @@ theorem elabStmt_correct_setOp (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
         hai hne hff hw h hnb
       simp only [aggStmt, SqlEquiv.evalStmt, Option.some.injEq] at hout
       exact ⟨rs, hrs, hout ▸ .of_forall₂ hr⟩
-    | @grouped items f wh groupBy having hgi hgb hgc hff hw hhv hbf hna =>
+    | @grouped items f wh groupBy having hgi hgb hgc hff hw hhv hnv hbf hna =>
       obtain ⟨rs, hrs, out, hout, hr⟩ := elabStmt_correct_grouped N hfold hfoldCI hwn hfix hD
-        hrel (orderBy := []) (lim := none) (off := none) hgi hgb hgc hff hw hhv (by simp) hbf
+        hrel (orderBy := []) (lim := none) (off := none) hgi hgb hgc hff hw hhv
+        (havingAvgOk_of_noAvg hnv) (by simp) hbf
         (by simp) h hnb
       simp only [groupedStmt, SqlEquiv.evalStmt, Option.some.injEq] at hout
       exact ⟨rs, hrs, hout ▸ .of_forall₂ (hr.imp fun _ _ h => outRel_of_outRelI hna h)⟩

@@ -1016,56 +1016,6 @@ theorem whereOk_of_subWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower
 
 /-! ### `AVG` bodies, compared up to rounding (step 6c) -/
 
-/-- A sum of integers is an integer. -/
-theorem sumFrom_int : ∀ (vs : List Value) (a : ℤ), (∀ v ∈ vs, v.type = .int) →
-    ∃ z : ℤ, sumFrom (.int a) vs = .ok (.int z)
-  | [], a, _ => ⟨a, rfl⟩
-  | v :: vs, a, h => by
-    have hv := h v List.mem_cons_self
-    cases v <;> simp only [Value.type, reduceCtorEq] at hv
-    rename_i b
-    simp only [sumFrom, Value.add, bind, Except.bind]
-    exact sumFrom_int vs (a + b) (fun v hv => h v (List.mem_cons_of_mem _ hv))
-
-/-- The denominator of an integer divided by a positive natural is at most that natural. -/
-theorem den_div_le (z : ℤ) (k : ℕ) (hk : 0 < k) : ((z : ℚ) / k).den ≤ k := by
-  have h : ((z : ℚ) / k) = Rat.divInt z k := by rw [Rat.divInt_eq_div]; push_cast; rfl
-  rw [h]
-  exact Nat.le_of_dvd hk (Int.natCast_dvd_natCast.mp (Rat.den_dvd z k))
-
-/-- **An average of integers has a denominator at most the number of rows averaged.** -/
-theorem avg_den_le {n : ℕ} {e : Expr n} {R : List (Row n)} {q : ℚ}
-    (hint : ∀ r ∈ R, ∀ d, e.eval r = .ok d → d.HasType .int)
-    (h : (AggCall.call .avg false e).eval R = .ok (some (.decimal q))) : q.den ≤ R.length := by
-  simp only [AggCall.eval, bind, Except.bind] at h
-  rcases hds : R.mapM e.eval with err | ds
-  · simp [hds] at h
-  simp only [hds, Bool.false_eq_true, ↓reduceIte] at h
-  have hfa := mapM_forall₂ hds
-  have hlen : (ds.filterMap id).length ≤ R.length := by
-    rw [hfa.length_eq]; exact List.length_filterMap_le _ _
-  have hty : ∀ v ∈ ds.filterMap id, v.type = .int := by
-    intro v hv
-    obtain ⟨d, hd, hdv⟩ := List.mem_filterMap.mp hv
-    simp only [id] at hdv
-    subst hdv
-    obtain ⟨r, hr, hrd⟩ := CorrectAgg.forall₂_mem_right hfa hd
-    exact hint r hr _ hrd
-  rcases hvs : ds.filterMap id with _ | ⟨v, vs⟩
-  · rw [hvs] at h; simp [AggFn.apply] at h
-  rw [hvs] at h hlen hty
-  have hv := hty v List.mem_cons_self
-  cases v <;> simp only [Value.type, reduceCtorEq] at hv
-  rename_i a
-  obtain ⟨z, hz⟩ := sumFrom_int vs a (fun v hv => hty v (List.mem_cons_of_mem _ hv))
-  simp only [AggFn.apply, hz, meanOf, bind, Except.bind, pure, Except.pure, Except.ok.injEq,
-    Option.some.injEq, Value.decimal.injEq] at h
-  subst h
-  have := den_div_le z (vs.length + 1) (Nat.succ_pos _)
-  simp only [List.length_cons] at hlen
-  push_cast at this ⊢
-  omega
-
 /-- A filter keeps at most the rows it is given. -/
 theorem filterRows_length_le {n : ℕ} (p : Expr n) : ∀ {R R' : List (Row n)},
     p.filterRows R = .ok R' → R'.length ≤ R.length
@@ -1140,47 +1090,6 @@ theorem nonDecimalIn_lit (N : NamedSchema) (f : SqlEquiv.FromClause) (z : ℤ) :
   simp [noHook, elabValue, pure, Except.pure] at h
   subst h
   exact ⟨.int, rfl, by simp⟩
-
-/-- In a schema without decimal columns, no column of a `FROM` tree is a decimal. -/
-theorem from_noDecimal (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
-    (hnd : ∀ T j, (N.S.columns T j).type ≠ .decimal) :
-    ∀ (f : SqlEquiv.FromClause), fromFragment f = true →
-    ∀ {e : Elaborated N.S}, elabFrom N sub f = .ok e →
-    ∀ {Γ}, e.q.typeOf = some Γ → ∀ i, Γ i ≠ .decimal
-  | .table ⟨name, al⟩, _, e, h => by
-    rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
-    · simp [elabFrom, lookupTable, hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
-    simp only [elabFrom, lookupTable, hT, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
-    subst h
-    intro hΓ i
-    simp only [Query.typeOf_table, Option.some.injEq] at hΓ
-    subst hΓ
-    exact hnd T i
-  | .join l kind r on, hf, e, h => by
-    obtain ⟨hl, hr, hon, hk⟩ := join_kind hf
-    rw [elabFrom] at h
-    obtain ⟨⟨n, ql, cl⟩, hel, h⟩ := bind_ok h
-    obtain ⟨⟨m, qr, cr⟩, her, h⟩ := bind_ok h
-    dsimp only at h
-    have hθ : ∃ θ, e = ⟨n + m, .join θ ql qr, Fin.append cl cr⟩ := by
-      rcases hk with rfl | ⟨rfl, rfl⟩
-      · cases on with
-        | none =>
-          simp only [pure, Except.pure, bind, Except.bind, Except.ok.injEq] at h
-          exact ⟨_, h.symm⟩
-        | some c =>
-          obtain ⟨θ, -, h⟩ := bind_ok h
-          simp only [pure, Except.pure, Except.ok.injEq] at h
-          exact ⟨θ, h.symm⟩
-      · simp only [pure, Except.pure, bind, Except.bind, Except.ok.injEq] at h
-        exact ⟨_, h.symm⟩
-    obtain ⟨θ, rfl⟩ := hθ
-    intro hΓ i
-    obtain ⟨Γ₁, Δ, h₁, h₂, -, rfl⟩ := Query.typeOf_join_eq_some.mp hΓ
-    refine Fin.addCases (fun j => ?_) (fun j => ?_) i
-    · rw [Fin.append_left]; exact from_noDecimal N sub hnd l hl hel h₁ j
-    · rw [Fin.append_right]; exact from_noDecimal N sub hnd r hr her h₂ j
-  | .subquery _ _, hf, _, _ => by simp [fromFragment] at hf
 
 /-- **In a schema without decimal columns, a column is not a decimal**, among the columns of any
     `FROM` tree of tables. -/
@@ -1322,7 +1231,7 @@ theorem avg_stmt_den (N : NamedSchema)
   have hev := CorrectAgg.evalAll_get hA j
   rw [← hel, ← hAj, hq] at hev
   have hconf := Query.conforms_of_eval_eq_ok hD hq₀ty hR
-  have hden := avg_den_le (fun r hr d hd => by
+  have hden := CorrectAvg.avg_den_le (fun r hr d hd => by
     rcases Expr.eval_ok_or_divisionByZero (hconf r hr) hτint with ⟨d', hd', hty'⟩ | ⟨hdz, _⟩
     · rw [hd] at hd'; cases hd'; exact hty'
     · rw [hd] at hdz; cases hdz) hev
@@ -1583,6 +1492,7 @@ theorem elabStmt_correct_grouped_inSub (N : NamedSchema)
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment f = true)
     (hw : AnySubWhere N D f w)
     (hhv : ∀ h ∈ having, CorrectGroup.havingFragment groupBy h = true)
+    (hav : CorrectGrouped.HavingAvgOk N D f having)
     (hob : ∀ o ∈ orderBy, CorrectGrouped.OrderKeyOk items groupBy o.expr)
     (hbf : CorrectGrouped.BareOk N items groupBy having orderBy)
     (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
@@ -1597,6 +1507,6 @@ theorem elabStmt_correct_grouped_inSub (N : NamedSchema)
           some out ∧ List.Forall₂ (CorrectGrouped.OutRelI items) rs out :=
   CorrectGrouped.elabStmt_correct_grouped_w N hfold hfoldCI hwn hfix hD hrel hgi hgb hgc hff
     (fun _ _ _ hf hq => whereOk_of_anySubWhere N hfold hfoldCI hwn hfix hD hrel hw hf hq)
-    hhv hob hbf hnm h hnb
+    hhv hav hob hbf hnm h hnb
 
 end SqlBridge.CorrectSub

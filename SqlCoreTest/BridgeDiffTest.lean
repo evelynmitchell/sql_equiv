@@ -170,6 +170,11 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM users WHERE 27 > (SELECT AVG(age) FROM users WHERE id > 99)", .agree),
   ("SELECT department, COUNT(*) FROM users WHERE age > (SELECT AVG(age) FROM users) GROUP BY department", .agree),
   ("SELECT COUNT(*) FROM users WHERE age <> (SELECT AVG(age) FROM users)", .agree),
+  -- `HAVING AVG(c) op k` (`HavingAvgOk`): the same rounding argument, per group
+  ("SELECT department, COUNT(*) FROM users GROUP BY department HAVING AVG(age) > 27", .agree),
+  ("SELECT department, AVG(age) FROM users GROUP BY department HAVING AVG(age) <= 30 ORDER BY department", .agree),
+  ("SELECT department FROM users GROUP BY department HAVING COUNT(*) >= 1 AND AVG(age) <> 30", .agree),
+  ("SELECT user_id, SUM(amount) FROM orders GROUP BY user_id HAVING AVG(amount) < 100", .agree),
   -- set operations keep the same rows in a different order (T18, `elabStmt_correct_setOp`): the
   -- typed core keeps the last copy of a duplicate, SqlEquiv the first; with LIMIT and no ORDER
   -- BY the rows differ

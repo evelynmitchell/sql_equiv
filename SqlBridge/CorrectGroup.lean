@@ -346,6 +346,61 @@ theorem evalWithAgg_of_noAgg (db : SqlEquiv.Database) (us : List SqlEquiv.Row) (
   | .subquery _, v, _, h | .windowFn .., v, _, h => by
     simpa [SqlEquiv.evalExprWithAggParam, ee] using h
 
+omit cols out fold keys aggs in
+/-- `AVG(c)` of a column, not `DISTINCT`. -/
+def avgColFragment : SqlEquiv.Expr → Bool
+  | .agg (.avg _) (some (.col _)) false => true
+  | _ => false
+
+omit cols out fold keys aggs in
+theorem avgFragment_of_avgCol : ∀ {x : SqlEquiv.Expr}, avgColFragment x = true →
+    CorrectAvg.avgFragment x = true
+  | .agg (.avg _) (some (.col _)) false, _ => rfl
+  | .agg (.avg _) (some (.lit _)) _, h | .agg (.avg _) none _, h
+  | .agg (.avg _) (some (.col _)) true, h => by simp [avgColFragment] at h
+  | .agg (.count) _ _, h | .agg (.sum _) _ _, h | .agg (.min _) _ _, h | .agg (.max _) _ _, h
+  | .lit _, h | .col _, h | .binOp _ _ _, h | .unaryOp _ _, h | .func _ _, h | .case _ _, h
+  | .inList _ _ _, h | .between _ _ _, h | .inSubquery _ _ _, h | .exists _ _, h | .subquery _, h
+  | .windowFn _ _ _, h | .countStar, h => by simp [avgColFragment] at h
+  | .agg (.avg _) (some (.binOp _ _ _)) _, h | .agg (.avg _) (some (.unaryOp _ _)) _, h
+  | .agg (.avg _) (some (.func _ _)) _, h | .agg (.avg _) (some (.case _ _)) _, h
+  | .agg (.avg _) (some (.inList _ _ _)) _, h | .agg (.avg _) (some (.between _ _ _)) _, h
+  | .agg (.avg _) (some (.inSubquery _ _ _)) _, h | .agg (.avg _) (some (.exists _ _)) _, h
+  | .agg (.avg _) (some (.subquery _)) _, h | .agg (.avg _) (some (.windowFn _ _ _)) _, h
+  | .agg (.avg _) (some .countStar) _, h | .agg (.avg _) (some (.agg _ _ _)) _, h => by
+    simp [avgColFragment] at h
+
+omit cols out fold keys aggs in
+/-- `AVG(c) op k`, a comparison of the average of a column with an integer literal (step 6c in
+    `HAVING`): related across the evaluators under a bound on the average's denominator. -/
+def cmpAvgForm : SqlEquiv.Expr → Bool
+  | .binOp op x (.lit (.int _)) =>
+    (match op with
+     | .eq | .ne | .lt | .le | .gt | .ge => true
+     | _ => false) && avgColFragment x
+  | _ => false
+
+omit cols out fold keys aggs in
+theorem cmpAvgForm_spec {op : SqlEquiv.BinOp} {x y : SqlEquiv.Expr}
+    (h : cmpAvgForm (.binOp op x y) = true) :
+    ∃ z c, y = .lit (.int z) ∧ elabBinOp op = .ok (.cmp c) ∧ avgColFragment x = true := by
+  unfold cmpAvgForm at h
+  split at h
+  · rename_i op' x' z heq
+    cases heq
+    simp only [Bool.and_eq_true] at h
+    refine ⟨z, ?_⟩
+    cases op <;> simp_all [elabBinOp, pure, Except.pure]
+  · cases h
+
+omit cols out fold keys aggs in
+/-- Whether a predicate has such a comparison. -/
+def hasCmpAvg : SqlEquiv.Expr → Bool
+  | .binOp op x y => cmpAvgForm (.binOp op x y) || hasCmpAvg x || hasCmpAvg y
+  | .unaryOp _ x => hasCmpAvg x
+  | .between x lo hi => hasCmpAvg x || hasCmpAvg lo || hasCmpAvg hi
+  | _ => false
+
 /-- A `HAVING` predicate over the aggregate's output elaborates the untyped one: literals,
     aggregates of step 3a (their output column), key columns (their key column), comparisons,
     `AND`, `OR`, `NOT`. -/
@@ -366,6 +421,13 @@ inductive TranslatesH : SqlEquiv.Expr → Expr (g + a) → Prop
       TranslatesH (.binOp .or x y) (.binary .or (retypeNull out x' y') (retypeNull out y' x'))
   | not {x : SqlEquiv.Expr} {x' : Expr (g + a)} : TranslatesH x x' →
       TranslatesH (.unaryOp .not x) (.unary .not x')
+  /-- `AVG(c) op k` (`cmpAvgForm`): the aggregate's column against the literal. -/
+  | cmpAvg {op : SqlEquiv.BinOp} {c : CmpOp} {x : SqlEquiv.Expr} {z : ℤ} {j : Fin a} :
+      elabBinOp op = .ok (.cmp c) → avgColFragment x = true →
+      elabAgg cols fold x = .ok (aggs j) →
+      TranslatesH (.binOp op x (.lit (.int z)))
+        (.binary (.cmp c) (retypeNull out (.col (Fin.natAdd g j)) (.lit (.int z)))
+          (retypeNull out (.lit (.int z)) (.col (Fin.natAdd g j))))
   /-- `x BETWEEN lo AND hi` (roadmap step 4): `x >= lo AND x <= hi` in both evaluators. -/
   | between {x lo hi : SqlEquiv.Expr} {x' lo' hi' : Expr (g + a)} :
       TranslatesH x x' → TranslatesH lo lo' → TranslatesH hi hi' →
@@ -383,23 +445,26 @@ theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {
     (hnbK : ∀ i, NoBoolOrder Γ (keys i)) (hnbAgg : ∀ j, AggNoBool Γ (aggs j))
     (has : ∀ j, ∃ σ, (aggs j).typeOf Γ = some σ) :
     ∀ {e : SqlEquiv.Expr} {e' : Expr (g + a)}, TranslatesH cols out fold keys aggs e e' →
+      (hasCmpAvg e = true → ∀ x j q, avgColFragment x = true →
+        elabAgg cols fold x = .ok (aggs j) → A j = some (.decimal q) →
+        q.den ≤ 10 ^ SqlEquiv.avgPlaces) →
       NoBoolOrder Δ e' → ∀ {d : Datum}, e'.eval (Fin.append k A) = .ok d →
         ∃ v, SqlEquiv.evalExprWithAggParam ee db us s e = some v ∧ DatumRel d v := by
   intro e e' ht
   induction ht with
   | lit hw =>
-    intro _ d h
+    intro _hden _hnb d h
     cases h
     exact ⟨_, by simp [SqlEquiv.evalExprWithAggParam, ee, SqlEquiv.evalExprWithDb_lit],
       valRel_of_elabValue hw⟩
   | @litNull v τ hw =>
-    intro _ d h
+    intro _hden _hnb d h
     cases h
     cases v <;> simp [elabValue] at hw
     rename_i t
     exact ⟨.null t, by simp [SqlEquiv.evalExprWithAggParam, ee, SqlEquiv.evalExprWithDb_lit], ⟨t, rfl⟩⟩
   | @agg x j hx hel =>
-    intro _ d h
+    intro _hden _hnb d h
     have hd : d = A j := by
       have : (Expr.col (Fin.natAdd g j) : Expr (g + a)).eval (Fin.append k A) = .ok (A j) := by
         show Except.ok _ = _; rw [Fin.append_right]
@@ -408,7 +473,7 @@ theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {
     obtain ⟨σ, hσ⟩ := has j
     exact agg_rel cols fold db hrows s x hx hel (hnbAgg j) hσ (evalAll_get hA j)
   | @key c i hel =>
-    intro _ d h
+    intro _hden _hnb d h
     have hd : d = k i := by
       have : (Expr.col (Fin.castAdd a i) : Expr (g + a)).eval (Fin.append k A) = .ok (k i) := by
         show Except.ok _ = _; rw [Fin.append_left]
@@ -420,13 +485,15 @@ theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {
       (translates_of_elab cols fold (.col c) rfl hel) (hnbK i) hki
     exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, ee, hv], hrel⟩
   | @cmp op c x y x' y' hop _ _ iha ihb =>
-    intro hnb d h
+    intro hden hnb d h
+    have hdx : hasCmpAvg x = true → _ := fun h => hden (by simp [hasCmpAvg, h])
+    have hdy : hasCmpAvg y = true → _ := fun h => hden (by simp [hasCmpAvg, h])
     obtain ⟨hc, hna, hnb'⟩ := hnb
     obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
     have hea' := hea; have heb' := heb
     rw [eval_retypeNull] at hea' heb'
-    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull out y' hna) hea'
-    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull out x' hnb') heb'
+    obtain ⟨va, hva, hra⟩ := iha hdx (noBoolOrder_of_retypeNull out y' hna) hea'
+    obtain ⟨vb, hvb, hrb⟩ := ihb hdy (noBoolOrder_of_retypeNull out x' hnb') heb'
     obtain ⟨v, hv, hrel⟩ := cmp_agree hop hra hrb (fun h1 h2 p q hpq => by
       rcases hc with hc | hc | ⟨τ, hτ, hτb⟩
       · exact h1 hc
@@ -437,41 +504,69 @@ theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {
           exact hτb (by simpa [Datum.HasType, Value.type] using hty.symm)
         · rw [hea] at hdz; cases hdz) hd
     exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hvb, hv], hrel⟩
-  | and _ _ iha ihb =>
-    intro hnb d h
+  | @and x y _ _ _ _ iha ihb =>
+    intro hden hnb d h
+    have hdx : hasCmpAvg x = true → _ := fun h => hden (by simp [hasCmpAvg, h])
+    have hdy : hasCmpAvg y = true → _ := fun h => hden (by simp [hasCmpAvg, h])
     obtain ⟨hna, hnb'⟩ := hnb
     obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
     rw [eval_retypeNull] at hea heb
-    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull out _ hna) hea
-    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull out _ hnb') heb
+    obtain ⟨va, hva, hra⟩ := iha hdx (noBoolOrder_of_retypeNull out _ hna) hea
+    obtain ⟨vb, hvb, hrb⟩ := ihb hdy (noBoolOrder_of_retypeNull out _ hnb') heb
     obtain ⟨v, hv, hrel⟩ := and_agree hra hrb hd
     exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hvb, hv], hrel⟩
-  | or _ _ iha ihb =>
-    intro hnb d h
+  | @or x y _ _ _ _ iha ihb =>
+    intro hden hnb d h
+    have hdx : hasCmpAvg x = true → _ := fun h => hden (by simp [hasCmpAvg, h])
+    have hdy : hasCmpAvg y = true → _ := fun h => hden (by simp [hasCmpAvg, h])
     obtain ⟨hna, hnb'⟩ := hnb
     obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
     rw [eval_retypeNull] at hea heb
-    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull out _ hna) hea
-    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull out _ hnb') heb
+    obtain ⟨va, hva, hra⟩ := iha hdx (noBoolOrder_of_retypeNull out _ hna) hea
+    obtain ⟨vb, hvb, hrb⟩ := ihb hdy (noBoolOrder_of_retypeNull out _ hnb') heb
     obtain ⟨v, hv, hrel⟩ := or_agree hra hrb hd
     exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hvb, hv], hrel⟩
+  | @cmpAvg op c x z j hop hx hel =>
+    intro hden _ d h
+    obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
+    rw [eval_retypeNull] at hea heb
+    have hda : da = A j := by
+      have : (Expr.col (Fin.natAdd g j) : Expr (g + a)).eval (Fin.append k A) = .ok (A j) := by
+        show Except.ok _ = _; rw [Fin.append_right]
+      exact Except.ok.inj (hea.symm.trans this)
+    cases heb
+    subst hda
+    obtain ⟨σ, hσ⟩ := has j
+    obtain ⟨va, hva, hra⟩ := CorrectAvg.avg_rel cols fold db hrows s x (avgFragment_of_avgCol hx)
+      hel (hnbAgg j) hσ (evalAll_get hA j)
+    have hca : hasCmpAvg (.binOp op x (.lit (.int z))) = true := by
+      cases op <;> simp [elabBinOp, pure, Except.pure] at hop <;>
+        simp [hasCmpAvg, cmpAvgForm, hx]
+    obtain ⟨v, hv, hrel⟩ := CorrectAvg.cmp_agree_avg_left hop hra
+      (fun q hq => hden hca x j q hx hel hq)
+      (show DatumRel (some (.int z)) (.int z) from ValRel.int z) (fun q hq => by cases hq) hd
+    exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, ee, SqlEquiv.evalExprWithDb_lit, hva, hv],
+      hrel⟩
   | not _ iha =>
-    intro hn d h
+    intro hden hn d h
     obtain ⟨da, hea, hd⟩ := eval_unary_ok h
-    obtain ⟨va, hva, hra⟩ := iha hn hea
+    obtain ⟨va, hva, hra⟩ := iha (fun h => hden (by simpa [hasCmpAvg] using h)) hn hea
     obtain ⟨v, hv, hrel⟩ := not_agree hra hd
     exact ⟨v, by simp [SqlEquiv.evalExprWithAggParam, hva, hv], hrel⟩
   | @between x lo hi x' lo' hi' _ _ _ ihx ihlo ihhi =>
-    intro hnb d h
+    intro hden hnb d h
+    have hdx : hasCmpAvg x = true → _ := fun h => hden (by simp [hasCmpAvg, h])
+    have hdlo : hasCmpAvg lo = true → _ := fun h => hden (by simp [hasCmpAvg, h])
+    have hdhi : hasCmpAvg hi = true → _ := fun h => hden (by simp [hasCmpAvg, h])
     obtain ⟨⟨hc₁, hnx, hnlo⟩, ⟨hc₂, -, hnhi⟩⟩ := hnb
     obtain ⟨d₁, d₂, h₁, h₂, hd⟩ := eval_binary_ok h
     obtain ⟨dx, dlo, hex, helo, hd₁⟩ := eval_binary_ok h₁
     obtain ⟨dx', dhi, hex', hehi, hd₂⟩ := eval_binary_ok h₂
     rw [hex, Except.ok.injEq] at hex'; subst hex'
     rw [eval_retypeNull] at helo hehi
-    obtain ⟨vx, hvx, hrx⟩ := ihx hnx hex
-    obtain ⟨vlo, hvlo, hrlo⟩ := ihlo (noBoolOrder_of_retypeNull out x' hnlo) helo
-    obtain ⟨vhi, hvhi, hrhi⟩ := ihhi (noBoolOrder_of_retypeNull out x' hnhi) hehi
+    obtain ⟨vx, hvx, hrx⟩ := ihx hdx hnx hex
+    obtain ⟨vlo, hvlo, hrlo⟩ := ihlo hdlo (noBoolOrder_of_retypeNull out x' hnlo) helo
+    obtain ⟨vhi, hvhi, hrhi⟩ := ihhi hdhi (noBoolOrder_of_retypeNull out x' hnhi) hehi
     have hnobool : ∀ {c : CmpOp} (_ : c = .eq ∨ c = .ne ∨ ∃ τ, x'.typeOf Δ = some τ ∧ τ ≠ .bool),
         c ≠ .eq → c ≠ .ne → ∀ (p q : Bool) (o : Datum),
           ¬ (dx = some (.bool p) ∧ o = some (.bool q)) := by
@@ -501,14 +596,16 @@ theorem TranslatesH.eval_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {
         evalWithAgg_of_noAgg db us s lo hparts.1.2 hvlo,
         evalWithAgg_of_noAgg db us s hi hparts.2 hvhi, hv₁, hv₂, hv]
 /-- The `HAVING` predicates of step 3b-2: literals, key columns, aggregates of step 3a,
-    comparisons, `AND`, `OR`, `NOT`, and (roadmap step 4) `BETWEEN`. -/
+    comparisons, `AND`, `OR`, `NOT`, (roadmap step 4) `BETWEEN`, and (step 6c) the comparison
+    `AVG(c) op k` of a column's average with an integer literal (`cmpAvgForm`). -/
 def havingFragment (groupBy : List SqlEquiv.Expr) : SqlEquiv.Expr → Bool
   | .lit _ => true
   | .col c => decide (SqlEquiv.Expr.col c ∈ groupBy)
   | .binOp op x y =>
-    (match op with
+    cmpAvgForm (.binOp op x y) ||
+    ((match op with
      | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
-     | _ => false) && havingFragment groupBy x && havingFragment groupBy y
+     | _ => false) && havingFragment groupBy x && havingFragment groupBy y)
   | .unaryOp .not x => havingFragment groupBy x
   | .between x lo hi =>
     havingFragment groupBy x && havingFragment groupBy lo && havingFragment groupBy hi
@@ -577,7 +674,8 @@ variable {n a : ℕ} (cols : Fin n → Column) (fold : String → String) (keyLi
   (groupBy : List SqlEquiv.Expr)
   (hXf : ∀ x ∈ X, aggFragment x = true ∨ CorrectAvg.avgFragment x = true ∨
     ∃ c, x = .col c ∧ SqlEquiv.Expr.col c ∉ groupBy)
-  (hXa : ∀ j (hj : j < X.length), aggFragment X[j] = true →
+  (hXa : ∀ j (hj : j < X.length),
+    (aggFragment X[j] = true ∨ CorrectAvg.avgFragment X[j] = true) →
     ∃ hja : j < a, elabAgg cols fold X[j] = .ok (aggs ⟨j, hja⟩))
   (hkc : ∀ i : Fin keyList.length, ∃ idx, keyList[i] = .col idx)
   (hkey : ∀ c, SqlEquiv.Expr.col c ∈ groupBy →
@@ -614,7 +712,7 @@ theorem agg_leaf {e : SqlEquiv.Expr} {e' : Expr (keyList.length + a)} (hfr : agg
       rw [List.findIdx?_isSome, List.any_eq_true]; exact ⟨e, hmem, by simp⟩)
   obtain ⟨hjl, hje, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hj
   simp only [beq_iff_eq] at hje
-  obtain ⟨hja, hel⟩ := hXa j hjl (hje ▸ hfr)
+  obtain ⟨hja, hel⟩ := hXa j hjl (.inl (hje ▸ hfr))
   rw [elab_of_hook _ _ _ (hook_agg cols fold _ X hj hja), Except.ok.injEq] at h
   subst h
   exact .agg hfr (hje ▸ hel)
@@ -650,8 +748,37 @@ theorem translatesH_of_elab : ∀ (h : SqlEquiv.Expr) {e' : Expr (keyList.length
     subst h
     exact .key (by rw [he₀, hk₀])
   | .binOp op x y, e', hf, hsub, h => by
-    simp only [havingFragment, Bool.and_eq_true] at hf
-    obtain ⟨⟨hop, hx⟩, hy⟩ := hf
+    simp only [havingFragment, Bool.or_eq_true, Bool.and_eq_true] at hf
+    rcases hf with hca | ⟨⟨hop, hx⟩, hy⟩
+    · -- `AVG(c) op k`
+      obtain ⟨z, c, rfl, hopc, hxa⟩ := cmpAvgForm_spec hca
+      have hxv := avgFragment_of_avgCol hxa
+      unfold elabExpr at h
+      rw [aggHook_none cols fold _ X (findIdx_none_of_not_agg X groupBy hXf (by simp [aggFragment]) (by simp))
+        (fun i => hkc i) (fun _ h => elab_binOp_not_col cols fold op x _ h)] at h
+      dsimp only at h
+      have hmem : x ∈ X := hsub x (by
+        cases x <;> simp [avgColFragment] at hxa
+        simp [aggsOf])
+      obtain ⟨j, hj⟩ : ∃ j, X.findIdx? (· == x) = some j :=
+        Option.isSome_iff_exists.mp (by
+          rw [List.findIdx?_isSome, List.any_eq_true]; exact ⟨x, hmem, by simp⟩)
+      obtain ⟨hjl, hje, -⟩ := List.findIdx?_eq_some_iff_getElem.mp hj
+      simp only [beq_iff_eq] at hje
+      obtain ⟨hja, hel⟩ := hXa j hjl (.inr (hje ▸ hxv))
+      have hxe : elabExpr out fold
+          (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X) x = _ :=
+        elab_of_hook _ _ _ (hook_agg cols fold _ X hj hja)
+      have hye : elabExpr out fold
+          (aggHook (a := a) cols fold (fun i : Fin keyList.length => keyList[i]) X)
+          (.lit (.int z)) = .ok (.lit (.int z)) := by
+        unfold elabExpr
+        rw [aggHook_none cols fold _ X (findIdx_none_of_not_agg X groupBy hXf rfl (by simp))
+          (fun i => hkc i) (fun _ h => elab_lit_not_col cols fold _ h)]
+        simp [elabValue, pure, Except.pure]
+      simp only [hopc, hxe, hye, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+      subst h
+      exact .cmpAvg hopc hxa (hje ▸ hel)
     have hsx : ∀ z ∈ aggsOf x, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
     have hsy : ∀ z ∈ aggsOf y, z ∈ X := fun z hz => hsub z (by simp [aggsOf, hz])
     unfold elabExpr at h
@@ -729,10 +856,19 @@ namespace SqlBridge.CorrectGroup
 open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectAgg
 
 theorem having_aggs {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
-    havingFragment groupBy h = true → ∀ x ∈ aggsOf h, aggFragment x = true
+    havingFragment groupBy h = true →
+      ∀ x ∈ aggsOf h, aggFragment x = true ∨ CorrectAvg.avgFragment x = true
   | .lit _, _, x, hx | .col _, _, x, hx => by simp [aggsOf] at hx
   | .binOp op p q, hf, x, hx => by
-    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [havingFragment, Bool.or_eq_true, Bool.and_eq_true] at hf
+    rcases hf with hca | hf
+    · obtain ⟨z, c, rfl, -, hxa⟩ := cmpAvgForm_spec hca
+      have hp : aggsOf p = [p] := by
+        cases p <;> simp [avgColFragment] at hxa
+        simp [aggsOf]
+      simp only [aggsOf, hp, List.append_nil, List.mem_singleton] at hx
+      subst hx
+      exact .inr (avgFragment_of_avgCol hxa)
     simp only [aggsOf, List.mem_append] at hx
     rcases hx with hx | hx
     · exact having_aggs p hf.1.2 x hx
@@ -741,8 +877,11 @@ theorem having_aggs {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
     cases op <;> simp only [havingFragment] at hf
     · exact having_aggs p hf x (by simpa [aggsOf] using hx)
     all_goals simp [aggFragment] at hf
-  | .countStar, hf, x, hx => by simp only [aggsOf, List.mem_singleton] at hx; subst hx; rfl
-  | .agg _ _ _, hf, x, hx => by simp only [aggsOf, List.mem_singleton] at hx; subst hx; simpa [havingFragment] using hf
+  | .countStar, hf, x, hx => by
+    simp only [aggsOf, List.mem_singleton] at hx; subst hx; exact .inl rfl
+  | .agg _ _ _, hf, x, hx => by
+    simp only [aggsOf, List.mem_singleton] at hx; subst hx
+    exact .inl (by simpa [havingFragment] using hf)
   | .between p lo hi, hf, x, hx => by
     simp only [havingFragment, Bool.and_eq_true] at hf
     simp only [aggsOf, List.mem_append] at hx
@@ -761,7 +900,11 @@ theorem having_cols {groupBy : List SqlEquiv.Expr} : ∀ (h : SqlEquiv.Expr),
     simp only [colsOutsideAggs, List.mem_singleton] at hc; subst hc
     simpa [havingFragment] using hf
   | .binOp op p q, hf, c, hc => by
-    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [havingFragment, Bool.or_eq_true, Bool.and_eq_true] at hf
+    rcases hf with hca | hf
+    · obtain ⟨z, c', rfl, -, hxa⟩ := cmpAvgForm_spec hca
+      cases p <;> simp [avgColFragment] at hxa
+      simp [colsOutsideAggs] at hc
     simp only [colsOutsideAggs, List.mem_append] at hc
     rcases hc with hc | hc
     · exact having_cols p hf.1.2 c hc
@@ -807,6 +950,7 @@ theorem TranslatesH.divSafe {n g a : ℕ} {cols : Fin n → Column} {out : Fin (
   | cmp _ _ _ iha ihb | and _ _ iha ihb | or _ _ iha ihb =>
     simp [Expr.divSafe, divSafe_retypeNull, iha, ihb, BinOp.isDivision]
   | not _ iha => simpa [Expr.divSafe] using iha
+  | cmpAvg _ _ _ => simp [Expr.divSafe, divSafe_retypeNull, BinOp.isDivision]
   | between _ _ _ ihx ihlo ihhi =>
     simp [Expr.divSafe, divSafe_retypeNull, ihx, ihlo, ihhi, BinOp.isDivision]
 

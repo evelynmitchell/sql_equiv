@@ -327,6 +327,47 @@ end SqlBridge.CorrectJoin
 namespace SqlBridge.CorrectJoin
 open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder
 
+/-- In a schema without decimal columns, no column of a `FROM` tree is a decimal. -/
+theorem from_noDecimal (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
+    (hnd : ∀ T j, (N.S.columns T j).type ≠ .decimal) :
+    ∀ (f : SqlEquiv.FromClause), fromFragment f = true →
+    ∀ {e : Elaborated N.S}, elabFrom N sub f = .ok e →
+    ∀ {Γ}, e.q.typeOf = some Γ → ∀ i, Γ i ≠ .decimal
+  | .table ⟨name, al⟩, _, e, h => by
+    rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
+    · simp [elabFrom, lookupTable, hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+    simp only [elabFrom, lookupTable, hT, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    intro hΓ i
+    simp only [Query.typeOf_table, Option.some.injEq] at hΓ
+    subst hΓ
+    exact hnd T i
+  | .join l kind r on, hf, e, h => by
+    obtain ⟨hl, hr, hon, hk⟩ := join_kind hf
+    rw [elabFrom] at h
+    obtain ⟨⟨n, ql, cl⟩, hel, h⟩ := bind_ok h
+    obtain ⟨⟨m, qr, cr⟩, her, h⟩ := bind_ok h
+    dsimp only at h
+    have hθ : ∃ θ, e = ⟨n + m, .join θ ql qr, Fin.append cl cr⟩ := by
+      rcases hk with rfl | ⟨rfl, rfl⟩
+      · cases on with
+        | none =>
+          simp only [pure, Except.pure, bind, Except.bind, Except.ok.injEq] at h
+          exact ⟨_, h.symm⟩
+        | some c =>
+          obtain ⟨θ, -, h⟩ := bind_ok h
+          simp only [pure, Except.pure, Except.ok.injEq] at h
+          exact ⟨θ, h.symm⟩
+      · simp only [pure, Except.pure, bind, Except.bind, Except.ok.injEq] at h
+        exact ⟨_, h.symm⟩
+    obtain ⟨θ, rfl⟩ := hθ
+    intro hΓ i
+    obtain ⟨Γ₁, Δ, h₁, h₂, -, rfl⟩ := Query.typeOf_join_eq_some.mp hΓ
+    refine Fin.addCases (fun j => ?_) (fun j => ?_) i
+    · rw [Fin.append_left]; exact from_noDecimal N sub hnd l hl hel h₁ j
+    · rw [Fin.append_right]; exact from_noDecimal N sub hnd r hr her h₂ j
+  | .subquery _ _, hf, _, _ => by simp [fromFragment] at hf
+
 /-- What a statement theorem needs of a `WHERE` clause's elaboration `q₀` over the `FROM` query
     `qf`: it keeps the type and the side conditions of `qf`, is safe when `qf` is, and its rows
     relate to the untyped rows `SqlEquiv`'s filter keeps. A fragment predicate provides it

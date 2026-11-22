@@ -222,8 +222,16 @@ theorem minMaxCalls_of_aggsOf_having {groupBy : List SqlEquiv.Expr} : ∀ (h : S
       ∀ x ∈ aggsOf h, SqlEquiv.minMaxCalls x = []
   | .lit _, _, _, x, hx | .col _, _, _, x, hx => by simp [aggsOf] at hx
   | .binOp op p q, hf, hm, x, hx => by
-    simp only [havingFragment, Bool.and_eq_true] at hf
+    simp only [havingFragment, Bool.or_eq_true, Bool.and_eq_true] at hf
     simp only [SqlEquiv.minMaxCalls, List.append_eq_nil_iff] at hm
+    rcases hf with hca | hf
+    · obtain ⟨z, c, rfl, -, hxa⟩ := cmpAvgForm_spec hca
+      have hp : aggsOf p = [p] := by
+        cases p <;> simp [avgColFragment] at hxa
+        simp [aggsOf]
+      simp only [aggsOf, hp, List.append_nil, List.mem_singleton] at hx
+      subst hx
+      exact hm.1
     simp only [aggsOf, List.mem_append] at hx
     rcases hx with hx | hx
     · exact minMaxCalls_of_aggsOf_having p hf.1.2 hm.1 x hx
@@ -1022,7 +1030,7 @@ theorem elab_grouped_shape (N : NamedSchema)
                have hjX : j < X.length := by
                  by_contra hn
                  rw [List.getElem_append_right (by omega)] at hfr
-                 simp [aggFragment] at hfr
+                 rcases hfr with hfr | hfr <;> simp [aggFragment, CorrectAvg.avgFragment] at hfr
                obtain ⟨hja, hel⟩ := hagg j hjX
                refine ⟨hja, ?_⟩
                rw [List.getElem_append_left hjX]
@@ -1153,6 +1161,25 @@ theorem itemAgg_divSafe {m : ℕ} (cols : Fin m → Column) (fold : String → S
       obtain ⟨e, he, rfl⟩ := bind_pure_ok hel
       exact Translates.divSafe cols fold (translates_of_elab cols fold w hx he)
 
+/-- What a `HAVING` with a comparison `AVG(c) op k` (`cmpAvgForm`) asks for, as the scalar
+    subqueries over an `AVG` do (`SqlBridge.CorrectSub.AvgWhere`): no column of the schema is a
+    decimal, so the average is one of integers, and `FROM` has at most `10¹⁶` rows, so its
+    denominator, at most a group's size, is within `SqlEquiv`'s 16 places. Nothing is asked of
+    a `HAVING` without such a comparison. -/
+def HavingAvgOk (N : NamedSchema) (D : Database N.S) (fr : SqlEquiv.FromClause)
+    (having : Option SqlEquiv.Expr) : Prop :=
+  (∃ h ∈ having, hasCmpAvg h = true) →
+    (∀ T j, (N.S.columns T j).type ≠ .decimal) ∧
+    ∀ {n : ℕ} (qf : Query N.S n) (cf : Fin n → Column) (Rf : List (Row n)),
+      elabFrom N (fun sq => elabSubQuery N 15 sq) fr = .ok ⟨n, qf, cf⟩ → qf.eval D = .ok Rf →
+      Rf.length ≤ 10 ^ SqlEquiv.avgPlaces
+
+theorem havingAvgOk_of_noAvg {N : NamedSchema} {D : Database N.S} {fr : SqlEquiv.FromClause}
+    {having : Option SqlEquiv.Expr} (h : ∀ hv ∈ having, hasCmpAvg hv = false) :
+    HavingAvgOk N D fr having := by
+  rintro ⟨hv, hmem, hc⟩
+  rw [h hv hmem] at hc; cases hc
+
 set_option maxHeartbeats 8000000 in
 /-- **Elaborator correctness for grouped queries (#352, roadmap steps 3b-4 to 3b-6).** For
     `SELECT … FROM f [WHERE p] GROUP BY c₁, … [HAVING h] [ORDER BY a₁, …] [LIMIT n] [OFFSET m]`,
@@ -1175,6 +1202,7 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
       elabFrom N (fun sq => elabSubQuery N 15 sq) fr = .ok ⟨n, qf, cf⟩ →
       elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf wh = .ok q₀ →
       WhereOk cf N.fold db D wh qf q₀) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
+    (hav : HavingAvgOk N D fr having)
     (hob : ∀ o ∈ orderBy, OrderKeyOk items groupBy o.expr) (hbf : BareOk N items groupBy having orderBy)
     (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
       ∀ k, (outName it).toLower ≠ SqlEquiv.groupOrderKeyName k)
@@ -1455,6 +1483,41 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
             exact ⟨d, rfl, ht⟩
         obtain ⟨v, hv', hrel⟩ := TranslatesH.eval_rel cf out N.fold _ aggs db hrows' hAe hconf
           ⟨rs_, hE_.1.1, hE_.1.2, hE_.2.1⟩ hnbK hnbAgg (fun j => ⟨_, has j⟩) htrH
+          (fun hca x j q hxa hel hq => by
+            -- the average of an integer column over a group of at most `10¹⁶` rows
+            obtain ⟨hnd, hrowsB⟩ := hav ⟨hv, by simp [hhs], hca⟩
+            have hgl : rs'.length ≤ 10 ^ SqlEquiv.avgPlaces := by
+              have h1 := Row.length_le_of_mem_groups (hsub _ hgm)
+              have h2 := hKeyed.length_eq
+              have h3 := (hwo'.rel hq₀ty hnbq₀ hRf hR hrows).length_eq
+              have h4 := hrows.length_eq
+              have h5 := hrowsB qf cf Rf hf hRf
+              cases wh with
+              | none => simp only at h1 h3; omega
+              | some c =>
+                have h6 := List.length_filter_le
+                  (fun u => SqlEquiv.evalExprWithDb db u c == some (.bool true))
+                  (SqlEquiv.evalFrom db fr)
+                simp only at h1 h3; omega
+            match x, hxa with
+            | .agg (.avg b) (some (.col c)) false, _ =>
+              simp only [elabAgg, bind, Except.bind] at hel
+              rcases he₀ : elabExpr cf N.fold noHook (.col c) with err | e₀
+              · simp [he₀] at hel
+              simp only [he₀, pure, Except.pure, Except.ok.injEq] at hel
+              obtain ⟨ix, rfl⟩ := elab_col_is_col cf N.fold c he₀
+              have hτ : Γ₀ ix ≠ .decimal := from_noDecimal N _ hnd fr hff hf hsrc ix
+              have hint : (Expr.col ix : Expr _).typeOf Γ₀ = some .int := by
+                have h1 := has j
+                rw [← hel] at h1
+                simp only [AggCall.typeOf, Expr.typeOf] at h1 ⊢
+                cases hΓ : Γ₀ ix <;> simp_all
+              have hev := evalAll_get hAe j
+              rw [← hel, hq] at hev
+              exact (CorrectAvg.avg_den_le (fun r hr d hd' => by
+                rcases Expr.eval_ok_or_divisionByZero (hrsc r hr) hint with ⟨d', hd'', hty⟩ | ⟨hdz, _⟩
+                · rw [hd'] at hd''; cases hd''; exact hty
+                · rw [hd'] at hdz; cases hdz) hev).trans hgl)
           (hnbP p (by simp [hPs])) hd
         simp only [keep, hPs, hhs, Option.all_some, keepRow, ht, hv']
         exact isTrue_iff_where hrel hdt
@@ -1724,6 +1787,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
     (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment fr = true)
     (hw : ∀ w ∈ wh, isFragment w = true) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
+    (hav : HavingAvgOk N D fr having)
     (hob : ∀ o ∈ orderBy, OrderKeyOk items groupBy o.expr) (hbf : BareOk N items groupBy having orderBy)
     (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
       ∀ k, (outName it).toLower ≠ SqlEquiv.groupOrderKeyName k)
@@ -1734,7 +1798,7 @@ theorem elabStmt_correct_grouped (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
       ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh groupBy having orderBy lim off)).2 =
         some out ∧ List.Forall₂ (OutRelI items) rs out :=
   elabStmt_correct_grouped_w N hfold hfoldCI hwn hfix hD hrel hgi hgb hgc hff
-    (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hhv hob hbf hnm h hnb
+    (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hhv hav hob hbf hnm h hnb
 
 /-- **Elaborator correctness for `GROUP BY` (#352, roadmap step 3b-1).** For
     `SELECT … FROM f [WHERE p] GROUP BY c₁, …, cₘ`, with column keys and every item either a key
@@ -1756,7 +1820,7 @@ theorem elabStmt_correct_group (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
         List.Forall₂ OutRel rs out := by
   obtain ⟨rs, hrs, out, hout, hr⟩ :=
       elabStmt_correct_grouped N hfold hfoldCI hwn hfix hD hrel (groupedItems_of_groupItems hgi) hgb hgc
-      hff hw (by simp) (by simp) (.inl (colRefs_mem hgi)) (by simp) h hnb
+      hff hw (by simp) (havingAvgOk_of_noAvg (by simp)) (by simp) (.inl (colRefs_mem hgi)) (by simp) h hnb
   exact ⟨rs, hrs, out, hout, hr.imp fun _ _ h => outRel_of_outRelI (noAvg_of_groupItems hgi) h⟩
 
 /-- **Elaborator correctness for `GROUP BY … HAVING` (#352, roadmap step 3b-2).** As
@@ -1771,7 +1835,7 @@ theorem elabStmt_correct_having (N : NamedSchema) (hfold : ∀ s, (N.fold s).toL
     {groupBy : List SqlEquiv.Expr} (hgi : groupItems groupBy items = true) (hgb : groupBy ≠ [])
     (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment fr = true)
     (hw : ∀ w ∈ wh, isFragment w = true) {hav : SqlEquiv.Expr}
-    (hhv : havingFragment groupBy hav = true)
+    (hhv : havingFragment groupBy hav = true) (havg : HavingAvgOk N D fr (some hav))
     {e : Elaborated N.S} (h : elabStmt N (groupStmt items fr wh groupBy (some hav)) = .ok e)
     (hnb : QNoBoolOrder e.q) :
     ∃ rs, e.q.eval D = .ok rs ∧
@@ -1779,7 +1843,7 @@ theorem elabStmt_correct_having (N : NamedSchema) (hfold : ∀ s, (N.fold s).toL
         List.Forall₂ OutRel rs out := by
   obtain ⟨rs, hrs, out, hout, hr⟩ :=
       elabStmt_correct_grouped N hfold hfoldCI hwn hfix hD hrel (groupedItems_of_groupItems hgi) hgb hgc
-      hff hw (fun h hh => by cases hh; exact hhv) (by simp) (.inl (colRefs_mem hgi)) (by simp) h hnb
+      hff hw (fun h hh => by cases hh; exact hhv) havg (by simp) (.inl (colRefs_mem hgi)) (by simp) h hnb
   exact ⟨rs, hrs, out, hout, hr.imp fun _ _ h => outRel_of_outRelI (noAvg_of_groupItems hgi) h⟩
 
 end SqlBridge.CorrectGroup
@@ -1814,7 +1878,7 @@ theorem elabStmt_correct_group_ordered (N : NamedSchema)
         some out ∧ List.Forall₂ OutRel rs out := by
   obtain ⟨rs, hrs, out, hout, hr⟩ :=
     elabStmt_correct_grouped N hfold hfoldCI hwn hfix hD hrel (groupedItems_of_groupItems hgi) hgb
-      hgc hff hw (by simp) (fun o ho => .inl (hob o ho)) (.inl (colRefs_mem hgi)) (fun _ => hnm) h hnb
+      hgc hff hw (by simp) (havingAvgOk_of_noAvg (by simp)) (fun o ho => .inl (hob o ho)) (.inl (colRefs_mem hgi)) (fun _ => hnm) h hnb
   exact ⟨rs, hrs, out, hout, hr.imp fun _ _ h => outRel_of_outRelI (noAvg_of_groupItems hgi) h⟩
 
 end SqlBridge.CorrectGroupOrder
