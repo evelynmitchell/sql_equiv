@@ -342,7 +342,10 @@ theorem evalWithAgg_of_noAgg (db : SqlEquiv.Database) (us : List SqlEquiv.Row) (
   | .between x lo hi, v, hag, h => by
     simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
     exact h
-  | .lit _, v, _, h | .col _, v, _, h | .inSubquery .., v, _, h | .exists .., v, _, h
+  | .inSubquery x neg sq, v, hag, h => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
+    exact h
+  | .lit _, v, _, h | .col _, v, _, h | .exists .., v, _, h
   | .subquery _, v, _, h | .windowFn .., v, _, h => by
     simpa [SqlEquiv.evalExprWithAggParam, ee] using h
 
