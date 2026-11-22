@@ -564,7 +564,19 @@ def runAllTests : IO TestSeq := do
     diffTest "ROW_NUMBER over ORDER BY (window)"
       "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
     diffTest "SUM OVER PARTITION BY (window)"
-      "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users",
+    -- (boolean-valued items are in DiffDuckdb and DiffPostgres: sqlite prints 1 / 0)
+    -- Window functions under IN (list), BETWEEN, CASE and a function call (#418)
+    diffTest "window: case condition"
+      "SELECT name, CASE WHEN SUM(age) OVER (PARTITION BY department) > 50 THEN 'big' ELSE 'small' END AS r FROM users",
+    diffTest "window: case result"
+      "SELECT name, CASE WHEN age > 26 THEN ROW_NUMBER() OVER (ORDER BY age) ELSE 0 END AS r FROM users",
+    diffTest "window: case later branch no else"
+      "SELECT name, CASE WHEN age > 100 THEN 1 WHEN COUNT(*) OVER () = 5 THEN 2 END AS r FROM users",
+    diffTest "window: case else"
+      "SELECT name, CASE WHEN age > 100 THEN 1 ELSE MIN(age) OVER (PARTITION BY department) END AS r FROM users",
+    diffTest "window: function argument"
+      "SELECT name, ABS(age - MAX(age) OVER (PARTITION BY department)) AS r FROM users"
   ].mapM id
   -- Build TestSeq from results
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

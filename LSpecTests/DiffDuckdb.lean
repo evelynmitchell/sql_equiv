@@ -363,6 +363,33 @@ def runAllTests : IO TestSeq := do
     -- Registry row 21: a comparison followed by a predicate groups as `a = (b LIKE c)`
     diffTest "precedence: comparison then LIKE (row 21)"
       "SELECT name FROM users WHERE (age > 26) = name LIKE 'A%'",
+    -- Window functions under IN (list), BETWEEN, CASE and a function call (#418)
+    diffTest "window: in list"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) IN (65, 28) AS r FROM users",
+    diffTest "window: not in list"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) NOT IN (65) AS r FROM users",
+    diffTest "window: inside in list"
+      "SELECT name, age IN (ROW_NUMBER() OVER (ORDER BY age) + 21, 30) AS r FROM users",
+    diffTest "window: between"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) BETWEEN 40 AND 50 AS r FROM users",
+    diffTest "window: between bound"
+      "SELECT name, age BETWEEN 22 AND 20 + ROW_NUMBER() OVER (ORDER BY age) * 2 AS r FROM users",
+    diffTest "window: case condition"
+      "SELECT name, CASE WHEN SUM(age) OVER (PARTITION BY department) > 50 THEN 'big' ELSE 'small' END AS r FROM users",
+    diffTest "window: case result"
+      "SELECT name, CASE WHEN age > 26 THEN ROW_NUMBER() OVER (ORDER BY age) ELSE 0 END AS r FROM users",
+    diffTest "window: case later branch no else"
+      "SELECT name, CASE WHEN age > 100 THEN 1 WHEN COUNT(*) OVER () = 5 THEN 2 END AS r FROM users",
+    diffTest "window: case else"
+      "SELECT name, CASE WHEN age > 100 THEN 1 ELSE MIN(age) OVER (PARTITION BY department) END AS r FROM users",
+    diffTest "window: function argument"
+      "SELECT name, ABS(age - MAX(age) OVER (PARTITION BY department)) AS r FROM users",
+    diffTest "window: nested"
+      "SELECT name, CASE WHEN ABS(SUM(age) OVER (PARTITION BY department)) IN (65) THEN age + 1 ELSE age END BETWEEN 31 AND 36 AS r FROM users",
+    diffTest "window: in list with null"
+      "SELECT name, MAX(age) OVER (PARTITION BY department) IN (NULL, 35) AS r FROM users",
+    diffTest "window: beside plain in"
+      "SELECT name, age IN (25, 30) AS r, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
     -- Modulo truncates toward zero (row 6; `/` differs, see KNOWN DIVERGENCES)
     diffTest "modulo of negatives"
       "SELECT (0 - age) % 7 AS r FROM users",

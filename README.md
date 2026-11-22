@@ -98,7 +98,7 @@ This repository could become a basis for SQL support in
 - **NULL handling**: Typed NULLs, IS NULL/IS NOT NULL, three-valued logic, NULL propagation
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
-- **Window functions**: ROW_NUMBER, RANK, DENSE_RANK, and aggregate windows (SUM/AVG/MIN/MAX/COUNT) with `OVER ([PARTITION BY ...] [ORDER BY ...])` and the SQL-default frame; explicit ROWS/RANGE frames and DISTINCT inside windows are rejected at parse time
+- **Window functions**: ROW_NUMBER, RANK, DENSE_RANK, and aggregate windows (SUM/AVG/MIN/MAX/COUNT) with `OVER ([PARTITION BY ...] [ORDER BY ...])` and the SQL-default frame; explicit ROWS/RANGE frames and DISTINCT inside windows are rejected at parse time. A window function may sit under operators, function calls, `CASE`, `IN (list)` and `BETWEEN` in a SELECT item (`SUM(x) OVER () IN (8)`, #418); as the left side of `IN (subquery)` it still evaluates to NULL
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries (inner-first name resolution), and derived tables (`FROM (SELECT …) AS d`). A derived table's alias qualifies its columns (`d.name`, #257); unqualified `name` also works.
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries

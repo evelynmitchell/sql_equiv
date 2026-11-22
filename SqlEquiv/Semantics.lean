@@ -53,7 +53,8 @@ def selectHasAggregate (items : List SelectItem) : Bool :=
 -- ============================================================================
 
 /-- Check if expression contains window functions. Looks through operators,
-    function arguments and CASE only (as before). Total and structurally
+    function arguments, CASE, IN (list) and BETWEEN, the nodes
+    `evalExprWithWindowParam` evaluates through (#418). Total and structurally
     recursive (#278 step 3; it was a `partial def`). -/
 def exprHasWindowFn : Expr → Bool
   | .windowFn _ _ _ => true
@@ -61,6 +62,8 @@ def exprHasWindowFn : Expr → Bool
   | .unaryOp _ e => exprHasWindowFn e
   | .func _ args => exprHasWindowFnList args
   | .case branches else_ => exprHasWindowFnPairs branches || exprHasWindowFnOpt else_
+  | .inList e _ vals => exprHasWindowFn e || exprHasWindowFnList vals
+  | .between e lo hi => exprHasWindowFn e || exprHasWindowFn lo || exprHasWindowFn hi
   | _ => false
 where
   exprHasWindowFnList : List Expr → Bool
@@ -374,9 +377,51 @@ def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Val
     match evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e with
     | some v => evalUnaryOp op v
     | none => none
+  -- A window function under a function call, CASE, IN (list) or BETWEEN is evaluated for
+  -- the current row, then combined as `evalExprCore` combines values (#418). Without a
+  -- window function inside, these go to the row evaluator unchanged.
+  | .func name args =>
+    if exprHasWindowFn (.func name args) then
+      evalFunc name (args.map fun a =>
+        evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex a)
+    else exprEval db row (.func name args)
+  | .case branches else_ =>
+    if exprHasWindowFn (.case branches else_) then
+      evalCasePicked
+        (branches.map fun pair =>
+          (evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex pair.1,
+            evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex pair.2))
+        (match else_ with
+          | some e => evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e
+          | none => some (.null none))
+    else exprEval db row (.case branches else_)
+  | .inList e neg vals =>
+    if exprHasWindowFn (.inList e neg vals) then
+      let ev := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e
+      let result := vals.foldl (fun acc vi =>
+        evalBinOp .or acc (evalBinOp .eq ev
+          (evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex vi))
+      ) (some (.bool false))
+      if neg then evalUnaryOp .not result else result
+    else exprEval db row (.inList e neg vals)
+  | .between e lo hi =>
+    if exprHasWindowFn (.between e lo hi) then
+      let ev := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e
+      let evlo := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex lo
+      let evhi := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex hi
+      evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
+    else exprEval db row (.between e lo hi)
   | e => exprEval db row e
 termination_by e => sizeOf e
-decreasing_by all_goals simp_wf; omega
+decreasing_by
+  all_goals simp_wf
+  all_goals first
+    | omega
+    | (have := List.sizeOf_lt_of_mem ‹_›; omega)
+    | (have h := List.sizeOf_lt_of_mem ‹_›
+       have : sizeOf pair = 1 + sizeOf pair.fst + sizeOf pair.snd := by
+         obtain ⟨a, b⟩ := pair; simp [Prod.mk.sizeOf_spec]
+       omega)
 
 -- ============================================================================
 -- Mutually Recursive Evaluation Functions (WFR - 3 function core)
@@ -1106,6 +1151,55 @@ theorem evalExprWithWindowParam_congr (db : Database) (r : Row) (p sp : Table) (
       simp only [evalExprWithWindowParam]
       simp only [Expr.size] at hn hN
       rw [ih x (by omega) (by omega)]
+    | func nm args =>
+      have hargs : ∀ a ∈ args, evalExprWithWindowParam e1 db r p sp i a = evalExprWithWindowParam e2 db r p sp i a :=
+        fun a ha => by
+          have := Expr.size_le_sizeList_of_mem ha
+          simp only [Expr.size] at hn hN
+          exact ih a (by omega) (by omega)
+      simp only [evalExprWithWindowParam, List.map_congr_left hargs, hE _ hN db r]
+    | «case» branches else_ =>
+      have hsz := hN; have hsn := hn
+      simp only [Expr.size] at hsz hsn
+      have hpair : ∀ q ∈ branches,
+          evalExprWithWindowParam e1 db r p sp i q.1 = evalExprWithWindowParam e2 db r p sp i q.1 ∧
+          evalExprWithWindowParam e1 db r p sp i q.2 = evalExprWithWindowParam e2 db r p sp i q.2 :=
+        fun q hq => by
+          obtain ⟨a, b⟩ := q
+          have := Expr.size_le_sizePairs_of_mem hq
+          exact ⟨ih a (by omega) (by omega), ih b (by omega) (by omega)⟩
+      have hmap : branches.map (fun pair => (evalExprWithWindowParam e1 db r p sp i pair.1, evalExprWithWindowParam e1 db r p sp i pair.2)) =
+          branches.map (fun pair => (evalExprWithWindowParam e2 db r p sp i pair.1, evalExprWithWindowParam e2 db r p sp i pair.2)) :=
+        List.map_congr_left fun q hq => by rw [(hpair q hq).1, (hpair q hq).2]
+      cases else_ with
+      | none =>
+        simp only [evalExprWithWindowParam, hmap, hE _ hN db r]
+      | some e =>
+        simp only [Expr.sizeOpt] at hsz hsn
+        simp only [evalExprWithWindowParam, hmap, hE _ hN db r, ih e (by omega) (by omega)]
+    | inList x neg vals =>
+      have hsz := hN; have hsn := hn
+      simp only [Expr.size] at hsz hsn
+      have hx := ih x (by omega) (by omega)
+      have hvals : ∀ (ev : Option Value) (l : List Expr), (∀ v ∈ l, v ∈ vals) →
+          ∀ (acc : Option Value),
+          l.foldl (fun acc vi => evalBinOp .or acc
+            (evalBinOp .eq ev (evalExprWithWindowParam e1 db r p sp i vi))) acc =
+          l.foldl (fun acc vi => evalBinOp .or acc
+            (evalBinOp .eq ev (evalExprWithWindowParam e2 db r p sp i vi))) acc := by
+        intro ev l hl
+        induction l with
+        | nil => intro acc; rfl
+        | cons v vs ihl =>
+          intro acc
+          have hv := Expr.size_le_sizeList_of_mem (hl v List.mem_cons_self)
+          simp only [List.foldl_cons, ih v (by omega) (by omega)]
+          exact ihl (fun q hq => hl q (List.mem_cons_of_mem _ hq)) _
+      simp only [evalExprWithWindowParam, hvals _ vals (fun _ h => h), hx, hE _ hN db r]
+    | between x lo hi =>
+      simp only [evalExprWithWindowParam, hE _ hN db r]
+      simp only [Expr.size] at hn hN
+      rw [ih x (by omega) (by omega), ih lo (by omega) (by omega), ih hi (by omega) (by omega)]
     | _ => simp only [evalExprWithWindowParam]; exact hE _ hN db r
 
 end HelperCongr
