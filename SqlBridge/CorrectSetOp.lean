@@ -271,9 +271,9 @@ theorem setOpTree_rel (N : NamedSchema) {D : Database N.S} (hD : D.Conforms)
     related exactly or up to order. `AVG` items are left out: their values are related only up
     to rounding (step 3c), which a set operation's row comparison could tell apart. -/
 inductive Leaf (N : NamedSchema) : SqlEquiv.Query → Prop
-  /-- `SELECT e₁, …, eₖ FROM f [WHERE p]` (`elabStmt_correct_join`). -/
+  /-- `SELECT e₁, …, eₖ FROM f [WHERE p]`, items possibly `*` (`elabStmt_correct_join`). -/
   | plain {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
-      {wh : Option SqlEquiv.Expr} (hit : itemsFragment items = true)
+      {wh : Option SqlEquiv.Expr} (hit : itemsStar items = true)
       (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
       Leaf N (.simple (.mk false items (some f) wh [] none [] none none))
   /-- `SELECT DISTINCT e₁, …, eₖ FROM f [WHERE p]` (`elabStmt_correct_distinct`). -/
