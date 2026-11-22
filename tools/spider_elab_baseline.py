@@ -88,6 +88,7 @@ def coverage_lines(features: list[set[str]]) -> list[str]:
         "query's typed result rows match the untyped evaluator's, in order, for",
         "`SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, `f` tables",
         "under inner joins and cross joins, with literals, columns, comparisons, `AND`, `OR`, `NOT`,",
+        "`LIKE` (in either case mode),",
         "column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an",
         "alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for",
         "`SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,",

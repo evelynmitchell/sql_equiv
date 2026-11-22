@@ -19,6 +19,7 @@ types (sqlite accepts it through type affinity, e.g. a `text` column compared wi
 query's typed result rows match the untyped evaluator's, in order, for
 `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`, `f` tables
 under inner joins and cross joins, with literals, columns, comparisons, `AND`, `OR`, `NOT`,
+`LIKE` (in either case mode),
 column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an
 alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for
 `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
@@ -52,12 +53,11 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 504 |
-| after DISTINCT with an unselected sort key and LIMIT | 505 |
+| Today | 512 |
+| after DISTINCT with an unselected sort key and LIMIT | 513 |
 
 Still outside after that (queries using each feature):
 
-- LIKE: 8
 - subquery/set operation/CTE: 5
 - *: 2
 

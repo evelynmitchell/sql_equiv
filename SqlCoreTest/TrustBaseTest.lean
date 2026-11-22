@@ -7,6 +7,7 @@
 import SqlCore
 import SqlBridge.Elab
 import SqlBridge.Correct
+import SqlBridge.CorrectLike
 import SqlBridge.CorrectOrder
 import SqlBridge.CorrectJoin
 import SqlBridge.CorrectAgg

@@ -18,6 +18,7 @@
     every spelling the fold maps to a table's key.
 -/
 import SqlBridge.Elab
+import SqlBridge.CorrectLike
 import Mathlib.Tactic.Positivity
 import Mathlib.Tactic.FieldSimp
 
@@ -208,6 +209,43 @@ theorem not_agree {a : Datum} {a' : SqlEquiv.Value} (ha : DatumRel a a') {d : Da
     exact ⟨.bool (!x), rfl, by cases x <;> exact ValRel.bool _⟩
 
 open SqlCore in
+/-- `LIKE`: the untyped operator agrees with the typed one on related operands, in either case
+    mode (`likeMatch_eq`, `likeMatchCI_eq`). -/
+theorem like_agree {op : SqlEquiv.BinOp} {ci : Bool} (hop : elabBinOp op = .ok (.like ci))
+    {a b : Datum} {a' b' : SqlEquiv.Value} (ha : DatumRel a a') (hb : DatumRel b b')
+    {d : Datum} (h : SqlCore.evalBinOp (.like ci) a b = .ok d) :
+    ∃ v, SqlEquiv.evalBinOp op (some a') (some b') = some v ∧ DatumRel d v := by
+  have hop' : (op = .like ∧ ci = false) ∨ (op = .likeCI ∧ ci = true) := by
+    cases op <;> simp_all [elabBinOp, pure, Except.pure]
+  simp only [SqlCore.evalBinOp, bind, Except.bind] at h
+  rcases a with _ | x
+  · obtain ⟨t, rfl⟩ := ha
+    rcases b with _ | y
+    · obtain ⟨t', rfl⟩ := hb
+      simp only [Datum.asText, pure, Except.pure, Except.ok.injEq] at h
+      subst h
+      rcases hop' with ⟨rfl, -⟩ | ⟨rfl, -⟩ <;> exact ⟨.null none, rfl, ⟨none, rfl⟩⟩
+    · cases y <;> simp only [Datum.asText, pure, Except.pure, Except.ok.injEq, reduceCtorEq] at h
+      subst h
+      cases hb
+      rcases hop' with ⟨rfl, -⟩ | ⟨rfl, -⟩ <;> exact ⟨.null none, rfl, ⟨none, rfl⟩⟩
+  · cases x <;> simp only [Datum.asText, reduceCtorEq] at h
+    rename_i s
+    cases ha
+    rcases b with _ | y
+    · obtain ⟨t', rfl⟩ := hb
+      simp only [Datum.asText, pure, Except.pure, Except.ok.injEq] at h
+      subst h
+      rcases hop' with ⟨rfl, -⟩ | ⟨rfl, -⟩ <;> exact ⟨.null none, rfl, ⟨none, rfl⟩⟩
+    · cases y <;> simp only [Datum.asText, pure, Except.pure, Except.ok.injEq, reduceCtorEq] at h
+      rename_i p
+      subst h
+      cases hb
+      rcases hop' with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+      · exact ⟨_, rfl, by rw [likeMatch_eq]; exact ValRel.bool _⟩
+      · exact ⟨_, rfl, by rw [likeMatchCI_eq]; exact ValRel.bool _⟩
+
+open SqlCore in
 theorem and_agree {a b : Datum} {a' b' : SqlEquiv.Value} (ha : DatumRel a a')
     (hb : DatumRel b b') {d : Datum} (h : SqlCore.evalBinOp .and a b = .ok d) :
     ∃ v, SqlEquiv.evalBinOp .and (some a') (some b') = some v ∧ DatumRel d v := by
@@ -285,6 +323,10 @@ inductive Translates : SqlEquiv.Expr → Expr n → Prop
       Translates (.binOp .or a b) (.binary .or (retypeNull cols a' b') (retypeNull cols b' a'))
   | not {a : SqlEquiv.Expr} {a' : Expr n} : Translates a a' →
       Translates (.unaryOp .not a) (.unary .not a')
+  /-- `a LIKE b`, case-sensitive or (sqlite) ignoring ASCII case, as the parser recorded it. -/
+  | like {op : SqlEquiv.BinOp} {ci : Bool} {a b : SqlEquiv.Expr} {a' b' : Expr n} :
+      elabBinOp op = .ok (.like ci) → Translates a a' → Translates b b' →
+      Translates (.binOp op a b) (.binary (.like ci) (retypeNull cols a' b') (retypeNull cols b' a'))
   /-- `e BETWEEN lo AND hi` (roadmap step 4): both evaluators read it as `e >= lo AND e <= hi`. -/
   | between {e lo hi : SqlEquiv.Expr} {e' lo' hi' : Expr n} :
       Translates e e' → Translates lo lo' → Translates hi hi' →
@@ -412,6 +454,15 @@ theorem Translates.eval_rel {Γ : Fin n → SqlType} (db : SqlEquiv.Database) {r
     obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull cols _ hnb') heb
     obtain ⟨v, hv, hrel⟩ := and_agree hra hrb hd
     exact ⟨v, by rw [SqlEquiv.evalExprWithDb_binOp, hva, hvb, hv], hrel⟩
+  | like hop _ _ iha ihb =>
+    intro hnb d h
+    obtain ⟨hna, hnb'⟩ := hnb
+    obtain ⟨da, db', hea, heb, hd⟩ := eval_binary_ok h
+    rw [eval_retypeNull] at hea heb
+    obtain ⟨va, hva, hra⟩ := iha (noBoolOrder_of_retypeNull cols _ hna) hea
+    obtain ⟨vb, hvb, hrb⟩ := ihb (noBoolOrder_of_retypeNull cols _ hnb') heb
+    obtain ⟨v, hv, hrel⟩ := like_agree hop hra hrb hd
+    exact ⟨v, by rw [SqlEquiv.evalExprWithDb_binOp, hva, hvb, hv], hrel⟩
   | or _ _ iha ihb =>
     intro hnb d h
     obtain ⟨hna, hnb'⟩ := hnb
@@ -464,13 +515,13 @@ theorem Translates.eval_rel {Γ : Fin n → SqlType} (db : SqlEquiv.Database) {r
       hrel⟩
 
 /-- The untyped expressions of the #309 fragment: literals, columns, comparisons, `AND`, `OR`,
-    `NOT` and (roadmap step 4) `BETWEEN`. -/
+    `NOT`, (roadmap step 4) `BETWEEN` and `LIKE`. -/
 def isFragment : SqlEquiv.Expr → Bool
   | .lit _ => true
   | .col _ => true
   | .binOp op a b =>
     (match op with
-     | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
+     | .eq | .ne | .lt | .le | .gt | .ge | .and | .or | .like | .likeCI => true
      | _ => false) && isFragment a && isFragment b
   | .unaryOp .not a => isFragment a
   | .between e lo hi => isFragment e && isFragment lo && isFragment hi
@@ -516,6 +567,8 @@ theorem translates_of_elab : ∀ (e : SqlEquiv.Expr) {e' : Expr n}, isFragment e
     · exact .cmp rfl ta tb
     · exact .and ta tb
     · exact .or ta tb
+    · exact .like rfl ta tb
+    · exact .like rfl ta tb
   | .unaryOp op a, e', hf, h => by
     cases op <;> simp only [isFragment, Bool.false_eq_true] at hf
     simp only [elabExpr, noHook] at h
