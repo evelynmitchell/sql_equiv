@@ -180,9 +180,15 @@ def bodyOkB : SqlEquiv.SelectStmt → Bool
 
 /-- `SqlBridge.CorrectSub.NodeOk` (sqlite assumed, for the scalar node). -/
 def nodeOkB : SqlEquiv.Expr → Bool
-  | .inSubquery e _ (.simple b) => isFragment e && bodyOkB b
+  | .inSubquery e _ sq => isFragment e && subBodyOkB sq
   | .subquery (.simple b) => bodyOkB b
   | _ => false
+where
+  /-- `SqlBridge.CorrectSub.SubBodyOk` (#410): a `BodyOk` statement or a set operation over
+      such bodies. -/
+  subBodyOkB : SqlEquiv.SubQuery → Bool
+    | .simple b => bodyOkB b
+    | .compound l _ r => subBodyOkB l && subBodyOkB r
 
 /-- An expression next to the node: in the fragment, not referring to the hidden column. -/
 def besideB (a : SqlEquiv.Expr) : Bool :=
@@ -771,6 +777,25 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT DISTINCT singer_id FROM song)")
+-- a set-operation body under `IN` (#410, `SubBodyOk`), as in Spider's flight_2 query; the
+-- membership does not depend on the order of the body's rows
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song UNION SELECT age FROM singer)")
+#guard inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id IN " ++
+  "(SELECT singer_id FROM song WHERE title = 'x' INTERSECT SELECT singer_id FROM singer " ++
+  "EXCEPT SELECT max(age) FROM singer)")
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song UNION ALL SELECT singer_id FROM song GROUP BY singer_id)")
+-- outside: a branch that is not a body (DISTINCT, an `AVG` item, a non-key column), and a
+-- set operation as a scalar subquery (its value is the first row, whose order is not related)
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song UNION SELECT DISTINCT age FROM singer)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE age IN " ++
+  "(SELECT age FROM singer UNION SELECT avg(age) FROM singer)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song UNION SELECT singer_id FROM song GROUP BY title)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE age = " ++
+  "(SELECT max(age) FROM singer UNION SELECT min(age) FROM singer)")
 -- a grouped body (#409, `BodyOk.grouped`): item columns all keys, an optional `HAVING`
 #guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song GROUP BY singer_id)")
@@ -796,8 +821,6 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT max(singer_id) FROM song HAVING count(*) > 1)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song LIMIT 1)")
-#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song UNION SELECT singer_id FROM singer)")
 -- a correlated subquery has the shape but does not elaborate
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
   "(SELECT singer_id FROM song WHERE title = name)")
@@ -813,6 +836,14 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song) AND age > 20") == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song GROUP BY singer_id HAVING count(*) > 1)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song UNION SELECT age FROM singer)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song UNION SELECT DISTINCT age FROM singer)") ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE age = " ++
+  "(SELECT max(age) FROM singer UNION SELECT min(age) FROM singer)") ==
+  [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id IN " ++
   "(SELECT count(*) FROM song GROUP BY singer_id)") == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++

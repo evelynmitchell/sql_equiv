@@ -158,6 +158,11 @@ def corpus : List (String × Expect) := [
   -- comparison, over an empty body (NULL), under DISTINCT and under aggregates
   ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders) AND age > 20", .agree),
   ("SELECT name FROM users WHERE id IN (SELECT MAX(user_id) FROM orders)", .agree),
+  -- #410: a set-operation body under IN / NOT IN
+  ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders UNION SELECT id FROM products)", .agree),
+  ("SELECT name FROM users WHERE id IN (SELECT user_id FROM orders INTERSECT SELECT id FROM users WHERE age > 26) ORDER BY name", .agree),
+  ("SELECT name FROM users WHERE id IN (SELECT id FROM users EXCEPT SELECT user_id FROM orders)", .agree),
+  ("SELECT name FROM users WHERE age > 20 AND id NOT IN (SELECT user_id FROM orders UNION ALL SELECT MAX(id) FROM products)", .agree),
   -- #409: a grouped body, with and without HAVING, key and aggregate items, and as a scalar
   ("SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM orders GROUP BY user_id HAVING SUM(amount) > 200)", .agree),
   ("SELECT name FROM users WHERE id IN (SELECT user_id FROM orders GROUP BY user_id)", .agree),
