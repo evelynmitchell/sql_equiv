@@ -636,6 +636,35 @@ theorem evalSelectCore_project_ctx (db : Database) (outerRow : Row)
   simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin,
     applyOrderByLimitOffsetAligned]
 
+/-- `evalSelectCore_project_ordered` under an outer row, with `ORDER BY` (#411): the source rows
+    are the `FROM` rows with the outer row appended, and the sort reads each projected row next
+    to its source row **without** the outer row (`SqlEquiv` strips it: outer columns are constant
+    per query instance). -/
+theorem evalSelectCore_project_ordered_ctx (db : Database) (outerRow : Row)
+    (fromEval : Database → FromClause → Table)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (compareEval : Database → Row → Row → List OrderByItem → Bool)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
+    (orderBy : List OrderByItem) (lim off : Option Nat)
+    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false) :
+    evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
+      (SelectStmt.mk false items (some from_) wh [] none orderBy lim off) =
+    let base := (fromEval db from_).map fun row => row ++ outerRow
+    let src := match wh with
+      | some c => base.filter fun row => exprEval db row c == some (Value.bool true)
+      | none => base
+    applyOrderByLimitOffsetAligned compareEval db orderBy lim off true
+      (src.map fun r => r.take (r.length - outerRow.length))
+      (src.map fun row => items.flatMap (selectItemEval db row)) := by
+  rw [evalSelectCore_eq_afterFilter]
+  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin]
+
 end SqlBridge.CorrectOrder
 
 namespace SqlBridge.CorrectOrder
@@ -1065,6 +1094,119 @@ theorem finish_rel {S : DbSchema} {D : Database S} {q₀ : Query S n} {R : List 
     obtain ⟨K, hK, hpure⟩ := bind_ok hK'
     cases hpure
     exact ordered_out_rel cols fold db Γ items orderBy hlen _ (hk hk0) hits hnb hRU hK hout
+
+/-! ### Under an outer row (#411) -/
+
+/-- Every column the typed row resolves is found in the untyped row itself. -/
+def Found (u : SqlEquiv.Row) : Prop :=
+  ∀ (q : Option String) (name : String) (i : Fin n),
+    resolveColumn cols (q.map fold) (fold name) = .ok i → ∃ v, u.getQualified q name = some v
+
+theorem found_of_rowRel {r : Row n} {u : SqlEquiv.Row} (h : RowRel cols fold r u) :
+    Found cols fold u := fun q nm i hres =>
+  let ⟨v, hv, _⟩ := h q nm i hres
+  ⟨v, hv⟩
+
+/-- An outer row appended to a row in which every resolved column is found changes no lookup. -/
+theorem rowRel_strip {r : Row n} {u : SqlEquiv.Row} (ctx : SqlEquiv.Row)
+    (h : RowRel cols fold r (u ++ ctx)) (hf : Found cols fold u) : RowRel cols fold r u := by
+  intro q name i hres
+  obtain ⟨v, hv⟩ := hf q name i hres
+  obtain ⟨v', hv', hd⟩ := h q name i hres
+  rw [getQualified_append_of_some u ctx q name hv] at hv'
+  cases hv'
+  exact ⟨v, hv, hd⟩
+
+/-- A translated expression reads the same with an outer row appended, when every column it
+    resolves is found in the row itself. -/
+theorem Translates.eval_append (db : SqlEquiv.Database) {u : SqlEquiv.Row} (ctx : SqlEquiv.Row)
+    (hf : Found cols fold u) :
+    ∀ {e : SqlEquiv.Expr} {e' : Expr n}, Translates cols fold e e' →
+      SqlEquiv.evalExprWithDb db (u ++ ctx) e = SqlEquiv.evalExprWithDb db u e := by
+  intro e e' ht
+  induction ht with
+  | lit _ => simp only [SqlEquiv.evalExprWithDb_lit]
+  | litNull _ _ => simp only [SqlEquiv.evalExprWithDb_lit]
+  | col hres =>
+    obtain ⟨v, hv⟩ := hf _ _ _ hres
+    rw [SqlEquiv.evalExprWithDb_col, SqlEquiv.evalExprWithDb_col, hv,
+      getQualified_append_of_some u ctx _ _ hv]
+  | cmp _ _ _ iha ihb => rw [SqlEquiv.evalExprWithDb_binOp, SqlEquiv.evalExprWithDb_binOp, iha, ihb]
+  | and _ _ iha ihb => rw [SqlEquiv.evalExprWithDb_binOp, SqlEquiv.evalExprWithDb_binOp, iha, ihb]
+  | or _ _ iha ihb => rw [SqlEquiv.evalExprWithDb_binOp, SqlEquiv.evalExprWithDb_binOp, iha, ihb]
+  | like _ _ _ iha ihb =>
+    rw [SqlEquiv.evalExprWithDb_binOp, SqlEquiv.evalExprWithDb_binOp, iha, ihb]
+  | not _ iha => rw [SqlEquiv.evalExprWithDb_unaryOp, SqlEquiv.evalExprWithDb_unaryOp, iha]
+  | between _ _ _ ihe ihl ihh =>
+    rw [SqlEquiv.evalExprWithDb_between, SqlEquiv.evalExprWithDb_between, ihe, ihl, ihh]
+
+/-- So the projection reads the same with an outer row appended. -/
+theorem projRow_append (db : SqlEquiv.Database) {items : List SqlEquiv.SelectItem}
+    {its : List (Expr n × Column)} (hits : ItemsRel cols fold items its) {u : SqlEquiv.Row}
+    (ctx : SqlEquiv.Row) (hf : Found cols fold u) :
+    projRow db items (u ++ ctx) = projRow db items u := by
+  unfold projRow
+  induction hits with
+  | nil => rfl
+  | @cons it x items its hx _ ih =>
+    obtain ⟨e, al, rfl, ht⟩ := hx
+    simp only [List.flatMap_cons, SqlEquiv.evalSelectItem, Translates.eval_append cols fold db ctx hf ht,
+      ih]
+
+theorem exists_of_forall₂_mem_right {α β : Type _} {P : α → β → Prop} {as : List α}
+    {bs : List β} (h : List.Forall₂ P as bs) {b : β} (hb : b ∈ bs) : ∃ a ∈ as, P a b := by
+  induction h with
+  | nil => cases hb
+  | cons hab _ ih =>
+    rcases List.mem_cons.mp hb with rfl | hb
+    · exact ⟨_, List.mem_cons_self, hab⟩
+    · obtain ⟨a, ha, hr⟩ := ih hb
+      exact ⟨a, List.mem_cons_of_mem _ ha, hr⟩
+
+/-- Stripping the outer row. -/
+theorem take_strip (u ctx : SqlEquiv.Row) : (u ++ ctx).take ((u ++ ctx).length - ctx.length) = u := by
+  simp
+
+/-- **Projection, `ORDER BY`, `OFFSET` and `LIMIT` under an outer row.** The input rows carry the
+    outer row at the end, each after a row in which every resolved column is found; `SqlEquiv`
+    sorts on the rows without it, and the typed result still relates, in order. -/
+theorem finish_rel_ctx {S : DbSchema} {D : Database S} {q₀ : Query S n} {R : List (Row n)}
+    {src : List SqlEquiv.Row} (ctx : SqlEquiv.Row) (hR : q₀.eval D = .ok R)
+    (hRU : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R src)
+    (hsrc : ∀ w ∈ src, ∃ u, w = u ++ ctx ∧ Found cols fold u)
+    {its : List (Expr n × Column)} (hits : ItemsRel cols fold items its)
+    (hnb : ∀ i : Fin its.length, NoBoolOrder Γ (its[i]).1)
+    {keyList : List (SortKey n)} (hlen : orderBy.length = keyList.length)
+    (hk : keyList.length ≠ 0 → KeysRel cols fold db Γ items orderBy hlen (fun i => keyList[i]))
+    (lim off : Option ℕ) {rs : List (Row its.length)}
+    (hrs : (limitWrap lim off (if keyList.length = 0 then .project (fun i => (its[i]).1) q₀
+      else .project (fun i => (its[i]).1)
+        (.orderBy (fun i : Fin keyList.length => keyList[i]) q₀))).eval D = .ok rs) :
+    List.Forall₂ OutRel rs
+      (SqlEquiv.applyOrderByLimitOffsetAligned
+        (SqlEquiv.compareByOrderItemsParam fun db' r e => SqlEquiv.evalExprWithDb db' r e)
+        db orderBy lim off true (src.map fun r => r.take (r.length - ctx.length))
+        (src.map (projRow db items))) := by
+  have hproj : src.map (projRow db items) =
+      (src.map fun r => r.take (r.length - ctx.length)).map (projRow db items) := by
+    rw [List.map_map]
+    apply List.map_congr_left
+    intro w hw
+    obtain ⟨u, rfl, hf⟩ := hsrc w hw
+    simp only [Function.comp, take_strip, projRow_append cols fold db hits ctx hf]
+  have hRU' : List.Forall₂ (fun r u => RowRel cols fold r u ∧ r.Conforms Γ) R
+      (src.map fun r => r.take (r.length - ctx.length)) := by
+    rw [List.forall₂_map_right_iff]
+    clear hrs hproj hR
+    induction hRU with
+    | nil => exact .nil
+    | @cons r w R src hrw _ ih =>
+      obtain ⟨u, rfl, hf⟩ := hsrc w List.mem_cons_self
+      refine .cons ?_ (ih fun w' hw' => hsrc w' (List.mem_cons_of_mem _ hw'))
+      rw [take_strip]
+      exact ⟨rowRel_strip cols fold ctx hrw.1 hf, hrw.2⟩
+  rw [hproj]
+  exact finish_rel cols fold db Γ items orderBy hR hRU' hits hnb hlen hk lim off hrs
 
 end SqlBridge.CorrectOrder
 

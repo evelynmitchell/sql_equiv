@@ -494,8 +494,8 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
     e.q.IsSafe ∧ ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (joinStmt items f wh orderBy lim off)).2 = some out ∧
         List.Forall₂ OutRel rs out ∧
-        (orderBy = [] → ∀ ctx, List.Forall₂ OutRel rs
-          (SqlEquiv.evalSelectWithContext db ctx (.mk false items (some f) wh [] none [] lim off))) := by
+        ∀ ctx, List.Forall₂ OutRel rs
+          (SqlEquiv.evalSelectWithContext db ctx (.mk false items (some f) wh [] none orderBy lim off)) := by
   obtain ⟨hty, n, qf, cf, hf, q₀, hq₀, its, hits, keyList, hk, rfl⟩ :=
     elab_join_shape N hit hcols h
   have hwo' := hwo qf q₀ cf hf hq₀
@@ -581,16 +581,24 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
     exact finish_rel cf N.fold db Γ items orderBy hR (hwo'.rel hq₀T hnbq₀ hRf hR hrows) hir
       hnbIt hlen hkr lim off hrs
   · -- under an outer row (a subquery body): the `FROM` rows carry it at the end, where no lookup
-    -- the elaborator resolved reaches it
-    rintro rfl ctx
-    rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore, evalSelectCore_project_ctx _ _ _ _ _ _ _
-      _ _ _ _ _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)]
+    -- the elaborator resolved reaches it, and `SqlEquiv` sorts on the rows without it (#411)
+    intro ctx
+    rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore, evalSelectCore_project_ordered_ctx _ _ _ _
+      _ _ _ _ _ _ _ _ _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)]
     have hrows' : List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ) Rf
         ((SqlEquiv.evalFrom db f).map fun row => row ++ ctx) := by
       rw [List.forall₂_map_right_iff]
       exact hrows.imp fun r u h => ⟨rowRel_append ctx h.1, h.2⟩
-    exact finish_rel cf N.fold db Γ items [] hR (hwo'.rel hq₀T hnbq₀ hRf hR hrows') hir
-      hnbIt hlen hkr lim off hrs
+    refine finish_rel_ctx cf N.fold db Γ items orderBy ctx hR (hwo'.rel hq₀T hnbq₀ hRf hR hrows')
+      ?_ hir hnbIt hlen hkr lim off hrs
+    intro w hw
+    have hwb : w ∈ (SqlEquiv.evalFrom db f).map fun row => row ++ ctx := by
+      cases wh with
+      | none => exact hw
+      | some c => exact (List.mem_filter.mp hw).1
+    obtain ⟨u, hu, rfl⟩ := List.mem_map.mp hwb
+    obtain ⟨rf, -, hru⟩ := exists_of_forall₂_mem_right hrows hu
+    exact ⟨u, rfl, found_of_rowRel cf N.fold hru.1⟩
 
 /-- `elabStmt_correct_join_ctx` without the outer row. -/
 theorem elabStmt_correct_join (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)

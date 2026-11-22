@@ -878,7 +878,7 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD
       hrel hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) (by simp) (by simp) hst hnbq
-    exact ⟨hs, ss, hss, hctx' rfl⟩
+    exact ⟨hs, ss, hss, hctx'⟩
   | @agg items f wh hai hne hff hw =>
     have hst : elabStmt N (CorrectAgg.aggStmt items f wh) = .ok ⟨m, rq, rc⟩ := by
       rw [elabSubQuery] at hsub
