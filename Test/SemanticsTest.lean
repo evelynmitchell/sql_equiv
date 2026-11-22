@@ -1406,6 +1406,54 @@ def windowTests : List TestResult := [
   testColumn "window_outer_order_by_nonprojected_rn"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY age"
     "rn" [.int 1, .int 2, .int 3, .int 4, .int 5],
+  -- Window functions under IN (list), BETWEEN, CASE and a function call (#418); expectations
+  -- verified against DuckDB v1.5.3 (DiffDuckdb runs the same queries)
+  -- sums per department: 65, 47, 65, 28, 47
+  testColumn "window_in_list"
+    "SELECT name, SUM(age) OVER (PARTITION BY department) IN (65, 28) AS r FROM users"
+    "r" [.bool true, .bool false, .bool true, .bool true, .bool false],
+  testColumn "window_not_in_list"
+    "SELECT name, SUM(age) OVER (PARTITION BY department) NOT IN (65) AS r FROM users"
+    "r" [.bool false, .bool true, .bool false, .bool true, .bool true],
+  -- row numbers 4, 2, 5, 3, 1, so the lists are {25, 30}, {23, 30}, {26, 30}, {24, 30}, {22, 30}
+  testColumn "window_inside_in_list"
+    "SELECT name, age IN (ROW_NUMBER() OVER (ORDER BY age) + 21, 30) AS r FROM users"
+    "r" [.bool true, .bool false, .bool false, .bool false, .bool true],
+  testColumn "window_between"
+    "SELECT name, SUM(age) OVER (PARTITION BY department) BETWEEN 40 AND 50 AS r FROM users"
+    "r" [.bool false, .bool true, .bool false, .bool false, .bool true],
+  -- upper bounds 28, 24, 30, 26, 22
+  testColumn "window_between_bound"
+    "SELECT name, age BETWEEN 22 AND 20 + ROW_NUMBER() OVER (ORDER BY age) * 2 AS r FROM users"
+    "r" [.bool false, .bool false, .bool false, .bool false, .bool true],
+  -- the condition is a window value: before #418 every row took the ELSE branch
+  testColumn "window_case_condition"
+    "SELECT name, CASE WHEN SUM(age) OVER (PARTITION BY department) > 50 THEN 'big' ELSE 'small' END AS r FROM users"
+    "r" [.string "big", .string "small", .string "big", .string "small", .string "small"],
+  testColumn "window_case_result"
+    "SELECT name, CASE WHEN age > 26 THEN ROW_NUMBER() OVER (ORDER BY age) ELSE 0 END AS r FROM users"
+    "r" [.int 4, .int 0, .int 5, .int 3, .int 0],
+  testColumn "window_case_later_branch_no_else"
+    "SELECT name, CASE WHEN age > 100 THEN 1 WHEN COUNT(*) OVER () = 5 THEN 2 END AS r FROM users"
+    "r" [.int 2, .int 2, .int 2, .int 2, .int 2],
+  testColumn "window_case_else"
+    "SELECT name, CASE WHEN age > 100 THEN 1 ELSE MIN(age) OVER (PARTITION BY department) END AS r FROM users"
+    "r" [.int 30, .int 22, .int 30, .int 28, .int 22],
+  testColumn "window_function_argument"
+    "SELECT name, ABS(age - MAX(age) OVER (PARTITION BY department)) AS r FROM users"
+    "r" [.int 5, .int 0, .int 0, .int 0, .int 3],
+  -- function call inside IN inside CASE inside BETWEEN
+  testColumn "window_nested"
+    "SELECT name, CASE WHEN ABS(SUM(age) OVER (PARTITION BY department)) IN (65) THEN age + 1 ELSE age END BETWEEN 31 AND 36 AS r FROM users"
+    "r" [.bool true, .bool false, .bool true, .bool false, .bool false],
+  -- no match against a list holding NULL is unknown
+  testColumn "window_in_list_with_null"
+    "SELECT name, MAX(age) OVER (PARTITION BY department) IN (NULL, 35) AS r FROM users"
+    "r" [.bool true, .null none, .bool true, .null none, .null none],
+  -- an item without a window function, next to one with, is unchanged
+  testColumn "window_beside_plain_in"
+    "SELECT name, age IN (25, 30) AS r, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users"
+    "r" [.bool true, .bool true, .bool false, .bool false, .bool false],
   testColumn "window_outer_order_by_nonprojected_names"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY age"
     "name" [.string "Eve", .string "Bob", .string "Dave", .string "Alice", .string "Carol"]
