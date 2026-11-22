@@ -14,7 +14,7 @@ import Mathlib.Tactic.SplitIfs
 
 Core and Batteries state how `<$>` acts on `Except.ok` and `Except.error`, but not `>>=`, and
 nothing about `Except.toOption`, which forgets which error occurred. Ported from cslib-frontier's
-`Foundations/Control/Except.lean` (pinned `e78796a1`) into the namespace `SqlCore.Except`, so that
+`Foundations/Control/Except.lean` (`e78796a1`, with the `Spec` refactor of `841a64b4e`) into the namespace `SqlCore.Except`, so that
 it does not claim names in core's `Except`. These equations let `simp`
 evaluate `do` blocks over `Except` and compare computations up to the error they raise.
 
@@ -34,11 +34,10 @@ failed with the same error. Batteries characterizes the successful results of `L
   computations.
 * `Except.mapM_eq_ok_map`, `Except.toOption_mapM_congr`: `List.mapM` of succeeding steps, and of
   steps with the same observations.
-* `Except.exists_mem_eq_ok_of_mapM_eq_ok`: the results of a successful `List.mapM` come from its
-  steps.
-* `Except.exists_mem_eq_error_of_mapM_eq_error`,
-  `Except.exists_mem_eq_error_of_filterMapM_eq_error`: a failing list of computations has a
-  failing step.
+* `Except.Spec`, `Except.Spec.bind`: a computation succeeds with a result satisfying `P` or fails
+  with an error satisfying `E`, and such specifications compose along `>>=`.
+* `Except.Spec.mapM`, `Except.Spec.filterMapM`: the results of a successful list of computations
+  come from steps meeting their specifications.
 -/
 
 public section
@@ -140,47 +139,6 @@ theorem toOption_filterMapM (f : α → Except ε (Option β)) (l : List α) :
     · simp only [List.filterMapM_cons, h, ok_bind, toOption_bind, ih]
       split_ifs <;> simp_all [pure, Except.pure]
 
-/-- Every result of a successful `List.mapM` is the result of one of its steps. -/
-theorem exists_mem_eq_ok_of_mapM_eq_ok {f : α → Except ε β} {l : List α} {bs : List β}
-    (h : l.mapM f = .ok bs) {b : β} (hb : b ∈ bs) : ∃ a ∈ l, f a = .ok b := by
-  have h' := congrArg Except.toOption h
-  rw [toOption_mapM] at h'
-  split_ifs at h'
-  · simp only [toOption_ok, Option.some.injEq] at h'
-    obtain ⟨a, ha, hab⟩ := List.mem_filterMap.mp (h' ▸ hb)
-    exact ⟨a, ha, toOption_eq_some_iff.mp hab⟩
-  · simp at h'
-
-/-- When `List.mapM` fails, some step fails with that error. -/
-theorem exists_mem_eq_error_of_mapM_eq_error {f : α → Except ε β} {l : List α} {e : ε}
-    (h : l.mapM f = .error e) : ∃ a ∈ l, f a = .error e := by
-  induction l with
-  | nil => simp [pure, Except.pure] at h
-  | cons a l ih =>
-    rcases ha : f a with e' | b
-    · simp only [List.mapM_cons, ha, error_bind, _root_.Except.error.injEq] at h
-      exact ⟨a, by simp, h ▸ ha⟩
-    · rcases hl : l.mapM f with e' | bs
-      · obtain ⟨a', ha', h'⟩ := ih (by simpa [ha, hl] using h)
-        exact ⟨a', by simp [ha'], h'⟩
-      · simp [ha, hl, pure, Except.pure] at h
-
-/-- When `List.filterMapM` fails, some step fails with that error. -/
-theorem exists_mem_eq_error_of_filterMapM_eq_error {f : α → Except ε (Option β)} {l : List α}
-    {e : ε} (h : l.filterMapM f = .error e) : ∃ a ∈ l, f a = .error e := by
-  induction l with
-  | nil => simp [pure, Except.pure] at h
-  | cons a l ih =>
-    rcases ha : f a with e' | (_ | b)
-    · simp only [List.filterMapM_cons, ha, error_bind, _root_.Except.error.injEq] at h
-      exact ⟨a, by simp, h ▸ ha⟩
-    · obtain ⟨a', ha', h'⟩ := ih (by simpa [ha] using h)
-      exact ⟨a', by simp [ha'], h'⟩
-    · rcases hl : l.filterMapM f with e' | bs
-      · obtain ⟨a', ha', h'⟩ := ih (by simpa [ha, hl] using h)
-        exact ⟨a', by simp [ha'], h'⟩
-      · simp [ha, hl, pure, Except.pure] at h
-
 /-! ### Postconditions -/
 
 section Spec
@@ -216,6 +174,26 @@ theorem Spec.mono {x : Except ε α} (hx : Spec x P E) (hP : ∀ a, P a → P' a
 theorem Spec.imp_error {x : Except ε α} {e₀ : ε} {B B' : Prop}
     (hx : Spec x P fun e => e = e₀ ∧ B) (h : B → B') : Spec x P fun e => e = e₀ ∧ B' :=
   hx.mono (fun _ => id) fun _ h' => ⟨h'.1, h h'.2⟩
+
+/-- Weaken the side condition of the errors a computation may fail with (`Spec.imp_error` for any
+class of errors). -/
+theorem Spec.imp_right {x : Except ε α} {A : ε → Prop} {B B' : Prop}
+    (hx : Spec x P fun e => A e ∧ B) (h : B → B') : Spec x P fun e => A e ∧ B' :=
+  hx.mono (fun _ => id) fun _ h' => ⟨h'.1, h h'.2⟩
+
+/-- A specification read as a disjunction. -/
+theorem Spec.ok_or_error {x : Except ε α} (hx : Spec x P E) :
+    (∃ a, x = .ok a ∧ P a) ∨ ∃ e, x = .error e ∧ E e := by
+  cases x with
+  | error e => exact .inr ⟨e, rfl, hx⟩
+  | ok a => exact .inl ⟨a, rfl, hx⟩
+
+/-- A specification from a disjunction. -/
+theorem Spec.of_ok_or_error {x : Except ε α}
+    (h : (∃ a, x = .ok a ∧ P a) ∨ ∃ e, x = .error e ∧ E e) : Spec x P E := by
+  rcases h with ⟨a, rfl, ha⟩ | ⟨e, rfl, he⟩
+  · exact ha
+  · exact he
 
 theorem Spec.of_eq_ok {x : Except ε α} (hx : Spec x P E) {a : α} (h : x = .ok a) : P a := by
   subst h; exact hx
