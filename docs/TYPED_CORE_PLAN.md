@@ -654,12 +654,6 @@ Changes from the frontier, all because of decimals:
 - `SqlCore/Except.lean` is the frontier's `Foundations/Control/Except.lean` in namespace
   `SqlCore.Except`. It also has a local `map_error`, which lives in a Mathlib module this library
   does not import.
-
-`SqlCoreTest/QueryExamples.lean` checks queries over the typed `SemanticsTest.testDb` by `decide`:
-a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` price.
-
-## Phase 5 notes
-
 - **The `Spec` refactor (upstream #5583, `841a64b4e`; here #415).** Type soundness is stated as
   a postcondition, `Except.Spec x P E` (`x` succeeds with a result satisfying `P` or fails with
   an error satisfying `E`), which composes along `>>=` by `Spec.bind`: `Expr.eval_spec`,
@@ -675,6 +669,12 @@ a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` pric
   first for the wider error class, the others so the `attach` case of `Query.eval_spec` keeps
   its proof); upstream's shortened proofs in `QueryLaws` and `Simplify` are not ported (they
   change no statement).
+
+`SqlCoreTest/QueryExamples.lean` checks queries over the typed `SemanticsTest.testDb` by `decide`:
+a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` price.
+
+## Phase 5 notes
+
 - `Expr.Equiv Γ` holds when two expressions have equal observations (`Except.toOption`) on every row
   conforming to `Γ`. It is a setoid and a congruence for every constructor, and it is compatible
   with renaming and substitution.
