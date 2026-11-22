@@ -173,6 +173,14 @@ def holeSplit : Expr → Option (List Expr × Option Expr × Expr)
   | .subquery (.simple b) => some ([], none, .subquery (.simple b))
   | _ => none
 
+/-- Whether the `FROM` clause is a derived table. `selectFeatures` admits one under `COUNT(*)`
+    items at the top of a statement (#412); a subquery body or a set-operation branch with one
+    is outside (`BodyOk` and `Leaf` take `FROM` trees of tables). -/
+def derivedFrom (s : SelectStmt) : Bool :=
+  match s.fromClause with
+  | some (.subquery _ _) => true
+  | _ => false
+
 mutual
 
 /-- Features of a `HAVING` predicate in the fragment: those of its aggregates' arguments. -/
@@ -287,8 +295,15 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   else s.items.flatMap fun
     | .star _ => [star]
     | .exprItem e _ => exprFeatures e) ++
+  -- a derived table under `COUNT(*)` items only, without `WHERE` (#412,
+  -- `SqlBridge.CorrectDerived.elabStmt_correct_countDerived`): inside when the body is one of an
+  -- `IN` body's (`SubBodyOk`); `COUNT(*)` does not see the body's row order
   (match s.fromClause with
    | none => [noFrom]
+   | some (.subquery sq _) =>
+     if plainAggOf s && s.whereClause.isNone &&
+         s.items.all (fun | .exprItem .countStar _ => true | _ => false)
+     then inBodyFeatures sq else [subquery]
    | some f => fromFeatures f) ++
   -- a `WHERE` with one subquery node (steps 6b and 6c, `SqlBridge.CorrectSub.SubWhere`) on a
   -- plain outer query, under plain `DISTINCT`, or under aggregates without `GROUP BY`
@@ -337,7 +352,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     say whether its sort keys are in the fragment. -/
 partial def bodyFeatures (avgOk : Bool) (b : SelectStmt) : List String :=
   selectFeatures b ++
-  (if b.distinct ||
+  (if b.distinct || derivedFrom b ||
       (if b.groupBy.isEmpty && b.having.isNone then
         b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
           !plainAggOf b && !avgOk
@@ -361,7 +376,7 @@ partial def branchFeatures (s : SelectStmt) : List String :=
   let bareNoGroup := !s.distinct && s.groupBy.isEmpty &&
     s.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
     s.items.any (fun | .exprItem (.col _) _ => true | _ => false)
-  selectFeatures s ++
+  selectFeatures s ++ (if derivedFrom s then [subquery] else []) ++
     (if !s.orderBy.isEmpty || s.limitVal.isSome || s.offsetVal.isSome || hasAvg || bareNoGroup ||
         s.having.any hasCmpAvgOk
      then [setOpBranch] else [])

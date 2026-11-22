@@ -13,6 +13,7 @@ import SqlBridge.CorrectGrouped
 import SqlBridge.CorrectDistinct
 import SqlBridge.CorrectSetOp
 import SqlBridge.CorrectSub
+import SqlBridge.CorrectDerived
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import SqlCoreTest.BridgeDiffTest
@@ -269,11 +270,18 @@ def aggBareInSubShape : SqlEquiv.Stmt → Bool
       bareOkB items [] none [] && anySubWhereB w
   | _ => false
 
+/-- The shape of `elabStmt_correct_countDerived` (#412): `COUNT(*)` items over a derived table
+    whose body is a `SubBodyOk` one, without `WHERE`. -/
+def countDerivedShape : SqlEquiv.Stmt → Bool
+  | .query (.simple (.mk false items (some (.subquery sq _)) none [] none [] none none)) =>
+    SqlBridge.CorrectDerived.countItems items && !items.isEmpty && nodeOkB.subBodyOkB sq
+  | _ => false
+
 /-- A statement has the shape of one of the elaborator-correctness theorems. -/
 def anyShape (s : SqlEquiv.Stmt) : Bool :=
   stmtShape s || aggShape s || aggBareShape s || groupedShape s || distinctShape s ||
     setOpShape s || inSubShape s || distinctInSubShape s || aggInSubShape s ||
-    aggBareInSubShape s || groupedInSubShape s
+    aggBareInSubShape s || groupedInSubShape s || countDerivedShape s
 
 /-- `SqlBridge.Coverage.outsideFragment` (the Spider coverage report, #352) finds no feature
     outside the fragment exactly when the statement has the theorem's shape, and its copy of
@@ -940,5 +948,61 @@ def inSubSpider (sql : String) : Bool :=
 -- (parenthesised: the parser reads `a + 1 NOT IN (…)` as `a + (1 NOT IN (…))`, #400)
 #guard featuresSqlite ("SELECT name FROM singer WHERE (singer_id + 1) NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.arithmetic]
+
+/-! ### A derived table under `COUNT(*)` (#412, `elabStmt_correct_countDerived`) -/
+
+/-- The statement has the theorem's shape and elaborates under the Spider-style schema. -/
+def countDerivedSpider (sql : String) : Bool :=
+  match SqlEquiv.parse sql (dialect := .sqlite) with
+  | .ok stmt => countDerivedShape stmt && (elabStmt singerSchema stmt).toBool
+  | .error _ => false
+
+-- inside: Spider's world_1 query (an anonymous derived table over `INTERSECT`), an aliased one,
+-- a plain, an aggregate and a grouped body, several `COUNT(*)` items
+#guard countDerivedSpider ("SELECT count(*) FROM (SELECT T1.name FROM singer AS T1 JOIN song AS T2 " ++
+  "ON T1.singer_id = T2.singer_id WHERE T2.title = 'x' INTERSECT SELECT T1.name FROM singer AS T1 " ++
+  "JOIN song AS T2 ON T1.singer_id = T2.singer_id WHERE T2.title = 'y')")
+#guard countDerivedSpider "SELECT count(*) FROM (SELECT name FROM singer) AS t"
+#guard countDerivedSpider "SELECT COUNT(*) AS n, count(*) FROM (SELECT age FROM singer WHERE age > 20)"
+#guard countDerivedSpider "SELECT count(*) FROM (SELECT max(age) FROM singer)"
+#guard countDerivedSpider "SELECT count(*) FROM (SELECT singer_id FROM song GROUP BY singer_id)"
+#guard countDerivedSpider ("SELECT count(*) FROM (SELECT singer_id FROM song UNION ALL " ++
+  "SELECT age FROM singer EXCEPT SELECT singer_id FROM singer)")
+#guard countDerivedSpider "SELECT count(*) FROM (SELECT name FROM singer ORDER BY age LIMIT 2)"
+-- outside: an item other than `COUNT(*)`, a `WHERE`, a derived table under a join, a body
+-- outside `SubBodyOk` (`DISTINCT`, an `AVG` item), `GROUP BY` outside, nested derived tables
+#guard !countDerivedSpider "SELECT count(name) FROM (SELECT name FROM singer)"
+#guard !countDerivedSpider "SELECT max(age) FROM (SELECT age FROM singer)"
+#guard !countDerivedSpider "SELECT count(*) FROM (SELECT age FROM singer) WHERE age > 1"
+#guard !countDerivedSpider "SELECT count(*) FROM (SELECT age FROM singer) AS t JOIN song AS s ON t.age = s.singer_id"
+#guard !countDerivedSpider "SELECT count(*) FROM (SELECT DISTINCT age FROM singer)"
+#guard !countDerivedSpider "SELECT count(*) FROM (SELECT avg(age) FROM singer)"
+#guard !countDerivedSpider "SELECT count(*) FROM (SELECT age FROM singer) GROUP BY age"
+#guard !countDerivedSpider "SELECT count(*) FROM (SELECT count(*) FROM (SELECT age FROM singer))"
+#guard !countDerivedSpider "SELECT name FROM (SELECT name FROM singer)"
+-- the coverage report agrees on each
+#guard featuresSqlite ("SELECT count(*) FROM (SELECT name FROM singer INTERSECT " ++
+  "SELECT title FROM song)") == []
+#guard featuresSqlite "SELECT count(*) FROM (SELECT name FROM singer) AS t" == []
+#guard featuresSqlite "SELECT count(*) FROM (SELECT singer_id FROM song GROUP BY singer_id)" == []
+#guard featuresSqlite "SELECT count(*) FROM (SELECT age + 1 FROM singer)" ==
+  [SqlBridge.Coverage.arithmetic]
+#guard featuresSqlite "SELECT count(name) FROM (SELECT name FROM singer)" ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite "SELECT count(*) FROM (SELECT age FROM singer) WHERE age > 1" ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite "SELECT count(*) FROM (SELECT DISTINCT age FROM singer)" ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite "SELECT count(*) FROM (SELECT avg(age) FROM singer)" ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite "SELECT count(*) FROM (SELECT count(*) FROM (SELECT age FROM singer))" ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite "SELECT name FROM (SELECT name FROM singer)" ==
+  [SqlBridge.Coverage.subquery]
+-- only at the top of a statement: not as a subquery body or a set-operation branch
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT count(*) FROM (SELECT age FROM singer))") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT count(*) FROM (SELECT age FROM singer) " ++
+  "UNION SELECT age FROM singer") == [SqlBridge.Coverage.subquery]
 
 end SqlCoreTest.CorrectExamples
