@@ -904,7 +904,9 @@ partial def parsePrimary : Parser Expr := do
       Parser.expect .rparen "Expected )"
       return .exists true sq  -- negated EXISTS
     else
-      let e ← parsePrimary
+      -- NOT is looser than the comparisons and predicates: `NOT a = b` is `NOT (a = b)`
+      -- and `NOT a IS NULL` is `NOT (a IS NULL)`, as in sqlite, DuckDB and Postgres (#400).
+      let e ← parseComparison
       return .unaryOp .not e
   | .op "-" =>
     let _ ← Parser.advance
@@ -1023,115 +1025,41 @@ where
     else
       return none
 
-/-- Parse postfix operators (IS NULL, IN, NOT IN, BETWEEN, LIKE) -/
-partial def parsePostfix (e : Expr) : Parser Expr := do
+/-- An `OVER` after a complete operand is attached to a non-window expression: a
+    window-eligible call consumes its own `OVER`. Error loudly instead of leaving it to
+    be silently swallowed (#214). -/
+partial def rejectStrayOver (e : Expr) : Parser Expr := do
   let t ← Parser.peek
-  if isKeyword "IS" t then
-    let _ ← Parser.advance
-    let t2 ← Parser.peek
-    if isKeyword "NULL" t2 then
-      let _ ← Parser.advance
-      parsePostfix (.unaryOp .isNull e)
-    else if isKeyword "NOT" t2 then
-      let _ ← Parser.advance
-      Parser.expect (.keyword "NULL") "Expected NULL"
-      parsePostfix (.unaryOp .isNotNull e)
-    else
-      Parser.fail "Expected NULL or NOT NULL after IS"
-  else if isKeyword "NOT" t then
-    -- NOT IN
-    let _ ← Parser.advance
-    let t2 ← Parser.peek
-    if isKeyword "IN" t2 then
-      let _ ← Parser.advance
-      Parser.expect .lparen "Expected ("
-      -- Check if it's a subquery or value list
-      let t3 ← Parser.peek
-      if isKeyword "SELECT" t3 then
-        let sq ← parseSubQueryBody
-        Parser.expect .rparen "Expected )"
-        parsePostfix (.inSubquery e true sq)  -- negated
-      else
-        let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
-        Parser.expect .rparen "Expected )"
-        parsePostfix (.inList e true vals)  -- negated
-    else if isKeyword "LIKE" t2 then
-      -- x NOT LIKE p  ≡  NOT (x LIKE p), with the dialect's LIKE operator
-      let _ ← Parser.advance
-      let pattern ← parsePrimary
-      let likeCase ← fun st => .ok (st.config.likeCase, st)
-      let op : BinOp := match likeCase with
-        | .sensitive => .like
-        | .asciiInsensitive => .likeCI
-      parsePostfix (.unaryOp .not (.binOp op e pattern))
-    else if isKeyword "BETWEEN" t2 then
-      -- x NOT BETWEEN a AND b  ≡  NOT (x BETWEEN a AND b) (#354)
-      let _ ← Parser.advance
-      let lo ← parseAddSub  -- as for BETWEEN: stop before the AND
-      Parser.expect (.keyword "AND") "Expected AND in NOT BETWEEN"
-      let hi ← parseAddSub
-      parsePostfix (.unaryOp .not (.between e lo hi))
-    else
-      Parser.fail "Expected IN, LIKE or BETWEEN after NOT"
-  else if isKeyword "IN" t then
-    let _ ← Parser.advance
-    Parser.expect .lparen "Expected ("
-    -- Check if it's a subquery or value list
-    let t2 ← Parser.peek
-    if isKeyword "SELECT" t2 then
-      let sq ← parseSubQueryBody
-      Parser.expect .rparen "Expected )"
-      parsePostfix (.inSubquery e false sq)
-    else
-      let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
-      Parser.expect .rparen "Expected )"
-      parsePostfix (.inList e false vals)
-  else if isKeyword "BETWEEN" t then
-    let _ ← Parser.advance
-    let lo ← parseAddSub  -- Use parseAddSub to avoid consuming the AND
-    Parser.expect (.keyword "AND") "Expected AND in BETWEEN"
-    let hi ← parseAddSub
-    parsePostfix (.between e lo hi)
-  else if isKeyword "LIKE" t then
-    let _ ← Parser.advance
-    let pattern ← parsePrimary
-    let likeCase ← fun st => .ok (st.config.likeCase, st)
-    let op : BinOp := match likeCase with
-      | .sensitive => .like
-      | .asciiInsensitive => .likeCI
-    parsePostfix (.binOp op e pattern)
-  else if isKeyword "OVER" t then
-    -- A window-eligible call consumes its OVER before postfix parsing, so an
-    -- OVER reaching here is attached to a non-window expression. Error loudly
-    -- instead of leaving it to be silently swallowed (#214).
+  if isKeyword "OVER" t then
     Parser.fail "OVER is only valid immediately after a window or aggregate function call"
   else
     return e
 
+/-- One operand of `*`, `/`, `%`. -/
+partial def parseOperand : Parser Expr := do
+  let e ← parsePrimary
+  rejectStrayOver e
+
 /-- Parse multiplication/division (highest precedence binops) -/
 partial def parseMulDiv : Parser Expr := do
-  let left ← parsePrimary
-  let left' ← parsePostfix left
-  parseMulDivRest left'
+  let left ← parseOperand
+  parseMulDivRest left
 
 partial def parseMulDivRest (left : Expr) : Parser Expr := do
     let t ← Parser.peek
     match t with
     | .star =>
       let _ ← Parser.advance
-      let right ← parsePrimary
-      let right' ← parsePostfix right
-      parseMulDivRest (.binOp .mul left right')
+      let right ← parseOperand
+      parseMulDivRest (.binOp .mul left right)
     | .op "/" =>
       let _ ← Parser.advance
-      let right ← parsePrimary
-      let right' ← parsePostfix right
-      parseMulDivRest (.binOp .div left right')
+      let right ← parseOperand
+      parseMulDivRest (.binOp .div left right)
     | .op "%" =>
       let _ ← Parser.advance
-      let right ← parsePrimary
-      let right' ← parsePostfix right
-      parseMulDivRest (.binOp .mod left right')
+      let right ← parseOperand
+      parseMulDivRest (.binOp .mod left right)
     | _ => return left
 
 /-- Parse addition/subtraction -/
@@ -1156,46 +1084,125 @@ partial def parseAddSubRest (left : Expr) : Parser Expr := do
       parseAddSubRest (.binOp .concat left right)
     | _ => return left
 
-/-- Parse comparison operators -/
-partial def parseComparison : Parser Expr := do
-  let left ← parseAddSub
-  parseCompRest left
+/-- The predicates `[NOT] IN`, `[NOT] BETWEEN` and `[NOT] LIKE`, applied to a complete
+    arithmetic expression `left` (#400): `1 + 1 IN (2)` is `(1 + 1) IN (2)`, as in sqlite,
+    DuckDB and Postgres. They bind tighter than the comparison operators and `IS NULL`.
 
-partial def parseCompRest (left : Expr) : Parser Expr := do
+    `closed` says whether another predicate may follow directly. It may after `IN (…)`,
+    which ends in a parenthesis. It may not after `BETWEEN` or `LIKE`: Postgres and DuckDB
+    reject `a LIKE b IN (c)` and sqlite reads it as `(a LIKE b) IN (c)`, so we ask for
+    parentheses (registry row 21). -/
+partial def parsePredRest (left : Expr) (closed : Bool) : Parser Expr := do
+  let t ← Parser.peek
+  if !(isKeyword "NOT" t || isKeyword "IN" t || isKeyword "BETWEEN" t || isKeyword "LIKE" t) then
+    return left
+  else if !closed then
+    Parser.fail "IN, BETWEEN or LIKE directly after a BETWEEN or LIKE needs parentheses"
+  else
+    let negated ← if isKeyword "NOT" t then (do let _ ← Parser.advance; Parser.pure true)
+                  else Parser.pure false
+    let t2 ← Parser.peek
+    if isKeyword "IN" t2 then
+      let _ ← Parser.advance
+      Parser.expect .lparen "Expected ("
+      -- Check if it's a subquery or value list
+      let t3 ← Parser.peek
+      if isKeyword "SELECT" t3 then
+        let sq ← parseSubQueryBody
+        Parser.expect .rparen "Expected )"
+        parsePredRest (.inSubquery left negated sq) true
+      else
+        let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
+        Parser.expect .rparen "Expected )"
+        parsePredRest (.inList left negated vals) true
+    else if isKeyword "BETWEEN" t2 then
+      -- x NOT BETWEEN a AND b  ≡  NOT (x BETWEEN a AND b) (#354)
+      let _ ← Parser.advance
+      let lo ← parseAddSub  -- the bounds stop before the AND
+      Parser.expect (.keyword "AND") "Expected AND in BETWEEN"
+      let hi ← parseAddSub
+      let e := Expr.between left lo hi
+      parsePredRest (if negated then .unaryOp .not e else e) false
+    else if isKeyword "LIKE" t2 then
+      -- x NOT LIKE p  ≡  NOT (x LIKE p), with the dialect's LIKE operator
+      let _ ← Parser.advance
+      let pattern ← parseAddSub
+      let likeCase ← fun st => .ok (st.config.likeCase, st)
+      let op : BinOp := match likeCase with
+        | .sensitive => .like
+        | .asciiInsensitive => .likeCI
+      let e := Expr.binOp op left pattern
+      parsePredRest (if negated then .unaryOp .not e else e) false
+    else
+      Parser.fail "Expected IN, LIKE or BETWEEN after NOT"
+
+/-- An arithmetic expression with its `IN` / `BETWEEN` / `LIKE` predicates: one side of a
+    comparison. -/
+partial def parsePred : Parser Expr := do
+  let left ← parseAddSub
+  parsePredRest left true
+
+/-- Parse comparison operators and `IS [NOT] NULL` -/
+partial def parseComparison : Parser Expr := do
+  let left ← parsePred
+  parseCompRest left true
+
+/-- The rest of the comparison level, after `left` (#400).
+
+    * `IS [NOT] NULL` applies to everything to its left: `a = b IS NULL` is
+      `(a = b) IS NULL`.
+    * A comparison takes a `parsePred` on its right, so `a = b IN (c)` is
+      `a = (b IN (c))`, as in Postgres and DuckDB (sqlite reads `(a = b) IN (c)`;
+      registry row 21).
+    * Comparisons do not chain: `a = b = c` and `a < b = c` are errors, as in Postgres
+      and DuckDB. `canCmp` is false directly after a comparison and true again after an
+      `IS [NOT] NULL` or a predicate, which close the expression to their left. -/
+partial def parseCompRest (left : Expr) (canCmp : Bool) : Parser Expr := do
     let t ← Parser.peek
-    match t with
-    | .op "=" =>
-      let _ ← Parser.advance
-      let right ← parseAddSub
-      return .binOp .eq left right
-    | .op "<>" =>
-      let _ ← Parser.advance
-      let right ← parseAddSub
-      return .binOp .ne left right
-    | .op "<" =>
-      let _ ← Parser.advance
-      let right ← parseAddSub
-      return .binOp .lt left right
-    | .op "<=" =>
-      let _ ← Parser.advance
-      let right ← parseAddSub
-      return .binOp .le left right
-    | .op ">" =>
-      let _ ← Parser.advance
-      let right ← parseAddSub
-      return .binOp .gt left right
-    | .op ">=" =>
-      let _ ← Parser.advance
-      let right ← parseAddSub
-      return .binOp .ge left right
-    | _ => return left
+    let cmpOp : Option BinOp := match t with
+      | .op "=" => some .eq
+      | .op "<>" => some .ne
+      | .op "<" => some .lt
+      | .op "<=" => some .le
+      | .op ">" => some .gt
+      | .op ">=" => some .ge
+      | _ => none
+    match cmpOp with
+    | some op =>
+      if !canCmp then
+        Parser.fail "Comparison operators do not chain: parenthesise one side"
+      else
+        let _ ← Parser.advance
+        let right ← parsePred
+        parseCompRest (.binOp op left right) false
+    | none =>
+      if isKeyword "IS" t then
+        let _ ← Parser.advance
+        let t2 ← Parser.peek
+        if isKeyword "NULL" t2 then
+          let _ ← Parser.advance
+          parseCompRest (.unaryOp .isNull left) true
+        else if isKeyword "NOT" t2 then
+          let _ ← Parser.advance
+          Parser.expect (.keyword "NULL") "Expected NULL"
+          parseCompRest (.unaryOp .isNotNull left) true
+        else
+          Parser.fail "Expected NULL or NOT NULL after IS"
+      else if isKeyword "NOT" t || isKeyword "IN" t || isKeyword "BETWEEN" t
+          || isKeyword "LIKE" t then
+        -- Reached after an `IS [NOT] NULL`, or from a SELECT item that parsed its first
+        -- operand itself: the predicate applies to all of `left`.
+        let e ← parsePredRest left true
+        parseCompRest e true
+      else
+        return left
 
 /-- Parse AND expressions -/
 partial def parseAnd : Parser Expr := do
   let left ← parseComparison
   parseAndRest left
-where
-  parseAndRest (left : Expr) : Parser Expr := do
+
+partial def parseAndRest (left : Expr) : Parser Expr := do
     let t ← Parser.peek
     if isKeyword "AND" t then
       let _ ← Parser.advance
@@ -1208,8 +1215,8 @@ where
 partial def parseOr : Parser Expr := do
   let left ← parseAnd
   parseOrRest left
-where
-  parseOrRest (left : Expr) : Parser Expr := do
+
+partial def parseOrRest (left : Expr) : Parser Expr := do
     let t ← Parser.peek
     if isKeyword "OR" t then
       let _ ← Parser.advance
@@ -1255,7 +1262,7 @@ partial def parseSelectItem : Parser SelectItem := do
         -- It's table.column, parse as column ref
         let col ← parseIdent
         let e := Expr.col { table := some name, column := col }
-        let e' ← parsePostfix e
+        let e' ← rejectStrayOver e
         let e'' ← continueExprFrom e'
         let alias ← parseAlias
         return .exprItem e'' alias
@@ -1270,7 +1277,7 @@ partial def parseSelectItem : Parser SelectItem := do
           let _ ← Parser.advance
           Parser.expect .rparen "Expected )"
           let e ← finishAggOrWindow .countStar .count none false
-          let e' ← parsePostfix e
+          let e' ← rejectStrayOver e
           let e'' ← continueExprFrom e'
           let alias ← parseAlias
           return .exprItem e'' alias
@@ -1286,7 +1293,7 @@ partial def parseSelectItem : Parser SelectItem := do
             let _ ← Parser.advance
             Parser.expect .rparen "Expected )"
             let e ← finishAggOrWindow .countStar .count none hasDistinct
-            let e' ← parsePostfix e
+            let e' ← rejectStrayOver e
             let e'' ← continueExprFrom e'
             let alias ← parseAlias
             return .exprItem e'' alias
@@ -1295,7 +1302,7 @@ partial def parseSelectItem : Parser SelectItem := do
             Parser.expect .rparen "Expected )"
             let e ← finishAggOrWindow (.agg aggFn (some arg) hasDistinct)
               (aggToWindowFunc aggFn) (some arg) hasDistinct
-            let e' ← parsePostfix e
+            let e' ← rejectStrayOver e
             let e'' ← continueExprFrom e'
             let alias ← parseAlias
             return .exprItem e'' alias
@@ -1305,7 +1312,7 @@ partial def parseSelectItem : Parser SelectItem := do
         let args ← Parser.sepBy parseExpr (Parser.expect .comma "")
         Parser.expect .rparen "Expected )"
         let e := Expr.func name args
-        let e' ← parsePostfix e
+        let e' ← rejectStrayOver e
         let e'' ← continueExprFrom e'
         let alias ← parseAlias
         return .exprItem e'' alias
@@ -1313,7 +1320,7 @@ partial def parseSelectItem : Parser SelectItem := do
       -- It's an identifier, could be column or start of expression
       let e := Expr.col { table := none, column := name }
       -- Check for more expression parts
-      let e' ← parsePostfix e
+      let e' ← rejectStrayOver e
       let e'' ← continueExprFrom e'
       let alias ← parseAlias
       return .exprItem e'' alias
@@ -1338,13 +1345,15 @@ where
 
   -- Continue parsing an expression from an already-parsed postfix expression
   -- (#228): resume the precedence chain (mul/div/mod → add/sub/concat →
-  -- comparison) instead of punting and leaving trailing operators — the old
+  -- predicates and comparison → AND → OR, #400) instead of punting and leaving trailing operators — the old
   -- "just return what we have" comment relied on the top-level parser
   -- silently discarding the rest of the statement.
   continueExprFrom (left : Expr) : Parser Expr := do
     let l1 ← parseMulDivRest left
     let l2 ← parseAddSubRest l1
-    parseCompRest l2
+    let l3 ← parseCompRest l2 true
+    let l4 ← parseAndRest l3
+    parseOrRest l4
 
 /-- Parse the remaining `, item` parts of a SELECT list without backtracking
     (#214): if an item after a comma fails to parse, the error propagates

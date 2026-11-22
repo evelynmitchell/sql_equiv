@@ -324,6 +324,45 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30",
     diffTest "NOT BETWEEN with a NULL bound"
       "SELECT name FROM users WHERE age NOT BETWEEN NULL AND 30",
+    -- Operator precedence (#400): IN / BETWEEN / LIKE / IS NULL take the whole arithmetic
+    -- expression on their left, and NOT is looser than all of them
+    diffTest "precedence: arithmetic then IN"
+      "SELECT name FROM users WHERE age + 1 IN (26, 31)",
+    diffTest "precedence: arithmetic then NOT IN"
+      "SELECT name FROM users WHERE age - 5 NOT IN (20, 25)",
+    diffTest "precedence: arithmetic then BETWEEN"
+      "SELECT name FROM users WHERE age * 2 BETWEEN 50 AND 60",
+    diffTest "precedence: arithmetic then NOT BETWEEN"
+      "SELECT name FROM users WHERE age % 10 + 1 NOT BETWEEN 1 AND 5",
+    diffTest "precedence: arithmetic then IS NULL"
+      "SELECT name FROM items WHERE price + 1 IS NULL",
+    diffTest "precedence: arithmetic then IS NOT NULL"
+      "SELECT name FROM items WHERE price * 2 IS NOT NULL",
+    diffTest "precedence: concatenation then LIKE"
+      "SELECT name FROM users WHERE name || 'x' LIKE 'A%x'",
+    diffTest "precedence: LIKE with a concatenated pattern"
+      "SELECT name FROM users WHERE name LIKE 'A' || '%'",
+    diffTest "precedence: NOT over a comparison"
+      "SELECT name FROM users WHERE NOT age = 30",
+    diffTest "precedence: NOT over IN"
+      "SELECT name FROM users WHERE NOT age IN (25, 30)",
+    diffTest "precedence: NOT over arithmetic then BETWEEN"
+      "SELECT name FROM users WHERE NOT age + 1 BETWEEN 26 AND 31",
+    diffTest "precedence: NOT over IS NULL"
+      "SELECT name FROM items WHERE NOT price IS NULL",
+    diffTest "precedence: NOT is tighter than AND"
+      "SELECT name FROM users WHERE NOT age = 30 AND department = 'Sales'",
+    diffTest "precedence: comparison then IS NULL"
+      "SELECT name FROM items WHERE price = 3 IS NULL",
+    diffTest "precedence: IN then comparison"
+      "SELECT name FROM users WHERE age IN (25, 30) = (department = 'Sales')",
+    diffTest "precedence: predicates under AND and OR"
+      "SELECT name FROM users WHERE age > 25 AND age + 1 IN (31, 36) OR name = 'Eve'",
+    diffTest "precedence: predicate as a SELECT item"
+      "SELECT name, age + 1 IN (26, 31) AS m FROM users",
+    -- Registry row 21: a comparison followed by a predicate groups as `a = (b LIKE c)`
+    diffTest "precedence: comparison then LIKE (row 21)"
+      "SELECT name FROM users WHERE (age > 26) = name LIKE 'A%'",
     -- Modulo truncates toward zero (row 6; `/` differs, see KNOWN DIVERGENCES)
     diffTest "modulo of negatives"
       "SELECT (0 - age) % 7 AS r FROM users",

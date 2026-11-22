@@ -24,6 +24,12 @@
 
   KNOWN DIVERGENCES from sqlite (registry rows; do not add cases that hit
   them, the registry records the decision and the pinning unit test):
+  - Row 21, a comparison followed by IN / BETWEEN / LIKE (`a = b IN (c)`):
+    sqlite reads `(a = b) IN (c)`; we read `a = (b IN (c))` in every dialect,
+    as DuckDB and Postgres do, and reject the chains they reject
+    (`1 < 2 = TRUE`, `a LIKE b IN (c)`), which sqlite accepts (#400; open for
+    the sqlite dialect). Pinned by the `prec_row21_*` and `prec_*_rejected`
+    unit tests; DiffDuckdb and DiffPostgres check the grouping.
   - Row 17, AVG/SUM over TEXT: sqlite converts each string to a number (its
     numeric prefix, else 0); we raise a type error, as DuckDB and Postgres do.
     The Spider harness reports these as a labelled known divergence.
@@ -465,6 +471,42 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE age NOT BETWEEN 25 AND 30",
     diffTest "NOT BETWEEN with a NULL bound"
       "SELECT name FROM users WHERE age NOT BETWEEN NULL AND 30",
+    -- Operator precedence (#400): IN / BETWEEN / LIKE / IS NULL take the whole arithmetic
+    -- expression on their left, and NOT is looser than all of them
+    diffTest "precedence: arithmetic then IN"
+      "SELECT name FROM users WHERE age + 1 IN (26, 31)",
+    diffTest "precedence: arithmetic then NOT IN"
+      "SELECT name FROM users WHERE age - 5 NOT IN (20, 25)",
+    diffTest "precedence: arithmetic then BETWEEN"
+      "SELECT name FROM users WHERE age * 2 BETWEEN 50 AND 60",
+    diffTest "precedence: arithmetic then NOT BETWEEN"
+      "SELECT name FROM users WHERE age % 10 + 1 NOT BETWEEN 1 AND 5",
+    diffTest "precedence: arithmetic then IS NULL"
+      "SELECT name FROM items WHERE price + 1 IS NULL",
+    diffTest "precedence: arithmetic then IS NOT NULL"
+      "SELECT name FROM items WHERE price * 2 IS NOT NULL",
+    diffTest "precedence: concatenation then LIKE"
+      "SELECT name FROM users WHERE name || 'x' LIKE 'A%x'",
+    diffTest "precedence: LIKE with a concatenated pattern"
+      "SELECT name FROM users WHERE name LIKE 'A' || '%'",
+    diffTest "precedence: NOT over a comparison"
+      "SELECT name FROM users WHERE NOT age = 30",
+    diffTest "precedence: NOT over IN"
+      "SELECT name FROM users WHERE NOT age IN (25, 30)",
+    diffTest "precedence: NOT over arithmetic then BETWEEN"
+      "SELECT name FROM users WHERE NOT age + 1 BETWEEN 26 AND 31",
+    diffTest "precedence: NOT over IS NULL"
+      "SELECT name FROM items WHERE NOT price IS NULL",
+    diffTest "precedence: NOT is tighter than AND"
+      "SELECT name FROM users WHERE NOT age = 30 AND department = 'Sales'",
+    diffTest "precedence: comparison then IS NULL"
+      "SELECT name FROM items WHERE price = 3 IS NULL",
+    diffTest "precedence: IN then comparison"
+      "SELECT name FROM users WHERE age IN (25, 30) = (department = 'Sales')",
+    diffTest "precedence: predicates under AND and OR"
+      "SELECT name FROM users WHERE age > 25 AND age + 1 IN (31, 36) OR name = 'Eve'",
+    -- (the SELECT-item form is in DiffDuckdb and DiffPostgres: sqlite prints a boolean
+    -- item as 1 / 0, which this harness does not read back as a boolean)
     -- Integer division/modulo truncate toward zero (row 6)
     diffTest "integer division and modulo, negatives"
       "SELECT (0 - age) / 7 AS q, (0 - age) % 7 AS r FROM users",
