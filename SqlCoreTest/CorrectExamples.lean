@@ -162,12 +162,20 @@ def setOpShape : SqlEquiv.Stmt → Bool
   | .query q => setOpTreeShape q
   | _ => false
 
-/-- `SqlBridge.CorrectSub.BodyOk`: a statement of `elabStmt_correct_join` or of
-    `elabStmt_correct_agg`, without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+/-- `SqlBridge.CorrectSub.BodyOk`: a statement of `elabStmt_correct_join`, of
+    `elabStmt_correct_agg`, or a grouped one (#409: item columns all keys, no `AVG` item or `AVG`
+    comparison in `HAVING`), without `ORDER BY`, `LIMIT` or `OFFSET`. -/
 def bodyOkB : SqlEquiv.SelectStmt → Bool
   | .mk false items (some f) wh [] none [] none none =>
     (itemsFragment items || (aggItems items && !items.isEmpty)) && fromFragment f &&
       wh.all isFragment
+  | .mk false items (some f) wh groupBy having [] none none =>
+    !groupBy.isEmpty && CorrectGrouped.groupedItems items &&
+      items.all (fun it => !CorrectAvg.avgFragment (itemExpr it)) &&
+      groupBy.all (fun | .col _ => true | _ => false) &&
+      (CorrectGroup.colRefs items).all (fun c => groupBy.contains (.col c)) && fromFragment f &&
+      wh.all isFragment && having.all (CorrectGroup.havingFragment groupBy) &&
+      having.all (fun h => !CorrectGroup.hasCmpAvg h)
   | _ => false
 
 /-- `SqlBridge.CorrectSub.NodeOk` (sqlite assumed, for the scalar node). -/
@@ -763,8 +771,29 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT DISTINCT singer_id FROM song)")
-#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+-- a grouped body (#409, `BodyOk.grouped`): item columns all keys, an optional `HAVING`
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song GROUP BY singer_id)")
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id HAVING count(*) > 1)")
+#guard inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id IN " ++
+  "(SELECT singer_id FROM song WHERE title = 'x' GROUP BY singer_id HAVING max(title) >= 'a')")
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT count(*) FROM song GROUP BY singer_id)")
+-- outside: a grouped body with `ORDER BY` or `LIMIT`, a bare (non-key) column, an `AVG` item,
+-- an `AVG` comparison in `HAVING`, or `HAVING` without `GROUP BY`
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY count(*))")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id LIMIT 1)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY title)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE age IN " ++
+  "(SELECT avg(singer_id) FROM song GROUP BY title)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id HAVING avg(singer_id) > 1)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT max(singer_id) FROM song HAVING count(*) > 1)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song LIMIT 1)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
@@ -782,6 +811,17 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song)") == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song) AND age > 20") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id HAVING count(*) > 1)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT count(*) FROM song GROUP BY singer_id)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY title)") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id HAVING avg(singer_id) > 1)") ==
+  [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY count(*))") != []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 OR singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++
