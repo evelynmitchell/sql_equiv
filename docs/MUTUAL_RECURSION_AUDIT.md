@@ -133,7 +133,7 @@ Semantics.lean block and would benefit from the same treatment.
 
 **Functions in the block:**
 ```
-parsePrimary, parsePostfix, parseMulDiv, parseAddSub,
+parsePrimary, parseOperand, parseMulDiv, parseAddSub, parsePred,
 parseComparison, parseAnd, parseOr, parseExpr,
 parseSelectItem, parseTableRef, parseJoinType,
 parseFromSource, parseFromClause, parseOrderByItem,
@@ -154,7 +154,7 @@ contains expressions. This gives us a minimal mutual core of roughly:
 
 The operator precedence chain is **not mutual** — it is a linear call chain:
 ```
-parseOr → parseAnd → parseComparison → parseAddSub → parseMulDiv → parsePostfix → parsePrimary
+parseOr → parseAnd → parseComparison → parsePred → parseAddSub → parseMulDiv → parseOperand → parsePrimary
 ```
 
 Similarly, `parseInsert`, `parseUpdate`, `parseDelete`, `parseStmt`,

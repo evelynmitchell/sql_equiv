@@ -507,12 +507,129 @@ def dialectPrintTests : List TestResult :=
     "SELECT MAX(age) AS m FROM users" usersDb
 ]
 
+-- ============================================================================
+-- Operator precedence (#400, registry row 21)
+-- ============================================================================
+
+/-- `sql` parses to the same AST as its fully parenthesised spelling `explicit`, in every
+    dialect. -/
+private def sameParse (name sql explicit : String) : List TestResult :=
+  allDialects.map fun d =>
+    let n := s!"{name}_{d.name}"
+    match parse sql (dialect := d), parse explicit (dialect := d) with
+    | .ok a, .ok b => if a == b then .pass n else .fail n s!"parsed as {a.toSql}"
+    | .error e, _ => .fail n s!"parse: {e}"
+    | _, .error e => .fail n s!"parse of the explicit form: {e}"
+
+/-- `sql` is a parse error whose message contains `needle`. -/
+private def failsWith (name sql needle : String) : TestResult :=
+  match parse sql with
+  | .ok st => .fail name s!"parsed as {st.toSql}"
+  | .error e => if (e.splitOn needle).length > 1 then .pass name
+                else .fail name s!"error without '{needle}': {e}"
+
+/-- The single value `SELECT <expr>` evaluates to. -/
+private def evalsTo (name sql : String) (expected : Value) : TestResult :=
+  match parse sql with
+  | .error e => .fail name s!"parse: {e}"
+  | .ok st => match (evalStmt (fun _ => []) st).2 with
+    | some [[(_, v)]] => if v == expected then .pass name
+                         else .fail name s!"got {repr v}"
+    | other => .fail name s!"got {repr other}"
+
+def precedenceTests : List TestResult :=
+  -- A predicate takes the whole arithmetic expression on its left
+  sameParse "prec_add_in" "SELECT a + b IN (1, 2) FROM t" "SELECT (a + b) IN (1, 2) FROM t" ++
+  sameParse "prec_sub_not_in" "SELECT a - b NOT IN (1) FROM t" "SELECT (a - b) NOT IN (1) FROM t" ++
+  sameParse "prec_mul_between" "SELECT a * b BETWEEN 1 AND 2 FROM t"
+    "SELECT (a * b) BETWEEN 1 AND 2 FROM t" ++
+  sameParse "prec_div_not_between" "SELECT a / b NOT BETWEEN 1 AND 2 FROM t"
+    "SELECT (a / b) NOT BETWEEN 1 AND 2 FROM t" ++
+  sameParse "prec_mod_is_null" "SELECT a % b IS NULL FROM t" "SELECT (a % b) IS NULL FROM t" ++
+  sameParse "prec_add_is_not_null" "SELECT a + b IS NOT NULL FROM t"
+    "SELECT (a + b) IS NOT NULL FROM t" ++
+  sameParse "prec_concat_like" "SELECT a || b LIKE 'x%' FROM t" "SELECT (a || b) LIKE 'x%' FROM t" ++
+  sameParse "prec_concat_not_like" "SELECT a || b NOT LIKE 'x%' FROM t"
+    "SELECT (a || b) NOT LIKE 'x%' FROM t" ++
+  sameParse "prec_mixed_arith_in" "SELECT a * 2 + b IN (1) FROM t" "SELECT ((a * 2) + b) IN (1) FROM t" ++
+  sameParse "prec_neg_add_in" "SELECT - a + b IN (1) FROM t" "SELECT ((- a) + b) IN (1) FROM t" ++
+  sameParse "prec_in_subquery" "SELECT x FROM t WHERE a + 1 NOT IN (SELECT b FROM u)"
+    "SELECT x FROM t WHERE (a + 1) NOT IN (SELECT b FROM u)" ++
+  -- Operands to the right of a predicate are arithmetic expressions
+  sameParse "prec_like_pattern_concat" "SELECT a LIKE b || '%' FROM t"
+    "SELECT a LIKE (b || '%') FROM t" ++
+  sameParse "prec_between_bounds" "SELECT a BETWEEN b + 1 AND c * 2 FROM t"
+    "SELECT a BETWEEN (b + 1) AND (c * 2) FROM t" ++
+  -- NOT is looser than comparisons and predicates, tighter than AND
+  sameParse "prec_not_eq" "SELECT x FROM t WHERE NOT a = b" "SELECT x FROM t WHERE NOT (a = b)" ++
+  sameParse "prec_not_in" "SELECT x FROM t WHERE NOT a IN (1)" "SELECT x FROM t WHERE NOT (a IN (1))" ++
+  sameParse "prec_not_is_null" "SELECT x FROM t WHERE NOT a IS NULL"
+    "SELECT x FROM t WHERE NOT (a IS NULL)" ++
+  sameParse "prec_not_between" "SELECT x FROM t WHERE NOT a + 1 BETWEEN 1 AND 2"
+    "SELECT x FROM t WHERE NOT ((a + 1) BETWEEN 1 AND 2)" ++
+  sameParse "prec_not_and" "SELECT x FROM t WHERE NOT a = b AND c = d"
+    "SELECT x FROM t WHERE (NOT (a = b)) AND (c = d)" ++
+  sameParse "prec_not_not" "SELECT x FROM t WHERE NOT NOT a = b"
+    "SELECT x FROM t WHERE NOT (NOT (a = b))" ++
+  -- IS NULL takes everything to its left; predicates and comparisons may follow it
+  sameParse "prec_eq_is_null" "SELECT a = b IS NULL FROM t" "SELECT (a = b) IS NULL FROM t" ++
+  sameParse "prec_is_null_eq" "SELECT a IS NULL = b FROM t" "SELECT (a IS NULL) = b FROM t" ++
+  sameParse "prec_is_null_in" "SELECT a IS NULL IN (b) FROM t" "SELECT (a IS NULL) IN (b) FROM t" ++
+  sameParse "prec_is_null_twice" "SELECT a IS NULL IS NOT NULL FROM t"
+    "SELECT (a IS NULL) IS NOT NULL FROM t" ++
+  sameParse "prec_eq_is_null_in" "SELECT a = b IS NULL IN (c) FROM t"
+    "SELECT ((a = b) IS NULL) IN (c) FROM t" ++
+  sameParse "prec_in_eq" "SELECT a IN (1) = b FROM t" "SELECT (a IN (1)) = b FROM t" ++
+  sameParse "prec_in_in" "SELECT a IN (1) IN (b) FROM t" "SELECT (a IN (1)) IN (b) FROM t" ++
+  sameParse "prec_between_eq" "SELECT a BETWEEN 1 AND 2 = b FROM t"
+    "SELECT (a BETWEEN 1 AND 2) = b FROM t" ++
+  sameParse "prec_between_and" "SELECT x FROM t WHERE a BETWEEN 1 AND 2 AND b = 1"
+    "SELECT x FROM t WHERE (a BETWEEN 1 AND 2) AND (b = 1)" ++
+  -- Registry row 21: a comparison followed by a predicate, as Postgres and DuckDB
+  sameParse "prec_row21_eq_in" "SELECT a = b IN (c) FROM t" "SELECT a = (b IN (c)) FROM t" ++
+  sameParse "prec_row21_eq_between" "SELECT a = b BETWEEN 1 AND 2 FROM t"
+    "SELECT a = (b BETWEEN 1 AND 2) FROM t" ++
+  sameParse "prec_row21_eq_like" "SELECT a = b LIKE 'x' FROM t" "SELECT a = (b LIKE 'x') FROM t" ++
+  -- A SELECT item that starts with a name continues through AND / OR
+  sameParse "prec_item_and_or" "SELECT a = 1 AND b + 1 IN (2) OR c IS NULL FROM t"
+    "SELECT ((a = 1) AND ((b + 1) IN (2))) OR (c IS NULL) FROM t" ++
+  sameParse "prec_item_qualified" "SELECT t.a * 2 BETWEEN 1 AND 2 AND t.b IN (1) FROM t"
+    "SELECT ((t.a * 2) BETWEEN 1 AND 2) AND (t.b IN (1)) FROM t" ++
+  sameParse "prec_item_agg" "SELECT COUNT(*) + 1 IN (2) FROM t" "SELECT (COUNT(*) + 1) IN (2) FROM t" ++ [
+  -- Round trips through the pretty-printer
+  testRoundTrip "prec_round_trip_in" "SELECT x FROM t WHERE a + 1 IN (2) AND NOT b = c",
+  testRoundTrip "prec_round_trip_is_null" "SELECT a = b IS NULL, a * 2 IS NOT NULL FROM t",
+  testRoundTrip "prec_round_trip_between_like"
+    "SELECT x FROM t WHERE a - 1 NOT BETWEEN 1 AND 2 OR a || b NOT LIKE 'x' || '%'",
+  -- Shapes the engines disagree on or reject are parse errors (row 21)
+  failsWith "prec_chained_comparison_rejected" "SELECT 1 = 1 = 1" "do not chain",
+  failsWith "prec_chained_lt_eq_rejected" "SELECT 1 < 2 = TRUE" "do not chain",
+  failsWith "prec_chain_after_is_null_rejected" "SELECT 1 IS NULL = FALSE = TRUE" "do not chain",
+  failsWith "prec_between_then_in_rejected" "SELECT 5 BETWEEN 1 AND 9 IN (TRUE)" "needs parentheses",
+  failsWith "prec_between_then_between_rejected" "SELECT 1 BETWEEN 0 AND 2 BETWEEN 0 AND 1"
+    "needs parentheses",
+  failsWith "prec_like_then_like_rejected" "SELECT 'a' LIKE 'a' LIKE 'a'" "needs parentheses",
+  failsWith "prec_like_then_not_in_rejected" "SELECT 'a' LIKE 'a' NOT IN (TRUE)" "needs parentheses",
+  testParseFail "prec_arithmetic_after_predicate_rejected" "SELECT 2 IN (2) + 1",
+  -- The queries of #400, as sqlite, DuckDB and Postgres evaluate them
+  evalsTo "prec_eval_add_in" "SELECT 1 + 1 IN (2)" (.bool true),
+  evalsTo "prec_eval_add_not_in" "SELECT 1 + 1 NOT IN (2)" (.bool false),
+  evalsTo "prec_eval_add_between" "SELECT 1 + 1 BETWEEN 2 AND 3" (.bool true),
+  evalsTo "prec_eval_mul_in" "SELECT 2 * 3 IN (6)" (.bool true),
+  evalsTo "prec_eval_add_is_null" "SELECT 1 + 1 IS NULL" (.bool false),
+  evalsTo "prec_eval_concat_like" "SELECT 'a' || 'b' LIKE 'ab'" (.bool true),
+  evalsTo "prec_eval_not_eq" "SELECT NOT 1 = 2" (.bool true),
+  evalsTo "prec_eval_not_null_is_null" "SELECT NOT NULL IS NULL" (.bool false),
+  evalsTo "prec_eval_eq_is_null" "SELECT NULL = 1 IS NULL" (.bool true),
+  evalsTo "prec_eval_case" "SELECT CASE WHEN 1 + 1 IN (2) THEN 'y' ELSE 'n' END" (.string "y")
+]
+
 def allParserTests : List TestResult :=
   basicSelectTests ++ whereTests ++ joinTests ++ groupOrderTests ++
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
   insertTests ++ updateTests ++ deleteTests ++ nonAsciiIdentTests ++ parseFailTests ++ cteTests ++
   recursiveCTETests ++ doubleQuoteTests ++ trailingInputTests ++ windowParserTests ++
-  dialectPrintTests
+  dialectPrintTests ++ precedenceTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests
