@@ -14,7 +14,9 @@
   aggregates, literals, comparisons, `AND`, `OR`, `NOT`, ordered by such aggregates with an
   optional `LIMIT`/`OFFSET`, no output name able to capture `SqlEquiv`'s sort-key columns, and
   item columns that are not grouped (bare columns, registry T9) when no `MIN`/`MAX` is written
-  (`SqlBridge/CorrectGrouped.lean`, `elabStmt_correct_grouped`). `outsideFragment stmt` lists the features that put a parsed
+  (`SqlBridge/CorrectGrouped.lean`, `elabStmt_correct_grouped`); or `SELECT COUNT(*), … FROM (sq)`
+  without `WHERE` over a subquery body, set operations included (`SqlBridge/CorrectDerived.lean`,
+  `elabStmt_correct_countDerived`, #412). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
