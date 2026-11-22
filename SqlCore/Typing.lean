@@ -316,83 +316,79 @@ private theorem isZero_of_eval_of_isNonzeroIntLit {e : Expr n} (he : e.isNonzero
     cases hb
     simpa [isNonzeroIntLit, Datum.isZero] using he
 
+/-- Type soundness as a postcondition: on a row conforming to `Γ`, an expression of type `τ`
+returns `NULL` or a value of type `τ`, or divides by zero, which requires a division that is not
+`divSafe`. -/
+theorem eval_spec {Γ : Fin n → SqlType} {r : Row n} (hr : r.Conforms Γ) {e : Expr n}
+    {τ : SqlType} (he : e.typeOf Γ = some τ) :
+    Except.Spec (e.eval r) (·.HasType τ) fun err => err = .divisionByZero ∧ e.divSafe = false := by
+  induction e generalizing τ with
+  | lit v => cases he; rfl
+  | null σ => cases he; trivial
+  | col i => cases he; exact hr i
+  | unary op e ih =>
+    obtain ⟨τ₀, h₀, hop⟩ := Option.bind_eq_some_iff.mp he
+    refine ((ih h₀).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun d _ hd => ?_
+    obtain ⟨d', hd', hd'τ⟩ := evalUnOp_ok_of_typeOf hop hd
+    simpa [hd'] using hd'τ
+  | binary op e₁ e₂ ih₁ ih₂ =>
+    obtain ⟨τ₁, h₁, he⟩ := Option.bind_eq_some_iff.mp he
+    obtain ⟨τ₂, h₂, hop⟩ := Option.bind_eq_some_iff.mp he
+    refine ((ih₁ h₁).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun a _ ha => ((ih₂ h₂).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun b hb hbτ => ?_
+    rcases evalBinOp_ok_or_divisionByZero hop ha hbτ with ⟨d, hd, hdτ⟩ | ⟨hd, hdiv, hzero⟩
+    · simpa [hd] using hdτ
+    · have hlit : e₂.isNonzeroIntLit = false := by
+        by_contra hlit
+        have := isZero_of_eval_of_isNonzeroIntLit (Bool.eq_true_of_not_eq_false hlit) r hb
+        simp [this] at hzero
+      simp [hd, divSafe, hdiv, hlit]
+  | inList e vs ih =>
+    obtain ⟨τ₀, h₀, hvs⟩ := Option.bind_eq_some_iff.mp he
+    split_ifs at hvs with hall
+    cases hvs
+    refine ((ih h₀).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun d _ hd => ?_
+    have hall : ∀ v ∈ vs, v.comparableWith τ₀ := by simpa using hall
+    obtain ⟨t, ht⟩ : ∃ t, d.inList vs = .ok t := by
+      refine Datum.exists_inList_eq_ok_iff.mpr fun v hv => CmpOp.exists_eval_eq_ok_iff.mpr ?_
+      have hc := hall v hv
+      match v, hc with
+      | none, _ => exact ⟨τ₀, τ₀, .refl _, hd, trivial⟩
+      | some w, hc => exact ⟨τ₀, w.type, by simpa [Datum.comparableWith] using hc, hd, rfl⟩
+    simp [ht]
+  | caseWhen c a b ihc iha ihb =>
+    obtain ⟨τ₀, ha, hcb⟩ := Option.bind_eq_some_iff.mp he
+    split_ifs at hcb with hcond
+    cases hcb
+    refine ((ihc hcond.1).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun d _ hd => ?_
+    obtain ⟨t, ht⟩ := Datum.exists_toTruth_eq_ok_iff.mpr hd
+    rw [ht, Except.ok_bind]
+    split
+    · exact (iha ha).imp_error fun hs => by simp [divSafe, hs]
+    · exact (ihb hcond.2).imp_error fun hs => by simp [divSafe, hs]
+
 /-- Type soundness: on a row conforming to `Γ`, an expression of type `τ` returns `NULL` or a
 value of type `τ`, or divides by zero, which requires a division that is not `divSafe`. -/
 theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {r : Row n} (hr : r.Conforms Γ)
     {e : Expr n} {τ : SqlType} (he : e.typeOf Γ = some τ) :
     (∃ d, e.eval r = .ok d ∧ d.HasType τ) ∨
-      (e.eval r = .error .divisionByZero ∧ e.divSafe = false) := by
-  induction e generalizing τ with
-  | lit v => cases he; exact .inl ⟨_, rfl, rfl⟩
-  | null σ => cases he; exact .inl ⟨_, rfl, trivial⟩
-  | col i => cases he; exact .inl ⟨_, rfl, hr i⟩
-  | unary op e ih =>
-    obtain ⟨τ₀, h₀, hop⟩ := Option.bind_eq_some_iff.mp he
-    rcases ih h₀ with ⟨d, hd, hdτ⟩ | ⟨hd, hs⟩
-    · obtain ⟨d', hd', hd'τ⟩ := evalUnOp_ok_of_typeOf hop hdτ
-      exact .inl ⟨d', by simp [eval_unary, hd, hd'], hd'τ⟩
-    · exact .inr ⟨by simp [eval_unary, hd], by simp [divSafe, hs]⟩
-  | binary op e₁ e₂ ih₁ ih₂ =>
-    obtain ⟨τ₁, h₁, he⟩ := Option.bind_eq_some_iff.mp he
-    obtain ⟨τ₂, h₂, hop⟩ := Option.bind_eq_some_iff.mp he
-    rcases ih₁ h₁ with ⟨a, ha, haτ⟩ | ⟨ha, hs⟩
-    · rcases ih₂ h₂ with ⟨b, hb, hbτ⟩ | ⟨hb, hs⟩
-      · rcases evalBinOp_ok_or_divisionByZero hop haτ hbτ with ⟨d, hd, hdτ⟩ | ⟨hd, hdiv, hzero⟩
-        · exact .inl ⟨d, by simp [eval_binary, ha, hb, hd], hdτ⟩
-        · refine .inr ⟨by simp [eval_binary, ha, hb, hd], ?_⟩
-          have hlit : e₂.isNonzeroIntLit = false := by
-            by_contra hlit
-            have := isZero_of_eval_of_isNonzeroIntLit (Bool.eq_true_of_not_eq_false hlit) r hb
-            simp [this] at hzero
-          simp [divSafe, hdiv, hlit]
-      · exact .inr ⟨by simp [eval_binary, ha, hb], by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp [eval_binary, ha], by simp [divSafe, hs]⟩
-  | inList e vs ih =>
-    obtain ⟨τ₀, h₀, hvs⟩ := Option.bind_eq_some_iff.mp he
-    split_ifs at hvs with hall
-    cases hvs
-    rcases ih h₀ with ⟨d, hd, hdτ⟩ | ⟨hd, hs⟩
-    · have hall : ∀ v ∈ vs, v.comparableWith τ₀ := by simpa using hall
-      obtain ⟨t, ht⟩ : ∃ t, d.inList vs = .ok t := by
-        refine Datum.exists_inList_eq_ok_iff.mpr fun v hv => CmpOp.exists_eval_eq_ok_iff.mpr ?_
-        have hc := hall v hv
-        match v, hc with
-        | none, _ => exact ⟨τ₀, τ₀, .refl _, hdτ, trivial⟩
-        | some w, hc => exact ⟨τ₀, w.type, by simpa [Datum.comparableWith] using hc, hdτ, rfl⟩
-      exact .inl ⟨_, by simp [eval_inList, hd, ht], Truth.toDatum_hasType t⟩
-    · exact .inr ⟨by simp [eval_inList, hd], by simp [divSafe, hs]⟩
-  | caseWhen c a b ihc iha ihb =>
-    obtain ⟨τ₀, ha, hcb⟩ := Option.bind_eq_some_iff.mp he
-    split_ifs at hcb with hcond
-    cases hcb
-    obtain ⟨hc, hb⟩ := hcond
-    rcases ihc hc with ⟨d, hd, hdτ⟩ | ⟨hd, hs⟩
-    · obtain ⟨t, ht⟩ := Datum.exists_toTruth_eq_ok_iff.mpr hdτ
-      have hct : c.evalTruth r = .ok t := by simp [evalTruth, hd, ht]
-      by_cases htt : t = .true
-      · rw [eval_caseWhen_of_true r (htt ▸ hct)]
-        rcases iha ha with h | ⟨hd', hs⟩
-        · exact .inl h
-        · exact .inr ⟨hd', by simp [divSafe, hs]⟩
-      · rw [eval_caseWhen_of_ne_true r hct htt]
-        rcases ihb hb with h | ⟨hd', hs⟩
-        · exact .inl h
-        · exact .inr ⟨hd', by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp [eval_caseWhen, hd], by simp [divSafe, hs]⟩
+      (e.eval r = .error .divisionByZero ∧ e.divSafe = false) :=
+  (eval_spec hr he).eq_ok_or_eq_error
 
 /-- A well-typed expression never raises a type error on a conforming row. -/
 theorem eval_ne_typeMismatch {Γ : Fin n → SqlType} {r : Row n} (hr : r.Conforms Γ)
-    {e : Expr n} {τ : SqlType} (he : e.typeOf Γ = some τ) : e.eval r ≠ .error .typeMismatch := by
-  rcases eval_ok_or_divisionByZero hr he with ⟨d, hd, -⟩ | ⟨hd, -⟩ <;> simp [hd]
+    {e : Expr n} {τ : SqlType} (he : e.typeOf Γ = some τ) : e.eval r ≠ .error .typeMismatch :=
+  (eval_spec hr he).ne_error (by simp)
 
 /-- The result of a well-typed expression on a conforming row has the expression's type. -/
 theorem hasType_of_eval_eq_ok {Γ : Fin n → SqlType} {r : Row n} (hr : r.Conforms Γ)
     {e : Expr n} {τ : SqlType} (he : e.typeOf Γ = some τ) {d : Datum} (h : e.eval r = .ok d) :
-    d.HasType τ := by
-  rcases eval_ok_or_divisionByZero hr he with ⟨d', hd', hd'τ⟩ | ⟨hd', -⟩
-  · rw [h, Except.ok.injEq] at hd'
-    exact hd' ▸ hd'τ
-  · simp [h] at hd'
+    d.HasType τ :=
+  (eval_spec hr he).of_eq_ok h
 
 /-- A well-typed `divSafe` expression succeeds on a conforming row, with a result of its type. -/
 theorem exists_eval_eq_ok_of_divSafe {Γ : Fin n → SqlType} {r : Row n} (hr : r.Conforms Γ)

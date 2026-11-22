@@ -261,28 +261,21 @@ private theorem bestAt_type {pick : Ordering} {κ σ : SqlType} :
 
 /-- The argument of an aggregate over conforming rows: all values of its type, or a division by
 zero. -/
-private theorem mapM_eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+private theorem mapM_eval_spec {Γ : Fin n → SqlType} {rs : List (Row n)}
     (hrs : ∀ r ∈ rs, r.Conforms Γ) {e : Expr n} {τ : SqlType} (he : e.typeOf Γ = some τ) :
-    (∃ ds, rs.mapM e.eval = .ok ds ∧ ∀ d ∈ ds, d.HasType τ) ∨
-      (rs.mapM e.eval = .error .divisionByZero ∧ e.divSafe = false) := by
-  rcases h : rs.mapM e.eval with err | ds
-  · obtain ⟨r, hr, herr⟩ := Except.exists_mem_eq_error_of_mapM_eq_error h
-    rcases Expr.eval_ok_or_divisionByZero (hrs r hr) he with ⟨d, hd, -⟩ | ⟨hd, hs⟩
-    · simp [hd] at herr
-    · rw [herr, _root_.Except.error.injEq] at hd
-      exact .inr ⟨by rw [hd], hs⟩
-  · refine .inl ⟨ds, rfl, fun d hd => ?_⟩
-    obtain ⟨r, hr, hrd⟩ := Except.exists_mem_eq_ok_of_mapM_eq_ok h hd
-    exact Expr.hasType_of_eval_eq_ok (hrs r hr) he hrd
+    Except.Spec (rs.mapM e.eval) (fun ds => ∀ d ∈ ds, d.HasType τ)
+      fun err => err = .divisionByZero ∧ e.divSafe = false :=
+  (Except.Spec.mapM fun r hr => Expr.eval_spec (hrs r hr) he).mono
+    (fun _ h d hd => by obtain ⟨_, _, h⟩ := h d hd; exact h) fun _ => id
 
-/-- Type soundness: over rows conforming to `Γ`, a well-typed aggregate call returns a datum of its
-type, or its argument divides by zero. -/
-theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+/-- Type soundness as a postcondition: over rows conforming to `Γ`, a well-typed aggregate call
+returns a datum of its type, or its argument divides by zero. -/
+theorem eval_spec {Γ : Fin n → SqlType} {rs : List (Row n)}
     (hrs : ∀ r ∈ rs, r.Conforms Γ) {a : AggCall n} {σ : SqlType} (ha : a.typeOf Γ = some σ) :
-    (∃ d, a.eval rs = .ok d ∧ d.HasType σ) ∨
-      (a.eval rs = .error .divisionByZero ∧ a.divSafe = false) := by
+    Except.Spec (a.eval rs) (·.HasType σ)
+      fun err => err = .divisionByZero ∧ a.divSafe = false := by
   cases a with
-  | countStar => cases ha; exact .inl ⟨_, rfl, rfl⟩
+  | countStar => cases ha; rfl
   | call fn dist e =>
     obtain ⟨τ, he, hfn⟩ : ∃ τ, e.typeOf Γ = some τ ∧ fn.ResultType τ σ := by
       cases fn <;> simp only [typeOf] at ha
@@ -293,22 +286,21 @@ theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
         all_goals first
           | (cases ha; exact ⟨_, ‹_›, by simp [AggFn.ResultType]⟩)
           | exact absurd ha (by simp)
-    rcases mapM_eval_ok_or_divisionByZero hrs he with ⟨ds, hds, hdτ⟩ | ⟨hds, hs⟩
-    · have hvs : ∀ v ∈ (if dist then (ds.filterMap id).dedup else ds.filterMap id), v.type = τ := by
-        intro v hv
-        have hv' : v ∈ ds.filterMap id := by split_ifs at hv <;> simp_all [List.mem_dedup]
-        obtain ⟨d, hd, rfl⟩ := List.mem_filterMap.mp hv'
-        exact hdτ (some v) (by simpa using hd)
-      obtain ⟨d, hd, hdσ⟩ := apply_type hvs hfn
-      exact .inl ⟨d, by simpa [eval, hds] using hd, hdσ⟩
-    · exact .inr ⟨by simp [eval, hds], hs⟩
+    refine (mapM_eval_spec hrs he).bind fun ds _ hdτ => ?_
+    have hvs : ∀ v ∈ (if dist then (ds.filterMap id).dedup else ds.filterMap id), v.type = τ := by
+      intro v hv
+      have hv' : v ∈ ds.filterMap id := by split_ifs at hv <;> simp_all [List.mem_dedup]
+      obtain ⟨d, hd, rfl⟩ := List.mem_filterMap.mp hv'
+      exact hdτ (some v) (by simpa using hd)
+    obtain ⟨d, hd, hdσ⟩ := apply_type hvs hfn
+    show Except.Spec (fn.apply (if dist then (ds.filterMap id).dedup else ds.filterMap id)) _ _
+    rw [hd]
+    exact hdσ
   | first e =>
-    rcases mapM_eval_ok_or_divisionByZero hrs ha with ⟨ds, hds, hdτ⟩ | ⟨hds, hs⟩
-    · refine .inl ⟨ds.head?.getD none, by simp [eval, hds, pure, Except.pure], ?_⟩
-      rcases ds with _ | ⟨d, ds⟩
-      · trivial
-      · exact hdτ d (by simp)
-    · exact .inr ⟨by simp [eval, hds], hs⟩
+    refine (mapM_eval_spec hrs ha).bind fun ds _ hdτ => ?_
+    rcases ds with _ | ⟨d, ds⟩
+    · trivial
+    · exact hdτ d (by simp)
   | atExtreme pick key e =>
     obtain ⟨κ, hk⟩ : ∃ κ, key.typeOf Γ = some κ := by
       simp only [typeOf] at ha
@@ -316,19 +308,26 @@ theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
     have he : e.typeOf Γ = some σ := by
       simp only [typeOf, hk] at ha
       split at ha <;> first | exact ha | exact absurd ha (by simp)
-    rcases mapM_eval_ok_or_divisionByZero hrs hk with ⟨ks, hks, hkτ⟩ | ⟨hks, hs⟩
-    · rcases mapM_eval_ok_or_divisionByZero hrs he with ⟨vs, hvs, hvτ⟩ | ⟨hvs, hs⟩
-      · obtain ⟨r, hr, hrt⟩ := bestAt_type (pick := pick) (ks.zip vs) none
-          (fun p hp => ⟨hkτ _ (List.of_mem_zip hp).1, hvτ _ (List.of_mem_zip hp).2⟩)
-          (fun _ _ h => by cases h)
-        refine .inl ⟨_, by simp only [eval, hks, hvs, hr, ok_bind]; rfl, ?_⟩
-        rcases r with _ | ⟨b, w⟩
-        · rcases hl : vs.getLast? with _ | d
-          · trivial
-          · exact hvτ d (List.mem_of_getLast? hl)
-        · exact (hrt b w rfl).2
-      · exact .inr ⟨by simp [eval, hks, hvs], by simp [divSafe, hs]⟩
-    · exact .inr ⟨by simp [eval, hks], by simp [divSafe, hs]⟩
+    refine ((mapM_eval_spec hrs hk).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun ks _ hkτ => ((mapM_eval_spec hrs he).imp_error fun hs => by simp [divSafe, hs]).bind
+      fun vs _ hvτ => ?_
+    obtain ⟨r, hr, hrt⟩ := bestAt_type (pick := pick) (ks.zip vs) none
+      (fun p hp => ⟨hkτ _ (List.of_mem_zip hp).1, hvτ _ (List.of_mem_zip hp).2⟩)
+      (fun _ _ h => by cases h)
+    rw [hr, Except.ok_bind]
+    rcases r with _ | ⟨b, w⟩
+    · rcases hl : vs.getLast? with _ | d
+      · simp
+      · simpa [hl] using hvτ d (List.mem_of_getLast? hl)
+    · exact (hrt b w rfl).2
+
+/-- Type soundness: over rows conforming to `Γ`, a well-typed aggregate call returns a datum of its
+type, or its argument divides by zero. -/
+theorem eval_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+    (hrs : ∀ r ∈ rs, r.Conforms Γ) {a : AggCall n} {σ : SqlType} (ha : a.typeOf Γ = some σ) :
+    (∃ d, a.eval rs = .ok d ∧ d.HasType σ) ∨
+      (a.eval rs = .error .divisionByZero ∧ a.divSafe = false) :=
+  (eval_spec hrs ha).eq_ok_or_eq_error
 
 /-- Evaluate a list of aggregate calls over a group: the row of results, or the first error. -/
 def evalAll : {a : ℕ} → (Fin a → AggCall n) → List (Row n) → Except EvalError (Row a)
@@ -338,24 +337,30 @@ def evalAll : {a : ℕ} → (Fin a → AggCall n) → List (Row n) → Except Ev
     let ds ← evalAll (fun i => as i.succ) rs
     return Matrix.vecCons d ds
 
-/-- Type soundness for a list of aggregate calls. -/
-theorem evalAll_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+/-- Type soundness for a list of aggregate calls, as a postcondition. -/
+theorem evalAll_spec {Γ : Fin n → SqlType} {rs : List (Row n)}
     (hrs : ∀ r ∈ rs, r.Conforms Γ) : ∀ {a : ℕ} {as : Fin a → AggCall n} {Δ : Fin a → SqlType},
     (∀ j, (as j).typeOf Γ = some (Δ j)) →
-    (∃ d, evalAll as rs = .ok d ∧ d.Conforms Δ) ∨
-      (evalAll as rs = .error .divisionByZero ∧ ∃ j, (as j).divSafe = false)
-  | 0, _, _, _ => .inl ⟨![], rfl, fun i => i.elim0⟩
+    Except.Spec (evalAll as rs) (·.Conforms Δ)
+      fun err => err = .divisionByZero ∧ ∃ j, (as j).divSafe = false
+  | 0, _, _, _ => fun i => i.elim0
   | a + 1, as, Δ, has => by
-    rcases eval_ok_or_divisionByZero hrs (has 0) with ⟨d, hd, hdτ⟩ | ⟨hd, hs⟩
-    · rcases evalAll_ok_or_divisionByZero hrs (as := fun i => as i.succ) (Δ := fun i => Δ i.succ)
-          (fun j => has j.succ) with ⟨ds, hds, hdsτ⟩ | ⟨hds, j, hs⟩
-      · refine .inl ⟨Matrix.vecCons d ds, by simp [evalAll, hd, hds, pure, Except.pure], ?_⟩
-        intro i
-        refine Fin.cases ?_ (fun j => ?_) i
-        · simpa using hdτ
-        · simpa using hdsτ j
-      · exact .inr ⟨by simp [evalAll, hd, hds], j.succ, hs⟩
-    · exact .inr ⟨by simp [evalAll, hd], 0, hs⟩
+    refine ((eval_spec hrs (has 0)).mono (fun _ => id) fun _ h => ⟨h.1, 0, h.2⟩).bind
+      fun d _ hdτ => ((evalAll_spec hrs (as := fun i => as i.succ) (Δ := fun i => Δ i.succ)
+        (fun j => has j.succ)).mono (fun _ => id) fun _ h =>
+          ⟨h.1, let ⟨j, hj⟩ := h.2; ⟨j.succ, hj⟩⟩).bind
+      fun ds _ hdsτ i => ?_
+    refine Fin.cases ?_ (fun j => ?_) i
+    · simpa using hdτ
+    · simpa using hdsτ j
+
+/-- Type soundness for a list of aggregate calls. -/
+theorem evalAll_ok_or_divisionByZero {Γ : Fin n → SqlType} {rs : List (Row n)}
+    (hrs : ∀ r ∈ rs, r.Conforms Γ) {a : ℕ} {as : Fin a → AggCall n} {Δ : Fin a → SqlType}
+    (has : ∀ j, (as j).typeOf Γ = some (Δ j)) :
+    (∃ d, evalAll as rs = .ok d ∧ d.Conforms Δ) ∨
+      (evalAll as rs = .error .divisionByZero ∧ ∃ j, (as j).divSafe = false) :=
+  (evalAll_spec hrs has).eq_ok_or_eq_error
 
 end AggCall
 
