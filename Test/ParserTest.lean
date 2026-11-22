@@ -35,6 +35,15 @@ def testParseFail (name : String) (sql : String) : TestResult :=
   | .ok _ => .fail name "Expected parse to fail but it succeeded"
   | .error _ => .pass name
 
+/-- Parsing fails with a message containing `needle`, so the test pins the
+    rejection it means rather than any parse error. -/
+def testParseFailWith (name : String) (needle : String) (sql : String) : TestResult :=
+  match parse sql with
+  | .ok _ => .fail name "Expected parse to fail but it succeeded"
+  | .error e =>
+    if (e.splitOn needle).length > 1 then .pass name
+    else .fail name s!"Failed with an unexpected message: {e}"
+
 -- ============================================================================
 -- Basic SELECT Tests
 -- ============================================================================
@@ -305,7 +314,34 @@ def windowParserTests : List TestResult := [
   testParseFail "window_distinct_rejected"
     "SELECT SUM(DISTINCT age) OVER () FROM users",
   testParseFail "window_ranking_takes_no_args"
-    "SELECT ROW_NUMBER(age) OVER (ORDER BY age) FROM users"
+    "SELECT ROW_NUMBER(age) OVER (ORDER BY age) FROM users",
+  -- #421: a window function in a grouped or aggregate query is not evaluated
+  -- yet (it was a silent NULL), so the shape is rejected
+  testParseFailWith "window_in_grouped_query_rejected" "(#421)"
+    "SELECT department, SUM(age) OVER () AS r FROM users GROUP BY department",
+  testParseFailWith "window_with_partition_in_grouped_query_rejected" "(#421)"
+    "SELECT department, ROW_NUMBER() OVER (PARTITION BY department ORDER BY department) AS r FROM users GROUP BY department",
+  testParseFailWith "window_next_to_aggregate_rejected" "(#421)"
+    "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS r FROM users",
+  testParseFailWith "window_with_having_rejected" "(#421)"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
+  testParseFailWith "window_over_aggregate_argument_rejected" "(#421)"
+    "SELECT SUM(SUM(age)) OVER () AS r FROM users",
+  testParseFailWith "window_over_aggregate_order_key_rejected" "(#421)"
+    "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
+  testParseFailWith "window_under_operator_in_grouped_query_rejected" "(#421)"
+    "SELECT department, SUM(COUNT(*)) OVER () + 1 AS r FROM users GROUP BY department",
+  testParseFailWith "window_in_grouped_order_by_rejected" "(#421)"
+    "SELECT department FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department)",
+  -- …but windows stay accepted outside grouped/aggregate SELECTs
+  testParse "window_in_plain_order_by_accepted"
+    "SELECT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age)",
+  testParse "window_in_from_subquery_of_grouped_query_accepted"
+    "SELECT department, COUNT(*) AS c FROM (SELECT department, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users) t GROUP BY department",
+  testParse "window_next_to_scalar_subquery_aggregate_accepted"
+    "SELECT name, (SELECT MAX(age) FROM users) AS m, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
+  testParse "window_in_where_subquery_of_grouped_query_accepted"
+    "SELECT department FROM users WHERE id IN (SELECT ROW_NUMBER() OVER (ORDER BY age) FROM users) GROUP BY department"
 ]
 
 -- ============================================================================
