@@ -189,6 +189,37 @@ theorem elab_compound_shape (N : NamedSchema) {l r : SqlEquiv.Query} {op : SqlEq
   · cases op <;> simp only [pure, Except.pure, Except.ok.injEq] at hraw <;>
       simpa [setOpQuery] using hraw.symm
 
+/-- **One set operation, on evaluated branches.** If both branches' rows are related up to order
+    to two untyped tables, the typed operator's rows are related, up to order, to `SqlEquiv`'s
+    `applySetOp` of them, whatever names it renames the right branch to. Used for statements
+    (`compound_rel`) and for subquery bodies under an outer row (`SqlBridge.CorrectSub`, #410). -/
+theorem setOpQuery_rel {S : DbSchema} {D : Database S} (hD : D.Conforms) {n : ℕ}
+    {ql qr : Query S n} {Γ : Fin n → SqlType} (hΓl : ql.typeOf = some Γ)
+    (hΓr : qr.typeOf = some Γ) {rs ss : List (Row n)} (hrs : ql.eval D = .ok rs)
+    (hss : qr.eval D = .ok ss) {l r : List SqlEquiv.Row} (h₁ : PermRel rs l) (h₂ : PermRel ss r)
+    (op : SqlEquiv.SetOp) (names : Option (List String)) :
+    ∃ ts, (setOpQuery op ql qr).eval D = .ok ts ∧
+      PermRel ts (SqlEquiv.applySetOp op names l r) := by
+  have hc₁ := Query.conforms_of_eval_eq_ok hD hΓl hrs
+  have hc₂ := Query.conforms_of_eval_eq_ok hD hΓr hss
+  cases op <;> simp only [setOpQuery]
+  · -- UNION
+    refine ⟨(rs ++ ss).dedup, by simp [Query.eval_distinct, Query.eval_unionAll, hrs, hss,
+      pure, Except.pure, bind, Except.bind], ?_⟩
+    exact permRel_dedup (permRel_append h₁ h₂ _) fun x hx =>
+      (List.mem_append.mp hx).elim (hc₁ x) (hc₂ x)
+  · -- UNION ALL
+    exact ⟨rs ++ ss, by simp [Query.eval_unionAll, hrs, hss, pure, Except.pure, bind,
+      Except.bind], permRel_append h₁ h₂ _⟩
+  · -- INTERSECT
+    refine ⟨Row.setOp true rs ss, by simp [Query.eval_intersect, hrs, hss, pure, Except.pure,
+      bind, Except.bind], ?_⟩
+    simpa [SqlEquiv.applySetOp] using permRel_setOp true h₁ h₂ hc₁ hc₂
+  · -- EXCEPT
+    refine ⟨Row.setOp false rs ss, by simp [Query.eval_difference, hrs, hss, pure, Except.pure,
+      bind, Except.bind], ?_⟩
+    simpa [SqlEquiv.applySetOp] using permRel_setOp false h₁ h₂ hc₁ hc₂
+
 /-- A parsed query and its elaboration are related: the typed query evaluates, and its rows
     are `SqlEquiv`'s up to their order. -/
 def QueryRel {N : NamedSchema} (D : Database N.S) (db : SqlEquiv.Database)
@@ -209,28 +240,8 @@ theorem compound_rel (N : NamedSchema) {D : Database N.S} (hD : D.Conforms)
   refine ⟨_, _, hl, hr, ?_, ?_⟩
   · cases op <;> simp only [setOpQuery, QNoBoolOrder] <;> exact id
   rintro ⟨rs, hrs, h₁⟩ ⟨ss, hss, h₂⟩
-  have hc₁ := Query.conforms_of_eval_eq_ok hD hΓl hrs
-  have hc₂ := Query.conforms_of_eval_eq_ok hD hΓr hss
-  dsimp only at hrs hss hc₁ hc₂ ⊢
-  unfold QueryRel
-  rw [SqlEquiv.evalQuery_compound]
-  cases op <;> simp only [setOpQuery]
-  · -- UNION
-    refine ⟨(rs ++ ss).dedup, by simp [Query.eval_distinct, Query.eval_unionAll, hrs, hss,
-      pure, Except.pure, bind, Except.bind], ?_⟩
-    exact permRel_dedup (permRel_append h₁ h₂ _) fun x hx =>
-      (List.mem_append.mp hx).elim (hc₁ x) (hc₂ x)
-  · -- UNION ALL
-    exact ⟨rs ++ ss, by simp [Query.eval_unionAll, hrs, hss, pure, Except.pure, bind,
-      Except.bind], permRel_append h₁ h₂ _⟩
-  · -- INTERSECT
-    refine ⟨Row.setOp true rs ss, by simp [Query.eval_intersect, hrs, hss, pure, Except.pure,
-      bind, Except.bind], ?_⟩
-    simpa [SqlEquiv.applySetOp] using permRel_setOp true h₁ h₂ hc₁ hc₂
-  · -- EXCEPT
-    refine ⟨Row.setOp false rs ss, by simp [Query.eval_difference, hrs, hss, pure, Except.pure,
-      bind, Except.bind], ?_⟩
-    simpa [SqlEquiv.applySetOp] using permRel_setOp false h₁ h₂ hc₁ hc₂
+  obtain ⟨ts, hts, hrel⟩ := setOpQuery_rel hD hΓl hΓr hrs hss h₁ h₂ op (SqlEquiv.Query.outputNames? l)
+  exact ⟨ts, hts, by rw [SqlEquiv.evalQuery_compound]; exact hrel⟩
 
 /-- A tree of set operations over leaves of a given class. -/
 inductive SetOpTree (leaf : SqlEquiv.Query → Prop) : SqlEquiv.Query → Prop
