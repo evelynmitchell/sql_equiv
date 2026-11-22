@@ -214,10 +214,11 @@ theorem elabFrom_congr (N : NamedSchema) (sub sub' : SqlEquiv.SubQuery → ElabM
 
 /-- So a plain statement of the fragment elaborates the same with any fuel. -/
 theorem elabSelectF_fuel (N : NamedSchema) (a b : ℕ) {items : List SqlEquiv.SelectItem}
-    {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} (hff : fromFragment f = true)
+    {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} {groupBy : List SqlEquiv.Expr}
+    {having : Option SqlEquiv.Expr} (hff : fromFragment f = true)
     (hw : ∀ w ∈ wh, isFragment w = true) :
-    elabSelectF N a (.mk false items (some f) wh [] none [] none none) =
-      elabSelectF N b (.mk false items (some f) wh [] none [] none none) := by
+    elabSelectF N a (.mk false items (some f) wh groupBy having [] none none) =
+      elabSelectF N b (.mk false items (some f) wh groupBy having [] none none) := by
   rw [elabSelectF, elabSelectF]
   conv_lhs => rw [elabFrom_congr N _ (fun sq => elabSubQuery N 15 sq) f hff]
   conv_rhs => rw [elabFrom_congr N _ (fun sq => elabSubQuery N 15 sq) f hff]
@@ -832,8 +833,8 @@ theorem whereOk_attach {S : DbSchema} {n : ℕ} (cf : Fin n → Column) (fold : 
       hc d hd
     exact hctx Γ τ hqfT (hnb.2.1 _ hattT) r u hru hc d vn hvn hrn hcx dp hdp
 
-/-- The subquery bodies of steps 6b and 6c: a statement of `elabStmt_correct_join` or of
-    `elabStmt_correct_agg`, without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+/-- The subquery bodies of steps 6b and 6c: a statement of `elabStmt_correct_join`, of
+    `elabStmt_correct_agg`, or a grouped one, without `ORDER BY`, `LIMIT` or `OFFSET`. -/
 inductive BodyOk : SqlEquiv.SelectStmt → Prop
   | plain {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
       {wh : Option SqlEquiv.Expr} (hit : itemsFragment items = true)
@@ -843,6 +844,19 @@ inductive BodyOk : SqlEquiv.SelectStmt → Prop
       {wh : Option SqlEquiv.Expr} (hai : CorrectAgg.aggItems items = true) (hne : items ≠ [])
       (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
       BodyOk (.mk false items (some f) wh [] none [] none none)
+  /-- A grouped body (#409): a statement of `elabStmt_correct_grouped_ctx` whose item columns are
+      all keys, without an `AVG` item (related only up to rounding, which a membership test could
+      tell apart) or an `AVG` comparison in `HAVING`. -/
+  | grouped {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
+      {wh : Option SqlEquiv.Expr} {groupBy : List SqlEquiv.Expr} {having : Option SqlEquiv.Expr}
+      (hgi : CorrectGrouped.groupedItems items = true)
+      (hna : ∀ it ∈ items, CorrectAvg.avgFragment (itemExpr it) = false)
+      (hgb : groupBy ≠ []) (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c)
+      (hkeys : ∀ c ∈ CorrectGroup.colRefs items, SqlEquiv.Expr.col c ∈ groupBy)
+      (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true)
+      (hhv : ∀ h ∈ having, CorrectGroup.havingFragment groupBy h = true)
+      (hhn : ∀ h ∈ having, CorrectGroup.hasCmpAvg h = false) :
+      BodyOk (.mk false items (some f) wh groupBy having [] none none)
 
 /-- Such a body, elaborated as a subquery, is safe, evaluates, and its rows relate to the rows
     `SqlEquiv` computes for it under every outer row. -/
@@ -874,6 +888,18 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
     obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn
       hfix hD hrel hai hne hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hst hnbq
     exact ⟨hs, ss, hss, hctx'⟩
+  | @grouped items f wh groupBy having hgi hna hgb hgc hkeys hff hw hhv hhn =>
+    have hst : elabStmt N (CorrectGrouped.groupedStmt items f wh groupBy having [] none none) =
+        .ok ⟨1, rq, rc⟩ := by
+      rw [elabSubQuery] at hsub
+      simp only [CorrectGrouped.groupedStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
+      rw [elabSelectF_fuel N 16 14 hff hw, hsub]
+      simp [hty, bind, Except.bind, pure, Except.pure]
+    obtain ⟨hs, ss, hss, hctx'⟩ := CorrectGrouped.elabStmt_correct_grouped_ctx N hfold hfoldCI hwn
+      hfix hD hrel hgi hgb hgc hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hhv
+      (CorrectGrouped.havingAvgOk_of_noAvg hhn) (by simp) (.inl hkeys) (by simp) hst hnbq
+    exact ⟨hs, ss, hss, fun ctx => (hctx' ctx).imp fun _ _ h =>
+      CorrectGrouped.outRel_of_outRelI hna h⟩
 
 /-- The typed value of `e [NOT] IN (vals)` is a truth value. -/
 theorem inExpr_hasType {n : ℕ} {neg : Bool} {e' : Expr n} {vals : List Datum} {r : Row n}
