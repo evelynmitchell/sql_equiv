@@ -14,7 +14,9 @@
   aggregates, literals, comparisons, `AND`, `OR`, `NOT`, ordered by such aggregates with an
   optional `LIMIT`/`OFFSET`, no output name able to capture `SqlEquiv`'s sort-key columns, and
   item columns that are not grouped (bare columns, registry T9) when no `MIN`/`MAX` is written
-  (`SqlBridge/CorrectGrouped.lean`, `elabStmt_correct_grouped`). `outsideFragment stmt` lists the features that put a parsed
+  (`SqlBridge/CorrectGrouped.lean`, `elabStmt_correct_grouped`); or `SELECT COUNT(*), … FROM (sq)`
+  without `WHERE` over a subquery body, set operations included (`SqlBridge/CorrectDerived.lean`,
+  `elabStmt_correct_countDerived`, #412). `outsideFragment stmt` lists the features that put a parsed
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
@@ -173,6 +175,20 @@ def holeSplit : Expr → Option (List Expr × Option Expr × Expr)
   | .subquery (.simple b) => some ([], none, .subquery (.simple b))
   | _ => none
 
+/-- Whether the `FROM` clause is a derived table. `selectFeatures` admits one under `COUNT(*)`
+    items at the top of a statement (#412); a subquery body or a set-operation branch with one
+    is outside (`BodyOk` and `Leaf` take `FROM` trees of tables). -/
+def derivedFrom (s : SelectStmt) : Bool :=
+  match s.fromClause with
+  | some (.subquery _ _) => true
+  | _ => false
+
+/-- Whether a subquery body or a set-operation branch has a subquery of its own: a derived table,
+    or a subquery node in `WHERE` that `selectFeatures` admits at the top of a statement. Both
+    are outside (`BodyOk` and `Leaf` take `FROM` trees of tables and fragment `WHERE`s). -/
+def nestedSub (s : SelectStmt) : Bool :=
+  derivedFrom s || s.whereClause.any fun w => (holeSplit w).isSome
+
 mutual
 
 /-- Features of a `HAVING` predicate in the fragment: those of its aggregates' arguments. -/
@@ -293,8 +309,15 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     | .star none => if starOk then [] else [star]
     | .star (some _) => [star]
     | .exprItem e _ => exprFeatures e) ++
+  -- a derived table under `COUNT(*)` items only, without `WHERE` (#412,
+  -- `SqlBridge.CorrectDerived.elabStmt_correct_countDerived`): inside when the body is one of an
+  -- `IN` body's (`SubBodyOk`); `COUNT(*)` does not see the body's row order
   (match s.fromClause with
    | none => [noFrom]
+   | some (.subquery sq _) =>
+     if plainAggOf s && s.whereClause.isNone &&
+         s.items.all (fun | .exprItem .countStar _ => true | _ => false)
+     then inBodyFeatures sq else [subquery]
    | some f => fromFeatures f) ++
   -- a `WHERE` with one subquery node (steps 6b and 6c, `SqlBridge.CorrectSub.SubWhere`) on a
   -- plain outer query, under plain `DISTINCT`, or under aggregates without `GROUP BY`
@@ -345,7 +368,7 @@ partial def bodyFeatures (avgOk : Bool) (b : SelectStmt) : List String :=
   selectFeatures b ++
   -- a body keeps `itemsFragment`: under the outer row `SqlEquiv`'s `*` returns its columns too
   (if b.items.any (fun | .star _ => true | _ => false) then [star] else []) ++
-  (if b.distinct ||
+  (if b.distinct || nestedSub b ||
       (if b.groupBy.isEmpty && b.having.isNone then
         b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
           !plainAggOf b && !avgOk
@@ -369,7 +392,7 @@ partial def branchFeatures (s : SelectStmt) : List String :=
   let bareNoGroup := !s.distinct && s.groupBy.isEmpty &&
     s.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
     s.items.any (fun | .exprItem (.col _) _ => true | _ => false)
-  selectFeatures s ++
+  selectFeatures s ++ (if nestedSub s then [subquery] else []) ++
     (if !s.orderBy.isEmpty || s.limitVal.isSome || s.offsetVal.isSome || hasAvg || bareNoGroup ||
         s.having.any hasCmpAvgOk
      then [setOpBranch] else [])
