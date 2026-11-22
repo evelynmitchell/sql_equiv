@@ -88,6 +88,11 @@ def corpus : List (String × Expect) := [
   ("SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id", .agree),
   ("SELECT u.name, o.amount FROM users u INNER JOIN orders o ON u.id = o.user_id WHERE o.amount > 100", .agree),
   ("SELECT * FROM users u JOIN orders o ON u.id = o.user_id", .agree),
+  -- `*` next to other items, under WHERE, over a cross join and in a set operation (#407)
+  ("SELECT name, *, age FROM users WHERE age > 25", .agree),
+  ("SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount > 100 AND u.age > 20", .agree),
+  ("SELECT * FROM users CROSS JOIN products", .agree),
+  ("SELECT * FROM users WHERE age > 28 UNION SELECT * FROM users WHERE department = 'Sales'", .agree),
   ("SELECT u.name, p.name FROM users u CROSS JOIN products p", .agree),
   ("SELECT o.product, p.price FROM orders o JOIN products p ON o.product = p.name", .agree),
   -- set operations

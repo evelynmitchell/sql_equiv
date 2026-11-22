@@ -91,8 +91,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     operands (`QNoBoolOrder`: the typed core orders `false < true`, `SqlEquiv` does not order
     booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
   - [x] Elaborator correctness roadmap (#352, closed 2026-11-22 at 512 of the 520 elaborated
-    Spider queries), below. The eight left continue in #407 and #409 to #413 (#409 to #411
-    done, 2026-11-22: 516)
+    Spider queries), below. The eight left continue in #407 and #409 to #413 (#407 and #409
+    to #411 done, 2026-11-22: 518)
     - [x] Step 0: case-folding schemas (#351)
     - [x] Step 1: `ORDER BY` column keys, `LIMIT`, `OFFSET`: `SqlBridge/CorrectOrder.lean`,
       `elabStmt_correct_ordered`. Spider coverage **113**, up from 64
@@ -259,16 +259,17 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | `LIKE` (done) | 512 |
 | `IN` / `NOT IN` and scalar subqueries with a grouped body (#409, done) | 513 |
 | `IN` / `NOT IN` with a set-operation body (#410, done) | 514 |
-| Today: subquery bodies with `ORDER BY … LIMIT`, plain and grouped (#411, done) | 516 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 517 |
+| Subquery bodies with `ORDER BY … LIMIT`, plain and grouped (#411, done) | 516 |
+| Today: `SELECT *` (#407, done) | 518 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 519 |
 
-Still outside after that: a subquery in `FROM` (1), `*` (2).
+Still outside after that: a subquery in `FROM` (1).
 
 #352 was closed on 2026-11-22 with eight queries outside. Each has an issue:
 
 | Issue | Queries | What |
 |---|---:|---|
-| #407 | 2 | `SELECT *` |
+| #407 (done) | 2 | `SELECT *`. `itemsStar` admits fragment items and `*` (not `t.*`) anywhere in the list; `elabStmt_correct_star` relates `SELECT … FROM f [WHERE p] [LIMIT n] [OFFSET m]` with such items: the elaborator expands `*` to the `FROM` scope's columns in order, `SqlEquiv` returns the source row, which has exactly those columns in that order (`KeyedRow`), and `OutRel` compares by position (`star_items_rel`). `elabStmt_correct_join` takes `itemsStar` (with `ORDER BY` its items must be named, so star-free), and so does `Leaf.plain`, which brings in the `UNION` query. The other theorems keep `itemsFragment`: under an outer row `SqlEquiv`'s `*` returns the outer columns too, so `*` stays outside subquery bodies (and `DISTINCT`, `GROUP BY`, `ORDER BY`, a subquery `WHERE`) |
 | #409 (done) | 1 | `IN` / `NOT IN` with a grouped body. The grouped theorem now concludes under every outer row (`elabStmt_correct_grouped_ctx`: `SqlEquiv`'s grouped path has the same closed form on source rows `row ++ ctx`, for any `ORDER BY`), and `BodyOk.grouped` admits a body whose item columns are all keys, without an `AVG` item or an `AVG` comparison in `HAVING`; no `ORDER BY` or `LIMIT` in the body |
 | #410 (done) | 1 | `IN` / `NOT IN` with a set-operation body. `SubBodyOk` takes `UNION [ALL]`, `INTERSECT` and `EXCEPT` over `BodyOk` bodies, nested; `subBody_ctx` relates such a body under every outer row up to row order (`CorrectSetOp.setOpQuery_rel`), and `inExpr_eval_perm` shows membership does not see the order. A set operation as a scalar subquery stays outside: its value is the first row |
 | #411 (done) | 2 | A scalar subquery with an `ORDER BY … LIMIT 1` body (one plain, one grouped). Under an outer row `SqlEquiv` sorts each projected row next to its source row with the outer row stripped (`evalSelectCore_project_ordered_ctx`); since every column the typed row resolves is found before the outer row (`Found`), lookups and projections read the same (`rowRel_strip`, `projRow_append`), and `elabStmt_correct_join_ctx` now concludes under every outer row with `ORDER BY` and `LIMIT` (`finish_rel_ctx`). The grouped theorem already did (#409). `BodyOk.plain` and `BodyOk.grouped` take `ORDER BY` and `LIMIT` / `OFFSET`, for `IN` bodies too. Ties: both evaluators sort stably over rows related in order, so the row `LIMIT 1` picks is the same |
