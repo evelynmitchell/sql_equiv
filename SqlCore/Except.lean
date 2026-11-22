@@ -189,7 +189,7 @@ variable {P P' : α → Prop} {Q : β → Prop} {E E' : ε → Prop}
 
 /-- `Spec x P E`: `x` succeeds with a result satisfying `P`, or fails with an error satisfying
 `E`. Specifications of the steps of a `do` block compose by `Except.Spec.bind`. -/
-def Spec (x : Except ε α) (P : α → Prop) (E : ε → Prop) : Prop :=
+@[expose] def Spec (x : Except ε α) (P : α → Prop) (E : ε → Prop) : Prop :=
   match x with
   | .ok a => P a
   | .error e => E e
