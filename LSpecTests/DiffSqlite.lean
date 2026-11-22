@@ -27,8 +27,8 @@
   - Row 21, a comparison followed by IN / BETWEEN / LIKE (`a = b IN (c)`):
     sqlite reads `(a = b) IN (c)`; we read `a = (b IN (c))` in every dialect,
     as DuckDB and Postgres do, and reject the chains they reject
-    (`1 < 2 = TRUE`, `a LIKE b IN (c)`), which sqlite accepts (#400; open for
-    the sqlite dialect). Pinned by the `prec_row21_*` and `prec_*_rejected`
+    (`1 < 2 = TRUE`, `a LIKE b IN (c)`), which sqlite accepts (#400; decided:
+    documented, not changed). Pinned by the `prec_row21_*` and `prec_*_rejected`
     unit tests; DiffDuckdb and DiffPostgres check the grouping.
   - Row 17, AVG/SUM over TEXT: sqlite converts each string to a number (its
     numeric prefix, else 0); we raise a type error, as DuckDB and Postgres do.
