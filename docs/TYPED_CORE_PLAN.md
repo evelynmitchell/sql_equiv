@@ -89,7 +89,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     operands (`QNoBoolOrder`: the typed core orders `false < true`, `SqlEquiv` does not order
     booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
   - [x] Elaborator correctness roadmap (#352, closed 2026-11-22 at 512 of the 520 elaborated
-    Spider queries), below. `SELECT *` continues in #407
+    Spider queries), below. The eight left continue in #407 and #409 to #413
     - [x] Step 0: case-folding schemas (#351)
     - [x] Step 1: `ORDER BY` column keys, `LIMIT`, `OFFSET`: `SqlBridge/CorrectOrder.lean`,
       `elabStmt_correct_ordered`. Spider coverage **113**, up from 64
@@ -259,9 +259,16 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 Still outside after that: `IN`/`NOT IN` and scalar subqueries (5: 2 over
 `ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `*` (2).
 
-#352 was closed on 2026-11-22 with these eight queries outside. `SELECT *` (2) is tracked in
-#407. The five subquery queries and the `DISTINCT` one have no issue of their own; #352's final
-body lists each with what it would need.
+#352 was closed on 2026-11-22 with these eight queries outside. Each has an issue:
+
+| Issue | Queries | What |
+|---|---:|---|
+| #407 | 2 | `SELECT *` |
+| #409 | 1 | `IN` / `NOT IN` with a grouped body |
+| #410 | 1 | `IN` / `NOT IN` with a set-operation body |
+| #411 | 2 | A scalar subquery with an `ORDER BY … LIMIT 1` body (one plain, one grouped) |
+| #412 | 1 | A subquery in `FROM` (over a set operation) |
+| #413 | 1 | `DISTINCT` with an unselected sort key and `LIMIT`; left outside by decision, recorded so it can be revisited |
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
 does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are
