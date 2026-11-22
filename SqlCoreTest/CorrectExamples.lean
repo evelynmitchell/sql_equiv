@@ -162,20 +162,30 @@ def setOpShape : SqlEquiv.Stmt → Bool
   | .query q => setOpTreeShape q
   | _ => false
 
-/-- `SqlBridge.CorrectSub.BodyOk`: a statement of `elabStmt_correct_join`, of
-    `elabStmt_correct_agg`, or a grouped one (#409: item columns all keys, no `AVG` item or `AVG`
-    comparison in `HAVING`), without `ORDER BY`, `LIMIT` or `OFFSET`. -/
+/-- `SqlBridge.CorrectSub.BodyOk`: a statement of `elabStmt_correct_join` (with `ORDER BY`
+    columns and `LIMIT` / `OFFSET`, #411), of `elabStmt_correct_agg` (without them), or a
+    grouped one (#409: item columns all keys, no `AVG` item or `AVG` comparison in `HAVING`;
+    `ORDER BY` and `LIMIT` as the grouped theorem takes them, #411). -/
 def bodyOkB : SqlEquiv.SelectStmt → Bool
   | .mk false items (some f) wh [] none [] none none =>
     (itemsFragment items || (aggItems items && !items.isEmpty)) && fromFragment f &&
       wh.all isFragment
-  | .mk false items (some f) wh groupBy having [] none none =>
+  | .mk false items (some f) wh [] none orderBy _ _ =>
+    -- #411: a plain body with `ORDER BY` columns and `LIMIT` / `OFFSET`
+    itemsFragment items && fromFragment f && wh.all isFragment &&
+      orderBy.all (fun o => match o.expr with | .col _ => true | _ => false) &&
+      (orderBy.isEmpty || itemsNamed items)
+  | .mk false items (some f) wh groupBy having orderBy _ _ =>
     !groupBy.isEmpty && CorrectGrouped.groupedItems items &&
       items.all (fun it => !CorrectAvg.avgFragment (itemExpr it)) &&
       groupBy.all (fun | .col _ => true | _ => false) &&
       (CorrectGroup.colRefs items).all (fun c => groupBy.contains (.col c)) && fromFragment f &&
       wh.all isFragment && having.all (CorrectGroup.havingFragment groupBy) &&
-      having.all (fun h => !CorrectGroup.hasCmpAvg h)
+      having.all (fun h => !CorrectGroup.hasCmpAvg h) &&
+      -- #411: `ORDER BY` aggregates or uncaptured key columns, `LIMIT` / `OFFSET`
+      orderBy.all (fun o => aggFragment o.expr || keyColB items groupBy o.expr) &&
+      (orderBy.isEmpty || items.all (fun it => decide ('.' ∉ (outName it).toList) &&
+        !"__group_orderkey_".toList.isPrefixOf (outName it).toLower.toList))
   | _ => false
 
 /-- `SqlBridge.CorrectSub.NodeOk` (sqlite assumed, for the scalar node). -/
@@ -737,7 +747,7 @@ def inSubSpider (sql : String) : Bool :=
 #guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song) " ++
   "ORDER BY name LIMIT 2")
 -- outside `inSubShape`: an aggregate or DISTINCT outer query (their own shapes), and a body
--- that is not a `BodyOk` statement (DISTINCT, GROUP BY, LIMIT, a set operation)
+-- that is not a `BodyOk` statement (DISTINCT, an aggregate body with LIMIT)
 #guard inSubSpider ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++
   "(SELECT singer_id FROM song)")
 -- step 6c: the node on either side of `AND`, over a body of aggregates, and scalar subqueries
@@ -766,8 +776,24 @@ def inSubSpider (sql : String) : Bool :=
 #guard !inSubSpider "SELECT name FROM singer WHERE 1.5 > (SELECT avg(age) FROM singer)"
 #guard !inSubSpider "SELECT name FROM singer WHERE age > (SELECT avg(DISTINCT age) FROM singer)"
 #guard !inSubSpider "SELECT name FROM singer WHERE age IN (SELECT avg(age) FROM singer)"
-#guard !inSubSpider ("SELECT name FROM singer WHERE age = " ++
+-- #411: a body that picks a row with `ORDER BY … LIMIT 1`: plain (the key need not be
+-- selected) or grouped (ordered by an aggregate), as in Spider's car_1 and dog_kennels
+#guard inSubSpider ("SELECT name FROM singer WHERE age = " ++
   "(SELECT age FROM singer ORDER BY age LIMIT 1)")
+#guard inSubSpider ("SELECT name FROM singer WHERE age > " ++
+  "(SELECT age FROM singer ORDER BY singer_id DESC LIMIT 1)")
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id = " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY count(*) ASC LIMIT 1)")
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song ORDER BY title LIMIT 2 OFFSET 1)")
+-- outside: a sort key that is an expression, an aggregate body with `LIMIT`, a grouped body
+-- sorted by an `AVG`
+#guard !inSubSpider ("SELECT name FROM singer WHERE age = " ++
+  "(SELECT age FROM singer ORDER BY age + 1 LIMIT 1)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE age = " ++
+  "(SELECT max(age) FROM singer LIMIT 1)")
+#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id = " ++
+  "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY avg(singer_id) LIMIT 1)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE age > 20 OR singer_id NOT IN " ++
   "(SELECT singer_id FROM song)")
 #guard !inSubSpider "SELECT count(*) FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)"
@@ -805,12 +831,13 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song WHERE title = 'x' GROUP BY singer_id HAVING max(title) >= 'a')")
 #guard inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
   "(SELECT count(*) FROM song GROUP BY singer_id)")
--- outside: a grouped body with `ORDER BY` or `LIMIT`, a bare (non-key) column, an `AVG` item,
--- an `AVG` comparison in `HAVING`, or `HAVING` without `GROUP BY`
-#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+-- with `ORDER BY` or `LIMIT` too, since #411
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY count(*))")
-#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song GROUP BY singer_id LIMIT 1)")
+-- outside: a bare (non-key) column, an `AVG` item, an `AVG` comparison in `HAVING`, or
+-- `HAVING` without `GROUP BY`
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song GROUP BY title)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE age IN " ++
@@ -819,7 +846,8 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song GROUP BY singer_id HAVING avg(singer_id) > 1)")
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT max(singer_id) FROM song HAVING count(*) > 1)")
-#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
+-- a plain body with `LIMIT` (#411)
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song LIMIT 1)")
 -- a correlated subquery has the shape but does not elaborate
 #guard !inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
@@ -852,7 +880,13 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song GROUP BY singer_id HAVING avg(singer_id) > 1)") ==
   [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY count(*))") != []
+  "(SELECT singer_id FROM song GROUP BY singer_id ORDER BY count(*))") == []
+#guard featuresSqlite ("SELECT count(*) FROM singer WHERE age > " ++
+  "(SELECT age FROM singer ORDER BY singer_id DESC LIMIT 1)") == []
+#guard featuresSqlite ("SELECT name FROM singer WHERE age = " ++
+  "(SELECT age FROM singer ORDER BY age + 1 LIMIT 1)") != []
+#guard featuresSqlite ("SELECT name FROM singer WHERE age = " ++
+  "(SELECT max(age) FROM singer LIMIT 1)") != []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 OR singer_id NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++

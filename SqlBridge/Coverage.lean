@@ -332,11 +332,12 @@ partial def selectFeatures (s : SelectStmt) : List String :=
 
 /-- Features of a subquery body (`SqlBridge.CorrectSub.BodyOk`) outside the fragment: its own,
     and `subquery` unless it is a plain statement, one of aggregates only (or, under a scalar
-    comparison, one `AVG`: `avgOk`), or a grouped one (`groupedBodyOf`), without `DISTINCT`,
-    `ORDER BY`, `LIMIT` or `OFFSET`. -/
+    comparison, one `AVG`: `avgOk`), or a grouped one (`groupedBodyOf`), without `DISTINCT`.
+    A plain or grouped body may have `ORDER BY` and `LIMIT` / `OFFSET` (#411); its own features
+    say whether its sort keys are in the fragment. -/
 partial def bodyFeatures (avgOk : Bool) (b : SelectStmt) : List String :=
   selectFeatures b ++
-  (if b.distinct || !b.orderBy.isEmpty || b.limitVal.isSome || b.offsetVal.isSome ||
+  (if b.distinct ||
       (if b.groupBy.isEmpty && b.having.isNone then
         b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
           !plainAggOf b && !avgOk

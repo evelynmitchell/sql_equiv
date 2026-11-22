@@ -215,10 +215,10 @@ theorem elabFrom_congr (N : NamedSchema) (sub sub' : SqlEquiv.SubQuery → ElabM
 /-- So a plain statement of the fragment elaborates the same with any fuel. -/
 theorem elabSelectF_fuel (N : NamedSchema) (a b : ℕ) {items : List SqlEquiv.SelectItem}
     {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} {groupBy : List SqlEquiv.Expr}
-    {having : Option SqlEquiv.Expr} (hff : fromFragment f = true)
-    (hw : ∀ w ∈ wh, isFragment w = true) :
-    elabSelectF N a (.mk false items (some f) wh groupBy having [] none none) =
-      elabSelectF N b (.mk false items (some f) wh groupBy having [] none none) := by
+    {having : Option SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
+    (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
+    elabSelectF N a (.mk false items (some f) wh groupBy having orderBy lim off) =
+      elabSelectF N b (.mk false items (some f) wh groupBy having orderBy lim off) := by
   rw [elabSelectF, elabSelectF]
   conv_lhs => rw [elabFrom_congr N _ (fun sq => elabSubQuery N 15 sq) f hff]
   conv_rhs => rw [elabFrom_congr N _ (fun sq => elabSubQuery N 15 sq) f hff]
@@ -836,10 +836,14 @@ theorem whereOk_attach {S : DbSchema} {n : ℕ} (cf : Fin n → Column) (fold : 
 /-- The subquery bodies of steps 6b and 6c: a statement of `elabStmt_correct_join`, of
     `elabStmt_correct_agg`, or a grouped one, without `ORDER BY`, `LIMIT` or `OFFSET`. -/
 inductive BodyOk : SqlEquiv.SelectStmt → Prop
+  /-- A plain statement, with `ORDER BY` columns and `LIMIT` / `OFFSET` (#411). -/
   | plain {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
-      {wh : Option SqlEquiv.Expr} (hit : itemsFragment items = true)
-      (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
-      BodyOk (.mk false items (some f) wh [] none [] none none)
+      {wh : Option SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
+      (hit : itemsFragment items = true)
+      (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true)
+      (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c)
+      (hnamed : orderBy ≠ [] → itemsNamed items = true) :
+      BodyOk (.mk false items (some f) wh [] none orderBy lim off)
   | agg {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause}
       {wh : Option SqlEquiv.Expr} (hai : CorrectAgg.aggItems items = true) (hne : items ≠ [])
       (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true) :
@@ -855,8 +859,12 @@ inductive BodyOk : SqlEquiv.SelectStmt → Prop
       (hkeys : ∀ c ∈ CorrectGroup.colRefs items, SqlEquiv.Expr.col c ∈ groupBy)
       (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true)
       (hhv : ∀ h ∈ having, CorrectGroup.havingFragment groupBy h = true)
-      (hhn : ∀ h ∈ having, CorrectGroup.hasCmpAvg h = false) :
-      BodyOk (.mk false items (some f) wh groupBy having [] none none)
+      (hhn : ∀ h ∈ having, CorrectGroup.hasCmpAvg h = false)
+      {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
+      (hob : ∀ o ∈ orderBy, CorrectGrouped.OrderKeyOk items groupBy o.expr)
+      (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
+        ∀ k, (outName it).toLower ≠ SqlEquiv.groupOrderKeyName k) :
+      BodyOk (.mk false items (some f) wh groupBy having orderBy lim off)
 
 /-- Such a body, elaborated as a subquery, is safe, evaluates, and its rows relate to the rows
     `SqlEquiv` computes for it under every outer row. -/
@@ -870,15 +878,15 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
     rq.IsSafe ∧ ∃ ss, rq.eval D = .ok ss ∧
       ∀ ctx, List.Forall₂ OutRel ss (SqlEquiv.evalSelectWithContext db ctx body) := by
   cases hb with
-  | @plain items f wh hit hff hw =>
-    have hst : elabStmt N (joinStmt items f wh [] none none) = .ok ⟨m, rq, rc⟩ := by
+  | @plain items f wh orderBy lim off hit hff hw hcols hnamed =>
+    have hst : elabStmt N (joinStmt items f wh orderBy lim off) = .ok ⟨m, rq, rc⟩ := by
       rw [elabSubQuery] at hsub
       simp only [joinStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
       rw [elabSelectF_fuel N 16 fu hff hw, hsub]
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD
-      hrel hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) (by simp) (by simp) hst hnbq
-    exact ⟨hs, ss, hss, hctx' rfl⟩
+      hrel hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hcols hnamed hst hnbq
+    exact ⟨hs, ss, hss, hctx'⟩
   | @agg items f wh hai hne hff hw =>
     have hst : elabStmt N (CorrectAgg.aggStmt items f wh) = .ok ⟨m, rq, rc⟩ := by
       rw [elabSubQuery] at hsub
@@ -888,8 +896,8 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
     obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn
       hfix hD hrel hai hne hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hst hnbq
     exact ⟨hs, ss, hss, hctx'⟩
-  | @grouped items f wh groupBy having hgi hna hgb hgc hkeys hff hw hhv hhn =>
-    have hst : elabStmt N (CorrectGrouped.groupedStmt items f wh groupBy having [] none none) =
+  | @grouped items f wh groupBy having hgi hna hgb hgc hkeys hff hw hhv hhn orderBy lim off hob hnm =>
+    have hst : elabStmt N (CorrectGrouped.groupedStmt items f wh groupBy having orderBy lim off) =
         .ok ⟨m, rq, rc⟩ := by
       rw [elabSubQuery] at hsub
       simp only [CorrectGrouped.groupedStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
@@ -897,7 +905,7 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, hctx'⟩ := CorrectGrouped.elabStmt_correct_grouped_ctx N hfold hfoldCI hwn
       hfix hD hrel hgi hgb hgc hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hhv
-      (CorrectGrouped.havingAvgOk_of_noAvg hhn) (by simp) (.inl hkeys) (by simp) hst hnbq
+      (CorrectGrouped.havingAvgOk_of_noAvg hhn) hob (.inl hkeys) hnm hst hnbq
     exact ⟨hs, ss, hss, fun ctx => (hctx' ctx).imp fun _ _ h =>
       CorrectGrouped.outRel_of_outRelI hna h⟩
 
