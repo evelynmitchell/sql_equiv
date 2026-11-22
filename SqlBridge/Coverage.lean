@@ -183,6 +183,12 @@ def derivedFrom (s : SelectStmt) : Bool :=
   | some (.subquery _ _) => true
   | _ => false
 
+/-- Whether a subquery body or a set-operation branch has a subquery of its own: a derived table,
+    or a subquery node in `WHERE` that `selectFeatures` admits at the top of a statement. Both
+    are outside (`BodyOk` and `Leaf` take `FROM` trees of tables and fragment `WHERE`s). -/
+def nestedSub (s : SelectStmt) : Bool :=
+  derivedFrom s || s.whereClause.any fun w => (holeSplit w).isSome
+
 mutual
 
 /-- Features of a `HAVING` predicate in the fragment: those of its aggregates' arguments. -/
@@ -354,7 +360,7 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     say whether its sort keys are in the fragment. -/
 partial def bodyFeatures (avgOk : Bool) (b : SelectStmt) : List String :=
   selectFeatures b ++
-  (if b.distinct || derivedFrom b ||
+  (if b.distinct || nestedSub b ||
       (if b.groupBy.isEmpty && b.having.isNone then
         b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
           !plainAggOf b && !avgOk
@@ -378,7 +384,7 @@ partial def branchFeatures (s : SelectStmt) : List String :=
   let bareNoGroup := !s.distinct && s.groupBy.isEmpty &&
     s.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
     s.items.any (fun | .exprItem (.col _) _ => true | _ => false)
-  selectFeatures s ++ (if derivedFrom s then [subquery] else []) ++
+  selectFeatures s ++ (if nestedSub s then [subquery] else []) ++
     (if !s.orderBy.isEmpty || s.limitVal.isSome || s.offsetVal.isSome || hasAvg || bareNoGroup ||
         s.having.any hasCmpAvgOk
      then [setOpBranch] else [])

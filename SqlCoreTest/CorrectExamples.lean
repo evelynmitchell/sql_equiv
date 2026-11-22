@@ -1004,5 +1004,15 @@ def countDerivedSpider (sql : String) : Bool :=
   "(SELECT count(*) FROM (SELECT age FROM singer))") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT count(*) FROM (SELECT age FROM singer) " ++
   "UNION SELECT age FROM singer") == [SqlBridge.Coverage.subquery]
+-- nor a body or branch with a subquery in its `WHERE` (`BodyOk` and `Leaf` take fragment
+-- `WHERE`s; the report used to count these inside)
+#guard featuresSqlite ("SELECT count(*) FROM (SELECT name FROM singer WHERE singer_id IN " ++
+  "(SELECT singer_id FROM song))") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT count(*) FROM (SELECT name FROM singer WHERE age > " ++
+  "(SELECT min(age) FROM singer))") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE age IN (SELECT name FROM singer WHERE " ++
+  "singer_id IN (SELECT singer_id FROM song))") == [SqlBridge.Coverage.subquery]
+#guard featuresSqlite ("SELECT name FROM singer WHERE singer_id IN (SELECT singer_id FROM song) " ++
+  "UNION SELECT name FROM singer") == [SqlBridge.Coverage.subquery]
 
 end SqlCoreTest.CorrectExamples
