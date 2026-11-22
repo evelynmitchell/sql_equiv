@@ -505,8 +505,8 @@ def runAllTests : IO TestSeq := do
       "SELECT name FROM users WHERE age IN (25, 30) = (department = 'Sales')",
     diffTest "precedence: predicates under AND and OR"
       "SELECT name FROM users WHERE age > 25 AND age + 1 IN (31, 36) OR name = 'Eve'",
-    diffTest "precedence: predicate as a SELECT item"
-      "SELECT name, age + 1 IN (26, 31) AS m FROM users",
+    -- (the SELECT-item form is in DiffDuckdb and DiffPostgres: sqlite prints a boolean
+    -- item as 1 / 0, which this harness does not read back as a boolean)
     -- Integer division/modulo truncate toward zero (row 6)
     diffTest "integer division and modulo, negatives"
       "SELECT (0 - age) / 7 AS q, (0 - age) % 7 AS r FROM users",
