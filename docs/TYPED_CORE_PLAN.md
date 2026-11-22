@@ -117,6 +117,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       from 384. `AVG` in `ORDER BY` stays outside; in `HAVING` see step 6c
     - [x] Step 4: `BETWEEN`, in expressions and in `HAVING` (`Translates.between`,
       `TranslatesH.between`). Spider coverage **407**, up from 403
+    - [x] `LIKE` in the expression fragment (`Translates.like`, 2026-11-22), case-sensitive or,
+      as the sqlite dialect parses it, ignoring ASCII case. Both evaluators simulate the same
+      pattern automaton; `SqlBridge/CorrectLike.lean` shows the matchers equal
+      (`likeMatch_eq`) and that `SqlEquiv`'s lowercase-then-match is the typed core's
+      match-ignoring-case (`likeMatchCI_eq`: lowercasing keeps `%` and `_` and makes no other
+      character one of them). Not in `HAVING`. Spider coverage **512**, up from 504
     - [ ] Step 4's other operators (`IS NULL`, negation, arithmetic, `IN (list)`): no Spider
       query needs them; left until the bar for phase 9 is set (decided 2026-11-21)
     - [x] Step 5: plain `SELECT DISTINCT`, up to the order of the rows
@@ -245,11 +251,12 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 6b (part). The clause under `AND`, and under `DISTINCT` (done) | 488 |
 | 6c (part). Scalar subqueries over plain, `MIN`, `MAX`, `COUNT`, `SUM` bodies (done) | 497 |
 | 6c (part). Scalar subqueries over an `AVG` body, under a size bound (done) | 502 |
-| Today: `HAVING AVG(c) op k`, under the same bound (done) | 504 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 505 |
+| `HAVING AVG(c) op k`, under the same bound (done) | 504 |
+| Today: `LIKE` (done) | 512 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 513 |
 
 Still outside after that: `IN`/`NOT IN` and scalar subqueries (5: 2 over
-`ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `LIKE` (8), `*` (2).
+`ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `*` (2).
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
 does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are

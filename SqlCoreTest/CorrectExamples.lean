@@ -667,8 +667,16 @@ def setOpSpider (sql : String) : Bool :=
   [SqlBridge.Coverage.setOpBranch]
 #guard featuresSqlite "SELECT name, max(age) FROM singer UNION SELECT name, age FROM singer" ==
   [SqlBridge.Coverage.setOpBranch]
-#guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer WHERE name LIKE 'A%'" ==
-  [SqlBridge.Coverage.like]
+#guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer WHERE age + 1 = 2" ==
+  [SqlBridge.Coverage.arithmetic]
+#guard featuresSqlite "SELECT name FROM singer UNION SELECT name FROM singer WHERE name LIKE 'A%'" == []
+-- `LIKE` is in the expression fragment, in either case mode (`Translates.like`): in `WHERE`,
+-- as an item, under `NOT`; not in `HAVING`
+#guard featuresSqlite "SELECT name FROM singer WHERE name LIKE '%a%'" == []
+#guard features "SELECT name FROM users WHERE name LIKE '%a%' AND NOT (department LIKE 'S_les')" == []
+#guard featuresSqlite "SELECT name LIKE 'A%' AS a FROM singer ORDER BY a" == []
+#guard featuresSqlite "SELECT count(*) FROM singer WHERE name LIKE 'A%'" == []
+#guard featuresSqlite "SELECT name FROM singer GROUP BY name HAVING name LIKE 'A%'" != []
 -- branch shapes on which the report and the theorem's leaves could drift apart: a grouped
 -- branch with an AVG item, a bare column next to COUNT without GROUP BY, DISTINCT over an
 -- aggregate, a nested set operation with a bad branch (`featuresSqlite` says "disagrees" if so)
@@ -778,8 +786,10 @@ def inSubSpider (sql : String) : Bool :=
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.subquery]
 #guard featuresSqlite ("SELECT DISTINCT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song) LIMIT 1") != []
+#guard featuresSqlite ("SELECT name FROM singer WHERE age + 1 = 2 AND singer_id NOT IN " ++
+  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.arithmetic]
 #guard featuresSqlite ("SELECT name FROM singer WHERE name LIKE 'A%' AND singer_id NOT IN " ++
-  "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.like]
+  "(SELECT singer_id FROM song)") == []
 -- under aggregates without GROUP BY (`elabStmt_correct_agg_inSub`), also next to an AVG or a
 -- bare column (`elabStmt_correct_aggBare_inSub`), and with GROUP BY
 -- (`elabStmt_correct_grouped_inSub`): inside
@@ -818,10 +828,10 @@ def inSubSpider (sql : String) : Bool :=
   "GROUP BY name") == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age = (SELECT max(age) FROM singer) " ++
   "GROUP BY name HAVING max(age + 1) > 2") != []
-#guard featuresSqlite ("SELECT name FROM singer WHERE name LIKE 'A%' AND " ++
-  "age = (SELECT max(age) FROM singer)") == [SqlBridge.Coverage.like]
+#guard featuresSqlite ("SELECT name FROM singer WHERE age + 1 = 2 AND " ++
+  "age = (SELECT max(age) FROM singer)") == [SqlBridge.Coverage.arithmetic]
 #guard featuresSqlite ("SELECT name FROM singer WHERE singer_id NOT IN " ++
-  "(SELECT singer_id FROM song WHERE title LIKE 'A%')") == [SqlBridge.Coverage.like]
+  "(SELECT singer_id FROM song WHERE singer_id + 1 = 2)") == [SqlBridge.Coverage.arithmetic]
 -- (parenthesised: the parser reads `a + 1 NOT IN (…)` as `a + (1 NOT IN (…))`, #400)
 #guard featuresSqlite ("SELECT name FROM singer WHERE (singer_id + 1) NOT IN " ++
   "(SELECT singer_id FROM song)") == [SqlBridge.Coverage.arithmetic]

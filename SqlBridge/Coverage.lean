@@ -62,7 +62,6 @@ def refsHidden : Expr → Bool
   | .unaryOp _ a => refsHidden a
   | .between e lo hi => refsHidden e || refsHidden lo || refsHidden hi
   | _ => false
-def like := "LIKE"
 def function := "scalar function"
 def caseExpr := "CASE"
 def star := "*"
@@ -180,7 +179,7 @@ partial def exprFeatures : Expr → List String
     let here := match op with
       | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => []
       | .add | .sub | .mul | .div | .mod => [arithmetic]
-      | .like | .likeCI => [like]
+      | .like | .likeCI => []
       | .concat => [concat]
     here ++ exprFeatures a ++ exprFeatures b
   | .unaryOp .not a => exprFeatures a

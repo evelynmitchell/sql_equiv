@@ -192,6 +192,12 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM museum WHERE name LIKE NULL", .agree),
   ("SELECT name FROM users WHERE name LIKE '_ob'", .agree),
   ("SELECT name FROM users WHERE name LIKE 'C%l'", .agree),
+  -- `Translates.like` (#352): under `AND`/`NOT`, with `%` and `_` together, the empty pattern,
+  -- a pattern that is only wildcards, and against a NULL text
+  ("SELECT name FROM users WHERE name LIKE '%a%' AND NOT (department LIKE 'S_les')", .agree),
+  ("SELECT name FROM users WHERE name LIKE ''", .agree),
+  ("SELECT name FROM users WHERE name LIKE '%_%_%'", .agree),
+  ("SELECT COUNT(*) FROM users WHERE department LIKE '%ing'", .agree),
   ("SELECT name FROM users WHERE age LIKE '3%'", .rejected "typeError"),
   ("SELECT name FROM users INTERSECT SELECT age FROM users", .rejected "typeError"),
   -- uncorrelated subqueries in WHERE (phase 8f, #329)
