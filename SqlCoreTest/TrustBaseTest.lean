@@ -20,6 +20,7 @@ import SqlBridge.CorrectAggBare
 import SqlBridge.CorrectDistinct
 import SqlBridge.CorrectSetOp
 import SqlBridge.CorrectSub
+import SqlBridge.CorrectDerived
 import SqlBridge.Coverage
 import SqlBridge.Spider
 import Test.TrustBaseCommands

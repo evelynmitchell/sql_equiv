@@ -412,6 +412,209 @@ theorem whereOk_frag (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elabo
       simp only [Query.eval_select, hRf, bind, Except.bind] at hR
       exact filter_rel _ _ db htp (hnb.1 _ (Query.typeOf_select_eq_some.mp hT).1) hrows hR
 
+/-! ### `SELECT *` (#407) -/
+
+/-- The items `elabStmt_correct_join` takes: fragment expressions and `*`, anywhere in the list
+    (#407). `t.*` stays outside: the typed side filters columns by folded qualifier, `SqlEquiv`
+    filters keys by the prefix as written. Only the plain statement without an outer row and
+    without `ORDER BY` takes `*` (under an outer row `SqlEquiv`'s `*` also returns the outer
+    columns), so the other theorems keep `itemsFragment`. -/
+def itemsStar : List SqlEquiv.SelectItem → Bool
+  | [] => true
+  | .exprItem e _ :: rest => isFragment e && itemsStar rest
+  | .star none :: rest => itemsStar rest
+  | .star (some _) :: _ => false
+
+theorem itemsStar_of_fragment : ∀ items, itemsFragment items = true → itemsStar items = true
+  | [], _ => rfl
+  | .exprItem e _ :: rest, h => by
+    simp only [itemsFragment, Bool.and_eq_true] at h
+    simp [itemsStar, h.1, itemsStar_of_fragment rest h.2]
+  | .star _ :: _, h => by simp [itemsFragment] at h
+
+/-- Named items have no `*`, so with an `ORDER BY` the items are fragment items. -/
+theorem itemsFragment_of_star_named : ∀ items, itemsStar items = true →
+    itemsNamed items = true → itemsFragment items = true
+  | [], _, _ => rfl
+  | .exprItem e al :: rest, h, hn => by
+    simp only [itemsStar, Bool.and_eq_true] at h
+    have hn' : itemsNamed rest = true := by
+      rcases al with _ | a <;> cases e <;> simp_all [itemsNamed]
+    simp [itemsFragment, h.1, itemsFragment_of_star_named rest h.2 hn']
+  | .star _ :: _, _, hn => by simp [itemsNamed] at hn
+
+theorem aggsOfList_items_star {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
+    (hf : ∀ e al, f (.exprItem e al) = some e) (hs : ∀ t, f (.star t) = none) :
+    ∀ items, itemsStar items = true → aggsOfList (items.filterMap f) = []
+  | [], _ => by simp [aggsOfList]
+  | .exprItem e _ :: rest, h => by
+    simp only [itemsStar, Bool.and_eq_true] at h
+    simp [hf, aggsOfList, aggsOf_frag e h.1, aggsOfList_items_star hf hs rest h.2]
+  | .star none :: rest, h => by
+    simp only [itemsStar] at h
+    simp [hs, aggsOfList_items_star hf hs rest h]
+  | .star (some _) :: _, h => by simp [itemsStar] at h
+
+theorem selectHasAggregate_star : ∀ items, itemsStar items = true →
+    SqlEquiv.selectHasAggregate items = false
+  | [], _ => rfl
+  | .exprItem e _ :: rest, h => by
+    simp only [itemsStar, Bool.and_eq_true] at h
+    have := selectHasAggregate_star rest h.2
+    simp only [SqlEquiv.selectHasAggregate, List.any_cons, hasAggregate_frag e h.1,
+      Bool.false_or] at this ⊢
+    exact this
+  | .star none :: rest, h => by
+    have := selectHasAggregate_star rest (by simpa [itemsStar] using h)
+    simp only [SqlEquiv.selectHasAggregate, List.any_cons, Bool.false_or] at this ⊢
+    exact this
+  | .star (some _) :: _, h => by simp [itemsStar] at h
+
+theorem selectHasWindowFn_star : ∀ items, itemsStar items = true →
+    SqlEquiv.selectHasWindowFn items = false
+  | [], _ => rfl
+  | .exprItem e _ :: rest, h => by
+    simp only [itemsStar, Bool.and_eq_true] at h
+    have := selectHasWindowFn_star rest h.2
+    simp only [SqlEquiv.selectHasWindowFn, List.any_cons, hasWindowFn_frag e h.1,
+      Bool.false_or] at this ⊢
+    exact this
+  | .star none :: rest, h => by
+    have := selectHasWindowFn_star rest (by simpa [itemsStar] using h)
+    simp only [SqlEquiv.selectHasWindowFn, List.any_cons, Bool.false_or] at this ⊢
+    exact this
+  | .star (some _) :: _, h => by simp [itemsStar] at h
+
+section Star
+variable (N : NamedSchema) {n : ℕ} (cf : Fin n → Column)
+
+/-- The elaborated items are division-safe: a `*` expands to columns. -/
+theorem divSafe_of_elab_star : ∀ (items : List SqlEquiv.SelectItem) {its : List (Expr n × Column)},
+    itemsStar items = true → elabItems N cf items = .ok its → ∀ x ∈ its, x.1.divSafe = true
+  | [], its, _, h => by
+    simp only [elabItems, pure, Except.pure, Except.ok.injEq] at h
+    subst h; simp
+  | .exprItem e al :: rest, its, hf, h => by
+    simp only [itemsStar, Bool.and_eq_true] at hf
+    simp only [elabItems] at h
+    rcases he : elabExpr cf N.fold noHook e with _ | e'
+    · simp [he, bind, Except.bind] at h
+    rcases hτ : e'.typeOf (ctx cf) with _ | τ
+    · simp [he, hτ, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+    rcases hr : elabItems N cf rest with _ | its'
+    · simp [he, hτ, hr, bind, Except.bind] at h
+    simp only [he, hτ, hr, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    intro x hx
+    rcases List.mem_cons.mp hx with rfl | hx
+    · exact Translates.divSafe _ _ (translates_of_elab cf N.fold e hf.1 he)
+    · exact divSafe_of_elab_star rest hf.2 hr x hx
+  | .star none :: rest, its, hf, h => by
+    simp only [itemsStar] at hf
+    simp only [elabItems] at h
+    rcases hr : elabItems N cf rest with _ | its'
+    · simp [hr, bind, Except.bind] at h
+    simp only [hr, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    intro x hx
+    rcases List.mem_append.mp hx with hx | hx
+    · obtain ⟨i, -, rfl⟩ := List.mem_map.mp hx
+      rfl
+    · exact divSafe_of_elab_star rest hf hr x hx
+  | .star (some _) :: _, _, hf, _ => by simp [itemsStar] at hf
+
+/-- On a keyed source row, the elaborated items evaluate to values related, in order, to the
+    values of `SqlEquiv`'s projection: an expression to its one value, a `*` to the whole row. -/
+theorem star_items_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType} {r : Row n}
+    {u : SqlEquiv.Row} (hkey : KeyedRow N.fold cf r u) (hrow : RowRel cf N.fold r u)
+    (hr : r.Conforms Γ) :
+    ∀ (items : List SqlEquiv.SelectItem) {its : List (Expr n × Column)},
+      itemsStar items = true → elabItems N cf items = .ok its → (∀ x ∈ its, NoBoolOrder Γ x.1) →
+      ∀ {ds : List Datum}, List.Forall₂ (fun x d => x.1.eval r = .ok d) its ds →
+      List.Forall₂ DatumRel ds ((items.flatMap (SqlEquiv.evalSelectItem db u)).map (·.2))
+  | [], its, _, h, _, ds, hds => by
+    simp only [elabItems, pure, Except.pure, Except.ok.injEq] at h
+    subst h; cases hds; exact .nil
+  | .exprItem e al :: rest, its, hf, h, hnb, ds, hds => by
+    simp only [itemsStar, Bool.and_eq_true] at hf
+    simp only [elabItems] at h
+    rcases he : elabExpr cf N.fold noHook e with _ | e'
+    · simp [he, bind, Except.bind] at h
+    rcases hτ : e'.typeOf (ctx cf) with _ | τ
+    · simp [he, hτ, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
+    rcases hr' : elabItems N cf rest with _ | its'
+    · simp [he, hτ, hr', bind, Except.bind] at h
+    simp only [he, hτ, hr', bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    obtain _ | ⟨hd, hds'⟩ := hds
+    obtain ⟨v, hv, hrel⟩ := Translates.eval_rel cf N.fold db hrow hr
+      (translates_of_elab cf N.fold e hf.1 he) (hnb _ List.mem_cons_self) hd
+    have ih := star_items_rel db hkey hrow hr rest hf.2 hr'
+      (fun x hx => hnb x (List.mem_cons_of_mem _ hx)) hds'
+    simp only [List.flatMap_cons, SqlEquiv.evalSelectItem, hv, List.map_cons,
+      List.singleton_append]
+    exact .cons hrel ih
+  | .star none :: rest, its, hf, h, hnb, ds, hds => by
+    simp only [itemsStar] at hf
+    simp only [elabItems] at h
+    rcases hr' : elabItems N cf rest with _ | its'
+    · simp [hr', bind, Except.bind] at h
+    simp only [hr', bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    have hA : ((List.finRange n).map fun i => ((Expr.col i : Expr n), cf i)).length = n := by simp
+    have h₁ := List.forall₂_take n hds
+    have h₂ := List.forall₂_drop n hds
+    rw [List.take_left' hA] at h₁
+    rw [List.drop_left' hA] at h₂
+    have ih := star_items_rel db hkey hrow hr rest hf hr'
+      (fun x hx => hnb x (List.mem_append_right _ hx)) h₂
+    obtain ⟨Q, w, rfl, -, hw⟩ := hkey
+    rw [← List.take_append_drop n ds]
+    simp only [List.flatMap_cons, List.map_append, SqlEquiv.evalSelectItem]
+    refine List.rel_append ?_ ih
+    have hlen := h₁.length_eq
+    rw [List.forall₂_iff_get] at h₁ ⊢
+    refine ⟨by simp only [List.length_map, List.length_ofFn]; simpa using hlen.symm, fun i hi₁ hi₂ => ?_⟩
+    have hin : i < n := by simpa using hi₂
+    have hi := h₁.2 i (by simpa using hin) hi₁
+    simp only [List.get_eq_getElem, List.getElem_map, List.getElem_finRange, Expr.eval,
+      Except.ok.injEq] at hi
+    simp only [List.get_eq_getElem, List.getElem_map, List.getElem_ofFn, ← hi]
+    exact hw _
+  | .star (some _) :: _, _, hf, _, _, _, _ => by simp [itemsStar] at hf
+
+/-- The projection over related source rows, `*` included. -/
+theorem star_project_rel (db : SqlEquiv.Database) {Γ : Fin n → SqlType}
+    {items : List SqlEquiv.SelectItem} {its : List (Expr n × Column)}
+    (hit : itemsStar items = true) (hits : elabItems N cf items = .ok its)
+    (hnb : ∀ x ∈ its, NoBoolOrder Γ x.1) {P : Row n → SqlEquiv.Row → Prop}
+    (hP : ∀ r u, P r u → KeyedRow N.fold cf r u ∧ RowRel cf N.fold r u ∧ r.Conforms Γ) :
+    ∀ {R : List (Row n)} {U : List SqlEquiv.Row}, List.Forall₂ P R U →
+      ∀ {out}, R.mapM (Expr.evalRow fun i : Fin its.length => (its[i]).1) = .ok out →
+      List.Forall₂ OutRel out (U.map (projRow db items))
+  | _, _, .nil, out, h => by
+    simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at h
+    subst h; exact .nil
+  | r :: R, u :: U, .cons hru hrest, out, h => by
+    rw [List.mapM_cons] at h
+    rcases hd : Expr.evalRow (fun i : Fin its.length => (its[i]).1) r with _ | d
+    · rw [hd] at h; simp [bind, Except.bind] at h
+    rcases hR : R.mapM (Expr.evalRow fun i : Fin its.length => (its[i]).1) with _ | out'
+    · rw [hd, hR] at h; simp [bind, Except.bind] at h
+    rw [hd, hR] at h
+    simp only [bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+    subst h
+    obtain ⟨hk, hrow, hr⟩ := hP r u hru
+    have hev : List.Forall₂ (fun x d => x.1.eval r = .ok d) its (List.ofFn d) := by
+      rw [List.forall₂_iff_get]
+      refine ⟨by simp, fun i h₁ h₂ => ?_⟩
+      simp only [List.get_eq_getElem, List.getElem_ofFn]
+      exact (Expr.evalRow_eq_ok_iff.mp hd) ⟨i, h₁⟩
+    exact .cons (star_items_rel N cf db hk hrow hr items hit hits hnb hev)
+      (star_project_rel db hit hits hnb hP hrest hR)
+
+end Star
+
 /-- The statements of roadmap steps 1 and 2:
     `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY …] [LIMIT n] [OFFSET m]`. -/
 def joinStmt (items : List SqlEquiv.SelectItem) (f : SqlEquiv.FromClause)
@@ -421,7 +624,7 @@ def joinStmt (items : List SqlEquiv.SelectItem) (f : SqlEquiv.FromClause)
 
 theorem elab_join_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem}
-    {lim off : Option ℕ} (hit : itemsFragment items = true)
+    {lim off : Option ℕ} (hit : itemsStar items = true)
     (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c) {e : Elaborated N.S}
     (h : elabStmt N (joinStmt items f wh orderBy lim off) = .ok e) :
     e.q.typeOf.isSome ∧ ∃ n, ∃ qf : Query N.S n, ∃ cf,
@@ -454,9 +657,10 @@ theorem elab_join_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   obtain ⟨q₀, hq₀, hraw⟩ := bind_ok hraw
   refine ⟨n, qf, cf, hf, q₀, hq₀, ?_⟩
   dsimp only at hraw
-  rw [aggsOfList_map_cols _ _ ?hm, aggsOfList_items ?hf items hit] at hraw
+  rw [aggsOfList_map_cols _ _ ?hm, aggsOfList_items_star ?hf ?hs items hit] at hraw
   case hm => exact hcols'
   case hf => intros; rfl
+  case hs => intros; rfl
   simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
     Bool.and_self, ↓reduceIte] at hraw
   rcases hits : elabItems N cf items with _ | its
@@ -497,7 +701,7 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
         ∀ ctx, List.Forall₂ OutRel rs
           (SqlEquiv.evalSelectWithContext db ctx (.mk false items (some f) wh [] none orderBy lim off)) := by
   obtain ⟨hty, n, qf, cf, hf, q₀, hq₀, its, hits, keyList, hk, rfl⟩ :=
-    elab_join_shape N hit hcols h
+    elab_join_shape N (itemsStar_of_fragment items hit) hcols h
   have hwo' := hwo qf q₀ cf hf hq₀
   obtain ⟨hnames, hfrom⟩ := from_rel N hfold hfoldCI hwn hfix hD hrel _ f hff hf
   simp only at hnames hfrom
@@ -600,14 +804,99 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
     obtain ⟨rf, -, hru⟩ := exists_of_forall₂_mem_right hrows hu
     exact ⟨u, rfl, found_of_rowRel cf N.fold hru.1⟩
 
-/-- `elabStmt_correct_join_ctx` without the outer row. -/
+/-- **`SELECT *` (#407).** `SELECT i₁, …, iₖ FROM f [WHERE p] [LIMIT n] [OFFSET m]`, each item a
+    fragment expression or `*`: when the statement elaborates, the typed query evaluates, and its
+    rows relate, in order, to `SqlEquiv`'s. The elaborator expands `*` to the `FROM` scope's
+    columns, in order; `SqlEquiv` returns the source row, which has exactly those columns in that
+    order (`KeyedRow`), and `OutRel` compares by position. -/
+theorem elabStmt_correct_star (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    {lim off : Option ℕ}
+    (hit : itemsStar items = true) (hff : fromFragment f = true)
+    (hw : ∀ w ∈ wh, isFragment w = true)
+    {e : Elaborated N.S} (h : elabStmt N (joinStmt items f wh [] lim off) = .ok e)
+    (hnb : QNoBoolOrder e.q) :
+    ∃ rs, e.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (joinStmt items f wh [] lim off)).2 = some out ∧
+        List.Forall₂ OutRel rs out := by
+  obtain ⟨hty, n, qf, cf, hf, q₀, hq₀, its, hits, keyList, hk, rfl⟩ :=
+    elab_join_shape N hit (by simp) h
+  simp only [List.mapM_nil, pure, Except.pure, Except.ok.injEq] at hk
+  subst hk
+  obtain ⟨hnames, hfrom⟩ := from_rel N hfold hfoldCI hwn hfix hD hrel _ f hff hf
+  simp only at hnames hfrom
+  simp only [List.length_nil, ↓reduceIte] at hty hnb ⊢
+  rw [typeOf_limitWrap] at hty
+  rw [qnb_limitWrap] at hnb
+  obtain ⟨Δ, hΔ⟩ := Option.isSome_iff_exists.mp hty
+  obtain ⟨Γ, hΓ, -⟩ := Query.typeOf_project_eq_some.mp hΔ
+  have hnbIt : ∀ x ∈ its, NoBoolOrder Γ x.1 := by
+    intro x hx
+    obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hx
+    exact hnb.1 _ hΓ ⟨i, hi⟩
+  have hwo := whereOk_frag N _ db D hw hq₀
+  obtain ⟨hdivf, Rf, hRf, hrelf⟩ := hfrom (hwo.src Γ hΓ) (hwo.nb hnb.2)
+  have hdivq₀ : q₀.divSafe = true := hwo.div Γ hΓ hnb.2 hdivf
+  have hP : ∀ r u, (KeyedRow N.fold cf r u ∧ r.Conforms Γ) →
+      KeyedRow N.fold cf r u ∧ RowRel cf N.fold r u ∧ r.Conforms Γ := fun r u h =>
+    ⟨h.1, rowRel_of_keyed N.fold hfold hfoldCI (fun j => (hnames j).1) (fun j => (hnames j).2) h.1,
+      h.2⟩
+  -- the rows `WHERE` keeps, still keyed
+  have hsrc : ∃ R, q₀.eval D = .ok R ∧
+      List.Forall₂ (fun r u => KeyedRow N.fold cf r u ∧ r.Conforms Γ) R
+        (match wh with
+         | some c => (SqlEquiv.evalFrom db f).filter fun u =>
+             SqlEquiv.evalExprWithDb db u c == some (.bool true)
+         | none => SqlEquiv.evalFrom db f) := by
+    cases wh with
+    | none =>
+      simp only [elabWhere, pure, Except.pure, Except.ok.injEq] at hq₀
+      subst hq₀
+      exact ⟨Rf, hRf, hrelf⟩
+    | some w =>
+      simp only [elabWhere, subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil,
+        ↓reduceIte] at hq₀
+      obtain ⟨p, hp, hq⟩ := bind_ok hq₀
+      simp only [pure, Except.pure, Except.ok.injEq] at hq
+      subst hq
+      have htp := translates_of_elab _ _ w (hw w rfl) hp
+      obtain ⟨R, hR⟩ := Query.IsSafe.exists_eval_eq_ok (q := Query.select p qf)
+        ⟨by simp [hΓ], hdivq₀⟩ hD
+      refine ⟨R, hR, ?_⟩
+      simp only [Query.eval_select, hRf, bind, Except.bind] at hR
+      exact filter_rel_of N.fold cf db htp
+        (hnb.2.1 _ (Query.typeOf_select_eq_some.mp hΓ).1) (fun r u h => (hP r u h).2) hrelf hR
+  obtain ⟨R, hR, hrows⟩ := hsrc
+  have hsafe : (limitWrap lim off (.project (fun i => (its[i]).1) q₀)).IsSafe := by
+    refine ⟨by rw [typeOf_limitWrap]; exact hty, ?_⟩
+    rw [divSafe_limitWrap]
+    have hdi : decide (∀ i : Fin its.length, (its[i]).1.divSafe = true) = true :=
+      decide_eq_true fun i => divSafe_of_elab_star N cf items hit hits _ (List.getElem_mem i.2)
+    simp only [Query.divSafe, hdi, hdivq₀, Bool.and_true]
+  obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok hsafe hD
+  refine ⟨rs, hrs, _, rfl, ?_⟩
+  simp only [SqlEquiv.evalQuery]
+  rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
+    _ _ _ _ _ (selectHasAggregate_star items hit) (selectHasWindowFn_star items hit)]
+  obtain ⟨base, hbase, rfl⟩ := eval_limitWrap D lim off _ hrs
+  rw [applyOrder_eq]
+  apply limit_rel
+  simp only [List.isEmpty_nil, ↓reduceIte]
+  rw [Query.eval_project, hR] at hbase
+  cases wh <;> exact star_project_rel N cf db hit hits hnbIt hP hrows hbase
+
+/-- `elabStmt_correct_join_ctx` without the outer row, and with `*` items when there is no
+    `ORDER BY` (`elabStmt_correct_star`, #407). -/
 theorem elabStmt_correct_join (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
     {items : List SqlEquiv.SelectItem} {f : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
     {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
-    (hit : itemsFragment items = true) (hff : fromFragment f = true)
+    (hit : itemsStar items = true) (hff : fromFragment f = true)
     (hw : ∀ w ∈ wh, isFragment w = true) (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c)
     (hnamed : orderBy ≠ [] → itemsNamed items = true)
     {e : Elaborated N.S} (h : elabStmt N (joinStmt items f wh orderBy lim off) = .ok e)
@@ -615,8 +904,12 @@ theorem elabStmt_correct_join (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLow
     ∃ rs, e.q.eval D = .ok rs ∧
       ∃ out, (SqlEquiv.evalStmt db (joinStmt items f wh orderBy lim off)).2 = some out ∧
         List.Forall₂ OutRel rs out := by
+  by_cases ho : orderBy = []
+  · subst ho
+    exact elabStmt_correct_star N hfold hfoldCI hwn hfix hD hrel hit hff hw h hnb
   obtain ⟨-, rs, hrs, out, hout, hr, -⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD hrel
-    hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hcols hnamed h hnb
+    (itemsFragment_of_star_named items hit (hnamed ho)) hff
+    (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hcols hnamed h hnb
   exact ⟨rs, hrs, out, hout, hr⟩
 
 end SqlBridge.CorrectJoin

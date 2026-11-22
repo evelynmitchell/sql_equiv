@@ -803,6 +803,54 @@ def distinctOrderKeySelected (items : List SelectItem) (e : Expr) : Bool :=
          (match e' with | .col ⟨_, c'⟩ => c'.toLower == c.toLower | _ => false)
        | _ => false)
 
+/-- Whether an expression contains a window function outside subqueries
+    (#421). Syntactic: every operand position is searched. -/
+partial def exprMentionsWindow : Expr → Bool
+  | .windowFn _ _ _ => true
+  | .binOp _ l r => exprMentionsWindow l || exprMentionsWindow r
+  | .unaryOp _ e => exprMentionsWindow e
+  | .func _ args => args.any exprMentionsWindow
+  | .agg _ a _ => a.any exprMentionsWindow
+  | .case bs el => bs.any (fun (c, r) => exprMentionsWindow c || exprMentionsWindow r) ||
+      el.any exprMentionsWindow
+  | .inList e _ vs => exprMentionsWindow e || vs.any exprMentionsWindow
+  | .inSubquery e _ _ => exprMentionsWindow e
+  | .between e lo hi => exprMentionsWindow e || exprMentionsWindow lo || exprMentionsWindow hi
+  | _ => false
+
+/-- Whether an expression contains an aggregate call outside subqueries,
+    including inside a window function's argument, `PARTITION BY` or
+    `ORDER BY` (`SUM(SUM(x)) OVER ()`), which `hasAggregate` does not see
+    (#421). A window function itself is not an aggregate. -/
+partial def exprMentionsAggregate : Expr → Bool
+  | .agg _ _ _ => true
+  | .countStar => true
+  | .windowFn _ a spec =>
+    a.any exprMentionsAggregate || spec.partitionBy.any exprMentionsAggregate ||
+      spec.orderBy.any (fun | .mk e _ _ => exprMentionsAggregate e)
+  | .binOp _ l r => exprMentionsAggregate l || exprMentionsAggregate r
+  | .unaryOp _ e => exprMentionsAggregate e
+  | .func _ args => args.any exprMentionsAggregate
+  | .case bs el => bs.any (fun (c, r) => exprMentionsAggregate c || exprMentionsAggregate r) ||
+      el.any exprMentionsAggregate
+  | .inList e _ vs => exprMentionsAggregate e || vs.any exprMentionsAggregate
+  | .inSubquery e _ _ => exprMentionsAggregate e
+  | .between e lo hi =>
+    exprMentionsAggregate e || exprMentionsAggregate lo || exprMentionsAggregate hi
+  | _ => false
+
+/-- #421: a window function in a grouped or aggregate SELECT (GROUP BY,
+    HAVING, or an aggregate in its items, HAVING or ORDER BY, window
+    arguments and keys included) is not evaluated yet (it would be a silent
+    NULL), so the parser rejects the shape. Checked per SELECT: subqueries
+    are checked when they are parsed. -/
+def groupedWindowUnsupported (items : List SelectItem) (groupBy : List Expr)
+    (having : Option Expr) (orderBy : List OrderByItem) : Bool :=
+  let exprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none) ++
+    orderBy.map (fun | .mk e _ _ => e) ++ having.toList
+  exprs.any exprMentionsWindow &&
+    (!groupBy.isEmpty || having.isSome || exprs.any exprMentionsAggregate)
+
 mutual
 
 /-- Parse the rest of a subquery body (#218): fold UNION [ALL] / INTERSECT /
@@ -1631,6 +1679,9 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
   if distinct && dob == .reject &&
       orderBy.any (fun | .mk e _ _ => !distinctOrderKeySelected items e) then
     Parser.fail "for SELECT DISTINCT, ORDER BY expressions must appear in select list"
+
+  if groupedWindowUnsupported items groupBy having orderBy then
+    Parser.fail "window function in a grouped or aggregate query is not supported yet (#421)"
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
 

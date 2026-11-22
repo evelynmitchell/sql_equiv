@@ -82,10 +82,10 @@ This repository could become a basis for SQL support in
   `HAVING`, ordered by aggregates or key columns, and with bare columns (on the first row or,
   next to one `MIN`/`MAX`, the extreme row, with or without `GROUP BY`), and `AVG` items up to
   SqlEquiv's rounding (registry row 7), and plain `SELECT DISTINCT` up to the order of the
-  rows (registry T18), the elaborator is proved correct
+  rows (registry T18), `SELECT *` without `ORDER BY` (#407), and `COUNT(*)` over a derived table whose body may be a set operation, the elaborator is proved correct
   against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `CorrectOrder.lean`,
   `CorrectJoin.lean`, `CorrectAgg.lean`, `CorrectGroup.lean`, `CorrectGroupOrder.lean`,
-  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`, `CorrectSetOp.lean`, `CorrectSub.lean`, `CorrectLike.lean`); 516 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
+  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`, `CorrectSetOp.lean`, `CorrectSub.lean`, `CorrectLike.lean`, `CorrectDerived.lean`); 519 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features
@@ -98,7 +98,7 @@ This repository could become a basis for SQL support in
 - **NULL handling**: Typed NULLs, IS NULL/IS NOT NULL, three-valued logic, NULL propagation
 - **Joins**: INNER, LEFT, RIGHT, FULL, CROSS
 - **Aggregates**: COUNT, SUM, AVG, MIN, MAX (with DISTINCT support)
-- **Window functions**: ROW_NUMBER, RANK, DENSE_RANK, and aggregate windows (SUM/AVG/MIN/MAX/COUNT) with `OVER ([PARTITION BY ...] [ORDER BY ...])` and the SQL-default frame; explicit ROWS/RANGE frames and DISTINCT inside windows are rejected at parse time. A window function may sit under operators, function calls, `CASE`, `IN (list)`, `BETWEEN` and the left side of `IN (subquery)` in a SELECT item (`SUM(x) OVER () IN (8)`, #418, #422); an aggregate may too, in a SELECT item or HAVING
+- **Window functions**: ROW_NUMBER, RANK, DENSE_RANK, and aggregate windows (SUM/AVG/MIN/MAX/COUNT) with `OVER ([PARTITION BY ...] [ORDER BY ...])` and the SQL-default frame; explicit ROWS/RANGE frames and DISTINCT inside windows are rejected at parse time, and so, for now, is a window function in a grouped or aggregate SELECT (`GROUP BY`, `HAVING`, or an aggregate in the items, `HAVING` or `ORDER BY`, a window's own argument and keys included, as in `SUM(SUM(x)) OVER ()`): it evaluated to NULL (#421). Subqueries are checked on their own, so a window inside a subquery of a grouped query is accepted. A window function may sit under operators, function calls, `CASE`, `IN (list)`, `BETWEEN` and the left side of `IN (subquery)` in a SELECT item (`SUM(x) OVER () IN (8)`, #418, #422); an aggregate may too, in a SELECT item or HAVING
 - **Subqueries**: Scalar subqueries, IN subqueries, EXISTS, correlated subqueries (inner-first name resolution), and derived tables (`FROM (SELECT …) AS d`). A derived table's alias qualifies its columns (`d.name`, #257); unqualified `name` also works.
 - **Set operations**: UNION, UNION ALL, INTERSECT, EXCEPT
 - **Common Table Expressions**: WITH clause, WITH RECURSIVE for recursive queries

@@ -88,6 +88,11 @@ def corpus : List (String × Expect) := [
   ("SELECT u.name, o.product FROM users u JOIN orders o ON u.id = o.user_id", .agree),
   ("SELECT u.name, o.amount FROM users u INNER JOIN orders o ON u.id = o.user_id WHERE o.amount > 100", .agree),
   ("SELECT * FROM users u JOIN orders o ON u.id = o.user_id", .agree),
+  -- `*` next to other items, under WHERE, over a cross join and in a set operation (#407)
+  ("SELECT name, *, age FROM users WHERE age > 25", .agree),
+  ("SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount > 100 AND u.age > 20", .agree),
+  ("SELECT * FROM users CROSS JOIN products", .agree),
+  ("SELECT * FROM users WHERE age > 28 UNION SELECT * FROM users WHERE department = 'Sales'", .agree),
   ("SELECT u.name, p.name FROM users u CROSS JOIN products p", .agree),
   ("SELECT o.product, p.price FROM orders o JOIN products p ON o.product = p.name", .agree),
   -- set operations
@@ -241,6 +246,13 @@ def corpus : List (String × Expect) := [
   ("SELECT t.n FROM (SELECT name AS n, age FROM users) AS t WHERE t.age > 28", .agree),
   ("SELECT u.name, t.total FROM users u JOIN (SELECT user_id, SUM(amount) AS total FROM orders GROUP BY user_id) AS t ON u.id = t.user_id", .agree),
   ("SELECT name FROM (SELECT name, age FROM users UNION ALL SELECT name, price FROM products) AS t WHERE age > 30", .agree),
+  -- #412: COUNT(*) over a derived table whose body is a set operation (`elabStmt_correct_countDerived`);
+  -- the body's rows are related only up to order, which COUNT(*) does not see
+  ("SELECT COUNT(*) FROM (SELECT department FROM users INTERSECT SELECT department FROM users WHERE age > 26)", .agree),
+  ("SELECT COUNT(*), COUNT(*) AS n FROM (SELECT name FROM users UNION SELECT name FROM products)", .agree),
+  ("SELECT COUNT(*) FROM (SELECT user_id FROM orders EXCEPT SELECT id FROM users WHERE age > 26) AS t", .agree),
+  ("SELECT COUNT(*) FROM (SELECT department FROM users GROUP BY department UNION ALL SELECT name FROM products)", .agree),
+  ("SELECT COUNT(*) FROM (SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20)", .agree),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
