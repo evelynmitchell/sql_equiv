@@ -141,6 +141,17 @@ def avgBodyOf (b : SelectStmt) : Bool :=
     | [.exprItem (.agg (.avg _) (some _) false) _] => true
     | _ => false
 
+/-- What a grouped subquery body needs beyond being a grouped statement (mirrors the side
+    conditions of `SqlBridge.CorrectSub.BodyOk.grouped`, #409): `GROUP BY`, every item column a
+    key, no `AVG` item (related only up to rounding), no `AVG` comparison in `HAVING`. -/
+def groupedBodyOf (b : SelectStmt) : Bool :=
+  !b.groupBy.isEmpty &&
+  b.items.all (fun
+    | .exprItem (.col c) _ => b.groupBy.contains (.col c)
+    | .exprItem (.agg (.avg _) _ _) _ => false
+    | _ => true) &&
+  b.having.all (fun h => !hasCmpAvgOk h)
+
 /-- A `WHERE` with one subquery node in a position `SqlBridge.CorrectSub.HoleCtx` allows (the
     node, `a op node` for a comparison, either under `AND`): the other expressions, the
     compared one if any, and the node. -/
@@ -282,8 +293,9 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   -- a `WHERE` with one subquery node (steps 6b and 6c, `SqlBridge.CorrectSub.SubWhere`) on a
   -- plain outer query, under plain `DISTINCT`, or under aggregates without `GROUP BY`
   -- (`elabStmt_correct_inSub`, `_distinct_inSub`, `_agg_inSub`, `_aggBare_inSub`): inside when
-  -- the other expressions, the probe of an `IN` and the body are; the body a plain statement
-  -- or one of aggregates only (`BodyOk`), without `ORDER BY`. A scalar node assumes a dialect
+  -- the other expressions, the probe of an `IN` and the body are; the body a plain statement,
+  -- one of aggregates only, or a grouped one whose item columns are keys (`BodyOk`,
+  -- `groupedBodyOf`), without `ORDER BY`. A scalar node assumes a dialect
   -- that takes the first row of several (sqlite, as Spider is). Under `GROUP BY` too
   -- (`elabStmt_correct_grouped_inSub`).
   -- A scalar node over an `AVG` body (`AvgWhere`): compared with a column or an integer literal.
@@ -303,10 +315,11 @@ partial def selectFeatures (s : SelectStmt) : List String :=
          (match nd with
           | .inSubquery _ _ (.simple b) | .subquery (.simple b) =>
             selectFeatures b ++
-            (if b.distinct || !b.groupBy.isEmpty || b.having.isSome || !b.orderBy.isEmpty ||
-                b.limitVal.isSome || b.offsetVal.isSome ||
-                (b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
-                  !plainAggOf b && !avgOk)
+            (if b.distinct || !b.orderBy.isEmpty || b.limitVal.isSome || b.offsetVal.isSome ||
+                (if b.groupBy.isEmpty && b.having.isNone then
+                  b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
+                    !plainAggOf b && !avgOk
+                 else !groupedBodyOf b)
              then [subquery] else [])
           | _ => [subquery])
      else subquery :: (xs.flatMap exprFeatures ++ probe)

@@ -22,9 +22,10 @@ namespace SqlBridge.CorrectGrouped
 open SqlEquiv SqlBridge.CorrectGroup
 
 /-- `SqlEquiv`'s grouped path in closed form: an optional `HAVING`, any `ORDER BY` (rewritten onto
-    the per-group key rows), `LIMIT`/`OFFSET`. A group whose `HAVING` is not `TRUE` on its sample
+    the per-group key rows), `LIMIT`/`OFFSET`. Under an outer row (a subquery body, #409) the source
+    rows carry it at the end; the statement itself is `outerRow = []`. A group whose `HAVING` is not `TRUE` on its sample
     row gives neither a row nor a key row. -/
-theorem evalSelectCore_grouped_full (db : Database)
+theorem evalSelectCore_grouped_full (db : Database) (outerRow : Row)
     (fromEval : Database → FromClause → Table)
     (exprEval : Database → Row → Expr → Option Value)
     (selectItemEval : Database → Row → SelectItem → List (String × Value))
@@ -49,16 +50,18 @@ theorem evalSelectCore_grouped_full (db : Database)
         Ψ (key, rows) = if (having.all fun c => exprWithAggEval db rows s c == some (Value.bool true))
           then some (groupOrderKeyRow db exprWithAggEval orderBy rows s
             (items.flatMap (selectItemWithAggEval db rows s))) else none) ∧
-      evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
+      evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
         exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
         (SelectStmt.mk false items (some from_) wh groupBy having orderBy lim off) =
       applyOrderByLimitOffsetAligned compareEval db (groupOrderByItems orderBy) lim off true
         (((match wh with
-          | some c => (fromEval db from_).filter fun row => exprEval db row c == some (Value.bool true)
-          | none => fromEval db from_).foldl F' []).filterMap Ψ)
+          | some c => ((fromEval db from_).map fun row => row ++ outerRow).filter
+              fun row => exprEval db row c == some (Value.bool true)
+          | none => (fromEval db from_).map fun row => row ++ outerRow).foldl F' []).filterMap Ψ)
         (((match wh with
-          | some c => (fromEval db from_).filter fun row => exprEval db row c == some (Value.bool true)
-          | none => fromEval db from_).foldl F []).filterMap Φ) := by
+          | some c => ((fromEval db from_).map fun row => row ++ outerRow).filter
+              fun row => exprEval db row c == some (Value.bool true)
+          | none => (fromEval db from_).map fun row => row ++ outerRow).foldl F []).filterMap Φ) := by
   have hne : groupBy.isEmpty = false := by cases groupBy <;> simp_all
   refine ⟨?F, ?F', ?Φ, ?Ψ, ?h1, ?h1', ?h2, ?h2', ?h3⟩
   case h3 =>
@@ -1188,8 +1191,11 @@ set_option maxHeartbeats 8000000 in
     the statement elaborates, the typed query's rows relate, in order, to `SqlEquiv`'s, an `AVG`
     item (step 3c) up to `SqlEquiv`'s rounding (`OutRelI`). Bare columns read the group's first row, or the row
     where the one `MIN`/`MAX` argument is extreme (`BareOk`), and with sort keys no output
-    name captures `SqlEquiv`'s key columns (`hnm`). -/
-theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    name captures `SqlEquiv`'s key columns (`hnm`).
+
+    The conclusion is under every outer row `ctx` (#409): as a subquery body `SqlEquiv` evaluates
+    the statement on source rows `row ++ ctx`, and the typed result is the same one. -/
+theorem elabStmt_correct_grouped_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
     (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
     (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
     {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
@@ -1209,9 +1215,9 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
     {e : Elaborated N.S}
     (h : elabStmt N (groupedStmt items fr wh groupBy having orderBy lim off) = .ok e)
     (hnb : QNoBoolOrder e.q) :
-    ∃ rs, e.q.eval D = .ok rs ∧
-      ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh groupBy having orderBy lim off)).2 =
-        some out ∧ List.Forall₂ (OutRelI items) rs out := by
+    e.q.IsSafe ∧ ∃ rs, e.q.eval D = .ok rs ∧
+      ∀ ctx, List.Forall₂ (OutRelI items) rs (SqlEquiv.evalSelectWithContext db ctx
+        (.mk false items (some fr) wh groupBy having orderBy lim off)) := by
   obtain ⟨hty, n, qf, cf, hf, q₀, hq₀, keyList, a, aggs, its, sk, mk, hk, hmk, haggs, hits, hsk,
     qh, hqh, rfl⟩ := elab_grouped_shape N hfoldCI hgi (.inl hgb) hob hgc hhv hbf h
   have hwo' := hwo qf q₀ cf hf hq₀
@@ -1344,7 +1350,7 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
         decide_eq_true_eq]
       exact ⟨fun i => hcols i, fun i => by rw [(hidx i).1]; rfl⟩
   obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok hsafe hD
-  refine ⟨rs, hrs, _, rfl, ?_⟩
+  refine ⟨hsafe, rs, hrs, fun ctx => ?_⟩
   -- the typed evaluation, step by step
   obtain ⟨base, hbase, rfl⟩ := eval_limitWrap D lim off _ hrs
   obtain ⟨rowsH, hH, hbase'⟩ : ∃ rowsH, qh.eval D = .ok rowsH ∧
@@ -1391,10 +1397,9 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
   have hitems : ∀ it ∈ items, ∃ e al, it = .exprItem e al := fun it hit => by
     obtain ⟨e, al, h, -⟩ := groupedItems_mem hgi it hit; exact ⟨e, al, h⟩
   -- `SqlEquiv`'s side
-  simp only [SqlEquiv.evalQuery]
-  rw [SqlEquiv.evalSelect_eq_evalSelectCore]
+  rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore]
   obtain ⟨F, F', Φ, Ψ, hF, hF', hΦ, hΨ, heq⟩ :=
-    evalSelectCore_grouped_full _ _ _ _ _ _ _ _ _ _ items fr wh groupBy having orderBy lim off hgb
+    evalSelectCore_grouped_full db ctx _ _ _ _ _ _ _ _ _ items fr wh groupBy having orderBy lim off hgb
   rw [heq, applyOrder_eq]
   apply limit_rel
   -- a typed aggregate row against `SqlEquiv`'s (projected row, key row)
@@ -1690,7 +1695,9 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
           (fun db' r e => SqlEquiv.evalExprWithDb db' r e) db (p₁.1 ++ p₁.2) (p₂.1 ++ p₂.2)
           (SqlEquiv.groupOrderByItems orderBy)).map Prod.fst) by
     apply hfin
-    exact hwo'.rel hq₀ty hnbq₀ hRf hR hrows
+    refine hwo'.rel hq₀ty hnbq₀ hRf hR ?_
+    rw [List.forall₂_map_right_iff]
+    exact hrows.imp fun r u h => ⟨rowRel_append ctx h.1, h.2⟩
   intro U hRU
   obtain ⟨hPR, hfst⟩ := core U hRU
   by_cases h0 : sk.length = 0
@@ -1742,6 +1749,39 @@ theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).
     rw [hW1, List.map_map] at hout
     rw [hW2, List.map_map]
     exact mapM_rel_of (fun w hw d hd => (hW w hw).1.1 d hd) hout
+
+/-- `elabStmt_correct_grouped_ctx` for the statement itself: no outer row. -/
+theorem elabStmt_correct_grouped_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLower)
+    (hfoldCI : ∀ x y, N.fold x = N.fold y ↔ x.toLower = y.toLower) (hwn : WellNamed N)
+    (hfix : ∀ T j, N.fold (N.S.columns T j).name = (N.S.columns T j).name)
+    {db : SqlEquiv.Database} {D : Database N.S} (hD : D.Conforms) (hrel : DbRel N db D)
+    {items : List SqlEquiv.SelectItem} {fr : SqlEquiv.FromClause} {wh : Option SqlEquiv.Expr}
+    {groupBy : List SqlEquiv.Expr} {having : Option SqlEquiv.Expr}
+    {orderBy : List SqlEquiv.OrderByItem} {lim off : Option ℕ}
+    (hgi : groupedItems items = true) (hgb : groupBy ≠ [])
+    (hgc : ∀ e ∈ groupBy, ∃ c, e = .col c) (hff : fromFragment fr = true)
+    (hwo : ∀ {n : ℕ} (qf q₀ : Query N.S n) (cf : Fin n → Column),
+      elabFrom N (fun sq => elabSubQuery N 15 sq) fr = .ok ⟨n, qf, cf⟩ →
+      elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf wh = .ok q₀ →
+      WhereOk cf N.fold db D wh qf q₀) (hhv : ∀ h ∈ having, havingFragment groupBy h = true)
+    (hav : HavingAvgOk N D fr having)
+    (hob : ∀ o ∈ orderBy, OrderKeyOk items groupBy o.expr) (hbf : BareOk N items groupBy having orderBy)
+    (hnm : orderBy ≠ [] → ∀ it ∈ items, '.' ∉ (outName it).toList ∧
+      ∀ k, (outName it).toLower ≠ SqlEquiv.groupOrderKeyName k)
+    {e : Elaborated N.S}
+    (h : elabStmt N (groupedStmt items fr wh groupBy having orderBy lim off) = .ok e)
+    (hnb : QNoBoolOrder e.q) :
+    ∃ rs, e.q.eval D = .ok rs ∧
+      ∃ out, (SqlEquiv.evalStmt db (groupedStmt items fr wh groupBy having orderBy lim off)).2 =
+        some out ∧ List.Forall₂ (OutRelI items) rs out := by
+  obtain ⟨-, rs, hrs, hctx⟩ := elabStmt_correct_grouped_ctx N hfold hfoldCI hwn hfix hD hrel hgi hgb
+    hgc hff hwo hhv hav hob hbf hnm h hnb
+  refine ⟨rs, hrs, _, rfl, ?_⟩
+  have := hctx []
+  rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore] at this
+  simp only [SqlEquiv.evalQuery]
+  rw [SqlEquiv.evalSelect_eq_evalSelectCore]
+  exact this
 
 end SqlBridge.CorrectGrouped
 
