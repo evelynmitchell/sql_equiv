@@ -135,12 +135,16 @@ def distinctShape : SqlEquiv.Stmt → Bool
 
 /-- `SqlBridge.CorrectSetOp.Leaf`: a branch of a set operation is a statement of
     `elabStmt_correct_join`, `_distinct`, `_agg` or `_grouped` without `ORDER BY`, `LIMIT` or
-    `OFFSET`, and in the grouped case without an `AVG` item. -/
+    `OFFSET`, and in the grouped case without an `AVG` item or an `AVG` comparison in
+    `HAVING`. -/
 def leafShape : SqlEquiv.Query → Bool
   | q@(.simple (.mk _ items _ _ _ _ [] none none)) =>
     stmtShape (.query q) || distinctShape (.query q) || aggShape (.query q) ||
       (groupedShape (.query q) &&
-        items.all fun it => !SqlBridge.CorrectAvg.avgFragment (itemExpr it))
+        (items.all fun it => !SqlBridge.CorrectAvg.avgFragment (itemExpr it)) &&
+        match q with
+        | .simple (.mk _ _ _ _ _ having _ _ _) => having.all fun h => !SqlBridge.CorrectGroup.hasCmpAvg h
+        | _ => false)
   | _ => false
 
 /-- `SqlBridge.CorrectSetOp.SetOpTree Leaf`, with at least one set operation. -/
@@ -330,11 +334,17 @@ def features (sql : String) : List String :=
 #guard features "SELECT department FROM users GROUP BY department HAVING COUNT(*) BETWEEN 1 AND 2" == []
 #guard features "SELECT name FROM users WHERE age BETWEEN 25 AND age + 1" == ["arithmetic"]
 #guard features "SELECT name FROM users WHERE age IN (1, 2)" == ["IN list"]
--- `AVG` as an item is in the fragment (step 3c), not in `HAVING`/`ORDER BY`
+-- `AVG` as an item is in the fragment (step 3c); in `HAVING` only as `AVG(c) op k` (step 6c,
+-- `HavingAvgOk`); not in `ORDER BY`
 #guard features "SELECT AVG(age) FROM users" == []
 #guard features "SELECT department, AVG(age) FROM users GROUP BY department" == []
-#guard features "SELECT department FROM users GROUP BY department HAVING AVG(age) > 1" ==
+#guard features "SELECT department FROM users GROUP BY department HAVING AVG(age) > 1" == []
+#guard features "SELECT department FROM users GROUP BY department HAVING 1 < AVG(age)" ==
   ["AVG", "aggregate/GROUP BY"]
+#guard features "SELECT department FROM users GROUP BY department HAVING AVG(age) > MIN(age)" ==
+  ["AVG", "aggregate/GROUP BY"]
+#guard features "SELECT department FROM users GROUP BY department HAVING AVG(DISTINCT age) > 1" != []
+#guard features "SELECT department FROM users GROUP BY department HAVING AVG(age) > 1.5" != []
 #guard features "SELECT SUM(age + 1) FROM users" == ["arithmetic"]
 #guard features "SELECT department, COUNT(*) FROM users GROUP BY department" == []
 -- a bare column (steps 3b-4, 3b-5): in the fragment without MIN/MAX; next to one MIN/MAX only in
@@ -416,6 +426,18 @@ example {D : SqlCore.Database singerSchema.S} (hD : D.Conforms)
     (fun _ h => by cases h)
     (SqlBridge.CorrectSub.nonDecimalIn_col singerSchema singerSchema_noDecimal rfl _)
     (fun qf cf Rf h hRf => SqlBridge.CorrectSub.fromRows_table singerSchema _ hB _ qf cf Rf h hRf)
+
+/-- The hypothesis of a `HAVING AVG(c) op k` (`SqlBridge.CorrectGrouped.HavingAvgOk`) holds
+    here over a table of at most `10¹⁶` rows. -/
+example {D : SqlCore.Database singerSchema.S} (hB : ∀ T, (D T).length ≤ 10 ^ SqlEquiv.avgPlaces)
+    (having : Option SqlEquiv.Expr) :
+    SqlBridge.CorrectGrouped.HavingAvgOk singerSchema D (.table ⟨"singer", none⟩) having :=
+  fun _ => ⟨singerSchema_noDecimal, fun qf cf Rf h hRf =>
+    SqlBridge.CorrectSub.fromRows_table singerSchema _ hB _ qf cf Rf h hRf⟩
+
+-- a branch of a set operation takes no `AVG` comparison in `HAVING` (`Leaf.grouped`)
+#guard featuresSqlite ("SELECT age FROM singer GROUP BY age HAVING avg(singer_id) > 1 " ++
+  "UNION SELECT age FROM singer") == [SqlBridge.Coverage.setOpBranch]
 
 /-- Mixed-case references, as Spider writes them, are in the fragment and elaborate under the
     folding schema, so `elabStmt_correct` applies to them. -/
@@ -524,7 +546,11 @@ def groupedSpider (sql : String) : Bool :=
 -- (the key is matched as written: `ORDER BY Age` after `GROUP BY age` stays outside)
 #guard !groupedSpider "SELECT count(*) FROM singer GROUP BY age ORDER BY Age"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age ORDER BY avg(singer_id)"
-#guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING avg(singer_id) > 1"
+#guard groupedSpider "SELECT age FROM singer GROUP BY age HAVING avg(singer_id) > 1"
+#guard groupedSpider ("SELECT age, avg(singer_id) FROM singer GROUP BY age " ++
+  "HAVING count(*) > 1 AND avg(singer_id) <= 3 ORDER BY age")
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING avg(singer_id) > min(singer_id)"
+#guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING 1 < avg(singer_id)"
 #guard !groupedSpider "SELECT age FROM singer GROUP BY age HAVING name = 'x'"
 #guard !groupedSpider "SELECT name, max(age), min(age) FROM singer GROUP BY singer_id"
 #guard !groupedSpider "SELECT name, max(DISTINCT age) FROM singer GROUP BY singer_id"

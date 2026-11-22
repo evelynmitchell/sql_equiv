@@ -95,15 +95,34 @@ def itemCallOk : Expr → Bool
   | .agg (.avg _) (some _) false => true
   | e => aggCallOk e
 
+/-- `AVG(c) op k` in `HAVING`, the average of a column against an integer literal (mirrors
+    `SqlBridge.CorrectGroup.cmpAvgForm`). The theorem relates it under two hypotheses the shape
+    cannot see (`SqlBridge.CorrectGrouped.HavingAvgOk`): no column of the schema is a decimal
+    (Spider's typing has none) and `FROM` has at most `10¹⁶` rows. The count assumes both. -/
+def cmpAvgOk : Expr → Bool
+  | .binOp op (.agg (.avg _) (some (.col _)) false) (.lit (.int _)) =>
+    match op with
+    | .eq | .ne | .lt | .le | .gt | .ge => true
+    | _ => false
+  | _ => false
+
+/-- Whether a predicate has such a comparison (mirrors `SqlBridge.CorrectGroup.hasCmpAvg`). -/
+def hasCmpAvgOk : Expr → Bool
+  | .binOp op x y => cmpAvgOk (.binOp op x y) || hasCmpAvgOk x || hasCmpAvgOk y
+  | .unaryOp _ x => hasCmpAvgOk x
+  | .between x lo hi => hasCmpAvgOk x || hasCmpAvgOk lo || hasCmpAvgOk hi
+  | _ => false
+
 /-- Mirrors `SqlBridge.CorrectGroup.havingFragment`'s shape (aggregate arguments are checked
     separately): literals, key columns, aggregates, comparisons, `AND`, `OR`, `NOT`. -/
 def havingOk (groupBy : List Expr) : Expr → Bool
   | .lit _ => true
   | .col c => groupBy.contains (.col c)
   | .binOp op x y =>
-    (match op with
+    cmpAvgOk (.binOp op x y) ||
+    ((match op with
      | .eq | .ne | .lt | .le | .gt | .ge | .and | .or => true
-     | _ => false) && havingOk groupBy x && havingOk groupBy y
+     | _ => false) && havingOk groupBy x && havingOk groupBy y)
   | .unaryOp .not x => havingOk groupBy x
   | .between x lo hi => havingOk groupBy x && havingOk groupBy lo && havingOk groupBy hi
   | e => aggCallOk e
@@ -316,7 +335,8 @@ partial def branchFeatures (s : SelectStmt) : List String :=
     s.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
     s.items.any (fun | .exprItem (.col _) _ => true | _ => false)
   selectFeatures s ++
-    (if !s.orderBy.isEmpty || s.limitVal.isSome || s.offsetVal.isSome || hasAvg || bareNoGroup
+    (if !s.orderBy.isEmpty || s.limitVal.isSome || s.offsetVal.isSome || hasAvg || bareNoGroup ||
+        s.having.any hasCmpAvgOk
      then [setOpBranch] else [])
 
 /-- Features of a query outside the fragment. A set operation (`elabStmt_correct_setOp`) is in

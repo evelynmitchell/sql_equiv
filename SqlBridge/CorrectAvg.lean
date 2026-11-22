@@ -277,4 +277,133 @@ theorem cmp_agree_avg {op : SqlEquiv.BinOp} {c : CmpOp} (hop : elabBinOp op = .o
       simp only [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp, compareDec,
         compare_int_round z q p hden']
 
+theorem compare_round_int (z : ℤ) (q : ℚ) (p : ℕ) (hden : q.den ≤ 10 ^ p) :
+    compare ((roundHalfAway (q * 10 ^ p) : ℚ) / (10 ^ p : ℕ)) (z : ℚ) = compare q (z : ℚ) := by
+  have h := compare_int_round z q p hden
+  rw [Std.OrientedCmp.eq_swap (cmp := (compare : ℚ → ℚ → Ordering)) (a := (z : ℚ)),
+    Std.OrientedCmp.eq_swap (cmp := (compare : ℚ → ℚ → Ordering)) (a := (z : ℚ)) (b := q)] at h
+  exact Ordering.swap_inj.mp h
+
+/-- `cmp_agree_avg` with the `AVG` on the left (`HAVING AVG(e) op k`). -/
+theorem cmp_agree_avg_left {op : SqlEquiv.BinOp} {c : CmpOp} (hop : elabBinOp op = .ok (.cmp c))
+    {a b : Datum} {a' b' : SqlEquiv.Value} (ha : AvgRel a a')
+    (hden : ∀ q, a = some (.decimal q) → q.den ≤ 10 ^ SqlEquiv.avgPlaces)
+    (hb : DatumRel b b') (hbt : ∀ q, b ≠ some (.decimal q))
+    {d : Datum} (h : SqlCore.evalBinOp (.cmp c) a b = .ok d) :
+    ∃ v, SqlEquiv.evalBinOp op (some a') (some b') = some v ∧ DatumRel d v := by
+  rcases ha with ⟨rfl, t, rfl⟩ | ⟨q, p, rfl, hp, rfl⟩
+  · exact cmp_agree hop (show DatumRel none (.null t) from ⟨t, rfl⟩) hb
+      (fun _ _ x y hxy => by cases hxy.1) h
+  · obtain ⟨u', s', he, hq, -⟩ := CorrectAgg.mkDecimal_spec p (roundHalfAway (q * 10 ^ p))
+    rw [he]
+    have har : DatumRel (some (.decimal ((u' : ℚ) / (10 ^ s' : ℕ)))) (.decimal u' s') :=
+      ValRel.decimal u' s'
+    refine cmp_agree hop har hb (fun _ _ x y hxy => by cases hxy.1) ?_
+    rw [← h, hq]
+    rcases b with _ | x
+    · rfl
+    · cases x with
+      | decimal r => exact absurd rfl (hbt r)
+      | text t => simp [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp] at h
+      | bool t => simp [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp] at h
+      | int z =>
+      have hden' : q.den ≤ 10 ^ p :=
+        (hden q rfl).trans (Nat.pow_le_pow_right (by norm_num) hp)
+      simp only [SqlCore.evalBinOp, CmpOp.eval_some_some, Value.cmp, compareDec,
+        compare_round_int z q p hden']
+
+/-! ### The denominator of an average of integers -/
+
+/-- A sum of integers is an integer. -/
+theorem sumFrom_int : ∀ (vs : List Value) (a : ℤ), (∀ v ∈ vs, v.type = .int) →
+    ∃ z : ℤ, sumFrom (.int a) vs = .ok (.int z)
+  | [], a, _ => ⟨a, rfl⟩
+  | v :: vs, a, h => by
+    have hv := h v List.mem_cons_self
+    cases v <;> simp only [Value.type, reduceCtorEq] at hv
+    rename_i b
+    simp only [sumFrom, Value.add, bind, Except.bind]
+    exact sumFrom_int vs (a + b) (fun v hv => h v (List.mem_cons_of_mem _ hv))
+
+/-- The denominator of an integer divided by a positive natural is at most that natural. -/
+theorem den_div_le (z : ℤ) (k : ℕ) (hk : 0 < k) : ((z : ℚ) / k).den ≤ k := by
+  have h : ((z : ℚ) / k) = Rat.divInt z k := by rw [Rat.divInt_eq_div]; push_cast; rfl
+  rw [h]
+  exact Nat.le_of_dvd hk (Int.natCast_dvd_natCast.mp (Rat.den_dvd z k))
+
+/-- **An average of integers has a denominator at most the number of rows averaged.** -/
+theorem avg_den_le {n : ℕ} {e : Expr n} {R : List (Row n)} {q : ℚ}
+    (hint : ∀ r ∈ R, ∀ d, e.eval r = .ok d → d.HasType .int)
+    (h : (AggCall.call .avg false e).eval R = .ok (some (.decimal q))) : q.den ≤ R.length := by
+  simp only [AggCall.eval, bind, Except.bind] at h
+  rcases hds : R.mapM e.eval with err | ds
+  · simp [hds] at h
+  simp only [hds, Bool.false_eq_true, ↓reduceIte] at h
+  have hfa := mapM_forall₂ hds
+  have hlen : (ds.filterMap id).length ≤ R.length := by
+    rw [hfa.length_eq]; exact List.length_filterMap_le _ _
+  have hty : ∀ v ∈ ds.filterMap id, v.type = .int := by
+    intro v hv
+    obtain ⟨d, hd, hdv⟩ := List.mem_filterMap.mp hv
+    simp only [id] at hdv
+    subst hdv
+    obtain ⟨r, hr, hrd⟩ := forall₂_mem_right hfa hd
+    exact hint r hr _ hrd
+  rcases hvs : ds.filterMap id with _ | ⟨v, vs⟩
+  · rw [hvs] at h; simp [AggFn.apply] at h
+  rw [hvs] at h hlen hty
+  have hv := hty v List.mem_cons_self
+  cases v <;> simp only [Value.type, reduceCtorEq] at hv
+  rename_i a
+  obtain ⟨z, hz⟩ := sumFrom_int vs a (fun v hv => hty v (List.mem_cons_of_mem _ hv))
+  simp only [AggFn.apply, hz, meanOf, bind, Except.bind, pure, Except.pure, Except.ok.injEq,
+    Option.some.injEq, Value.decimal.injEq] at h
+  subst h
+  have := den_div_le z (vs.length + 1) (Nat.succ_pos _)
+  simp only [List.length_cons] at hlen
+  push_cast at this ⊢
+  omega
+
 end SqlBridge.CorrectAvg
+
+/-! ### Group sizes -/
+
+namespace SqlCore.Row
+variable {n g : ℕ}
+
+theorem insertGroup_total (k : Row g) (r : Row n) : ∀ gs : List (Row g × List (Row n)),
+    ((insertGroup k r gs).map (·.2.length)).sum = (gs.map (·.2.length)).sum + 1
+  | [] => by simp [insertGroup]
+  | (k', rs) :: gs => by
+    unfold insertGroup
+    split
+    · simp; omega
+    · simp only [List.map_cons, List.sum_cons, insertGroup_total k r gs]; omega
+
+theorem groupAux_total : ∀ (l : List (Row g × Row n)) (acc : List (Row g × List (Row n))),
+    ((groupAux acc l).map (·.2.length)).sum = (acc.map (·.2.length)).sum + l.length
+  | [], acc => by simp [groupAux]
+  | (k, r) :: l, acc => by
+    unfold groupAux
+    rw [groupAux_total l, insertGroup_total]; simp; omega
+
+theorem le_sum_of_mem_nat : ∀ {l : List ℕ} {x : ℕ}, x ∈ l → x ≤ l.sum
+  | y :: l, x, h => by
+    rcases List.mem_cons.mp h with rfl | h
+    · simp
+    · have := le_sum_of_mem_nat h
+      simp only [List.sum_cons]; omega
+
+/-- No group has more rows than the input. -/
+theorem length_le_of_mem_groups {keyed : List (Row g × Row n)} {grp : Row g × List (Row n)}
+    (h : grp ∈ groups keyed) : grp.2.length ≤ keyed.length := by
+  unfold groups at h
+  split at h
+  · rw [List.mem_singleton] at h; subst h; simp
+  · have ht := groupAux_total keyed ([] : List (Row g × List (Row n)))
+    simp only [List.map_nil, List.sum_nil, Nat.zero_add] at ht
+    rw [← ht]
+    exact le_sum_of_mem_nat (List.mem_map_of_mem (f := fun x : Row g × List (Row n) => x.2.length) h)
+
+end SqlCore.Row
+

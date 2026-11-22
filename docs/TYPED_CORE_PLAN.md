@@ -114,7 +114,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       `elabStmt_correct_grouped`). Spider coverage **384**, up from 381
     - [x] Step 3c: `AVG` as an item, grouped or not, its value related up to `SqlEquiv`'s rounding
       (`SqlBridge/CorrectAvg.lean`, `AvgRel`; decided 2026-11-21). Spider coverage **403**, up
-      from 384. `AVG` in `HAVING` or `ORDER BY` stays outside (2 queries)
+      from 384. `AVG` in `ORDER BY` stays outside; in `HAVING` see step 6c
     - [x] Step 4: `BETWEEN`, in expressions and in `HAVING` (`Translates.between`,
       `TranslatesH.between`). Spider coverage **407**, up from 403
     - [ ] Step 4's other operators (`IS NULL`, negation, arithmetic, `IN (list)`): no Spider
@@ -152,6 +152,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
         integer that cannot change the comparison under the bound (`cmp_agree_avg`). Also under
         `GROUP BY` (`elabStmt_correct_grouped_inSub`, for every `AnySubWhere` clause). Spider
         coverage **502**, up from 497
+      - [x] `HAVING AVG(c) op k`, by the same argument per group (`HavingAvgOk`,
+        `TranslatesH.cmpAvg`; 2 queries). Spider coverage **504**, up from 502
       - [ ] Bodies with `ORDER BY … LIMIT 1` (2 queries, one grouped)
     - [ ] `DISTINCT` with `ORDER BY` (1 Spider query, an unselected sort key with `LIMIT`).
       **Left outside, decided 2026-11-21:** a full step (the `AggCall.first` shape has no
@@ -242,12 +244,12 @@ after each step below. At the time of writing (20 Nov 2026, 520 queries elaborat
 | 6b (part). The same next to `AVG` or bare columns (done) | 486 |
 | 6b (part). The clause under `AND`, and under `DISTINCT` (done) | 488 |
 | 6c (part). Scalar subqueries over plain, `MIN`, `MAX`, `COUNT`, `SUM` bodies (done) | 497 |
-| Today: 6c (part). Scalar subqueries over an `AVG` body, under a size bound (done) | 502 |
-| `DISTINCT` with an unselected sort key and `LIMIT` | 503 |
+| 6c (part). Scalar subqueries over an `AVG` body, under a size bound (done) | 502 |
+| Today: `HAVING AVG(c) op k`, under the same bound (done) | 504 |
+| `DISTINCT` with an unselected sort key and `LIMIT` | 505 |
 
 Still outside after that: `IN`/`NOT IN` and scalar subqueries (5: 2 over
-`ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `LIKE` (8), `*` (2),
-`AVG` in `HAVING` (2).
+`ORDER BY … LIMIT 1`, 2 over a grouped or `UNION` body, 1 subquery in `FROM`), `LIKE` (8), `*` (2).
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
 does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are
@@ -527,6 +529,18 @@ follows coverage instead (decided 20 Nov 2026):
      the coverage count still assumes is that data bound. `CorrectExamples` instantiates both
      lemmas on the Spider-shaped test schema. The body theorem is
      `elabStmt_correct_aggBare_ctx`, the bare-column aggregate theorem under an outer row.
+
+     *`AVG` in `HAVING`* (2 queries, done 2026-11-22). The same argument per group:
+     `HAVING AVG(c) op k`, the average of a column against an integer literal
+     (`CorrectGroup.cmpAvgForm`), is a new case of the `HAVING` translation
+     (`TranslatesH.cmpAvg`), related by `cmp_agree_avg_left`. The grouped theorem takes
+     `HavingAvgOk`, which asks nothing of a `HAVING` without such a comparison and otherwise
+     that no column of the schema is a decimal and that `FROM` has at most `10¹⁶` rows: the
+     average is then one of integers over a group, its denominator at most the group's size
+     (`avg_den_le`, `Row.length_le_of_mem_groups`). Other uses of `AVG` in `HAVING` (the
+     literal on the left, against another aggregate, `AVG(DISTINCT …)`, a decimal literal)
+     and `AVG` in `ORDER BY` stay outside, as does such a `HAVING` in a branch of a set
+     operation.
 
      Still to do: `ORDER BY … LIMIT 1` bodies (2 queries).
 

@@ -39,6 +39,10 @@ with a subquery `AVG` is counted under the theorem's two hypotheses: the compare
 expression is not a decimal (proved for any column of a schema without decimal
 columns, which Spider's are), and the average's denominator is at most 10^16 (proved
 when the subquery's `FROM` has at most 10^16 rows; the count assumes that of the data).
+`HAVING AVG(c) op k` with an integer literal `k` is counted under the same two
+conditions (`HavingAvgOk`). Spider's `number` columns are typed `int` here, including
+those that hold fractions in the sqlite data; for such a column the typed model, not
+the theorem, is what departs from the data.
 Counts are of the
 elaborated
 queries with that shape (`SqlBridge.Coverage.outsideFragment`); roadmap and reasoning in
@@ -48,16 +52,14 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 502 |
-| after DISTINCT with an unselected sort key and LIMIT | 503 |
+| Today | 504 |
+| after DISTINCT with an unselected sort key and LIMIT | 505 |
 
 Still outside after that (queries using each feature):
 
 - LIKE: 8
 - subquery/set operation/CTE: 5
 - *: 2
-- AVG: 2
-- aggregate/GROUP BY: 2
 
 ## Failure classes (largest first)
 
