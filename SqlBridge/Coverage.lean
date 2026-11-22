@@ -162,14 +162,14 @@ def holeSplit : Expr → Option (List Expr × Option Expr × Expr)
     | none => (holeSplit b).map fun (xs, c, nd) => (a :: xs, c, nd)
   | .binOp op a nd =>
     match op, nd with
-    | .eq, .inSubquery _ _ (.simple _) | .ne, .inSubquery _ _ (.simple _)
-    | .lt, .inSubquery _ _ (.simple _) | .le, .inSubquery _ _ (.simple _)
-    | .gt, .inSubquery _ _ (.simple _) | .ge, .inSubquery _ _ (.simple _)
+    | .eq, .inSubquery _ _ _ | .ne, .inSubquery _ _ _
+    | .lt, .inSubquery _ _ _ | .le, .inSubquery _ _ _
+    | .gt, .inSubquery _ _ _ | .ge, .inSubquery _ _ _
     | .eq, .subquery (.simple _) | .ne, .subquery (.simple _) | .lt, .subquery (.simple _)
     | .le, .subquery (.simple _) | .gt, .subquery (.simple _) | .ge, .subquery (.simple _) =>
       some ([a], some a, nd)
     | _, _ => none
-  | .inSubquery e neg (.simple b) => some ([], none, .inSubquery e neg (.simple b))
+  | .inSubquery e neg sq => some ([], none, .inSubquery e neg sq)
   | .subquery (.simple b) => some ([], none, .subquery (.simple b))
   | _ => none
 
@@ -295,7 +295,8 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   -- (`elabStmt_correct_inSub`, `_distinct_inSub`, `_agg_inSub`, `_aggBare_inSub`): inside when
   -- the other expressions, the probe of an `IN` and the body are; the body a plain statement,
   -- one of aggregates only, or a grouped one whose item columns are keys (`BodyOk`,
-  -- `groupedBodyOf`), without `ORDER BY`. A scalar node assumes a dialect
+  -- `groupedBodyOf`), without `ORDER BY`; under `IN`, also a set operation over such bodies
+  -- (`SubBodyOk`, #410). A scalar node assumes a dialect
   -- that takes the first row of several (sqlite, as Spider is). Under `GROUP BY` too
   -- (`elabStmt_correct_grouped_inSub`).
   -- A scalar node over an `AVG` body (`AvgWhere`): compared with a column or an integer literal.
@@ -313,14 +314,8 @@ partial def selectFeatures (s : SelectStmt) : List String :=
      if (s.groupBy.isEmpty && s.having.isNone && (!s.distinct || plainDistinct)) || plainGroup then
        xs.flatMap exprFeatures ++ (if xs.any refsHidden then [hiddenName] else []) ++ probe ++
          (match nd with
-          | .inSubquery _ _ (.simple b) | .subquery (.simple b) =>
-            selectFeatures b ++
-            (if b.distinct || !b.orderBy.isEmpty || b.limitVal.isSome || b.offsetVal.isSome ||
-                (if b.groupBy.isEmpty && b.having.isNone then
-                  b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
-                    !plainAggOf b && !avgOk
-                 else !groupedBodyOf b)
-             then [subquery] else [])
+          | .inSubquery _ _ sq => inBodyFeatures sq
+          | .subquery (.simple b) => bodyFeatures avgOk b
           | _ => [subquery])
      else subquery :: (xs.flatMap exprFeatures ++ probe)
    | none, some w => exprFeatures w
@@ -334,6 +329,25 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   (s.orderBy.flatMap fun o =>
     if plainGroup then (match o.expr with | .agg _ (some a) _ => exprFeatures a | _ => [])
     else exprFeatures o.expr)
+
+/-- Features of a subquery body (`SqlBridge.CorrectSub.BodyOk`) outside the fragment: its own,
+    and `subquery` unless it is a plain statement, one of aggregates only (or, under a scalar
+    comparison, one `AVG`: `avgOk`), or a grouped one (`groupedBodyOf`), without `DISTINCT`,
+    `ORDER BY`, `LIMIT` or `OFFSET`. -/
+partial def bodyFeatures (avgOk : Bool) (b : SelectStmt) : List String :=
+  selectFeatures b ++
+  (if b.distinct || !b.orderBy.isEmpty || b.limitVal.isSome || b.offsetVal.isSome ||
+      (if b.groupBy.isEmpty && b.having.isNone then
+        b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
+          !plainAggOf b && !avgOk
+       else !groupedBodyOf b)
+   then [subquery] else [])
+
+/-- Features of an `IN` body (`SqlBridge.CorrectSub.SubBodyOk`, #410): a body as above, or a
+    set operation over such bodies. -/
+partial def inBodyFeatures : SubQuery → List String
+  | .simple b => bodyFeatures false b
+  | .compound l _ r => inBodyFeatures l ++ inBodyFeatures r
 
 /-- A branch of a set operation (mirrors `SqlBridge.CorrectSetOp.Leaf`): a statement of the
     earlier steps whose result is related exactly or up to order. So besides its own features:

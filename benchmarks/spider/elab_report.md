@@ -53,12 +53,12 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 513 |
-| after DISTINCT with an unselected sort key and LIMIT | 514 |
+| Today | 514 |
+| after DISTINCT with an unselected sort key and LIMIT | 515 |
 
 Still outside after that (queries using each feature):
 
-- subquery/set operation/CTE: 4
+- subquery/set operation/CTE: 3
 - *: 2
 
 ## Failure classes (largest first)
