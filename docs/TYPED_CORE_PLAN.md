@@ -5,7 +5,9 @@ This tracks #287. The decisions are in [`TYPED_CORE_DECISIONS.md`](TYPED_CORE_DE
 ## Goal
 
 Rebuild the semantic core in the typed style of cslib-frontier's SQL development
-(`CslibFrontier/Languages/SQL`, pinned at `e78796a1`):
+(`CslibFrontier/Languages/SQL`, pinned at `e78796a1`; its one SQL commit since, the proof
+refactor `841a64b4e`, is ported too, #415; re-diffed against upstream `d619c680e` on
+2026-11-22, which adds no SQL feature):
 
 - rows are positional (`Fin n → Datum`);
 - NULL is `none` of `Datum := Option Value`;
@@ -658,6 +660,21 @@ a filter, an equijoin, `DISTINCT`, and a decimal filter that drops a `NULL` pric
 
 ## Phase 5 notes
 
+- **The `Spec` refactor (upstream #5583, `841a64b4e`; here #415).** Type soundness is stated as
+  a postcondition, `Except.Spec x P E` (`x` succeeds with a result satisfying `P` or fails with
+  an error satisfying `E`), which composes along `>>=` by `Spec.bind`: `Expr.eval_spec`,
+  `Expr.evalTruth_spec`, `Expr.filterRows_spec`, `Expr.evalRow_spec`, and for this repo's
+  extensions `AggCall.eval_spec`, `AggCall.evalAll_spec` and `Query.eval_spec` (whose error side
+  is `EvalError.IsRuntime`, wider than upstream's division by zero). The older statements
+  (`eval_ok_or_divisionByZero`, `evalAll_ok_or_divisionByZero`, `eval_ok_or_runtimeError`,
+  `conforms_of_eval_eq_ok`) are corollaries, so `SqlBridge` is unchanged. `Except.ok` is the simp
+  normal form of `pure`; `bind_comm_of_eq_error` replaces the per-operator commutation lemmas;
+  `EquivLevel.Rel.lift` derives the unary `Rel` lemmas. Differences from upstream: the lemmas
+  live in `SqlCore.Except`, so the predicate is written `Spec x P E` where upstream writes
+  `x.Spec P E`; `Spec.imp_right`, `Spec.ok_or_error` and `Spec.of_ok_or_error` are added (the
+  first for the wider error class, the others so the `attach` case of `Query.eval_spec` keeps
+  its proof); upstream's shortened proofs in `QueryLaws` and `Simplify` are not ported (they
+  change no statement).
 - `Expr.Equiv Γ` holds when two expressions have equal observations (`Except.toOption`) on every row
   conforming to `Γ`. It is a setoid and a congruence for every constructor, and it is compatible
   with renaming and substitution.
