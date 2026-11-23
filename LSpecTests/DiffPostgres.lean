@@ -440,6 +440,19 @@ def runAllTests : IO TestSeq := do
     -- Registry row 21: a comparison followed by a predicate groups as `a = (b LIKE c)`
     diffTest "precedence: comparison then LIKE (row 21)"
       "SELECT name FROM users WHERE (age > 26) = name LIKE 'A%'",
+    -- A window function over groups (#429)
+    diffTest "grouped window: rank over sum"
+      "SELECT department, RANK() OVER (ORDER BY SUM(age) DESC) AS r FROM users GROUP BY department ORDER BY department",
+    diffTest "grouped window: sum of sums"
+      "SELECT department, SUM(SUM(age)) OVER () AS s FROM users GROUP BY department ORDER BY department",
+    diffTest "grouped window: after having"
+      "SELECT department, ROW_NUMBER() OVER (ORDER BY department) AS rn FROM users GROUP BY department HAVING COUNT(*) = 2 ORDER BY department",
+    diffTest "grouped window: partition by an aggregate"
+      "SELECT department, COUNT(*) AS c, SUM(COUNT(*)) OVER (PARTITION BY COUNT(*)) AS s FROM users GROUP BY department ORDER BY department",
+    diffTest "grouped window: aggregate query"
+      "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS rn FROM users",
+    diffTest "grouped window: order by its alias"
+      "SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department ORDER BY r",
     -- Window functions under IN (list), BETWEEN, CASE and a function call (#418)
     diffTest "window: in list"
       "SELECT name, SUM(age) OVER (PARTITION BY department) IN (65, 28) AS r FROM users",

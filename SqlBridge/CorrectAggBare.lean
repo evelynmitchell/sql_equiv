@@ -252,7 +252,8 @@ theorem elabStmt_correct_aggBare_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s
   rotate_left
   · -- under an outer row (a subquery body)
     rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore, evalSelectCore_agg_ctx _ _ _ _ _ _ _ _ _
-      _ _ _ _ _ (selectHasAggregate_of_agg hgi hai)]
+      _ _ _ _ _ (selectHasAggregate_of_agg hgi hai)
+      (CorrectGrouped.selectHasWindowFn_groupedItems hgi)]
     refine .cons ⟨hits.length_eq, ?_⟩ .nil
     rw [items_vals_group db _ _ hitems]
     apply final
@@ -262,7 +263,7 @@ theorem elabStmt_correct_aggBare_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s
   -- `SqlEquiv`'s side: one row of the items' values, on its sample row
   simp only [SqlEquiv.evalQuery]
   rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_agg _ _ _ _ _ _ _ _ _ _ _ _ _
-    (selectHasAggregate_of_agg hgi hai)]
+    (selectHasAggregate_of_agg hgi hai) (CorrectGrouped.selectHasWindowFn_groupedItems hgi)]
   refine .cons ⟨hits.length_eq, ?_⟩ .nil
   rw [items_vals_group db _ _ hitems]
   apply final

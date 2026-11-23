@@ -141,7 +141,7 @@ theorem elabStmt_correct_countDerived (N : NamedSchema)
   -- `SqlEquiv`'s side: one row, each item the number of the derived table's rows
   simp only [SqlEquiv.evalQuery]
   rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_agg _ _ _ _ _ _ _ _ _ _ _ _ _
-    (selectHasAggregate_aggItems hai hne)]
+    (selectHasAggregate_aggItems hai hne) (selectHasWindowFn_aggItems hai)]
   refine .cons ?_ .nil
   unfold OutRel
   rw [items_vals db _ _ hai]

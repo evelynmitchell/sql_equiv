@@ -315,23 +315,25 @@ def windowParserTests : List TestResult := [
     "SELECT SUM(DISTINCT age) OVER () FROM users",
   testParseFail "window_ranking_takes_no_args"
     "SELECT ROW_NUMBER(age) OVER (ORDER BY age) FROM users",
-  -- #421: a window function in a grouped or aggregate query is not evaluated
-  -- yet (it was a silent NULL), so the shape is rejected
-  testParseFailWith "window_in_grouped_query_rejected" "(#421)"
+  -- #429: a window function in a grouped or aggregate query is evaluated over the groups
+  -- (#421 rejected it while it was a silent NULL)
+  testParse "window_in_grouped_query_accepted"
     "SELECT department, SUM(age) OVER () AS r FROM users GROUP BY department",
-  testParseFailWith "window_with_partition_in_grouped_query_rejected" "(#421)"
+  testParse "window_with_partition_in_grouped_query_accepted"
     "SELECT department, ROW_NUMBER() OVER (PARTITION BY department ORDER BY department) AS r FROM users GROUP BY department",
-  testParseFailWith "window_next_to_aggregate_rejected" "(#421)"
+  testParse "window_next_to_aggregate_accepted"
     "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS r FROM users",
-  testParseFailWith "window_with_having_rejected" "(#421)"
-    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
-  testParseFailWith "window_over_aggregate_argument_rejected" "(#421)"
-    "SELECT SUM(SUM(age)) OVER () AS r FROM users",
-  testParseFailWith "window_over_aggregate_order_key_rejected" "(#421)"
-    "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
-  testParseFailWith "window_under_operator_in_grouped_query_rejected" "(#421)"
+  testParse "window_under_operator_in_grouped_query_accepted"
     "SELECT department, SUM(COUNT(*)) OVER () + 1 AS r FROM users GROUP BY department",
-  -- (an ORDER BY window key is rejected on its own since #424, before the #421 check)
+  -- #438: without GROUP BY and with no aggregate outside a window in the items, the evaluator
+  -- would not aggregate, so an aggregate elsewhere or a HAVING is still rejected
+  testParseFailWith "window_with_having_rejected" "(#438)"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
+  testParseFailWith "window_over_aggregate_argument_rejected" "(#438)"
+    "SELECT SUM(SUM(age)) OVER () AS r FROM users",
+  testParseFailWith "window_over_aggregate_order_key_rejected" "(#438)"
+    "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
+  -- an ORDER BY window key is rejected on its own (#424, #435)
   testParseFailWith "window_in_grouped_order_by_rejected" "(#435)"
     "SELECT department FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department)",
   -- #424: windows are computed after WHERE, GROUP BY, HAVING and join conditions; all three
