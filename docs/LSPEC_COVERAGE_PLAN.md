@@ -1,5 +1,9 @@
 # Plan: Increase LSpec Property Test Coverage
 
+> **Note (23 Nov 2026):** the optimizer (`Optimizer.lean`, `OptimizerUtils.lean`,
+> `LSpecTests/OptimizerEquiv.lean`) was removed in PR #156. The optimizer items below are
+> historical; the certified rewriter `certifiedRewrite` (`SqlEquiv/Rewriter.lean`) took its place.
+
 ## Current State (after 100→1000 sample bump)
 - **76 property checks** across 3 suites (ExprAlgebra, NullSemantics, OptimizerEquiv)
 - **1000 samples** per check (76,000 total) — previously 100 samples (7,600 total)

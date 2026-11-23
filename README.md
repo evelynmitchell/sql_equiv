@@ -102,7 +102,7 @@ This repository could become a basis for SQL support in
     the AST is total and kernel-reducible, `sql_equiv!` is kernel-checked
     (`decide +kernel`), and statement-level certified checkers exist
     (`checkSelectEquiv`, `checkQueryEquiv` in `Equiv/StatementChecker.lean`).
-    The 58 remaining `partial def`s (17 Nov 2026) are the parser (40), the SQL
+    The 66 remaining `partial def`s (23 Nov 2026) are the parser (48), the SQL
     pretty-printer (8) and the debug `Repr` printer `toReprStr` (10); no
     semantics, proof or checker code calls them;
   - the representation choices above were made for a checker, not a library.
