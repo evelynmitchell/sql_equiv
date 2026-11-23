@@ -1456,7 +1456,51 @@ def windowTests : List TestResult := [
     "r" [.bool true, .bool true, .bool false, .bool false, .bool false],
   testColumn "window_outer_order_by_nonprojected_names"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY age"
-    "name" [.string "Eve", .string "Bob", .string "Dave", .string "Alice", .string "Carol"]
+    "name" [.string "Eve", .string "Bob", .string "Dave", .string "Alice", .string "Carol"],
+  -- A window function or an aggregate left of IN (subquery) (#422): before, the item was NULL
+  -- and HAVING dropped every group. Expectations agree with DuckDB, sqlite and Postgres.
+  -- department sums 65, 47, 65, 28, 47 against amount - 35 = 65, 165, 115, 265
+  testColumn "window_in_subquery"
+    "SELECT name, SUM(age) OVER (PARTITION BY department) IN (SELECT amount - 35 FROM orders) AS r FROM users"
+    "r" [.bool true, .bool false, .bool true, .bool false, .bool false],
+  -- row numbers 4, 2, 5, 3, 1 against {NULL, 2, 3}: no match with a NULL is unknown
+  testColumn "window_not_in_subquery_with_null"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) NOT IN (SELECT CASE WHEN id = 1 THEN NULL ELSE id END FROM products) AS r FROM users"
+    "r" [.null none, .bool false, .null none, .bool false, .null none],
+  testColumn "agg_in_subquery_whole_table"
+    "SELECT MIN(age) IN (SELECT age FROM users WHERE department = 'Sales') AS r FROM users"
+    "r" [.bool true],
+  -- counts per department: Engineering 2, Marketing 1, Sales 2
+  testColumn "agg_in_subquery_grouped"
+    "SELECT department, COUNT(*) IN (SELECT user_id FROM orders WHERE user_id > 1) AS r FROM users GROUP BY department ORDER BY department"
+    "r" [.bool true, .bool false, .bool true],
+  testColumn "agg_expr_in_subquery_grouped"
+    "SELECT department, MAX(age) - 20 IN (SELECT price / 10 FROM products) AS r FROM users GROUP BY department ORDER BY department"
+    "r" [.bool true, .bool false, .bool true],
+  testColumn "agg_not_in_subquery_with_null"
+    "SELECT department, COUNT(*) NOT IN (SELECT CASE WHEN id = 1 THEN NULL ELSE id END FROM products) AS r FROM users GROUP BY department ORDER BY department"
+    "r" [.bool false, .null none, .bool false],
+  testColumn "agg_in_empty_subquery"
+    "SELECT department, COUNT(*) IN (SELECT id FROM products WHERE id > 100) AS r FROM users GROUP BY department ORDER BY department"
+    "r" [.bool false, .bool false, .bool false],
+  testColumn "agg_not_in_empty_subquery"
+    "SELECT department, MAX(age) NOT IN (SELECT id FROM products WHERE id > 100) AS r FROM users GROUP BY department ORDER BY department"
+    "r" [.bool true, .bool true, .bool true],
+  -- maxima 35, 28, 25 against ages {28, 22}
+  testColumn "having_agg_in_subquery"
+    "SELECT department FROM users GROUP BY department HAVING MAX(age) IN (SELECT age FROM users WHERE id > 3)"
+    "department" [.string "Marketing"],
+  testColumn "having_agg_not_in_subquery"
+    "SELECT department FROM users GROUP BY department HAVING COUNT(*) NOT IN (SELECT user_id FROM orders WHERE user_id > 1)"
+    "department" [.string "Marketing"],
+  -- sqlite's bare-column rule (registry T9) counts a MIN/MAX left of IN (subquery), as sqlite
+  -- 3 does: `name` comes from the extreme row
+  testContainsValueIn "bare_column_max_in_subquery_sqlite" .sqlite
+    "SELECT name, MAX(age) IN (SELECT 35) AS r FROM users" (.string "Carol"),
+  testContainsValueIn "bare_column_min_in_subquery_sqlite" .sqlite
+    "SELECT name, MIN(age) IN (SELECT 1) AS r FROM users" (.string "Eve"),
+  testContainsValueIn "bare_column_max_in_subquery_standard_first_row" .standard
+    "SELECT name, MAX(age) IN (SELECT 35) AS r FROM users" (.string "Alice")
 ]
 
 -- ============================================================================

@@ -681,18 +681,22 @@ private theorem evalExprWithAggParam_ground_eq
     (hlen : rows1.length = rows2.length)
     (hg : e.isGround = true)
     (h_ee : ∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
-        ∀ row1 row2, ee db row1 e' = ee db row2 e') :
+        ∀ row1 row2, ee db row1 e' = ee db row2 e')
+    (h_sub : (∀ (v : Value) (neg : Bool) (sq : SubQuery), sq.isGround = true → sizeOf sq < sizeOf e →
+        ∀ row1 row2, ee db row1 (.inSubquery (.lit v) neg sq) = ee db row2 (.inSubquery (.lit v) neg sq))) :
     evalExprWithAggParam ee db rows1 s1 e = evalExprWithAggParam ee db rows2 s2 e := by
   suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
       e.isGround = true →
       (∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
           ∀ row1 row2, ee db row1 e' = ee db row2 e') →
+      (∀ (v : Value) (neg : Bool) (sq : SubQuery), sq.isGround = true → sizeOf sq < sizeOf e →
+          ∀ row1 row2, ee db row1 (.inSubquery (.lit v) neg sq) = ee db row2 (.inSubquery (.lit v) neg sq)) →
       evalExprWithAggParam ee db rows1 s1 e = evalExprWithAggParam ee db rows2 s2 e by
-    exact key (sizeOf e + 1) e (by omega) hg h_ee
+    exact key (sizeOf e + 1) e (by omega) hg h_ee h_sub
   intro n; induction n with
   | zero => intro _ h; exact absurd h (Nat.not_lt_zero _)
   | succ n ih =>
-    intro e hlt hg h_ee
+    intro e hlt hg h_ee h_sub
     cases e with
     | agg fn arg distinct =>
       simp only [evalExprWithAggParam]
@@ -711,14 +715,17 @@ private theorem evalExprWithAggParam_ground_eq
       have h_sz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
       have hl := ih l (by omega) hgl
         (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       have hr := ih r (by omega) hgr
         (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       simp only [evalExprWithAggParam, hl, hr]
     | unaryOp op inner =>
       have hgi : inner.isGround = true := by simp only [Expr.isGround] at hg; exact hg
       have h_sz_i : sizeOf inner < sizeOf (Expr.unaryOp op inner) := by simp_wf; omega
       have hi := ih inner (by omega) hgi
         (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       simp only [evalExprWithAggParam, hi]
     | lit _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | col _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
@@ -734,6 +741,7 @@ private theorem evalExprWithAggParam_ground_eq
           have := List.sizeOf_lt_of_mem ha; simp_wf; omega
         exact ih a (by omega) (hga a ha)
           (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | «case» branches else_ =>
       by_cases hA : hasAggregate (Expr.case branches else_) = true
@@ -754,8 +762,10 @@ private theorem evalExprWithAggParam_ground_eq
           have hab : sizeOf (a, b) = 1 + sizeOf a + sizeOf b := by simp [Prod.mk.sizeOf_spec]
           have ha : sizeOf a < sizeOf (Expr.case branches else_) := by simp_wf; omega
           have hb : sizeOf b < sizeOf (Expr.case branches else_) := by simp_wf; omega
-          rw [ih a (by omega) g1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2'),
-            ih b (by omega) g2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+          rw [ih a (by omega) g1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2'),
+            ih b (by omega) g2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
         cases else_ with
         | none =>
           simp only [evalExprWithAggParam, hA, ↓reduceIte, hmap]
@@ -763,7 +773,8 @@ private theorem evalExprWithAggParam_ground_eq
           have he : sizeOf e < sizeOf (Expr.case branches (some e)) := by simp_wf; omega
           simp only [evalExprWithAggParam, hA, ↓reduceIte, hmap,
             ih e (by omega) (by simpa using hg.2)
-              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
       · cases else_ <;> simp only [evalExprWithAggParam, hA, Bool.false_eq_true, ↓reduceIte] <;>
           exact h_ee _ hg (Nat.le_refl _) s1 s2
     | inList x neg vals =>
@@ -774,6 +785,7 @@ private theorem evalExprWithAggParam_ground_eq
         have hgv := (foldl_and_true_mem vals true hg.2).2
         have h1 : sizeOf x < sizeOf (Expr.inList x neg vals) := by simp_wf; omega
         have hx := ih x (by omega) hg.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
         have hvals : ∀ (l : List Expr), (∀ v ∈ l, v ∈ vals) → ∀ (acc : Option Value),
             l.foldl (fun acc vi => evalBinOp .or acc
               (evalBinOp .eq (evalExprWithAggParam ee db rows2 s2 x)
@@ -790,11 +802,24 @@ private theorem evalExprWithAggParam_ground_eq
             have h_sz : sizeOf v < sizeOf (Expr.inList x neg vals) := by
               have := List.sizeOf_lt_of_mem hv; simp_wf; omega
             simp only [List.foldl_cons, ih v (by omega) (hgv v hv)
-              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
             exact ihl (fun q hq => hl q (List.mem_cons_of_mem _ hq)) _
         simp only [hx, hvals vals (fun _ h => h)]
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) s1 s2
-    | inSubquery _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
+    | inSubquery x neg sq =>
+      simp only [evalExprWithAggParam]
+      by_cases hA : hasAggregate (Expr.inSubquery x neg sq) = true
+      · simp only [hA, ↓reduceIte]
+        simp only [Expr.isGround, Bool.and_eq_true] at hg
+        have h1 : sizeOf x < sizeOf (Expr.inSubquery x neg sq) := by simp_wf; omega
+        have h2 : sizeOf sq < sizeOf (Expr.inSubquery x neg sq) := by simp_wf
+        rw [ih x (by omega) hg.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
+        split
+        · exact h_sub _ _ _ hg.2 h2 s1 s2
+        · rfl
+      · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | «exists» _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | subquery _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | between x lo hi =>
@@ -805,9 +830,12 @@ private theorem evalExprWithAggParam_ground_eq
         have h1 : sizeOf x < sizeOf (Expr.between x lo hi) := by simp_wf; omega
         have h2 : sizeOf lo < sizeOf (Expr.between x lo hi) := by simp_wf; omega
         have h3 : sizeOf hi < sizeOf (Expr.between x lo hi) := by simp_wf; omega
-        rw [ih x (by omega) hg.1.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2'),
-          ih lo (by omega) hg.1.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2'),
-          ih hi (by omega) hg.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+        rw [ih x (by omega) hg.1.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2'),
+          ih lo (by omega) hg.1.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2'),
+          ih hi (by omega) hg.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) s1 s2
     | windowFn _ _ _ => simp only [evalExprWithAggParam]; exact h_ee _ hg (Nat.le_refl _) s1 s2
 
@@ -818,20 +846,24 @@ private theorem evalExprWithWindowParam_ground_eq
     (p1 p2 sp1 sp2 : Table) (idx : Nat)
     (hg : e.isGround = true)
     (h_ee : ∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
-        ∀ row1 row2, ee db row1 e' = ee db row2 e') :
+        ∀ row1 row2, ee db row1 e' = ee db row2 e')
+    (h_sub : (∀ (v : Value) (neg : Bool) (sq : SubQuery), sq.isGround = true → sizeOf sq < sizeOf e →
+        ∀ row1 row2, ee db row1 (.inSubquery (.lit v) neg sq) = ee db row2 (.inSubquery (.lit v) neg sq))) :
     evalExprWithWindowParam ee db row1 p1 sp1 idx e =
     evalExprWithWindowParam ee db row2 p2 sp2 idx e := by
   suffices key : ∀ (n : Nat) (e : Expr), sizeOf e < n →
       e.isGround = true →
       (∀ e', e'.isGround = true → sizeOf e' ≤ sizeOf e →
           ∀ row1 row2, ee db row1 e' = ee db row2 e') →
+      (∀ (v : Value) (neg : Bool) (sq : SubQuery), sq.isGround = true → sizeOf sq < sizeOf e →
+          ∀ row1 row2, ee db row1 (.inSubquery (.lit v) neg sq) = ee db row2 (.inSubquery (.lit v) neg sq)) →
       evalExprWithWindowParam ee db row1 p1 sp1 idx e =
       evalExprWithWindowParam ee db row2 p2 sp2 idx e by
-    exact key (sizeOf e + 1) e (by omega) hg h_ee
+    exact key (sizeOf e + 1) e (by omega) hg h_ee h_sub
   intro n; induction n with
   | zero => intro _ h; exact absurd h (Nat.not_lt_zero _)
   | succ n ih =>
-    intro e hlt hg h_ee
+    intro e hlt hg h_ee h_sub
     cases e with
     | windowFn _ _ _ => simp [Expr.isGround] at hg
     | binOp op l r =>
@@ -843,20 +875,35 @@ private theorem evalExprWithWindowParam_ground_eq
       have h_sz_r : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
       have hl := ih l (by omega) hgl
         (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       have hr := ih r (by omega) hgr
         (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       simp only [evalExprWithWindowParam, hl, hr]
     | unaryOp op inner =>
       have hgi : inner.isGround = true := by simp only [Expr.isGround] at hg; exact hg
       have h_sz_i : sizeOf inner < sizeOf (Expr.unaryOp op inner) := by simp_wf; omega
       have hi := ih inner (by omega) hgi
         (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       simp only [evalExprWithWindowParam, hi]
     | lit _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | col _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | agg _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | countStar => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
-    | inSubquery _ _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
+    | inSubquery x neg sq =>
+      simp only [evalExprWithWindowParam]
+      by_cases hA : exprHasWindowFn (Expr.inSubquery x neg sq) = true
+      · simp only [hA, ↓reduceIte]
+        simp only [Expr.isGround, Bool.and_eq_true] at hg
+        have h1 : sizeOf x < sizeOf (Expr.inSubquery x neg sq) := by simp_wf; omega
+        have h2 : sizeOf sq < sizeOf (Expr.inSubquery x neg sq) := by simp_wf
+        rw [ih x (by omega) hg.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
+        split
+        · exact h_sub _ _ _ hg.2 h2 row1 row2
+        · rfl
+      · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | «exists» _ _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | subquery _ => simp only [evalExprWithWindowParam]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | func nm args =>
@@ -871,6 +918,7 @@ private theorem evalExprWithWindowParam_ground_eq
           have := List.sizeOf_lt_of_mem ha; simp_wf; omega
         exact ih a (by omega) (hga a ha)
           (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) row1 row2
     | «case» branches else_ =>
       by_cases hA : exprHasWindowFn (Expr.case branches else_) = true
@@ -891,8 +939,10 @@ private theorem evalExprWithWindowParam_ground_eq
           have hab : sizeOf (a, b) = 1 + sizeOf a + sizeOf b := by simp [Prod.mk.sizeOf_spec]
           have ha : sizeOf a < sizeOf (Expr.case branches else_) := by simp_wf; omega
           have hb : sizeOf b < sizeOf (Expr.case branches else_) := by simp_wf; omega
-          rw [ih a (by omega) g1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2'),
-            ih b (by omega) g2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+          rw [ih a (by omega) g1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2'),
+            ih b (by omega) g2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
         cases else_ with
         | none =>
           simp only [evalExprWithWindowParam, hA, ↓reduceIte, hmap]
@@ -900,7 +950,8 @@ private theorem evalExprWithWindowParam_ground_eq
           have he : sizeOf e < sizeOf (Expr.case branches (some e)) := by simp_wf; omega
           simp only [evalExprWithWindowParam, hA, ↓reduceIte, hmap,
             ih e (by omega) (by simpa using hg.2)
-              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
       · cases else_ <;> simp only [evalExprWithWindowParam, hA, Bool.false_eq_true, ↓reduceIte] <;>
           exact h_ee _ hg (Nat.le_refl _) row1 row2
     | inList x neg vals =>
@@ -911,6 +962,7 @@ private theorem evalExprWithWindowParam_ground_eq
         have hgv := (foldl_and_true_mem vals true hg.2).2
         have h1 : sizeOf x < sizeOf (Expr.inList x neg vals) := by simp_wf; omega
         have hx := ih x (by omega) hg.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
         have hvals : ∀ (l : List Expr), (∀ v ∈ l, v ∈ vals) → ∀ (acc : Option Value),
             l.foldl (fun acc vi => evalBinOp .or acc
               (evalBinOp .eq (evalExprWithWindowParam ee db row2 p2 sp2 idx x)
@@ -927,7 +979,8 @@ private theorem evalExprWithWindowParam_ground_eq
             have h_sz : sizeOf v < sizeOf (Expr.inList x neg vals) := by
               have := List.sizeOf_lt_of_mem hv; simp_wf; omega
             simp only [List.foldl_cons, ih v (by omega) (hgv v hv)
-              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+              (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
             exact ihl (fun q hq => hl q (List.mem_cons_of_mem _ hq)) _
         simp only [hx, hvals vals (fun _ h => h)]
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) row1 row2
@@ -939,9 +992,12 @@ private theorem evalExprWithWindowParam_ground_eq
         have h1 : sizeOf x < sizeOf (Expr.between x lo hi) := by simp_wf; omega
         have h2 : sizeOf lo < sizeOf (Expr.between x lo hi) := by simp_wf; omega
         have h3 : sizeOf hi < sizeOf (Expr.between x lo hi) := by simp_wf; omega
-        rw [ih x (by omega) hg.1.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2'),
-          ih lo (by omega) hg.1.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2'),
-          ih hi (by omega) hg.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')]
+        rw [ih x (by omega) hg.1.1 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2'),
+          ih lo (by omega) hg.1.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2'),
+          ih hi (by omega) hg.2 (fun e' hg' hsize r1' r2' => h_ee e' hg' (by omega) r1' r2')
+          (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) row1 row2
 
 /-- When expression evaluation is db row-independent for ground expressions,
@@ -952,7 +1008,9 @@ private theorem evalSelectCore_ground_outerRow_eq
     (sel : SelectStmt)
     (hg : sel.isGround = true)
     (h_ee : ∀ e, e.isGround = true → sizeOf e < sizeOf sel →
-        ∀ row1 row2, ee db row1 e = ee db row2 e) :
+        ∀ row1 row2, ee db row1 e = ee db row2 e)
+    (h_sub : ∀ (v : Value) (neg : Bool) (sq : SubQuery), sq.isGround = true → sizeOf sq < sizeOf sel →
+        ∀ row1 row2, ee db row1 (.inSubquery (.lit v) neg sq) = ee db row2 (.inSubquery (.lit v) neg sq)) :
     evalSelectCore db r1 (fun db' fc => evalFrom db' fc) ee (evalSelectItemParam ee)
       (evalSelectItemWithAggParam ee) (evalExprWithAggParam ee)
       (compareByOrderItemsParam ee) (evalExprWithWindowParam ee)
@@ -1041,6 +1099,7 @@ private theorem evalSelectCore_ground_outerRow_eq
       simp_wf; omega
     have := evalExprWithAggParam_ground_eq ee db rows1 rows2 s1 s2 e hlen hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
+      (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
     rw [this]
   -- h_ea: exprWithAggParam for HAVING
   · intro e hhv rows1 rows2 s1 s2 hlen
@@ -1050,6 +1109,7 @@ private theorem evalSelectCore_ground_outerRow_eq
       subst hhv'; simp_wf; omega
     exact evalExprWithAggParam_ground_eq ee db rows1 rows2 s1 s2 e hlen hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
+      (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
   -- h_ew: exprWithWindowParam db row/partition-independence
   · intro e alias_ hitem row1 row2 p1 p2 sp1 sp2 idx hplen
     have hge := h_item_ground (.exprItem e alias_) hitem e alias_ rfl
@@ -1060,6 +1120,7 @@ private theorem evalSelectCore_ground_outerRow_eq
       simp_wf; omega
     exact evalExprWithWindowParam_ground_eq ee db e row1 row2 p1 p2 sp1 sp2 idx hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
+      (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
 
 /-- Bridge: if a SubQuery is ground, evalSubQueryWithContext is db row-independent (#218).
     Strong induction on sizeOf: a compound is handled by congruence of applySetOp
@@ -1116,7 +1177,15 @@ theorem subQueryGround_eval_independent (sq : SubQuery)
           · rfl
         exact isGroundCore_eval_independent SubQuery.isGround truncSqe h_sq db e
           (isGround_eq_isGroundCore e ▸ hge) row1 row2
-      exact evalSelectCore_ground_outerRow_eq db r1 r2 ee sel hgs h_ee
+      -- IN (subquery) with a literal on the left (#422): only the subquery is evaluated,
+      -- and it is smaller than `sel`, so the induction hypothesis covers it.
+      have h_sub : ∀ (v : Value) (neg : Bool) (sq' : SubQuery), sq'.isGround = true →
+          sizeOf sq' < sizeOf sel → ∀ row1 row2,
+            ee db row1 (.inSubquery (.lit v) neg sq') = ee db row2 (.inSubquery (.lit v) neg sq') := by
+        intro v neg sq' hg' h_sz row1 row2
+        simp only [ee, evalExprWithDb_eq_evalExprCore, evalExprCore,
+          ih sq' (by omega) hg' db row1 row2]
+      exact evalSelectCore_ground_outerRow_eq db r1 r2 ee sel hgs h_ee h_sub
 
 /-- Bridge: if a SelectStmt is ground, evalSelectWithContext is db row-independent -/
 theorem selectStmtGround_eval_independent (sel : SelectStmt)

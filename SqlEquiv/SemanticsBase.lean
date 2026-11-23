@@ -282,6 +282,7 @@ def minMaxCalls : Expr → List (Bool × MinMaxMode × Option Expr × Bool)
   | .case branches else_ => minMaxCallsPairs branches ++ minMaxCallsOpt else_
   | .inList e _ vals => minMaxCalls e ++ minMaxCallsList vals
   | .between e lo hi => minMaxCalls e ++ minMaxCalls lo ++ minMaxCalls hi
+  | .inSubquery e _ _ => minMaxCalls e
   | _ => []
 where
   minMaxCallsList : List Expr → List (Bool × MinMaxMode × Option Expr × Bool)

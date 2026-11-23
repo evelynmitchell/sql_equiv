@@ -15,8 +15,8 @@ namespace SqlEquiv
 -- ============================================================================
 
 /-- Check if expression contains aggregate functions. Looks through operators,
-    function arguments, CASE, IN lists and BETWEEN, not into subqueries or
-    window functions. Total and structurally recursive (#278 step 3; it was a
+    function arguments, CASE, IN lists, BETWEEN and the left side of IN (subquery),
+    not into subqueries or window functions. Total and structurally recursive (#278 step 3; it was a
     `partial def`, opaque to proofs). -/
 def hasAggregate : Expr → Bool
   | .agg _ _ _ => true
@@ -27,6 +27,7 @@ def hasAggregate : Expr → Bool
   | .case branches else_ => hasAggregatePairs branches || hasAggregateOpt else_
   | .inList e _ vals => hasAggregate e || hasAggregateList vals
   | .between e lo hi => hasAggregate e || hasAggregate lo || hasAggregate hi
+  | .inSubquery e _ _ => hasAggregate e
   | _ => false
 where
   /-- `args.any hasAggregate` -/
@@ -53,8 +54,8 @@ def selectHasAggregate (items : List SelectItem) : Bool :=
 -- ============================================================================
 
 /-- Check if expression contains window functions. Looks through operators,
-    function arguments, CASE, IN (list) and BETWEEN, the nodes
-    `evalExprWithWindowParam` evaluates through (#418). Total and structurally
+    function arguments, CASE, IN (list), BETWEEN and the left side of IN (subquery),
+    the nodes `evalExprWithWindowParam` evaluates through (#418, #422). Total and structurally
     recursive (#278 step 3; it was a `partial def`). -/
 def exprHasWindowFn : Expr → Bool
   | .windowFn _ _ _ => true
@@ -64,6 +65,7 @@ def exprHasWindowFn : Expr → Bool
   | .case branches else_ => exprHasWindowFnPairs branches || exprHasWindowFnOpt else_
   | .inList e _ vals => exprHasWindowFn e || exprHasWindowFnList vals
   | .between e lo hi => exprHasWindowFn e || exprHasWindowFn lo || exprHasWindowFn hi
+  | .inSubquery e _ _ => exprHasWindowFn e
   | _ => false
 where
   exprHasWindowFnList : List Expr → Bool
@@ -167,6 +169,15 @@ def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
       let evhi := evalExprWithAggParam exprEval db rows row hi
       evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
     else exprEval db row (.between e lo hi)
+  -- IN (subquery) with an aggregate on the left (#422): the left side is evaluated over the
+  -- group and its value handed to the row evaluator as a literal, which runs the subquery.
+  -- The substituted expression is no larger than the original.
+  | .inSubquery e neg sq =>
+    if hasAggregate (.inSubquery e neg sq) then
+      match evalExprWithAggParam exprEval db rows row e with
+      | some v => exprEval db row (.inSubquery (.lit v) neg sq)
+      | none => none
+    else exprEval db row (.inSubquery e neg sq)
   | e => exprEval db row e
 termination_by e => sizeOf e
 decreasing_by
@@ -411,6 +422,14 @@ def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Val
       let evhi := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex hi
       evalBinOp .and (evalBinOp .ge ev evlo) (evalBinOp .le ev evhi)
     else exprEval db row (.between e lo hi)
+  -- IN (subquery) with a window function on the left (#422): as for aggregates, the left
+  -- side's value goes to the row evaluator as a literal.
+  | .inSubquery e neg sq =>
+    if exprHasWindowFn (.inSubquery e neg sq) then
+      match evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e with
+      | some v => exprEval db row (.inSubquery (.lit v) neg sq)
+      | none => none
+    else exprEval db row (.inSubquery e neg sq)
   | e => exprEval db row e
 termination_by e => sizeOf e
 decreasing_by
@@ -1037,6 +1056,13 @@ theorem evalExprWithAggParam_congr (db : Database) (rows : Table) (r : Row) :
       simp only [evalExprWithAggParam, hE _ hN db r]
       simp only [Expr.size] at hn hN
       rw [ih x (by omega) (by omega), ih lo (by omega) (by omega), ih hi (by omega) (by omega)]
+    | inSubquery x neg sq =>
+      have hsz := hN; have hsn := hn
+      simp only [Expr.size] at hsz hsn
+      simp only [evalExprWithAggParam, hE _ hN db r, ih x (by omega) (by omega)]
+      split <;> try rfl
+      split <;> try rfl
+      exact hE _ (by have := Expr.size_pos x; simp only [Expr.size]; omega) db r
     | _ => simp only [evalExprWithAggParam]; exact hE _ hN db r
 
 include hE in
@@ -1200,6 +1226,13 @@ theorem evalExprWithWindowParam_congr (db : Database) (r : Row) (p sp : Table) (
       simp only [evalExprWithWindowParam, hE _ hN db r]
       simp only [Expr.size] at hn hN
       rw [ih x (by omega) (by omega), ih lo (by omega) (by omega), ih hi (by omega) (by omega)]
+    | inSubquery x neg sq =>
+      have hsz := hN; have hsn := hn
+      simp only [Expr.size] at hsz hsn
+      simp only [evalExprWithWindowParam, hE _ hN db r, ih x (by omega) (by omega)]
+      split <;> try rfl
+      split <;> try rfl
+      exact hE _ (by have := Expr.size_pos x; simp only [Expr.size]; omega) db r
     | _ => simp only [evalExprWithWindowParam]; exact hE _ hN db r
 
 end HelperCongr
@@ -1244,8 +1277,11 @@ theorem minMaxCalls_arg_size : ∀ (e : Expr) {w : Bool} {m : MinMaxMode} {a : E
     · have := minMaxCalls_arg_size x h; simp [Expr.size]; omega
     · have := minMaxCalls_arg_size lo h; simp [Expr.size]; omega
     · have := minMaxCalls_arg_size hi h; simp [Expr.size]; omega
+  | .inSubquery x _ _, _, _, _, _, h => by
+    simp only [minMaxCalls] at h
+    have := minMaxCalls_arg_size x h; simp [Expr.size]; omega
   | .lit _, _, _, _, _, h | .col _, _, _, _, _, h | .countStar, _, _, _, _, h
-  | .inSubquery .., _, _, _, _, h | .exists .., _, _, _, _, h | .subquery _, _, _, _, _, h
+  | .exists .., _, _, _, _, h | .subquery _, _, _, _, _, h
   | .windowFn .., _, _, _, _, h => by simp [minMaxCalls] at h
 theorem minMaxCallsList_arg_size : ∀ (es : List Expr) {w : Bool} {m : MinMaxMode} {a : Expr}
     {d : Bool}, (w, m, some a, d) ∈ minMaxCalls.minMaxCallsList es → a.size < Expr.sizeList es

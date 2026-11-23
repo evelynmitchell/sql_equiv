@@ -390,6 +390,23 @@ def runAllTests : IO TestSeq := do
       "SELECT name, MAX(age) OVER (PARTITION BY department) IN (NULL, 35) AS r FROM users",
     diffTest "window: beside plain in"
       "SELECT name, age IN (25, 30) AS r, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
+    -- A window function or an aggregate left of IN (subquery) (#422)
+    diffTest "window: in subquery"
+      "SELECT name, SUM(age) OVER (PARTITION BY department) IN (SELECT age + 37 FROM users) AS r FROM users",
+    diffTest "window: not in subquery with null"
+      "SELECT name, ROW_NUMBER() OVER (ORDER BY age) NOT IN (SELECT CASE WHEN x = 4 THEN NULL ELSE x END FROM other) AS r FROM users",
+    diffTest "aggregate: in subquery, whole table"
+      "SELECT MIN(age) IN (SELECT age FROM users WHERE department = 'Sales') AS r FROM users",
+    diffTest "aggregate: in subquery, grouped"
+      "SELECT department, COUNT(*) IN (SELECT x FROM other) AS r FROM users GROUP BY department ORDER BY department",
+    diffTest "aggregate: not in subquery with null"
+      "SELECT department, COUNT(*) NOT IN (SELECT CASE WHEN x = 4 THEN NULL ELSE x END FROM other) AS r FROM users GROUP BY department ORDER BY department",
+    diffTest "aggregate: in empty subquery"
+      "SELECT department, COUNT(*) IN (SELECT x FROM other WHERE x > 100) AS r, MAX(age) NOT IN (SELECT x FROM other WHERE x > 100) AS s FROM users GROUP BY department ORDER BY department",
+    diffTest "aggregate: HAVING in subquery"
+      "SELECT department FROM users GROUP BY department HAVING MAX(age) IN (SELECT age FROM users WHERE id > 3) ORDER BY department",
+    diffTest "aggregate: HAVING not in subquery"
+      "SELECT department FROM users GROUP BY department HAVING COUNT(*) NOT IN (SELECT x FROM other) ORDER BY department",
     -- Modulo truncates toward zero (row 6; `/` differs, see KNOWN DIVERGENCES)
     diffTest "modulo of negatives"
       "SELECT (0 - age) % 7 AS r FROM users",
