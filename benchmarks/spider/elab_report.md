@@ -21,7 +21,8 @@ query's typed result rows match the untyped evaluator's, in order, for
 under inner joins and cross joins, with literals, columns, comparisons, `AND`, `OR`, `NOT`,
 `LIKE` (in either case mode),
 column `ORDER BY` keys, and (with an `ORDER BY`) items that are columns or have an
-alias; `elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for
+alias; without an `ORDER BY` an item may be `*` (not `t.*`, #407);
+`elabStmt_correct_agg` (`SqlBridge/CorrectAgg.lean`) does for
 `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT`, `COUNT(DISTINCT)`, `SUM`, `MIN`,
 `MAX`, and `elabStmt_correct_grouped`
 (`SqlBridge/CorrectGrouped.lean`) for the same `GROUP BY` columns, each item a key column,
@@ -53,12 +54,11 @@ alike (as the evaluate harness's lowercasing does) and nothing orders booleans.
 
 | Step | Queries in the fragment |
 |------|------------------------:|
-| Today | 517 |
-| after DISTINCT with an unselected sort key and LIMIT | 518 |
+| Today | 519 |
+| after DISTINCT with an unselected sort key and LIMIT | 520 |
 
 Still outside after that (queries using each feature):
 
-- *: 2
 
 ## Failure classes (largest first)
 

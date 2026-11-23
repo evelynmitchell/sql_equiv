@@ -7,7 +7,7 @@
   tables (optionally aliased) under inner joins and cross joins without `ON`, every expression
   (`ON` included) is a literal, a column, a comparison, `BETWEEN`, `AND`, `OR` or `NOT`, every `ORDER BY`
   key is a column reference, and, when there is an `ORDER BY`, every item is a column or has an
-  alias (`itemsNamed`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
+  alias (`itemsNamed`); without an `ORDER BY` an item may also be `*` (#407, not `t.*`); or `SELECT agg₁, …, aggₖ FROM f [WHERE p]` with `COUNT(*)`,
   `COUNT([DISTINCT] e)`, `SUM(e)`, `MIN(e)`, `MAX(e)`, and as an item `AVG(e)` (step 3c, up to
   rounding; elsewhere `AVG` is its own feature); or the same grouped by columns, `GROUP BY c₁, …`,
   each item a key column or such an aggregate, with an optional `HAVING` of key columns, such
@@ -20,7 +20,7 @@
   statement outside that fragment, named after the roadmap steps in `docs/TYPED_CORE_PLAN.md`
   ("Elaborator correctness roadmap"). An empty list means the statement has the fragment's
   shape; `SqlCoreTest/CorrectExamples.lean` checks that this agrees with the theorem's own
-  `isFragment`/`itemsFragment`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`/
+  `isFragment`/`itemsFragment`/`itemsStar`/`fromFragment`/`joinStmt`/`itemsNamed`/`aggItems`/`aggStmt`/
   `groupedItems`/`groupedStmt`/`havingFragment`.
 
   `lake exe spider_elab` prints these features for every Spider query that elaborates, and
@@ -295,13 +295,19 @@ partial def selectFeatures (s : SelectStmt) : List String :=
   -- rows relate up to their order.
   let plainDistinct := s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
     s.limitVal.isNone && s.offsetVal.isNone
+  -- `*` (#407, `elabStmt_correct_star`, mirrors `SqlBridge.CorrectJoin.itemsStar`): in the plain
+  -- statement without `DISTINCT`, `GROUP BY`, `HAVING`, `ORDER BY` or a subquery node in `WHERE`
+  -- (`LIMIT`/`OFFSET` allowed); never `t.*`, and never in a subquery body (`bodyFeatures`)
+  let starOk := !s.distinct && s.groupBy.isEmpty && s.having.isNone && s.orderBy.isEmpty &&
+    (s.whereClause.bind holeSplit).isNone
   (if s.distinct && !plainDistinct then [distinct] else []) ++
   (if plainAgg || plainAggBare || plainGroup then
     s.items.flatMap fun
       | .exprItem (.agg _ (some a) _) _ => exprFeatures a
       | _ => []
   else s.items.flatMap fun
-    | .star _ => [star]
+    | .star none => if starOk then [] else [star]
+    | .star (some _) => [star]
     | .exprItem e _ => exprFeatures e) ++
   -- a derived table under `COUNT(*)` items only, without `WHERE` (#412,
   -- `SqlBridge.CorrectDerived.elabStmt_correct_countDerived`): inside when the body is one of an
@@ -360,6 +366,8 @@ partial def selectFeatures (s : SelectStmt) : List String :=
     say whether its sort keys are in the fragment. -/
 partial def bodyFeatures (avgOk : Bool) (b : SelectStmt) : List String :=
   selectFeatures b ++
+  -- a body keeps `itemsFragment`: under the outer row `SqlEquiv`'s `*` returns its columns too
+  (if b.items.any (fun | .star _ => true | _ => false) then [star] else []) ++
   (if b.distinct || nestedSub b ||
       (if b.groupBy.isEmpty && b.having.isNone then
         b.items.any (fun | .exprItem e _ => itemCallOk e | .star _ => false) &&
