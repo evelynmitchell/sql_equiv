@@ -135,7 +135,28 @@ engines.
   `SlimCheck.minimizeAux` is commented out), so shrinkers list their most aggressive candidates
   first. Findings go in `LSPEC_FINDINGS.md`.
 
-### 8. Review
+### 8. Mutation testing (weekly, #210)
+
+- **Catches:** evaluator arms that no proof or test would notice going wrong: the silent kind of
+  bug, such as `COUNT(col)` counting NULLs, which the coverage matrix (every arm exists) and the
+  theorem-coverage ratchet (every theorem is named) cannot see.
+- **How:** `tools/mutation_test.py` mutates each dispatch arm of `SqlEquiv/SemanticsBase.lean`
+  (`Value.eq`, `Value.compare`, `Value.toBool`, `evalBinOp`, `evalUnaryOp`, `evalFunc`; 172
+  mutants): a value change (flip a boolean or comparison, swap an ordering, off by one, drop a
+  call) and an error/NULL swap. Each mutant is built (`sql_equiv_test`, `sql_equiv_lspec`) and
+  tested, and classified: *killed by proofs* (the build fails in a theorem or a `decide`
+  check), *killed by tests* (a unit test, or LSpec at 1000 samples with the differential
+  oracles, fails), *survived*, or *invalid* (it does not compile). `.github/workflows/mutation.yml`
+  runs it weekly in 8 shards and merges the report (`--merge`): an artifact and the job
+  summary, with the survivors and the tests that kill the most mutants.
+- **Locally:** in a scratch worktree (it edits `SemanticsBase.lean` and leaves the build cache
+  holding the last mutant): `python3 tools/mutation_test.py --list`, then
+  `--sites evalFunc --out f.json` and `--merge f.json`. About one to two minutes per mutant.
+- **Watch for:** survivors are test-writing tasks, but check each first: a mutant can be
+  equivalent (no input tells it apart). The SqlCore / SqlBridge proofs are not built (they
+  need Mathlib), so a mutant only they would reject shows as killed by tests or survived.
+
+### 9. Review
 
 - **Critical self-review** (`/critical-self-review`) when a bug would be quiet: semantics
   changes, new value types, parser changes, new external surfaces, and changes whose tests were
@@ -148,8 +169,8 @@ engines.
 
 Every CI run uploads `test-results/*.jsonl` (one object per test: suite, name, pass). The unit
 runner writes it directly; the LSpec log is converted by `tools/lspec_results_to_json.py`. The
-history is there for flake detection in the subprocess-based oracle tests and for the
-mutation-testing proposal (#210).
+history is there for flake detection in the subprocess-based oracle tests, and mutation testing
+(#210) reads them to name the tests that kill each mutant.
 
 ## Running the layers locally
 
@@ -207,8 +228,8 @@ Never run `lake clean` (a full rebuild takes over twenty minutes).
 
 - 43 public `Equiv/` theorems have no test naming them (`tools/theorem_coverage_uncovered.txt`).
 - Database properties cover one fixed schema; random schemas are out of scope (#245).
-- No mutation testing: nothing shows that every evaluator arm has a test that would notice it
-  being wrong (#210).
+- Mutation testing covers the value-level dispatch arms only; the SELECT pipeline
+  (`SemanticsCore`, `SemanticsParam`) is not mutated (#210).
 - `SqlEquiv`'s equivalences are relative to its quiet-error model; the strict layer per dialect
   (#270, #448) transfers them only when neither side fails, and does not see bind-time errors.
   The typed core is strict.
