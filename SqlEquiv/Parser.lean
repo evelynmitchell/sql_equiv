@@ -836,9 +836,10 @@ partial def exprNestsWindow : Expr → Bool
   | .between e lo hi => exprNestsWindow e || exprNestsWindow lo || exprNestsWindow hi
   | _ => false
 
-/-- #424: windows are computed after `WHERE`, `GROUP BY`, `HAVING` and join conditions, so a
-    window function there is an error in sqlite, DuckDB and Postgres; we would quietly treat it
-    as an error value (no rows, or one group). Fails naming the clause. A subquery inside the
+/-- #424: windows are computed after `WHERE`, `GROUP BY`, `HAVING` and join conditions, and do
+    not exist in `UPDATE … SET` or `INSERT … VALUES`, so a window function there is an error in
+    sqlite, DuckDB and Postgres; we would quietly treat it as an error value (no rows, or one
+    group). Fails naming the clause. A subquery inside the
     clause may have windows of its own: `exprMentionsWindow` does not look into it. -/
 def rejectWindowIn (clause : String) (e : Expr) : Parser Unit :=
   if exprMentionsWindow e then
@@ -1843,6 +1844,7 @@ partial def parseInsert : Parser InsertStmt := do
       let rows ← Parser.sepBy1 (do
         Parser.expect .lparen "Expected ("
         let vals ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
+        for v in vals do rejectWindowIn "VALUES" v
         Parser.expect .rparen "Expected )"
         Parser.pure vals
       ) (Parser.expect .comma "")
@@ -1870,6 +1872,7 @@ partial def parseUpdate : Parser UpdateStmt := do
     let col ← parseIdent
     Parser.expect (.op "=") "Expected ="
     let val ← parseExpr
+    rejectWindowIn "UPDATE" val
     Parser.pure { column := col, value := val : Assignment }
   ) (Parser.expect .comma "")
 

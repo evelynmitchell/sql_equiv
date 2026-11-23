@@ -352,6 +352,10 @@ def windowParserTests : List TestResult := [
     "UPDATE users SET age = 1 WHERE ROW_NUMBER() OVER () = 1",
   testParseFailWith "window_in_delete_where_rejected" "not allowed in WHERE"
     "DELETE FROM users WHERE ROW_NUMBER() OVER () = 1",
+  testParseFailWith "window_in_update_set_rejected" "not allowed in UPDATE"
+    "UPDATE users SET age = ROW_NUMBER() OVER () WHERE id = 1",
+  testParseFailWith "window_in_insert_values_rejected" "not allowed in VALUES"
+    "INSERT INTO users VALUES (ROW_NUMBER() OVER ())",
   testParseFailWith "window_nested_in_argument_rejected" "cannot be nested"
     "SELECT SUM(ROW_NUMBER() OVER ()) OVER () FROM users",
   testParseFailWith "window_nested_in_partition_rejected" "cannot be nested"
