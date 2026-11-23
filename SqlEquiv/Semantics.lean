@@ -129,14 +129,12 @@ def evalExprWithAggParam (exprEval : Database → Row → Expr → Option Value)
     (db : Database) (rows : Table) (row : Row) : Expr → Option Value
   | .agg fn arg distinct => evalAggOverTableParam exprEval db fn arg distinct rows
   | .countStar => some (.int rows.length)
+  -- Operators combine their operands' results as `evalExprCore` does, an error included:
+  -- `FALSE AND <error>` is FALSE and `<error> IS NULL` is TRUE on every path (#423).
   | .binOp op l r =>
-    match evalExprWithAggParam exprEval db rows row l, evalExprWithAggParam exprEval db rows row r with
-    | some a, some b => evalBinOp op a b
-    | _, _ => none
-  | .unaryOp op e =>
-    match evalExprWithAggParam exprEval db rows row e with
-    | some v => evalUnaryOp op v
-    | none => none
+    evalBinOp op (evalExprWithAggParam exprEval db rows row l)
+      (evalExprWithAggParam exprEval db rows row r)
+  | .unaryOp op e => evalUnaryOp op (evalExprWithAggParam exprEval db rows row e)
   -- An aggregate under a function call, CASE, IN (list) or BETWEEN is evaluated over the
   -- group, then combined as `evalExprCore` combines values. Without an aggregate inside,
   -- these go to the row evaluator unchanged.
@@ -378,16 +376,12 @@ def evalExprWithWindowParam (exprEval : Database → Row → Expr → Option Val
                      else sortPartitionParam exprEval db part spec.orderBy
     let idx := (winSorted.findIdx? (fun r => r == row)).getD rowIndex
     evalWindowFnParam exprEval db fn arg spec.orderBy winSorted row idx
+  -- Operators combine their operands' results as `evalExprCore` does, an error included (#423).
   | .binOp op l r =>
-    let lv := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex l
-    let rv := evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex r
-    match lv, rv with
-    | some a, some b => evalBinOp op a b
-    | _, _ => none
+    evalBinOp op (evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex l)
+      (evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex r)
   | .unaryOp op e =>
-    match evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e with
-    | some v => evalUnaryOp op v
-    | none => none
+    evalUnaryOp op (evalExprWithWindowParam exprEval db row partition sortedPartition rowIndex e)
   -- A window function under a function call, CASE, IN (list) or BETWEEN is evaluated for
   -- the current row, then combined as `evalExprCore` combines values (#418). Without a
   -- window function inside, these go to the row evaluator unchanged.
