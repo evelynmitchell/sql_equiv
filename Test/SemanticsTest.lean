@@ -476,6 +476,22 @@ def testRowCountIn (name : String) (dialect : Dialect) (sql : String) (expected 
 
 -- Pins for implementation-defined behaviour (docs/IMPLEMENTATION_DEFINED.md,
 -- #262), so none of these can change silently.
+
+/-- The aggregate `fn` of a column over the users table evaluates to an error (`none`), not to
+    a NULL value (registry rows 17 and 18). -/
+def aggIsError (name : String) (fn : AggFunc) (col : String) : TestResult :=
+  match evalAggOverTableParam (fun d r e => evalExprWithDb d r e) testDb fn
+      (some (.col ⟨none, col⟩)) false usersTable with
+  | none => .pass name
+  | some v => .fail name s!"expected an error, got {repr v}"
+
+/-- The same for `fn (age > 26)`, a boolean argument. -/
+def aggBoolIsError (name : String) (fn : AggFunc) : TestResult :=
+  match evalAggOverTableParam (fun d r e => evalExprWithDb d r e) testDb fn
+      (some (.binOp .gt (.col ⟨none, "age"⟩) (.lit (.int 26)))) false usersTable with
+  | none => .pass name
+  | some v => .fail name s!"expected an error, got {repr v}"
+
 def registryPinTests : List TestResult := [
   -- Row 8: LIKE letter case is per dialect. standard/duckdb/postgres:
   -- case-sensitive; sqlite: ASCII case-insensitive.
@@ -521,12 +537,15 @@ def registryPinTests : List TestResult := [
   testContainsValueIn "bare_column_max_item_and_having_sqlite" .sqlite
     "SELECT name, MAX(age) FROM users HAVING MAX(age) > 0" (.string "Carol"),
   -- AVG/SUM over a string is a type error, as in DuckDB and Postgres; sqlite converts it to a
-  -- number (registry row 17). In a SELECT item the error shows as NULL; in HAVING it drops the
-  -- group, which tells it apart from a NULL result.
-  testRowCount "avg_text_column_error_in_having"
-    "SELECT COUNT(*) FROM users HAVING AVG(name) IS NULL" 0,
-  testRowCount "sum_text_column_error_in_having"
-    "SELECT COUNT(*) FROM users HAVING SUM(name) IS NULL" 0,
+  -- number (registry row 17). The aggregate's value is the error (`none`); in a SELECT item it
+  -- shows as NULL, and since #423 `IS NULL` reads it as NULL on every path, as the row
+  -- evaluator always has, so HAVING keeps the group.
+  aggIsError "avg_text_column_error" (.avg .error) "name",
+  aggIsError "sum_text_column_error" (.sum .error) "name",
+  testRowCount "avg_text_column_error_is_null_in_having"
+    "SELECT COUNT(*) FROM users HAVING AVG(name) IS NULL" 1,
+  testRowCount "sum_text_column_error_not_a_value_in_having"
+    "SELECT COUNT(*) FROM users HAVING SUM(name) IS NOT NULL" 0,
   -- a mix of numbers and strings is an error too (strings used to be skipped)
   testRowCount "avg_mixed_text_error_in_having"
     "SELECT COUNT(*) FROM users HAVING AVG(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" 0,
@@ -540,12 +559,15 @@ def registryPinTests : List TestResult := [
     "SELECT AVG(age > 26) FROM users" (.decimal 6 1),
   testRowCountIn "sum_bool_duckdb" .duckdb
     "SELECT COUNT(*) FROM users HAVING SUM(age > 26) = 3" 1,
+  -- the error modes give no value (the error reads as NULL to `IS NULL`, #423)
   testRowCountIn "avg_bool_duckdb_error" .duckdb
-    "SELECT COUNT(*) FROM users HAVING AVG(age > 26) IS NULL" 0,
+    "SELECT COUNT(*) FROM users HAVING AVG(age > 26) IS NOT NULL" 0,
   testRowCount "sum_bool_standard_error"
-    "SELECT COUNT(*) FROM users HAVING SUM(age > 26) IS NULL" 0,
+    "SELECT COUNT(*) FROM users HAVING SUM(age > 26) IS NOT NULL" 0,
   testRowCountIn "avg_bool_postgres_error" .postgres
-    "SELECT COUNT(*) FROM users HAVING AVG(age > 26) IS NULL" 0,
+    "SELECT COUNT(*) FROM users HAVING AVG(age > 26) IS NOT NULL" 0,
+  aggBoolIsError "sum_bool_error_mode" (.sum .error),
+  aggBoolIsError "avg_bool_error_mode" (.avg .error),
   -- ROUND keeps the input type and rounds half away from zero (registry row 16, #355)
   testContainsValue "round_int_unchanged" "SELECT ROUND(age) FROM users WHERE id = 1" (.int 30),
   testContainsValue "round_int_negative_places" "SELECT ROUND(25, -1) FROM users WHERE id = 1" (.int 30),
@@ -1337,6 +1359,37 @@ def crossTypeTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Errors combine alike on every evaluation path (#423)
+-- ============================================================================
+-- `1 = 'a'` is a type error (registry row 10). The row evaluator passes the error to
+-- `evalBinOp` / `evalUnaryOp`, which absorb it (`FALSE AND <error>` is FALSE, `<error> IS NULL`
+-- is TRUE). The aggregate and window paths now do the same, so an item's value does not
+-- depend on whether another item has an aggregate or a window function.
+
+def errorPathTests : List TestResult := [
+  testColumn "error_and_false_plain"
+    "SELECT name, (1 = 'a') AND FALSE AS r FROM users WHERE id = 1" "r" [.bool false],
+  testColumn "error_and_false_beside_aggregate"
+    "SELECT (1 = 'a') AND FALSE AS r, COUNT(*) AS n FROM users" "r" [.bool false],
+  testColumn "error_or_true_beside_window"
+    "SELECT (1 = 'a') OR TRUE AS r, ROW_NUMBER() OVER (ORDER BY id) AS n FROM users WHERE id < 3"
+    "r" [.bool true, .bool true],
+  testColumn "error_is_null_plain"
+    "SELECT (1 = 'a') IS NULL AS r FROM users WHERE id = 1" "r" [.bool true],
+  testColumn "error_is_null_beside_aggregate"
+    "SELECT (1 = 'a') IS NULL AS r, COUNT(*) AS n FROM users" "r" [.bool true],
+  testColumn "error_is_null_beside_window"
+    "SELECT (1 = 'a') IS NULL AS r, ROW_NUMBER() OVER (ORDER BY id) AS n FROM users WHERE id = 1"
+    "r" [.bool true],
+  -- HAVING reads like WHERE: the error side of OR does not drop the group
+  testColumn "error_or_in_having"
+    "SELECT department FROM users GROUP BY department HAVING (1 = 'a') OR COUNT(*) = 1"
+    "department" [.string "Marketing"],
+  testColumn "error_or_in_where"
+    "SELECT department FROM users WHERE (1 = 'a') OR id = 4" "department" [.string "Marketing"]
+]
+
+-- ============================================================================
 -- Window Function Tests (#214)
 -- ============================================================================
 -- Output rows stay in source-row order (users: Alice 30 Eng, Bob 25 Sales,
@@ -1550,7 +1603,7 @@ def allSemanticsTests : List TestResult :=
   setOpSubqueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
-  windowTests ++ caseInsensitiveTests
+  windowTests ++ errorPathTests ++ caseInsensitiveTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests

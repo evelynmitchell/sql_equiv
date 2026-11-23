@@ -307,47 +307,39 @@ variable {n g a : ℕ} (cols : Fin n → Column) (out : Fin (g + a) → Column) 
   (keys : Fin g → Expr n) (aggs : Fin a → AggCall n)
 
 omit cols out fold keys aggs in
-/-- Without an aggregate inside, the aggregate-aware evaluator's value is the row evaluator's. -/
-theorem evalWithAgg_of_noAgg (db : SqlEquiv.Database) (us : List SqlEquiv.Row) (s : SqlEquiv.Row) :
-    ∀ (e : SqlEquiv.Expr) {v : SqlEquiv.Value}, SqlEquiv.hasAggregate e = false →
-      SqlEquiv.evalExprWithAggParam ee db us s e = some v → SqlEquiv.evalExprWithDb db s e = some v
-  | .binOp op l r, v, hag, h => by
+/-- Without an aggregate inside, the aggregate-aware evaluator is the row evaluator. -/
+theorem evalWithAgg_eq_of_noAgg (db : SqlEquiv.Database) (us : List SqlEquiv.Row) (s : SqlEquiv.Row) :
+    ∀ (e : SqlEquiv.Expr), SqlEquiv.hasAggregate e = false →
+      SqlEquiv.evalExprWithAggParam ee db us s e = SqlEquiv.evalExprWithDb db s e
+  | .binOp op l r, hag => by
     simp only [SqlEquiv.hasAggregate, Bool.or_eq_false_iff] at hag
-    simp only [SqlEquiv.evalExprWithAggParam] at h
-    split at h
-    · rename_i a b ha hb
-      rw [SqlEquiv.evalExprWithDb_binOp, evalWithAgg_of_noAgg db us s l hag.1 ha,
-        evalWithAgg_of_noAgg db us s r hag.2 hb]
-      exact h
-    · cases h
-  | .unaryOp op x, v, hag, h => by
+    rw [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalExprWithDb_binOp,
+      evalWithAgg_eq_of_noAgg db us s l hag.1, evalWithAgg_eq_of_noAgg db us s r hag.2]
+  | .unaryOp op x, hag => by
     simp only [SqlEquiv.hasAggregate] at hag
-    simp only [SqlEquiv.evalExprWithAggParam] at h
-    split at h
-    · rename_i a ha
-      rw [SqlEquiv.evalExprWithDb_unaryOp, evalWithAgg_of_noAgg db us s x hag ha]
-      exact h
-    · cases h
-  | .agg .., _, hag, _ | .countStar, _, hag, _ => by simp [SqlEquiv.hasAggregate] at hag
-  | .func name args, v, hag, h => by
-    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
-    exact h
-  | .case bs els, v, hag, h => by
-    unfold SqlEquiv.evalExprWithAggParam at h
-    rw [if_neg (by simp [hag])] at h
-    exact h
-  | .inList x neg vs, v, hag, h => by
-    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
-    exact h
-  | .between x lo hi, v, hag, h => by
-    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
-    exact h
-  | .inSubquery x neg sq, v, hag, h => by
-    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte] at h
-    exact h
-  | .lit _, v, _, h | .col _, v, _, h | .exists .., v, _, h
-  | .subquery _, v, _, h | .windowFn .., v, _, h => by
-    simpa [SqlEquiv.evalExprWithAggParam, ee] using h
+    rw [SqlEquiv.evalExprWithAggParam, SqlEquiv.evalExprWithDb_unaryOp,
+      evalWithAgg_eq_of_noAgg db us s x hag]
+  | .agg .., hag | .countStar, hag => by simp [SqlEquiv.hasAggregate] at hag
+  | .func name args, hag => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte]
+  | .case bs els, hag => by
+    unfold SqlEquiv.evalExprWithAggParam
+    rw [if_neg (by simp [hag])]
+  | .inList x neg vs, hag => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte]
+  | .between x lo hi, hag => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte]
+  | .inSubquery x neg sq, hag => by
+    simp only [SqlEquiv.evalExprWithAggParam, hag, Bool.false_eq_true, ↓reduceIte]
+  | .lit _, _ | .col _, _ | .exists .., _ | .subquery _, _ | .windowFn .., _ => by
+    simp [SqlEquiv.evalExprWithAggParam, ee]
+
+omit cols out fold keys aggs in
+/-- Without an aggregate inside, the aggregate-aware evaluator's value is the row evaluator's. -/
+theorem evalWithAgg_of_noAgg (db : SqlEquiv.Database) (us : List SqlEquiv.Row) (s : SqlEquiv.Row)
+    (e : SqlEquiv.Expr) {v : SqlEquiv.Value} (hag : SqlEquiv.hasAggregate e = false)
+    (h : SqlEquiv.evalExprWithAggParam ee db us s e = some v) : SqlEquiv.evalExprWithDb db s e = some v := by
+  rw [← evalWithAgg_eq_of_noAgg db us s e hag]; exact h
 
 omit cols out fold keys aggs in
 /-- `AVG(c)` of a column, not `DISTINCT`. -/
