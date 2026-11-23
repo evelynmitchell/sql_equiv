@@ -15,6 +15,7 @@
 import LSpec
 import SqlEquiv
 import LSpecTests.Generators
+import LSpecTests.DbProperties
 import LSpecTests.ExprAlgebra
 import LSpecTests.NullSemantics
 import LSpecTests.QueryHelpers
@@ -61,6 +62,7 @@ def main (args : List String) : IO UInt32 := do
     ("DuckDB Differential", [duckdbTests]),
     ("Postgres Differential", [postgresTests]),
     ("Rewriter Properties", [RewriterProperties.allTests cfg]),
+    ("Random Databases", [DbProperties.allTests cfg]),
     ("Seed Self-Test", [SeedSelfTest.allTests])
   ]) []
   if rc != 0 then

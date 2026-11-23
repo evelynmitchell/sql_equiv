@@ -125,6 +125,26 @@ Estimated: **~3 new check properties**
 
 ### Tier 3 — Hard (need database/table fixtures)
 
+#### Random databases (done, #245)
+`genGenDb` (`LSpecTests/Generators.lean`) draws random contents for the fixed schema
+`users` / `orders` / `products` / `t(a)`: tables of 0 to 6 rows (0 and 1 common), ids sometimes
+unique and sometimes duplicated, `orders.user_id` mostly an existing user id, sometimes dangling
+or NULL, typed and untyped NULLs, decimal amounts. Shrinking drops rows, then NULLs values.
+`LSpecTests/DbProperties.lean` (suite "Random Databases") runs over it:
+- the certified rewriter: random expressions in rewrite contexts, and the sweep cases with
+  subqueries, on random databases;
+- `not_not_exists`, `in_empty_subquery_false`, `not_in_empty_subquery_true`;
+- select-level relations: AND commutes in WHERE, an inner join is a filtered cross join,
+  DISTINCT, UNION ALL, ORDER BY / LIMIT / OFFSET, LEFT JOIN keeps its left rows;
+- `in_subquery_unnest_to_join` and `not_in_subquery_unnest_to_antijoin` (under its NOT NULL
+  preconditions).
+
+Each group has vacuity guards over a fixed batch of 300 generated databases (`genDbBatch`) and a
+mutant that must be caught (`x IN (sq) → EXISTS (sq)`, `NOT IN = NOT EXISTS`, an inner join
+without its ON condition, the join form without DISTINCT, the antijoin without its
+preconditions). Database properties cap their sample count (`dbCfg`: 100 to 5000), since each
+sample evaluates whole queries. The `EdgeCaseDb` fixtures stay as named regression cases.
+
 #### 3A. Query-level optimizer equivalence
 Would need: `Database`, `Table`, `SelectStmt` generators (complex).
 
