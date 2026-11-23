@@ -58,8 +58,10 @@ carry this caveat. Each dialect also has an error mode (registry row 23): `evalQ
 `evalStmtIn` (`SqlEquiv/Strict.lean`) return the quiet result, or fail the statement in the
 standard, postgres and duckdb dialects when a clause it evaluates yields an error (DuckDB: not
 for division or modulo by zero). Quiet-equivalent queries that both succeed give the same rows
-(`evalQueryIn_transfer`). The check is a runtime approximation with documented gaps (#448):
-errors engines raise at bind time, and errors inside expression subqueries, are not seen. See
+(`evalQueryIn_transfer`). The check is a runtime approximation (#448): it covers every clause,
+window queries, scalar and `IN` subqueries (with the row as outer row), recursive CTEs and
+INSERT/UPDATE/DELETE, but not errors engines raise at bind or plan time (a type mismatch behind
+`FALSE AND …` or over an empty table, a constant `1 / 0`), which needs a schema. See
 `docs/IMPLEMENTATION_DEFINED.md`, "What this means for proved equivalences".
 
 ### For Lean / CSLib readers
@@ -99,8 +101,8 @@ This repository could become a basis for SQL support in
   these quiet results, so a proved equivalence transfers to such an engine only for queries
   that do not raise an error there: a rewrite may remove a subexpression that would have
   aborted. The typed core is strict instead (errors are a separate `Except` result). A strict
-  layer per dialect sits on top without changing any theorem (`evalQueryIn`, registry row 23,
-  gaps in [#448](https://github.com/evelynmitchell/sql_equiv/issues/448)).
+  layer per dialect sits on top without changing any theorem (`evalQueryIn`, registry row 23;
+  it does not see bind-time errors, [#448](https://github.com/evelynmitchell/sql_equiv/issues/448)).
 - **Trust.** The trust base is the one described above. The certified rewriter
   and the decision procedure come with proofs (`docs/CERTIFIED_REWRITER.md`).
 - **Known gaps before a library port:**

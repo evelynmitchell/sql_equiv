@@ -658,6 +658,33 @@ def runAllTests : IO TestSeq := do
       "SELECT SUM(name) AS s FROM users",
     diffTest "a lazy CASE guards a division by zero"
       "SELECT id, CASE WHEN age = 30 THEN NULL ELSE id % (age - 30) END AS x FROM users",
+    -- #448: subqueries, windows, grouped ORDER BY keys, recursive CTEs
+    diffErrors "an IN subquery is evaluated in full"
+      "SELECT id FROM users WHERE id IN (SELECT id / (age - 30) FROM users)",
+    diffErrors "a correlated scalar subquery"
+      "SELECT id, (SELECT 1 / (u.age - 30) FROM dups d LIMIT 1) AS x FROM users u",
+    diffTest "a correlated scalar subquery on rows without the error"
+      "SELECT id, (SELECT 1 / (u.age - 30) FROM dups d LIMIT 1) AS x FROM users u WHERE u.age <> 30",
+    diffTest "a subquery under AND is short-circuited"
+      "SELECT id FROM users WHERE id = 99 AND id IN (SELECT 1 / (age - 30) FROM users)",
+    diffTest "EXISTS ignores its select list"
+      "SELECT id FROM users WHERE EXISTS (SELECT 1 / (x - 1) FROM dups)",
+    diffTest "a window query's items past LIMIT are not evaluated"
+      "SELECT id / (id - 5) AS x, ROW_NUMBER() OVER () AS n FROM users LIMIT 1",
+    diffErrors "a window argument is evaluated on every row, LIMIT or not"
+      "SELECT SUM(id / (id - 5)) OVER () AS s FROM users LIMIT 1",
+    diffErrors "a window function's argument"
+      "SELECT SUM(id / (age - 30)) OVER () AS s FROM users",
+    diffErrors "a window's PARTITION BY key"
+      "SELECT ROW_NUMBER() OVER (PARTITION BY id / (age - 30)) AS n FROM users",
+    diffErrors "a grouped ORDER BY key"
+      "SELECT department FROM users GROUP BY department ORDER BY SUM(age) / (COUNT(*) - 2)",
+    diffTest "a grouped ORDER BY key of a removed group"
+      "SELECT department FROM users GROUP BY department HAVING COUNT(*) = 1 ORDER BY SUM(age) / (COUNT(*) - 2)",
+    diffTest "a subquery past a CASE's first condition is not evaluated"
+      "SELECT id, CASE WHEN id > 0 THEN 0 ELSE (SELECT MAX(1 / (age - 30)) FROM users) END AS x FROM users",
+    diffErrors "a recursive CTE's iterations"
+      "WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM c WHERE 10 / (3 - n) > 0) SELECT n FROM c",
     diffTest "no error past LIMIT (no ORDER BY)"
       "SELECT id / (id - 5) AS x FROM users LIMIT 4",
     diffErrors "rows OFFSET skips are evaluated"

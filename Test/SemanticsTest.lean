@@ -1760,10 +1760,90 @@ def strictErrorTests : List TestResult := [
     "SELECT DISTINCT id / (id - 5) AS x FROM users LIMIT 1" (some "SELECT"),
   testStrict "strict: with ORDER BY every row is" .postgres
     "SELECT id / (age - 30) AS x FROM users ORDER BY id LIMIT 2 OFFSET 2" (some "SELECT"),
-  testStrict "strict gap (#448): an error inside an expression subquery is not seen" .postgres
-    "SELECT id FROM users WHERE id IN (SELECT id / 0 FROM users)" none,
+  -- #448: expression subqueries, window queries, grouped ORDER BY keys, DML, recursive CTEs
+  testStrict "strict: an IN subquery is evaluated in full" .postgres
+    "SELECT id FROM users WHERE id IN (SELECT id / (age - 30) FROM users)" (some "SELECT"),
+  testStrict "strict: a scalar subquery" .postgres
+    "SELECT id, (SELECT MAX(id) / 0 FROM orders) AS x FROM users" (some "SELECT"),
+  testStrict "strict: a correlated scalar subquery sees the outer row" .postgres
+    "SELECT id, (SELECT 1 / (u.age - 30) FROM orders o WHERE o.user_id = u.id LIMIT 1) AS x FROM users u"
+    (some "SELECT"),
+  testStrict "strict: a correlated subquery for rows that never hit the error" .postgres
+    "SELECT id, (SELECT 1 / (u.age - 30) FROM orders o WHERE o.user_id = u.id LIMIT 1) AS x FROM users u WHERE u.age <> 30"
+    none,
+  testStrict "strict: a scalar subquery's own WHERE filters first" .postgres
+    "SELECT (SELECT id / (age - 30) FROM users WHERE age <> 30 LIMIT 1) AS x" none,
+  testStrict "strict: a subquery in a join ON" .postgres
+    "SELECT u.id FROM users u JOIN orders o ON o.user_id = (SELECT MAX(id) / 0 FROM users)" (some "SELECT"),
+  testStrict "strict gap (#448): a subquery under AND is not checked (engines short-circuit)" .postgres
+    "SELECT id FROM users WHERE id = 99 AND id IN (SELECT 1 / (age - 30) FROM users)" none,
+  testStrict "strict gap (#448): a subquery past a CASE's first condition is not checked" .postgres
+    "SELECT CASE WHEN id > 0 THEN 0 ELSE (SELECT MAX(1 / (age - 30)) FROM users) END AS x FROM users" none,
+  testStrict "strict gap (#448): EXISTS is not checked (engines differ)" .postgres
+    "SELECT id FROM users WHERE EXISTS (SELECT 1 / (amount - 100) FROM orders)" none,
+  testStrict "strict: a window query's plain item" .postgres
+    "SELECT id / (age - 30) AS x, ROW_NUMBER() OVER () AS n FROM users" (some "SELECT"),
+  testStrict "strict: a window query's items under LIMIT are not checked (rows unknown)" .postgres
+    "SELECT id / (id - 5) AS x, ROW_NUMBER() OVER () AS n FROM users LIMIT 1" none,
+  testStrict "strict: a window argument under LIMIT is, on every row" .postgres
+    "SELECT SUM(id / (id - 5)) OVER () AS s FROM users LIMIT 1" (some "window"),
+  testStrict "strict: a window function's argument" .postgres
+    "SELECT SUM(id / (age - 30)) OVER () AS s FROM users" (some "window"),
+  testStrict "strict: a window's PARTITION BY key" .postgres
+    "SELECT ROW_NUMBER() OVER (PARTITION BY id / (age - 30)) AS n FROM users" (some "window"),
+  testStrict "strict: a window over groups" .postgres
+    "SELECT department, SUM(COUNT(*) / (COUNT(*) - 2)) OVER () AS s FROM users GROUP BY department"
+    (some "window"),
+  testStrict "strict: a window query without errors" .postgres
+    "SELECT id, ROW_NUMBER() OVER (ORDER BY age) AS n FROM users ORDER BY n" none,
+  testStrict "strict: a grouped ORDER BY key" .postgres
+    "SELECT department FROM users GROUP BY department ORDER BY SUM(age) / (COUNT(*) - 2)" (some "ORDER BY"),
+  testStrict "strict: a grouped ORDER BY on an output alias" .postgres
+    "SELECT department, COUNT(*) AS c FROM users GROUP BY department ORDER BY c" none,
+  testStrict "strict: a grouped ORDER BY key of a group HAVING removes is not evaluated" .postgres
+    "SELECT department FROM users GROUP BY department HAVING COUNT(*) = 1 ORDER BY SUM(age) / (COUNT(*) - 2)"
+    none,
+  testStrict "strict: a recursive CTE's iterations" .postgres
+    "WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM c WHERE 10 / (3 - n) > 0) SELECT n FROM c"
+    (some "WHERE"),
+  testStrict "strict: a recursive CTE that stops before the error" .postgres
+    "WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 AS n FROM c WHERE n < 2 AND 10 / (3 - n) > 0) SELECT n FROM c"
+    none,
   testStrict "strict gap (#448): a type error on no evaluated row is not seen (engines reject at bind time)" .postgres
     "SELECT id FROM users WHERE FALSE AND name > 1" none
+]
+
+/-- A DML statement under a dialect's error mode: `none` succeeds, `some what` fails in `what`. -/
+def testStrictDml (name : String) (dialect : Dialect) (sql : String) (expected : Option String) :
+    TestResult :=
+  match parse sql (dialect := dialect) with
+  | .error e => .fail name s!"parse error: {e}"
+  | .ok stmt =>
+    match evalStmtIn dialect.config.errors testDb stmt, expected with
+    | .ok _, none => .pass name
+    | .ok _, some what => .fail name s!"expected an error in {what}, got success"
+    | .error e, none => .fail name s!"expected success, got: {e}"
+    | .error e, some what =>
+      if e == s!"evaluation error in {what}" then .pass name
+      else .fail name s!"expected an error in {what}, got: {e}"
+
+def strictDmlTests : List TestResult := [
+  testStrictDml "strict DML: INSERT VALUES" .postgres
+    "INSERT INTO users (id, name) VALUES (6, 1 / 0)" (some "VALUES"),
+  testStrictDml "strict DML: INSERT SELECT" .postgres
+    "INSERT INTO users (id) SELECT id / (age - 30) FROM users" (some "SELECT"),
+  testStrictDml "strict DML: UPDATE SET" .postgres
+    "UPDATE users SET age = id / (age - 30)" (some "SET"),
+  testStrictDml "strict DML: UPDATE SET only on the rows WHERE keeps" .postgres
+    "UPDATE users SET age = id / (age - 30) WHERE age <> 30" none,
+  testStrictDml "strict DML: UPDATE WHERE" .postgres
+    "UPDATE users SET age = 1 WHERE name > 1" (some "WHERE"),
+  testStrictDml "strict DML: DELETE WHERE" .postgres
+    "DELETE FROM users WHERE id / (age - 30) > 0" (some "WHERE"),
+  testStrictDml "quiet DML: sqlite" .sqlite
+    "DELETE FROM users WHERE id / (age - 30) > 0" none,
+  testStrictDml "strictDivZeroNull DML: duckdb" .duckdb
+    "DELETE FROM users WHERE id % (age - 30) > 0" none
 ]
 
 -- ============================================================================
@@ -1780,7 +1860,7 @@ def allSemanticsTests : List TestResult :=
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
   windowTests ++ groupedWindowTests ++ errorPathTests ++ caseInsensitiveTests ++
-  strictErrorTests
+  strictErrorTests ++ strictDmlTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
