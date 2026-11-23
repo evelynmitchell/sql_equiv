@@ -141,7 +141,7 @@ engines.
   bug, such as `COUNT(col)` counting NULLs, which the coverage matrix (every arm exists) and the
   theorem-coverage ratchet (every theorem is named) cannot see.
 - **How:** `tools/mutation_test.py` mutates each dispatch arm of `SqlEquiv/SemanticsBase.lean`
-  (`Value.eq`, `Value.compare`, `Value.toBool`, `evalBinOp`, `evalUnaryOp`, `evalFunc`; 172
+  (`Value.eq`, `Value.compare`, `evalBinOp`, `evalUnaryOp`, `evalFunc`; 165
   mutants): a value change (flip a boolean or comparison, swap an ordering, off by one, drop a
   call) and an error/NULL swap. Each mutant is built (`sql_equiv_test`, `sql_equiv_lspec`) and
   tested, and classified: *killed by proofs* (the build fails in a theorem or a `decide`

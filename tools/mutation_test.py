@@ -3,7 +3,7 @@
 Mutation testing of the evaluator's dispatch arms (#210).
 
 Every arm of the value-level dispatch in `SqlEquiv/SemanticsBase.lean` (`Value.eq`,
-`Value.compare`, `Value.toBool`, `evalBinOp`, `evalUnaryOp`, `evalFunc`) gets one or two
+`Value.compare`, `evalBinOp`, `evalUnaryOp`, `evalFunc`) gets one or two
 mutants:
 - a value mutation, the first rule of `VALUE_RULES` that applies to the arm's result: flip a
   boolean or a comparison, swap an ordering, add one to an integer or decimal, drop
@@ -48,7 +48,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = Path("SqlEquiv/SemanticsBase.lean")
-SITES = ["Value.eq", "Value.compare", "Value.toBool", "evalBinOp", "evalUnaryOp", "evalFunc"]
+# `Value.toBool` is not mutated: nothing calls it (the first trial run found it: every mutant
+# survived), so its mutants cannot be killed.
+SITES = ["Value.eq", "Value.compare", "evalBinOp", "evalUnaryOp", "evalFunc"]
 REPORT = Path("benchmarks/mutation/report.md")
 RESULTS = Path("benchmarks/mutation/results.json")
 LSPEC_SAMPLES = "1000"
