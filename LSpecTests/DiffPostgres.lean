@@ -453,6 +453,14 @@ def runAllTests : IO TestSeq := do
       "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS rn FROM users",
     diffTest "grouped window: order by its alias"
       "SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department ORDER BY r",
+    diffTest "window over aggregate: one group"
+      "SELECT SUM(SUM(age)) OVER () AS s FROM users",
+    diffTest "window over aggregate: order key"
+      "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
+    diffTest "window over aggregate: having"
+      "SELECT ROW_NUMBER() OVER () AS r FROM users HAVING COUNT(*) > 1",
+    diffTest "window over aggregate: no rows"
+      "SELECT SUM(SUM(age)) OVER () AS s FROM users WHERE age > 100",
     -- Window functions under IN (list), BETWEEN, CASE and a function call (#418)
     diffTest "window: in list"
       "SELECT name, SUM(age) OVER (PARTITION BY department) IN (65, 28) AS r FROM users",

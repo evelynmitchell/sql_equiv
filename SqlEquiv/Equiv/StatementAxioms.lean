@@ -42,7 +42,7 @@ theorem intersect_empty_right (db : Database) (a : SelectStmt) :
   simp only [evalQuery_compound, evalQuery_simple, applySetOp]
   have h : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
-      (by rfl) (fun row => by simp [evalExprWithDb_lit])
+      (by rfl) (by simp [windowAggregates, selectHasWindowFn]) (fun row => by simp [evalExprWithDb_lit])
   rw [h]
   have hfilt : (List.filter (fun (_ : Row) => false) (evalSelect db a)) = [] := by
     rw [List.filter_eq_nil_iff]; intro x _ hx; exact absurd hx (by simp)
@@ -153,7 +153,7 @@ theorem union_empty_right (a : SelectStmt) :
   rw [evalQuery_compound, mem_valueKey_union]
   have hempty : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
-      (by rfl) (fun _row => by simp [evalExprWithDb_lit])
+      (by rfl) (by simp [windowAggregates, selectHasWindowFn]) (fun _row => by simp [evalExprWithDb_lit])
   rw [evalQuery_simple (sel := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none), hempty]
   simp
 
@@ -994,17 +994,20 @@ theorem subquery_where_true (db : Database) (row : Row)
   intro r
   simp [evalExprWithDb_lit]
 
-/-- Adding WHERE FALSE to subquery makes it empty (requires no aggregates) -/
+/-- Adding WHERE FALSE to subquery makes it empty (requires no aggregates: none in the items,
+    and none inside a window or in `HAVING` that makes a window query aggregate, #438) -/
 theorem subquery_where_false (db : Database) (row : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (hNoAgg : selectHasAggregate items = false) :
+    (hNoAgg : selectHasAggregate items = false)
+    (hNoWinAgg : windowAggregates selectHasWindowFn items having = false) :
     let selWithFalse := SelectStmt.mk distinct items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset
     evalSelectWithContext db row selWithFalse = [] := by
   simp only
   apply evalSelectWithContext_filter_all_false
   · exact hNoAgg
+  · exact hNoWinAgg
   · intro r; simp [evalExprWithDb_lit]
 
 /-- IN with single-value subquery is equivalent to equality.

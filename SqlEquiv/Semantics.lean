@@ -699,23 +699,6 @@ theorem evalWindowFnParam_congr (db : Database) (fn : WindowFunc) (a : Option Ex
     have hx := hE x (by simpa [Expr.sizeOpt] using ha)
     cases fn <;> simp only [evalWindowFnParam, hf, hr, hd, hx]
 
-theorem WindowSpec.partitionBy_size_lt {spec : WindowSpec} {x : Expr}
-    (hx : x ∈ spec.partitionBy) : x.size < spec.size := by
-  cases spec with
-  | mk ps os =>
-    simp only [WindowSpec.partitionBy] at hx
-    have := Expr.size_le_sizeList_of_mem hx
-    simp [WindowSpec.size]; omega
-
-theorem WindowSpec.orderBy_size_lt {spec : WindowSpec} {o : OrderByItem}
-    (ho : o ∈ spec.orderBy) : o.expr.size < spec.size := by
-  cases spec with
-  | mk ps os =>
-    simp only [WindowSpec.orderBy] at ho
-    have := OrderByItem.size_le_sizeList_of_mem ho
-    have := OrderByItem.expr_size_lt o
-    simp [WindowSpec.size]; omega
-
 include hE in
 theorem evalExprWithWindowParam_congr (db : Database) (r : Row) (p sp : Table) (i : Nat) :
     ∀ (n : Nat) (e : Expr), e.size ≤ n → e.size < N →
@@ -1083,18 +1066,20 @@ theorem evalSelect_where_congr (db : Database)
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
   exact evalSelectCore_where_congr _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hCongr
 
-/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates.
+/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates
+    (none in the items, and none that makes a window query aggregate, #438).
     Proved via evalSelectCore bridge. -/
 theorem evalSelect_filter_all_false (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (cond : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
+  windowAggregates selectHasWindowFn items having = false →
   (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
-  intro hNoAgg hAllFalse
+  intro hNoAgg hNoWA hAllFalse
   rw [evalSelect_eq_evalSelectCore]
-  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hAllFalse
+  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA hAllFalse
 
 -- ============================================================================
 -- Infrastructure theorems for evalSelectWithContext (proved via evalSelectCore bridge)
@@ -1115,18 +1100,20 @@ theorem evalSelectWithContext_where_congr (db : Database) (outerRow : Row)
   rw [evalSelectWithContext_eq_evalSelectCore, evalSelectWithContext_eq_evalSelectCore]
   exact evalSelectCore_where_congr _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hCongr
 
-/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates.
+/-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates
+    (none in the items, and none that makes a window query aggregate, #438).
     For evalSelectWithContext (correlated subqueries). Proved via evalSelectCore bridge. -/
 theorem evalSelectWithContext_filter_all_false (db : Database) (outerRow : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (cond : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
+  windowAggregates selectHasWindowFn items having = false →
   (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
-  intro hNoAgg hAllFalse
+  intro hNoAgg hNoWA hAllFalse
   rw [evalSelectWithContext_eq_evalSelectCore]
-  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hAllFalse
+  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA hAllFalse
 
 /-- Infrastructure: evalSelectWithContext decomposes limit/offset into drop/take on the base result.
     Proved via evalSelectCore bridge. -/

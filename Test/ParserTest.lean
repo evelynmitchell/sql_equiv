@@ -325,14 +325,19 @@ def windowParserTests : List TestResult := [
     "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS r FROM users",
   testParse "window_under_operator_in_grouped_query_accepted"
     "SELECT department, SUM(COUNT(*)) OVER () + 1 AS r FROM users GROUP BY department",
-  -- #438: without GROUP BY and with no aggregate outside a window in the items, the evaluator
-  -- would not aggregate, so an aggregate elsewhere or a HAVING is still rejected
-  testParseFailWith "window_with_having_rejected" "(#438)"
-    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
-  testParseFailWith "window_over_aggregate_argument_rejected" "(#438)"
+  -- #438: without GROUP BY, an aggregate inside a window in the items or in HAVING makes the
+  -- window query aggregate (one group), as in sqlite, DuckDB and Postgres
+  testParse "window_over_aggregate_argument_accepted"
     "SELECT SUM(SUM(age)) OVER () AS r FROM users",
-  testParseFailWith "window_over_aggregate_order_key_rejected" "(#438)"
+  testParse "window_over_aggregate_order_key_accepted"
     "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
+  testParse "window_with_aggregate_having_accepted"
+    "SELECT ROW_NUMBER() OVER () AS r FROM users HAVING COUNT(*) > 1",
+  -- #440: an aggregate only in ORDER BY, or a HAVING without an aggregate, is still rejected
+  testParseFailWith "window_with_having_rejected" "(#440)"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
+  testParseFailWith "window_with_aggregate_only_in_order_by_rejected" "(#440)"
+    "SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)",
   -- an ORDER BY window key is rejected on its own (#424, #435)
   testParseFailWith "window_in_grouped_order_by_rejected" "(#435)"
     "SELECT department FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department)",

@@ -599,6 +599,18 @@ theorem projectWindowItems_congr
     | star t => cases t <;> rfl
     | exprItem e a => simp only [h e a List.mem_cons_self]
 
+/-- A window query that aggregates through an aggregate inside a window or in `HAVING`, though
+    its items have none outside windows (#438): it is evaluated as an aggregate query, one group. -/
+def windowAggregates (hasWindowFn : List SelectItem → Bool) (items : List SelectItem)
+    (having : Option Expr) : Bool :=
+  hasWindowFn items && windowQueryAggregates items having
+
+/-- Without window functions in the items, `windowAggregates` is false. -/
+@[simp] theorem windowAggregates_of_noWin {hasWindowFn : List SelectItem → Bool}
+    {items : List SelectItem} (having : Option Expr) (h : hasWindowFn items = false) :
+    windowAggregates hasWindowFn items having = false := by
+  simp [windowAggregates, h]
+
 /-- The groups of a GROUP BY query that survive `HAVING`, each with its rows and its sample row
     (the row bare columns are read on), in the order of the grouped projection. Used by the
     window path over groups (#429); the grouped projection without windows inlines the same
@@ -739,7 +751,8 @@ def evalSelectCore (db : Database) (outerRow : Row)
       groupedSurvivors db exprEval exprWithAggEval sel.items sel.groupBy sel.having filteredRows
     else aggSurvivors db exprEval exprWithAggEval sel.items sel.having filteredRows
   let projectedRows : Table :=
-    if (!sel.groupBy.isEmpty || hasAgg sel.items) && hasWindowFn sel.items then
+    if (!sel.groupBy.isEmpty || hasAgg sel.items ||
+        windowAggregates hasWindowFn sel.items sel.having) && hasWindowFn sel.items then
       projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval sel.items windowGroups
     else if !sel.groupBy.isEmpty then
       -- GROUP BY present: partition rows and evaluate aggregates per group
@@ -806,7 +819,8 @@ def evalSelectCore (db : Database) (outerRow : Row)
   applyOrderByLimitOffsetAligned compareEval db
     (if groupedSort || groupedDistinct then groupOrderByItems sel.orderBy else sel.orderBy)
     sel.limitVal sel.offsetVal
-    ((!sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items) || groupedSort ||
+    ((!sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items &&
+        !windowAggregates hasWindowFn sel.items sel.having) || groupedSort ||
       groupedDistinct || plainDistinct)
     (if groupedSort then
       (if hasWindowFn sel.items then
@@ -956,7 +970,8 @@ def evalSelectProjectDistinct (db : Database)
     (groupBy : List Expr) (having : Option Expr)
     (filteredRows : Table) : Table :=
   let projectedRows : Table :=
-    if (!groupBy.isEmpty || hasAgg items) && hasWindowFn items then
+    if (!groupBy.isEmpty || hasAgg items || windowAggregates hasWindowFn items having) &&
+        hasWindowFn items then
       projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval items
         (if !groupBy.isEmpty then
           groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows
@@ -1045,7 +1060,8 @@ theorem evalSelectProjectDistinct_length_aligned (db : Database)
     (distinct : Bool) (items : List SelectItem)
     (groupBy : List Expr) (having : Option Expr)
     (filteredRows : Table)
-    (h : (!distinct && groupBy.isEmpty && !hasAgg items) = true) :
+    (h : (!distinct && groupBy.isEmpty && !hasAgg items &&
+      !windowAggregates hasWindowFn items having) = true) :
     (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
       groupBy having filteredRows).length =
@@ -1054,9 +1070,9 @@ theorem evalSelectProjectDistinct_length_aligned (db : Database)
           exprEval db row cond == some (Value.bool true)
       | none => filteredRows).length := by
   simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
-  obtain ⟨⟨hd, hgb⟩, hagg⟩ := h
-  simp only [evalSelectProjectDistinct, hgb, hagg, hd, Bool.not_true,
-    Bool.false_eq_true, if_false]
+  obtain ⟨⟨⟨hd, hgb⟩, hagg⟩, hwa⟩ := h
+  simp only [evalSelectProjectDistinct, hgb, hagg, hd, hwa, Bool.not_true,
+    Bool.false_eq_true, if_false, Bool.or_false, Bool.false_and]
   by_cases hwin : hasWindowFn items = true
   · simp [hwin, List.length_map, List.length_zip, List.length_range]
   · simp [hwin, List.length_map]
@@ -1244,7 +1260,8 @@ def evalSelectAfterFilter (db : Database)
     else aggSurvivors db exprEval exprWithAggEval items having filteredRows
   applyOrderByLimitOffsetAligned compareEval db
     (if groupedSort || groupedDistinct then groupOrderByItems orderBy else orderBy) limit offset
-    ((!distinct && groupBy.isEmpty && !hasAgg items) || groupedSort || groupedDistinct ||
+    ((!distinct && groupBy.isEmpty && !hasAgg items &&
+        !windowAggregates hasWindowFn items having) || groupedSort || groupedDistinct ||
       plainDistinct)
     (if groupedSort then
       (if hasWindowFn items then
@@ -1329,7 +1346,8 @@ theorem evalSelectAfterFilter_orderBy_length (db : Database)
           subst hd hg0
           simp [evalSelectProjectDistinct, ha, hw]
         · rw [if_neg hpd, List.length_map]
-          have hplain : (!distinct && groupBy.isEmpty && !hasAgg items) = true := by
+          have hplain : (!distinct && groupBy.isEmpty && !hasAgg items &&
+              !windowAggregates hasWindowFn items having) = true := by
             simpa [hg, hgd, hpd] using huse
           exact (evalSelectProjectDistinct_length_aligned _ _ _ _ _ _ _ _
             _ _ _ _ _ hplain).symm
@@ -1346,12 +1364,13 @@ theorem evalSelectProjectDistinct_nil (db : Database)
     (hasAgg : List SelectItem → Bool)
     (distinct : Bool) (items : List SelectItem)
     (groupBy : List Expr) (having : Option Expr)
-    (hNoAgg : hasAgg items = false) :
+    (hNoAgg : hasAgg items = false)
+    (hNoWA : windowAggregates hasWindowFn items having = false) :
     evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
       groupBy having [] = [] := by
   simp only [evalSelectProjectDistinct, List.foldl, List.filterMap_nil,
-    hNoAgg, List.head?_nil, Option.getD]
+    hNoAgg, hNoWA, Bool.or_false, List.head?_nil, Option.getD]
   cases having <;> simp [List.map_nil] <;> split <;> simp_all
 
 /-- evalSelectCore decomposes into base rows + filter + afterFilter -/
@@ -1508,11 +1527,12 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
     (cond : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     hasAgg items = false →
+    windowAggregates hasWindowFn items having = false →
     (∀ row : Row, (exprEval db row cond == some (Value.bool true)) = false) →
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
-  intro hNoAgg hAllFalse
+  intro hNoAgg hNoWA hAllFalse
   -- Unfold evalSelectCore directly (it's a regular def)
   show evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
     exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
@@ -1526,7 +1546,7 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
   simp only [evalSelectAfterFilter]
   -- evalSelectProjectDistinct ... [] = [] (no aggregates); the rows, and since #320 the
   -- grouped DISTINCT sources, hold one such term each
-  simp only [evalSelectProjectDistinct_nil _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg]
+  simp only [evalSelectProjectDistinct_nil _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA]
   -- aligned ORDER BY on [] = [] (sources irrelevant for empty input)
   exact applyOrderByLimitOffsetAligned_nil _ _ _ _ _ _ _
 
@@ -2566,7 +2586,8 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
     (h_ew : ∀ e alias_, .exprItem e alias_ ∈ items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
         p1.length = p2.length →
         exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e)
-    (h_gwin : ((!groupBy.isEmpty || hasAgg items) && hasWindowFn items) = false) :
+    (h_gwin : ((!groupBy.isEmpty || hasAgg items || windowAggregates hasWindowFn items having) &&
+      hasWindowFn items) = false) :
     evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       exprWithWindowEval hasWindowFn hasAgg distinct items groupBy having fr1 =
     evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval exprWithAggEval
@@ -2778,7 +2799,8 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
     (h_ew : ∀ e alias_, .exprItem e alias_ ∈ sel.items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
         p1.length = p2.length →
         exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e)
-    (h_gwin : ((!sel.groupBy.isEmpty || hasAgg sel.items) && hasWindowFn sel.items) = false) :
+    (h_gwin : ((!sel.groupBy.isEmpty || hasAgg sel.items ||
+      windowAggregates hasWindowFn sel.items sel.having) && hasWindowFn sel.items) = false) :
     evalSelectCore db r1 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       compareEval exprWithWindowEval hasWindowFn hasAgg sel =
     evalSelectCore db r2 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval

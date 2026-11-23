@@ -216,14 +216,16 @@ theorem where_true_elim (db : Database) (items : List SelectItem) (from_ : Optio
 /-- WHERE FALSE produces empty result when no aggregates.
     Proved using evalSelect_filter_all_false: FALSE filter removes all rows.
     Requires no aggregates because aggregate queries (e.g., COUNT(*)) with empty
-    filtered rows still produce 1 row. -/
+    filtered rows still produce 1 row; that includes a window query that aggregates through an
+    aggregate inside a window or in `HAVING` (#438). -/
 theorem where_false_empty (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
     (limit offset : Option Nat)
-    (h_no_agg : selectHasAggregate items = false) :
+    (h_no_agg : selectHasAggregate items = false)
+    (h_no_win_agg : windowAggregates selectHasWindowFn items having = false) :
     (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 := by
   have h := evalSelect_filter_all_false db false items from_ (.lit (.bool false)) groupBy having orderBy limit offset
-    h_no_agg
+    h_no_agg h_no_win_agg
     (fun row => by simp [evalExprWithDb_lit])
   simp [h]
 
