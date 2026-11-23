@@ -331,11 +331,48 @@ def windowParserTests : List TestResult := [
     "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
   testParseFailWith "window_under_operator_in_grouped_query_rejected" "(#421)"
     "SELECT department, SUM(COUNT(*)) OVER () + 1 AS r FROM users GROUP BY department",
-  testParseFailWith "window_in_grouped_order_by_rejected" "(#421)"
+  -- (an ORDER BY window key is rejected on its own since #424, before the #421 check)
+  testParseFailWith "window_in_grouped_order_by_rejected" "(#435)"
     "SELECT department FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department)",
-  -- …but windows stay accepted outside grouped/aggregate SELECTs
-  testParse "window_in_plain_order_by_accepted"
+  -- #424: windows are computed after WHERE, GROUP BY, HAVING and join conditions; all three
+  -- engines reject a window there (we gave no rows or one group), and nested windows (NULL)
+  testParseFailWith "window_in_where_rejected" "not allowed in WHERE"
+    "SELECT name FROM users WHERE SUM(age) OVER () > 0",
+  testParseFailWith "window_under_between_in_where_rejected" "not allowed in WHERE"
+    "SELECT name FROM users WHERE age BETWEEN 1 AND ROW_NUMBER() OVER ()",
+  testParseFailWith "window_in_subquery_where_rejected" "not allowed in WHERE"
+    "SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE ROW_NUMBER() OVER () = 1)",
+  testParseFailWith "window_in_having_rejected" "not allowed in HAVING"
+    "SELECT department FROM users GROUP BY department HAVING SUM(age) OVER () > 0",
+  testParseFailWith "window_in_group_by_rejected" "not allowed in GROUP BY"
+    "SELECT 1 FROM users GROUP BY ROW_NUMBER() OVER ()",
+  testParseFailWith "window_in_join_on_rejected" "not allowed in JOIN conditions"
+    "SELECT u.name FROM users u JOIN orders o ON ROW_NUMBER() OVER () = 1",
+  testParseFailWith "window_in_update_where_rejected" "not allowed in WHERE"
+    "UPDATE users SET age = 1 WHERE ROW_NUMBER() OVER () = 1",
+  testParseFailWith "window_in_delete_where_rejected" "not allowed in WHERE"
+    "DELETE FROM users WHERE ROW_NUMBER() OVER () = 1",
+  testParseFailWith "window_in_update_set_rejected" "not allowed in UPDATE"
+    "UPDATE users SET age = ROW_NUMBER() OVER () WHERE id = 1",
+  testParseFailWith "window_in_insert_values_rejected" "not allowed in VALUES"
+    "INSERT INTO users VALUES (ROW_NUMBER() OVER ())",
+  testParseFailWith "window_nested_in_argument_rejected" "cannot be nested"
+    "SELECT SUM(ROW_NUMBER() OVER ()) OVER () FROM users",
+  testParseFailWith "window_nested_in_partition_rejected" "cannot be nested"
+    "SELECT CASE WHEN age > 1 THEN RANK() OVER (PARTITION BY ROW_NUMBER() OVER ()) END FROM users",
+  testParseFailWith "window_nested_in_order_key_rejected" "cannot be nested"
+    "SELECT ROW_NUMBER() OVER (ORDER BY SUM(age) OVER ()) FROM users",
+  -- #435: an ORDER BY window key was never evaluated (rows came back unsorted), so it is
+  -- rejected, by position too, until it is; ordering by the item's alias works
+  testParseFailWith "window_in_plain_order_by_rejected" "(#435)"
     "SELECT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age)",
+  testParseFailWith "window_order_by_position_rejected" "(#435)"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) FROM users ORDER BY 2",
+  -- …but windows stay accepted outside those clauses and grouped/aggregate SELECTs
+  testParse "window_order_by_alias_accepted"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users ORDER BY r",
+  testParse "window_in_join_on_subquery_accepted"
+    "SELECT u.name FROM users u JOIN orders o ON o.id IN (SELECT ROW_NUMBER() OVER () FROM users)",
   testParse "window_in_from_subquery_of_grouped_query_accepted"
     "SELECT department, COUNT(*) AS c FROM (SELECT department, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users) t GROUP BY department",
   testParse "window_next_to_scalar_subquery_aggregate_accepted"
