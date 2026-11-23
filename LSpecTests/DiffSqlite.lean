@@ -595,8 +595,9 @@ def runAllTests : IO TestSeq := do
       "SELECT SUM(SUM(age)) OVER () AS s FROM users",
     diffTest "window over aggregate: order key"
       "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
-    -- (`HAVING COUNT(*) > 1` with a window and no item aggregate: sqlite rejects it, DuckDB and
-    -- Postgres form one group, as we do; registry row 22)
+    -- (`HAVING COUNT(*) > 1` with a window and no item aggregate: sqlite rejects it, and so does
+    -- our sqlite dialect; DuckDB and Postgres form one group, as the other dialects do; registry
+    -- row 22, #440; ParserTest implicitGroupDialectTests)
     diffTest "window over aggregate: no rows"
       "SELECT SUM(SUM(age)) OVER () AS s FROM users WHERE age > 100",
     -- (boolean-valued items are in DiffDuckdb and DiffPostgres: sqlite prints 1 / 0)

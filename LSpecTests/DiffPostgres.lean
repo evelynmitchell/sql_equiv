@@ -466,6 +466,16 @@ def runAllTests : IO TestSeq := do
       "SELECT department FROM users GROUP BY department ORDER BY RANK() OVER (ORDER BY SUM(age))",
     diffTest "order by window: grouped, with an aggregate item"
       "SELECT department, COUNT(*) AS c FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department DESC)",
+    -- HAVING without GROUP BY and without an aggregate in the select list: one group (#440,
+    -- registry row 22; sqlite rejects these)
+    diffTest "implicit group: HAVING an aggregate"
+      "SELECT 1 AS one FROM users HAVING COUNT(*) > 1",
+    diffTest "implicit group: HAVING false"
+      "SELECT 1 AS one FROM users HAVING SUM(age) > 1000",
+    diffTest "implicit group: HAVING over no rows"
+      "SELECT 1 AS one FROM users WHERE age > 100 HAVING 1 = 1",
+    diffTest "implicit group: ORDER BY an aggregate"
+      "SELECT 1 AS one FROM users HAVING COUNT(*) > 1 ORDER BY COUNT(*)",
     diffTest "window over aggregate: one group"
       "SELECT SUM(SUM(age)) OVER () AS s FROM users",
     diffTest "window over aggregate: order key"

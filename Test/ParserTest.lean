@@ -333,11 +333,19 @@ def windowParserTests : List TestResult := [
     "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users",
   testParse "window_with_aggregate_having_accepted"
     "SELECT ROW_NUMBER() OVER () AS r FROM users HAVING COUNT(*) > 1",
-  -- #440: an aggregate only in ORDER BY, or a HAVING without an aggregate, is still rejected
-  testParseFailWith "window_with_having_rejected" "(#440)"
+  -- #440 (registry row 22): without GROUP BY and without an aggregate in the select list, a
+  -- HAVING makes the query one group (standard, DuckDB, Postgres; sqlite rejects it, see
+  -- implicitGroupDialectTests); an aggregate only in ORDER BY is rejected in every dialect
+  testParse "window_with_having_one_group"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
+  testParse "having_without_group_by_one_group"
+    "SELECT 1 FROM users HAVING COUNT(*) > 1",
   testParseFailWith "window_with_aggregate_only_in_order_by_rejected" "(#440)"
     "SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)",
+  testParseFailWith "aggregate_only_in_order_by_rejected" "(#440)"
+    "SELECT 1 FROM users ORDER BY COUNT(*)",
+  testParse "aggregate_in_order_by_with_having_accepted"
+    "SELECT 1 FROM users HAVING COUNT(*) > 1 ORDER BY COUNT(*)",
   -- an ORDER BY window key is evaluated over the groups (#435)
   testParse "window_in_grouped_order_by_accepted"
     "SELECT department FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department)",
@@ -546,6 +554,36 @@ private def usersDb : Database := fun n =>
     [("name", .string "Carol"), ("age", .int 22), ("department", .string "Eng")]]
   else []
 
+/-- Registry row 22 (#440): sqlite rejects a HAVING without GROUP BY when the select list has no
+    aggregate (one inside a window function counts); the other dialects form one group. -/
+private def sqliteRejects (name sql : String) : TestResult :=
+  match parse sql (dialect := .sqlite) with
+  | .error e => if (e.splitOn "HAVING clause on a non-aggregate query").length > 1 then .pass name
+                else .fail name s!"unexpected error: {e}"
+  | .ok _ => .fail name "sqlite dialect accepted it"
+
+private def acceptedIn (name : String) (d : Dialect) (sql : String) : TestResult :=
+  match parse sql (dialect := d) with
+  | .ok _ => .pass name
+  | .error e => .fail name e
+
+def implicitGroupDialectTests : List TestResult := [
+  sqliteRejects "sqlite_having_without_aggregate_rejected"
+    "SELECT 1 FROM users HAVING COUNT(*) > 1",
+  sqliteRejects "sqlite_having_no_aggregate_at_all_rejected"
+    "SELECT name FROM users HAVING age > 26",
+  sqliteRejects "sqlite_window_having_rejected"
+    "SELECT ROW_NUMBER() OVER () FROM users HAVING COUNT(*) > 1",
+  acceptedIn "sqlite_having_with_item_aggregate_accepted" .sqlite
+    "SELECT COUNT(*) FROM users HAVING COUNT(*) > 1",
+  acceptedIn "sqlite_having_with_window_aggregate_accepted" .sqlite
+    "SELECT SUM(SUM(age)) OVER () FROM users HAVING COUNT(*) > 1",
+  acceptedIn "duckdb_having_without_aggregate_one_group" .duckdb
+    "SELECT 1 FROM users HAVING COUNT(*) > 1",
+  acceptedIn "postgres_having_without_aggregate_one_group" .postgres
+    "SELECT 1 FROM users HAVING COUNT(*) > 1"
+]
+
 def dialectPrintTests : List TestResult :=
   (allDialects.flatMap fun d => dialectCorpus.map (roundTripIn d)) ++ [
   -- likeCI survives a cross-dialect trip as LOWER(x) LIKE LOWER(p): same AST shape, same rows
@@ -713,7 +751,7 @@ def allParserTests : List TestResult :=
   aggregateTests ++ subqueryTests ++ setOpTests ++ exprTests ++
   insertTests ++ updateTests ++ deleteTests ++ nonAsciiIdentTests ++ parseFailTests ++ cteTests ++
   recursiveCTETests ++ doubleQuoteTests ++ trailingInputTests ++ windowParserTests ++
-  dialectPrintTests ++ precedenceTests
+  dialectPrintTests ++ implicitGroupDialectTests ++ precedenceTests
 
 def runParserTests : IO (Nat × Nat) :=
   runTests "Parser Tests" allParserTests

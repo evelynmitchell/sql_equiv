@@ -1435,6 +1435,20 @@ def groupedWindowTests : List TestResult := [
   testColumn "grouped_order_by_window_key"
     "SELECT department FROM users GROUP BY department ORDER BY RANK() OVER (ORDER BY SUM(age))"
     "department" [.string "Marketing", .string "Sales", .string "Engineering"],
+  -- #440 (registry row 22): a HAVING without GROUP BY and without an aggregate in the select
+  -- list makes the query one group, as in the standard, DuckDB and Postgres
+  testColumn "having_without_group_by_one_group"
+    "SELECT 1 AS one FROM users HAVING COUNT(*) > 1"
+    "one" [.int 1],
+  testColumn "having_without_group_by_no_group"
+    "SELECT 1 AS one FROM users HAVING SUM(age) > 1000"
+    "one" [],
+  testColumn "having_true_over_no_rows_one_group"
+    "SELECT 1 AS one FROM users WHERE age > 100 HAVING 1 = 1"
+    "one" [.int 1],
+  testColumn "having_one_group_order_by_aggregate"
+    "SELECT 1 AS one FROM users HAVING COUNT(*) > 1 ORDER BY COUNT(*)"
+    "one" [.int 1],
   testColumn "grouped_window_in_derived_table"
     "SELECT MAX(r) AS m FROM (SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department) t"
     "m" [.int 3]
