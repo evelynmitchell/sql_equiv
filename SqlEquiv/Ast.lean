@@ -355,6 +355,21 @@ inductive ImplicitGroup where
   | reject
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- What a quiet evaluation error (`none`: a type mismatch, a missing column, a division by zero)
+    means in a dialect (registry row 23, #270). The evaluator and every theorem are quiet: an
+    error drops the row in `WHERE` and shows as NULL in the select list. `evalQueryIn`
+    (`SqlEquiv.Strict`) layers the dialect's choice on top.
+    - `quiet`: nothing changes, as sqlite mostly does.
+    - `strict`: the statement fails when a clause it evaluates yields an error, as Postgres and
+      the standard do.
+    - `strictDivZeroNull`: `strict`, except that division and modulo by zero are not errors, as in
+      DuckDB (`5 % 0` is NULL; `1 / 0` is a float infinity, registry row 6). -/
+inductive ErrorMode where
+  | quiet
+  | strict
+  | strictDivZeroNull
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- The database engine whose implementation-defined behaviour a query is
     checked against (docs/IMPLEMENTATION_DEFINED.md). Resolved at parse time:
     the parser writes each choice into the AST (e.g. the NULL position of every
@@ -395,6 +410,8 @@ structure DialectConfig where
   boolAvg : BoolSumAvg := .error
   /-- `HAVING` without `GROUP BY` and without an aggregate in the select list (row 22) -/
   implicitGroup : ImplicitGroup := .oneGroup
+  /-- What an evaluation error means (row 23, #270) -/
+  errors : ErrorMode := .strict
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -408,10 +425,11 @@ def Dialect.config : Dialect → DialectConfig
                    boolMinMax := .asInt,   likeCase := .asciiInsensitive,
                    distinctOrderBy := .firstRow, bareColumns := .sqlite,
                    scalarSubqueryRows := .firstRow, boolSum := .asInt, boolAvg := .asInt,
-                   implicitGroup := .reject }
+                   implicitGroup := .reject, errors := .quiet }
   | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
                    boolMinMax := .ordered, likeCase := .sensitive,
-                   distinctOrderBy := .firstRow, boolSum := .asInt }
+                   distinctOrderBy := .firstRow, boolSum := .asInt,
+                   errors := .strictDivZeroNull }
   | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
                    boolMinMax := .error,   likeCase := .sensitive,
                    distinctOrderBy := .reject }

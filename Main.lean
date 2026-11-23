@@ -689,9 +689,11 @@ def main (args0 : List String) : IO Unit := do
       | .error e =>
         IO.println s!"#RESULT {i} err parse: {(s!"{e}".splitOn "\n").headD ""}"
       | .ok stmt =>
-        match (SqlEquiv.evalStmt database stmt).2 with
-        | none => IO.println s!"#RESULT {i} err no-result"
-        | some tableResult =>
+        -- the dialect's error mode decides whether an evaluation error fails the query (#270)
+        match SqlEquiv.evalStmtIn (← dialectRef.get).config.errors database stmt with
+        | .error e => IO.println s!"#RESULT {i} err {e}"
+        | .ok (_, none) => IO.println s!"#RESULT {i} err no-result"
+        | .ok (_, some tableResult) =>
           IO.println s!"#RESULT {i} ok"
           for row in tableResult do
             IO.println (String.intercalate "|" (row.map (fun (_, v) => renderCell v)))
