@@ -11,7 +11,7 @@ SQL Equiv is a comprehensive toolkit for:
 - **Proving equivalences** - Formal proofs that two SQL expressions/queries are semantically equivalent, for the fragment in **What is parsed, evaluated, and proved** below
 - **Custom tactics** - Lean 4 tactics specifically designed for SQL equivalence proofs
 
-The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations.
+The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations. On the 564 Spider dev queries, 563 parse, and 520 (92.2%) give exactly sqlite's rows on synthetic data; with answers that differ only in breaking a tie at a `LIMIT` or that need sqlite's TEXT-affinity comparison emulated, 559 (99.1%). Both counts are ratcheted in CI (`benchmarks/spider/eval_report.md`).
 
 **Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are total functions (no `partial def` remains in the semantics, #278) but have no equivalence theorems yet. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
 

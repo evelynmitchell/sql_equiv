@@ -64,8 +64,11 @@ Spider databases — see Download above.
 (`dev_tables.json`) with deterministic FK-aware synthetic data, evaluates all
 564 `dev_queries.jsonl` pairs with our engine (`sql_equiv --spider-eval`) and
 with in-process sqlite3 (the Spider-fidelity oracle), and compares result
-multisets. Report: `eval_report.md`; ratchet: `tools/spider_eval_minimum.txt`
-(CI-checked). Failure classes are issue candidates, per the operating loop.
+multisets. Report: `eval_report.md`, which leads with the exact multiset-match rate
+(520/564, 92.2%, on 23 Nov 2026) and then adds the tolerated categories (tie-valid,
+TEXT-affinity emulated) for the evaluate-agreement count (559/564, 99.1%). Two ratchets,
+both CI-checked (#266): `tools/spider_eval_exact_minimum.txt` (exact matches) and
+`tools/spider_eval_minimum.txt` (the combined count). Failure classes are issue candidates, per the operating loop.
 A failure that is a decided implementation-defined difference stays a failure
 but is reported under its own label naming the registry row (e.g. **known
 divergence: AVG/SUM over a TEXT column (registry row 17)**), so the remaining
