@@ -51,7 +51,8 @@ theorem evalSelectCore_distinct (db : Database)
     intro rows
     simp [evalSelectProjectDistinct]
   rw [evalSelectCore_eq_afterFilter, evalSelectCore_eq_afterFilter]
-  simp only [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, hg, ↓reduceIte, hp]
+  simp only [evalSelectAfterFilter, orderByHasWindow_nil, Bool.false_eq_true, ↓reduceIte,
+    Bool.or_false, applyOrderByLimitOffsetAligned, hg, hp]
 
 end SqlBridge.CorrectDistinct
 

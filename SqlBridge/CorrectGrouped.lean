@@ -36,7 +36,8 @@ theorem evalSelectCore_grouped_full (db : Database) (outerRow : Row)
     (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr) (groupBy : List Expr)
     (having : Option Expr) (orderBy : List OrderByItem) (lim off : Option Nat)
-    (hg : groupBy ≠ []) (hNoWin : hasWindowFn items = false) :
+    (hg : groupBy ≠ []) (hNoWin : hasWindowFn items = false)
+    (hOB : orderByHasWindow orderBy = false) :
     ∃ (F F' : List (List (Option Value) × Table) → Row → List (List (Option Value) × Table))
       (Φ Ψ : List (Option Value) × Table → Option Row),
       (∀ gs u, (gs.map Prod.fst).Nodup →
@@ -67,7 +68,7 @@ theorem evalSelectCore_grouped_full (db : Database) (outerRow : Row)
   case h3 =>
     rw [evalSelectCore_eq_afterFilter]
     cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, evalSelectGroupOrderKeys,
-      hne, hNoWin] <;> rfl
+      hne, hNoWin, hOB] <;> rfl
   case h1 =>
     intro gs u h
     split
@@ -166,6 +167,18 @@ def OrderKeyOk (items : List SqlEquiv.SelectItem) (groupBy : List SqlEquiv.Expr)
   aggFragment o = true ∨ ∃ c, o = .col c ∧ SqlEquiv.Expr.col c ∈ groupBy ∧
     ∀ it ∈ items, ((outName it).toLower = c.column.toLower ∨
       (itemColName it).toLower = c.column.toLower) → itemExpr it = .col c
+
+/-- Sort keys of the grouped fragment have no window function (#435). -/
+theorem orderByHasWindow_of_orderKeyOk {items : List SqlEquiv.SelectItem}
+    {groupBy : List SqlEquiv.Expr} {orderBy : List SqlEquiv.OrderByItem}
+    (hob : ∀ o ∈ orderBy, OrderKeyOk items groupBy o.expr) :
+    SqlEquiv.orderByHasWindow orderBy = false := by
+  simp only [SqlEquiv.orderByHasWindow, List.any_eq_false]
+  intro o ho
+  rcases hob o ho with h | ⟨c, hc, -⟩
+  · generalize o.expr = e at h ⊢
+    cases e <;> simp_all [aggFragment, SqlEquiv.exprHasWindowFn]
+  · simp [hc, SqlEquiv.exprHasWindowFn]
 
 /-- The `MIN`/`MAX` aggregates. -/
 def isMinMax : SqlEquiv.Expr → Bool
@@ -1414,7 +1427,7 @@ theorem elabStmt_correct_grouped_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s
   rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore]
   obtain ⟨F, F', Φ, Ψ, hF, hF', hΦ, hΨ, heq⟩ :=
     evalSelectCore_grouped_full db ctx _ _ _ _ _ _ _ _ _ items fr wh groupBy having orderBy lim off hgb
-      (selectHasWindowFn_groupedItems hgi)
+      (selectHasWindowFn_groupedItems hgi) (orderByHasWindow_of_orderKeyOk hob)
   rw [heq, applyOrder_eq]
   apply limit_rel
   -- a typed aggregate row against `SqlEquiv`'s (projected row, key row)
