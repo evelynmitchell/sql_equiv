@@ -1716,6 +1716,10 @@ def strictErrorTests : List TestResult := [
     "SELECT id % (age - 30) AS x FROM users" none,
   testStrict "strictDivZeroNull: a type error still is (duckdb)" .duckdb
     "SELECT name + 1 AS x FROM users" (some "SELECT"),
+  testStrict "strictDivZeroNull: an error in the dividend still is (duckdb)" .duckdb
+    "SELECT (name + 1) % (age - age) AS x FROM users" (some "SELECT"),
+  testStrict "strictDivZeroNull: an error in the dividend still is, under a division (duckdb)" .duckdb
+    "SELECT (name + 1) / 0 AS x FROM users" (some "SELECT"),
   testStrict "strictDivZeroNull: a string divisor still is (duckdb)" .duckdb
     "SELECT id / name AS x FROM users" (some "SELECT"),
   testStrict "strict: WHERE" .postgres

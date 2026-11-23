@@ -27,16 +27,20 @@ namespace SqlEquiv
 -- DuckDB: division and modulo by zero are not errors
 -- ============================================================================
 
-/-- `a / b` and `a % b` become `CASE WHEN b = 0 THEN NULL ELSE … END`, so a division by zero
+/-- `a / b` and `a % b` become `CASE WHEN b = 0 THEN NULL = a ELSE … END`, so a division by zero
     yields NULL instead of an error when the expression is checked (`ErrorMode.strictDivZeroNull`).
-    A divisor that is itself an error, or not a number, still yields an error. Does not enter
-    subqueries or window functions. Used only by the checker, never for results. -/
+    A divisor that is itself an error, or not a number, still yields an error, and so does an error
+    in the dividend: `NULL = a` is NULL for every value of `a` and an error when `a` is one (a
+    plain `THEN NULL` hid `(s + 1) % 0`, found by `/audit` on 23 Nov 2026). Does not enter
+    subqueries or window functions. Used only by the checker, never for results; it does not
+    preserve `≃ₑ`, on purpose. -/
 def nullOnDivZero : Expr → Expr
   | .binOp op l r =>
     let l' := nullOnDivZero l
     let r' := nullOnDivZero r
     if op == .div || op == .mod then
-      .case [(.binOp .eq r' (.lit (.int 0)), .lit (.null none))] (some (.binOp op l' r'))
+      .case [(.binOp .eq r' (.lit (.int 0)), .binOp .eq (.lit (.null none)) l')]
+        (some (.binOp op l' r'))
     else .binOp op l' r'
   | .unaryOp op e => .unaryOp op (nullOnDivZero e)
   | .func name args => .func name (args.attach.map fun ⟨x, _⟩ => nullOnDivZero x)
