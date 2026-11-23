@@ -92,7 +92,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     booleans). `SqlCoreTest/CorrectExamples.lean` checks the hypotheses on the bridge test schema
   - [x] Elaborator correctness roadmap (#352, closed 2026-11-22 at 512 of the 520 elaborated
     Spider queries), below. The eight left continue in #407 and #409 to #413 (#407 and #409
-    to #412 done, 2026-11-22: 519)
+    to #412 done, 2026-11-22: 519; #413 closed as not planned, 2026-11-23)
     - [x] Step 0: case-folding schemas (#351)
     - [x] Step 1: `ORDER BY` column keys, `LIMIT`, `OFFSET`: `SqlBridge/CorrectOrder.lean`,
       `elabStmt_correct_ordered`. Spider coverage **113**, up from 64
@@ -275,7 +275,7 @@ Nothing else is outside after that.
 | #410 (done) | 1 | `IN` / `NOT IN` with a set-operation body. `SubBodyOk` takes `UNION [ALL]`, `INTERSECT` and `EXCEPT` over `BodyOk` bodies, nested; `subBody_ctx` relates such a body under every outer row up to row order (`CorrectSetOp.setOpQuery_rel`), and `inExpr_eval_perm` shows membership does not see the order. A set operation as a scalar subquery stays outside: its value is the first row |
 | #411 (done) | 2 | A scalar subquery with an `ORDER BY … LIMIT 1` body (one plain, one grouped). Under an outer row `SqlEquiv` sorts each projected row next to its source row with the outer row stripped (`evalSelectCore_project_ordered_ctx`); since every column the typed row resolves is found before the outer row (`Found`), lookups and projections read the same (`rowRel_strip`, `projRow_append`), and `elabStmt_correct_join_ctx` now concludes under every outer row with `ORDER BY` and `LIMIT` (`finish_rel_ctx`). The grouped theorem already did (#409). `BodyOk.plain` and `BodyOk.grouped` take `ORDER BY` and `LIMIT` / `OFFSET`, for `IN` bodies too. Ties: both evaluators sort stably over rows related in order, so the row `LIMIT 1` picks is the same |
 | #412 (done) | 1 | A subquery in `FROM` (over a set operation). `elabStmt_correct_countDerived` (`SqlBridge/CorrectDerived.lean`): `SELECT COUNT(*), … FROM (sq) [AS al]`, no `WHERE`, over a `SubBodyOk` body (`subBody_ctx`, fuel 15 = 14 + 1). The body's rows are related only up to order; `COUNT(*)` reads only their number, so the outer row is related exactly. Left out: other aggregates, `WHERE` or plain items over a derived table, and a derived table under a join: they read its columns, which needs the keys of `SqlEquiv`'s output rows (the statement theorems relate values by position, `OutRel`); and order-dependent outer queries over a set-operation body |
-| #413 | 1 | `DISTINCT` with an unselected sort key and `LIMIT`; left outside by decision, recorded so it can be revisited |
+| #413 | 1 | `DISTINCT` with an unselected sort key and `LIMIT`; left outside by decision, confirmed and closed as not planned (2026-11-23) |
 
 **Step 0, a prerequisite: case folding (#351), done.** The theorem used to assume the schema
 does not fold names (`fold = id`), while Spider's schemas lowercase them, as sqlite's names are
