@@ -346,6 +346,15 @@ def NullOrdering.resolve : NullOrdering → OrderDir → NullsOrder
   | .nullsLargest, .desc => .first
   | .nullsAlwaysLast, _ => .last
 
+/-- A query without `GROUP BY` and without an aggregate in its select list that has a `HAVING`
+    (`SELECT 1 FROM t HAVING COUNT(*) > 1`; registry row 22, #440).
+    - `oneGroup`: the whole input is one group, as the standard, DuckDB and Postgres do.
+    - `reject`: an error, as sqlite does ("HAVING clause on a non-aggregate query"). -/
+inductive ImplicitGroup where
+  | oneGroup
+  | reject
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- The database engine whose implementation-defined behaviour a query is
     checked against (docs/IMPLEMENTATION_DEFINED.md). Resolved at parse time:
     the parser writes each choice into the AST (e.g. the NULL position of every
@@ -384,6 +393,8 @@ structure DialectConfig where
   boolSum : BoolSumAvg := .error
   /-- AVG over booleans (row 18) -/
   boolAvg : BoolSumAvg := .error
+  /-- `HAVING` without `GROUP BY` and without an aggregate in the select list (row 22) -/
+  implicitGroup : ImplicitGroup := .oneGroup
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -396,7 +407,8 @@ def Dialect.config : Dialect → DialectConfig
   | .sqlite   => { nullOrdering := .nullsSmallest,   mixedMinMax := .typeClass,
                    boolMinMax := .asInt,   likeCase := .asciiInsensitive,
                    distinctOrderBy := .firstRow, bareColumns := .sqlite,
-                   scalarSubqueryRows := .firstRow, boolSum := .asInt, boolAvg := .asInt }
+                   scalarSubqueryRows := .firstRow, boolSum := .asInt, boolAvg := .asInt,
+                   implicitGroup := .reject }
   | .duckdb   => { nullOrdering := .nullsAlwaysLast, mixedMinMax := .error,
                    boolMinMax := .ordered, likeCase := .sensitive,
                    distinctOrderBy := .firstRow, boolSum := .asInt }

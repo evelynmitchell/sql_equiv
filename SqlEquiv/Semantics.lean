@@ -1106,7 +1106,7 @@ theorem evalSelect_filter_all_false (db : Database)
     (cond : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
-  windowAggregates selectHasWindowFn items having = false →
+  implicitGroup selectHasWindowFn items having = false →
   (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
   intro hNoAgg hNoWA hAllFalse
@@ -1140,7 +1140,7 @@ theorem evalSelectWithContext_filter_all_false (db : Database) (outerRow : Row)
     (cond : Expr) (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
-  windowAggregates selectHasWindowFn items having = false →
+  implicitGroup selectHasWindowFn items having = false →
   (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
   intro hNoAgg hNoWA hAllFalse

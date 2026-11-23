@@ -119,7 +119,7 @@ decreasing_by
     (`SELECT SUM(SUM(x)) OVER () FROM t`): sqlite, DuckDB and Postgres then form one group, as
     for any aggregate query (#438). An aggregate only in `ORDER BY` is rejected by the parser.
     The SELECT pipeline conjoins this with "the items have a window function"
-    (`windowAggregates`), so a query without one keeps its path. -/
+    (`implicitGroup`), so a query without one keeps its path. -/
 def windowQueryAggregates (items : List SelectItem) (having : Option Expr) : Bool :=
   items.any (fun | .exprItem e _ => exprHasAggregateDeep e | .star _ => false) ||
   having.any exprHasAggregateDeep

@@ -867,20 +867,6 @@ partial def exprMentionsAggregate : Expr → Bool
     exprMentionsAggregate e || exprMentionsAggregate lo || exprMentionsAggregate hi
   | _ => false
 
-/-- A window function in a grouped or aggregate SELECT is evaluated over the groups since #429
-    (it was rejected by #421). Without `GROUP BY` and without an aggregate in the items outside
-    window functions, an aggregate inside a window in the items or in `HAVING` makes the query
-    aggregate too (#438, `windowQueryAggregates`). Two shapes remain rejected, the window form of
-    #440: an aggregate only in `ORDER BY`, and a `HAVING` with no aggregate at all; the
-    evaluator would not aggregate. Checked per SELECT: subqueries are checked when they are
-    parsed. -/
-def groupedWindowUnsupported (items : List SelectItem) (groupBy : List Expr)
-    (having : Option Expr) (orderBy : List OrderByItem) : Bool :=
-  let itemExprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none)
-  itemExprs.any exprMentionsWindow && groupBy.isEmpty &&
-    !(itemExprs.any exprMentionsAggregate || having.any exprMentionsAggregate) &&
-    (having.isSome || orderBy.any (fun | .mk e _ _ => exprMentionsAggregate e))
-
 mutual
 
 /-- Parse the rest of a subquery body (#218): fold UNION [ALL] / INTERSECT /
@@ -1732,9 +1718,18 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
     Parser.fail ("for SELECT DISTINCT, a window function in ORDER BY is not supported; " ++
       "give the window item an alias and order by the alias")
 
-  if groupedWindowUnsupported items groupBy having orderBy then
-    Parser.fail ("in a window query without GROUP BY, an aggregate only in ORDER BY, or a " ++
-      "HAVING without an aggregate, is not supported yet (#440)")
+  -- #440 (registry row 22): without GROUP BY and without an aggregate in the select list (one
+  -- inside a window function counts), a HAVING makes the query one group in the standard,
+  -- DuckDB and Postgres dialects; sqlite rejects it. An aggregate only in ORDER BY is rejected
+  -- in every dialect: the evaluator decides grouping from the select list and HAVING.
+  let itemExprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none)
+  if groupBy.isEmpty && !itemExprs.any exprMentionsAggregate then
+    let ig ← fun st => .ok (st.config.implicitGroup, st)
+    if having.isSome && ig == .reject then
+      Parser.fail "HAVING clause on a non-aggregate query"
+    if having.isNone && orderBy.any (fun | .mk e _ _ => exprMentionsAggregate e) then
+      Parser.fail ("an aggregate in ORDER BY of a query without GROUP BY, HAVING or an " ++
+        "aggregate in the select list is not supported (#440)")
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
 

@@ -42,7 +42,7 @@ theorem intersect_empty_right (db : Database) (a : SelectStmt) :
   simp only [evalQuery_compound, evalQuery_simple, applySetOp]
   have h : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
-      (by rfl) (by simp [windowAggregates, selectHasWindowFn]) (fun row => by simp [evalExprWithDb_lit])
+      (by rfl) (by simp [implicitGroup, selectHasWindowFn]) (fun row => by simp [evalExprWithDb_lit])
   rw [h]
   have hfilt : (List.filter (fun (_ : Row) => false) (evalSelect db a)) = [] := by
     rw [List.filter_eq_nil_iff]; intro x _ hx; exact absurd hx (by simp)
@@ -153,7 +153,7 @@ theorem union_empty_right (a : SelectStmt) :
   rw [evalQuery_compound, mem_valueKey_union]
   have hempty : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
-      (by rfl) (by simp [windowAggregates, selectHasWindowFn]) (fun _row => by simp [evalExprWithDb_lit])
+      (by rfl) (by simp [implicitGroup, selectHasWindowFn]) (fun _row => by simp [evalExprWithDb_lit])
   rw [evalQuery_simple (sel := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none), hempty]
   simp
 
@@ -1001,7 +1001,7 @@ theorem subquery_where_false (db : Database) (row : Row)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
     (hNoAgg : selectHasAggregate items = false)
-    (hNoWinAgg : windowAggregates selectHasWindowFn items having = false) :
+    (hNoWinAgg : implicitGroup selectHasWindowFn items having = false) :
     let selWithFalse := SelectStmt.mk distinct items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset
     evalSelectWithContext db row selWithFalse = [] := by
   simp only
