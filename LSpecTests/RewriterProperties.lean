@@ -285,15 +285,15 @@ def notNotTests (cfg : Configuration) : TestSeq :=
 -- (`none`), every `Value` kind, and EXISTS / IN (subquery) against a
 -- non-empty database. It guards the runtime path, not the proof.
 
-private def sweepSel (s : String) : SubQuery :=
+def sweepSel (s : String) : SubQuery :=
   match parseSelectStr s with
   | .ok x => .simple x
   | .error e => panic! s!"sweepSel: {e}"
 
-private def sweepCol (c : String) : Expr := .col ⟨none, c⟩
+def sweepCol (c : String) : Expr := .col ⟨none, c⟩
 
-private def subqNonEmpty : SubQuery := sweepSel "SELECT a FROM t"
-private def subqEmpty : SubQuery := sweepSel "SELECT a FROM t WHERE a > 100"
+def subqNonEmpty : SubQuery := sweepSel "SELECT a FROM t"
+def subqEmpty : SubQuery := sweepSel "SELECT a FROM t WHERE a > 100"
 
 /-- Operands: every Value kind, identity/absorbing constants, NULLs,
     erroring expressions, bound/missing columns, EXISTS. -/
@@ -426,7 +426,7 @@ def contextSweepTests : TestSeq :=
     mismatches.isEmpty
 
 /-- Wrap a random expression in each context that triggers a rewriter arm. -/
-private def rewriteContexts (e : Expr) : List Expr := [
+def rewriteContexts (e : Expr) : List Expr := [
   e,
   .binOp .and e (.lit (.bool true)), .binOp .and (.lit (.bool true)) e,
   .binOp .or e (.lit (.bool false)), .binOp .or (.lit (.bool false)) e,

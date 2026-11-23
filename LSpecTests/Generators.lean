@@ -325,7 +325,8 @@ structure AgeInt where
 instance : Shrinkable AgeInt where shrink _ := []
 
 instance : SampleableExt AgeInt :=
-  SampleableExt.mkSelfContained (AgeInt.mk <$> Gen.choose Int 20 40)
+  -- a `Nat` offset: `Gen.choose Int` does not keep to its bounds
+  SampleableExt.mkSelfContained (do pure (AgeInt.mk (20 + Int.ofNat (← Gen.choose Nat 0 20))))
 
 /-- JoinType generator for query-level property tests. -/
 instance : Shrinkable JoinType where shrink _ := []
@@ -333,3 +334,132 @@ instance : Shrinkable JoinType where shrink _ := []
 instance : SampleableExt JoinType :=
   SampleableExt.mkSelfContained $
     Gen.elements #[JoinType.inner, .left, .right, .full, .cross]
+
+-- ============================================================================
+-- Random databases (#245)
+-- ============================================================================
+
+/-- Contents of the fixed test schema, generated at random (#245):
+    `users(id, name, age, department)`, `orders(id, user_id, amount, product)`,
+    `products(id, name, price)` (the `QueryHelpers.testDb` schema) and the rewriter sweep's
+    `t(a)`. Schema-driven: random contents, not random schemas, so queries stay meaningful. -/
+structure GenDb where
+  users : Table
+  orders : Table
+  products : Table
+  t : Table
+  deriving Repr
+
+/-- The database a `GenDb` stands for; any other table is empty. -/
+def GenDb.db (g : GenDb) : Database := fun n =>
+  if n == "users" then g.users
+  else if n == "orders" then g.orders
+  else if n == "products" then g.products
+  else if n == "t" then g.t
+  else []
+
+/-- Smaller versions of a table, most aggressive first: empty, each half, then each way of
+    dropping one row. -/
+private def dropOneRow (rs : Table) : List Table :=
+  (if rs.length ≥ 2 then [[], rs.take (rs.length / 2), rs.drop (rs.length / 2)] else []) ++
+  (List.range rs.length).map rs.eraseIdx
+
+/-- Each way of making one non-NULL cell NULL. -/
+private def nullOneCell (rs : Table) : List Table :=
+  (List.range rs.length).flatMap fun i =>
+    let row := rs.getD i []
+    (List.range row.length).filterMap fun j =>
+      match row.getD j ("", .null none) with
+      | (_, .null _) => none
+      | (k, _) => some (rs.set i (row.set j (k, .null none)))
+
+/-- Shrink by dropping rows first, then by replacing values with NULL. LSpec takes a single
+    shrink step (the recursive call in `SlimCheck.minimizeAux` is commented out), choosing the
+    first candidate that still fails, so the candidates come most aggressive first. -/
+instance : Shrinkable GenDb where
+  shrink g :=
+    (dropOneRow g.users).map ({ g with users := · }) ++
+    (dropOneRow g.orders).map ({ g with orders := · }) ++
+    (dropOneRow g.products).map ({ g with products := · }) ++
+    (dropOneRow g.t).map ({ g with t := · }) ++
+    (nullOneCell g.users).map ({ g with users := · }) ++
+    (nullOneCell g.orders).map ({ g with orders := · }) ++
+    (nullOneCell g.t).map ({ g with t := · })
+
+/-- A row count of 0 to 6; 0 and 1 are common. -/
+private def genRowCount : Gen Nat :=
+  Gen.frequency #[(2, pure 0), (2, pure 1), (5, Gen.choose Nat 2 6)] (pure 0)
+
+/-- NULL (typed `ty` or untyped) with probability `pct`%, else a value from `g`. -/
+private def genNullOr (pct : Nat) (ty : SqlType) (g : Gen Value) : Gen Value := do
+  if (← Gen.choose Nat 0 99) < pct then
+    pure (.null (if ← Gen.chooseAny Bool then some ty else none))
+  else g
+
+/-- An integer in `lo..hi` (drawn as a `Nat` offset: `Gen.choose Int` does not keep to its
+    bounds). -/
+private def genSmallInt (lo hi : Int) : Gen Value := do
+  pure (.int (lo + Int.ofNat (← Gen.choose Nat 0 (hi - lo).toNat)))
+
+/-- An amount or price: usually an integer, sometimes an exact decimal. -/
+private def genMoney : Gen Value :=
+  Gen.frequency #[
+    (3, genSmallInt 0 300),
+    (1, do pure (Value.mkDecimal (Int.ofNat (← Gen.choose Nat 0 3000)) 1))] (genSmallInt 0 300)
+
+private def genFrom (xs : Array String) : Gen Value := do
+  pure (.string (← Gen.elements xs))
+
+/-- Ids `1..n`, unique, or drawn from a small range so that duplicates are common. -/
+private def genIds (n : Nat) : Gen (List Value) := do
+  if ← Gen.chooseAny Bool then pure ((List.range n).map fun i => .int (Int.ofNat i + 1))
+  else (List.range n).mapM fun _ => genSmallInt 1 3
+
+/-- With probability 1/3, `rs` plus a copy of one of its rows. -/
+private def withDuplicate (rs : Table) : Gen Table := do
+  if rs.isEmpty || (← Gen.choose Nat 0 2) != 0 then pure rs
+  else pure (rs ++ [rs.getD (← Gen.choose Nat 0 (rs.length - 1)) []])
+
+def genGenDb : Gen GenDb := do
+  -- users: ids sometimes duplicated, rarely NULL
+  let nu ← genRowCount
+  let uids ← genIds nu
+  let users ← uids.mapM fun id => do
+    let id ← genNullOr 5 .int (pure id)
+    let name ← genNullOr 10 .string (genFrom #["Alice", "Bob", "Carol", "Dave"])
+    let age ← genNullOr 15 .int (genSmallInt 18 40)
+    let dept ← genNullOr 10 .string (genFrom #["Engineering", "Sales", "Marketing"])
+    pure [("id", id), ("name", name), ("age", age), ("department", dept)]
+  -- orders: user_id mostly an existing user id, sometimes dangling or NULL
+  let no ← genRowCount
+  let oids ← genIds no
+  let orders ← oids.mapM fun id => do
+    let uid ← Gen.frequency #[
+      (7, if uids.isEmpty then pure (.int 99) else Gen.elements uids.toArray),
+      (2, pure (.int 99)),
+      (1, pure (.null (some .int)))] (pure (.int 99))
+    let amount ← genNullOr 10 .int genMoney
+    let product ← genNullOr 10 .string (genFrom #["Widget", "Gadget", "Gizmo"])
+    pure [("id", id), ("user_id", uid), ("amount", amount), ("product", product)]
+  -- products
+  let np ← genRowCount
+  let products ← (List.range np).mapM fun i => do
+    let name ← genFrom #["Widget", "Gadget", "Gizmo"]
+    let price ← genNullOr 10 .int genMoney
+    pure [("id", .int (Int.ofNat i + 1)), ("name", name), ("price", price)]
+  -- t(a): the rewriter sweep's subquery table
+  let nt ← genRowCount
+  let t ← (List.range nt).mapM fun _ => do
+    pure [("a", ← genNullOr 15 .int (genSmallInt 0 6))]
+  -- sometimes an exact copy of a row, so DISTINCT and bag semantics have something to do
+  let users ← withDuplicate users
+  let orders ← withDuplicate orders
+  let t ← withDuplicate t
+  pure { users, orders, products, t }
+
+instance : SampleableExt GenDb := SampleableExt.mkSelfContained genGenDb
+
+/-- `n` databases drawn from a fixed seed: the batch the vacuity guards and mutant checks of the
+    database properties run over (#245). -/
+def genDbBatch (n : Nat) (seed : Nat := 245) : List GenDb :=
+  (ReaderT.run ((List.range n).mapM fun _ => genGenDb) (ULift.up 10)).run' (ULift.up (mkStdGen seed))

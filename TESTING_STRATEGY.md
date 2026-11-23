@@ -108,8 +108,11 @@ engines.
 
 - **Catches:** edge cases hand-written tests miss: NULL propagation, type mismatches, algebraic
   boundary conditions, rewriter soundness on generated expressions.
-- **How:** SlimCheck generates expressions (`LSpecTests/Generators.lean`); CI runs
-  `LSPEC_SAMPLES=100000`.
+- **How:** SlimCheck generates expressions and, since #245, databases (`LSpecTests/Generators.lean`,
+  `genGenDb`: random contents of the `users` / `orders` / `products` / `t` schema, with empty
+  tables, duplicate rows and keys, dangling and NULL foreign keys); CI runs
+  `LSPEC_SAMPLES=100000`. Database properties (`LSpecTests/DbProperties.lean`, suite "Random
+  Databases") cap their own sample count, since each sample evaluates whole queries.
 - **Seeds (#395):** the samples come from a run seed, `LSPEC_SEED` (default 0), mixed with each
   property's name (`checkS`, `propertySeed`). Pull-request CI uses the default, so a PR is
   tested on the same samples every time and cannot go red for a bug its diff did not cause.
@@ -122,9 +125,15 @@ engines.
 - **Context Sweep:** the Context Sweep (`RewriterProperties`) runs every rewriter over
   generated contexts and includes a mutant check: an unguarded `a AND TRUE → a` rewriter must be
   caught.
+- **Random databases (#245):** every database property group has vacuity guards over a fixed
+  batch of 300 generated databases (non-empty results, matches and non-matches, NULL keys) and a
+  mutant that must be caught: a wrong variant of the law under test.
 - **Watch for:** the CI step pipes the runner through `tee`, so it needs `set -o pipefail` or a
-  failing property is green. Databases are fixtures, not generated (#245), so a property can go vacuous if
-  its fixture does not match the query (`/test-vacuity`). Findings go in `LSPEC_FINDINGS.md`.
+  failing property is green. Properties over the hand-written fixtures (`EdgeCaseDb`,
+  `QueryHelpers.testDb`) can still go vacuous if the fixture does not match the query
+  (`/test-vacuity`). LSpec shrinks a counterexample by one step only (the recursion in
+  `SlimCheck.minimizeAux` is commented out), so shrinkers list their most aggressive candidates
+  first. Findings go in `LSPEC_FINDINGS.md`.
 
 ### 8. Review
 
@@ -197,12 +206,12 @@ Never run `lake clean` (a full rebuild takes over twenty minutes).
 ## Known gaps
 
 - 43 public `Equiv/` theorems have no test naming them (`tools/theorem_coverage_uncovered.txt`).
-- Exact Spider matches are not ratcheted on their own (#266).
-- Property tests use fixture databases, not generated ones (#245).
+- Database properties cover one fixed schema; random schemas are out of scope (#245).
 - No mutation testing: nothing shows that every evaluator arm has a test that would notice it
   being wrong (#210).
-- `SqlEquiv`'s equivalences are relative to its quiet-error model (#270); the typed core is
-  strict.
+- `SqlEquiv`'s equivalences are relative to its quiet-error model; the strict layer per dialect
+  (#270, #448) transfers them only when neither side fails, and does not see bind-time errors.
+  The typed core is strict.
 
 ## Anti-patterns
 
