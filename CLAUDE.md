@@ -10,6 +10,7 @@
 
 After editing any of these files, suggest running `/audit` before committing:
 - `SqlEquiv/Semantics.lean` — `evalBinOp`, `evalUnaryOp`, `evalFunc` dispatch
+- `SqlEquiv/SemanticsParam.lean` — the aggregate- and window-aware evaluators
 - `SqlEquiv/Ast.lean` — `Value`, `BinOp`, `UnaryOp` type definitions
 - `SqlEquiv/Equiv.lean` — equivalence module root
 - `SqlEquiv/Equiv/` — axioms, lemmas, and equivalence definitions

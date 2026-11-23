@@ -1000,6 +1000,102 @@ private theorem evalExprWithWindowParam_ground_eq
           (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')]
       · simp only [hA, Bool.false_eq_true, ↓reduceIte]; exact h_ee _ hg (Nat.le_refl _) row1 row2
 
+private theorem exprHasWindowFnList_false {args : List Expr}
+    (h : ∀ a ∈ args, exprHasWindowFn a = false) :
+    exprHasWindowFn.exprHasWindowFnList args = false := by
+  induction args with
+  | nil => rfl
+  | cons a as ih =>
+    simp only [exprHasWindowFn.exprHasWindowFnList, h a List.mem_cons_self, Bool.false_or]
+    exact ih (fun x hx => h x (List.mem_cons_of_mem a hx))
+
+private theorem exprHasWindowFnPairs_false {ps : List (Expr × Expr)}
+    (h : ∀ p ∈ ps, exprHasWindowFn p.1 = false ∧ exprHasWindowFn p.2 = false) :
+    exprHasWindowFn.exprHasWindowFnPairs ps = false := by
+  induction ps with
+  | nil => rfl
+  | cons p ps ih =>
+    obtain ⟨c, r⟩ := p
+    have hp := h (c, r) List.mem_cons_self
+    simp only [exprHasWindowFn.exprHasWindowFnPairs, hp.1, hp.2, Bool.false_or]
+    exact ih (fun x hx => h x (List.mem_cons_of_mem _ hx))
+
+/-- A ground expression has no window function (`Expr.isGround` is false on one). Used to
+    discharge the no-window-over-groups hypothesis of `evalSelectCore_outerRow_congr` (#429). -/
+private theorem exprHasWindowFn_false_of_isGround :
+    ∀ (n : Nat) (e : Expr), sizeOf e < n → e.isGround = true → exprHasWindowFn e = false := by
+  intro n; induction n with
+  | zero => intro _ h; exact absurd h (Nat.not_lt_zero _)
+  | succ n ih =>
+    intro e hlt hg
+    cases e with
+    | windowFn _ _ _ => simp [Expr.isGround] at hg
+    | binOp op l r =>
+      simp only [Expr.isGround, Bool.and_eq_true] at hg
+      have h1 : sizeOf l < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      have h2 : sizeOf r < sizeOf (Expr.binOp op l r) := by simp_wf; omega
+      simp only [exprHasWindowFn, ih l (by omega) hg.1, ih r (by omega) hg.2, Bool.or_self]
+    | unaryOp op x =>
+      simp only [Expr.isGround] at hg
+      have h1 : sizeOf x < sizeOf (Expr.unaryOp op x) := by simp_wf; omega
+      simp only [exprHasWindowFn, ih x (by omega) hg]
+    | func nm args =>
+      have hga := (foldl_and_true_mem args true (by simpa [Expr.isGround] using hg)).2
+      simp only [exprHasWindowFn]
+      apply exprHasWindowFnList_false
+      intro a ha
+      have h_sz : sizeOf a < sizeOf (Expr.func nm args) := by
+        have := List.sizeOf_lt_of_mem ha; simp_wf; omega
+      exact ih a (by omega) (hga a ha)
+    | «case» branches else_ =>
+      unfold Expr.isGround at hg
+      simp only [Bool.and_eq_true] at hg
+      have hgb := (foldl_and2_true_mem branches true hg.1).2
+      have hP : exprHasWindowFn.exprHasWindowFnPairs branches = false := by
+        apply exprHasWindowFnPairs_false
+        intro p hp
+        obtain ⟨g1, g2⟩ := hgb p hp
+        obtain ⟨a, b⟩ := p
+        have h_sz := List.sizeOf_lt_of_mem hp
+        have hab : sizeOf (a, b) = 1 + sizeOf a + sizeOf b := by simp [Prod.mk.sizeOf_spec]
+        have ha : sizeOf a < sizeOf (Expr.case branches else_) := by simp_wf; omega
+        have hb : sizeOf b < sizeOf (Expr.case branches else_) := by simp_wf; omega
+        exact ⟨ih a (by omega) g1, ih b (by omega) g2⟩
+      cases else_ with
+      | none => simp only [exprHasWindowFn, hP, exprHasWindowFn.exprHasWindowFnOpt, Bool.or_self]
+      | some x =>
+        have hx : sizeOf x < sizeOf (Expr.case branches (some x)) := by simp_wf; omega
+        simp only [exprHasWindowFn, hP, exprHasWindowFn.exprHasWindowFnOpt,
+          ih x (by omega) (by simpa using hg.2), Bool.or_self]
+    | inList x neg vals =>
+      simp only [Expr.isGround, Bool.and_eq_true] at hg
+      have hgv := (foldl_and_true_mem vals true hg.2).2
+      have h1 : sizeOf x < sizeOf (Expr.inList x neg vals) := by simp_wf; omega
+      have hL : exprHasWindowFn.exprHasWindowFnList vals = false := by
+        apply exprHasWindowFnList_false
+        intro v hv
+        have h_sz : sizeOf v < sizeOf (Expr.inList x neg vals) := by
+          have := List.sizeOf_lt_of_mem hv; simp_wf; omega
+        exact ih v (by omega) (hgv v hv)
+      simp only [exprHasWindowFn, ih x (by omega) hg.1, hL, Bool.or_self]
+    | between x lo hi =>
+      simp only [Expr.isGround, Bool.and_eq_true] at hg
+      have h1 : sizeOf x < sizeOf (Expr.between x lo hi) := by simp_wf; omega
+      have h2 : sizeOf lo < sizeOf (Expr.between x lo hi) := by simp_wf; omega
+      have h3 : sizeOf hi < sizeOf (Expr.between x lo hi) := by simp_wf; omega
+      simp only [exprHasWindowFn, ih x (by omega) hg.1.1, ih lo (by omega) hg.1.2,
+        ih hi (by omega) hg.2, Bool.or_self]
+    | inSubquery x neg sq =>
+      simp only [Expr.isGround, Bool.and_eq_true] at hg
+      have h1 : sizeOf x < sizeOf (Expr.inSubquery x neg sq) := by simp_wf; omega
+      simp only [exprHasWindowFn, ih x (by omega) hg.1]
+    | lit _ => rfl
+    | col _ => rfl
+    | agg _ _ _ => rfl
+    | countStar => rfl
+    | «exists» _ _ => rfl
+    | subquery _ => rfl
+
 /-- When expression evaluation is db row-independent for ground expressions,
     evalSelectCore doesn't depend on outerRow for a ground SELECT. -/
 private theorem evalSelectCore_ground_outerRow_eq
@@ -1121,6 +1217,15 @@ private theorem evalSelectCore_ground_outerRow_eq
     exact evalExprWithWindowParam_ground_eq ee db e row1 row2 p1 p2 sp1 sp2 idx hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
       (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
+  -- h_gwin (#429): ground items have no window function
+  · have hw : selectHasWindowFn items = false := by
+      unfold selectHasWindowFn
+      rw [List.any_eq_false]
+      intro item hitem
+      obtain ⟨e, alias_, rfl⟩ := h_items_no_star item hitem
+      simpa using exprHasWindowFn_false_of_isGround _ e (Nat.lt_succ_self _)
+        (h_item_ground _ hitem e alias_ rfl)
+    simp only [SelectStmt.items, hw, Bool.and_false]
 
 /-- Bridge: if a SubQuery is ground, evalSubQueryWithContext is db row-independent (#218).
     Strong induction on sizeOf: a compound is handled by congruence of applySetOp

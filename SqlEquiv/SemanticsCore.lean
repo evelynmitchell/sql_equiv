@@ -11,6 +11,7 @@
   another module (not within the same file).
 -/
 import SqlEquiv.SemanticsBase
+import SqlEquiv.SemanticsParam
 import SqlEquiv.AstSize
 
 namespace SqlEquiv
@@ -598,6 +599,97 @@ theorem projectWindowItems_congr
     | star t => cases t <;> rfl
     | exprItem e a => simp only [h e a List.mem_cons_self]
 
+/-- The groups of a GROUP BY query that survive `HAVING`, each with its rows and its sample row
+    (the row bare columns are read on), in the order of the grouped projection. Used by the
+    window path over groups (#429); the grouped projection without windows inlines the same
+    steps. -/
+def groupedSurvivors (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (filteredRows : Table) : List (Table × Row) :=
+  let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
+      List (List (Option Value) × Table) :=
+    let key := groupBy.map (fun e => (exprEval db row e).map Value.setKey)
+    match groups.find? (fun (k, _) => k == key) with
+    | some _ => groups.map fun (k, rs) => if k == key then (k, rs ++ [row]) else (k, rs)
+    | none => groups ++ [(key, [row])]
+  let groups := filteredRows.foldl addToGroups []
+  groups.filterMap fun (_key, groupRows) =>
+    match bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
+    | none => none
+    | some sampleRow =>
+      let passesHaving := match having with
+        | none => true
+        | some cond =>
+          exprWithAggEval db groupRows sampleRow cond == some (Value.bool true)
+      if passesHaving then some (groupRows, sampleRow) else none
+
+/-- The one group of an aggregate query without GROUP BY, if it survives `HAVING` (#429). -/
+def aggSurvivors (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (having : Option Expr) (filteredRows : Table) :
+    List (Table × Row) :=
+  let sampleRow :=
+    (bareSampleRow (exprEval db) (selectMinMaxCalls items having) filteredRows).getD []
+  let passesHaving := match having with
+    | none => true
+    | some cond =>
+      exprWithAggEval db filteredRows sampleRow cond == some (Value.bool true)
+  if passesHaving then [(filteredRows, sampleRow)] else []
+
+/-- Hidden column that tells the rows standing for groups apart (#429). -/
+def groupWindowMarker : String := "__window_group__"
+
+/-- One row per surviving group for the window evaluator (#429): the group's sample row with
+    its index in a hidden column, so rows of different groups always differ (the window
+    evaluator finds a row's position by equality). -/
+def groupWindowRows (groups : List (Table × Row)) : Table :=
+  ((List.range groups.length).zip groups).map fun (i, (_, s)) =>
+    s ++ [(groupWindowMarker, Value.int (Int.ofNat i))]
+
+/-- Row evaluator for windows over groups (#429): an expression on the row standing for a group
+    is evaluated in that group's aggregate context, so `SUM(age)` in a window's argument,
+    `PARTITION BY` or `ORDER BY` is the group's sum. -/
+def groupWindowEval (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (groups : List (Table × Row)) : Database → Row → Expr → Option Value :=
+  fun db r e =>
+    match ((groupWindowRows groups).zip groups).find? (fun p => p.1 == r) with
+    | some (_, (rs, s)) => exprWithAggEval db rs s e
+    | none => none
+
+/-- Projection of a grouped or aggregate query whose items have window functions (#429), in two
+    stages: the groups are formed and filtered by `HAVING` first (`groups`), then each item with
+    a window function is evaluated by the window evaluator over one row per group, with
+    aggregates evaluated per group (`groupWindowEval`). Items without a window function are
+    evaluated as in the grouped projection. -/
+def projectGroupsWithWindows (db : Database)
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (groups : List (Table × Row)) : Table :=
+  let synth := groupWindowRows groups
+  let ev := groupWindowEval exprWithAggEval groups
+  ((List.range groups.length).zip (synth.zip groups)).map fun (idx, (row, (rs, s))) =>
+    items.flatMap fun item =>
+      match item with
+      | .exprItem e alias =>
+        if exprHasWindowFn e then
+          match evalExprWithWindowParam ev db row synth synth idx e with
+          | some v => [(alias.getD (exprToName e), v)]
+          | none => [(alias.getD (exprToName e), .null none)]
+        else selectItemWithAggEval db rs s item
+      | .star _ => selectItemWithAggEval db rs s item
+
+/-- Sort-key rows of a grouped query with window items (#429), aligned with
+    `projectGroupsWithWindows`: as `groupOrderKeyRow`, against the projected row, so
+    `ORDER BY` a window item's alias sorts by its value. -/
+def groupWindowOrderKeys (db : Database)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (orderBy : List OrderByItem) (groups : List (Table × Row)) (projected : Table) : Table :=
+  (groups.zip projected).map fun ((rs, s), p) =>
+    groupOrderKeyRow db exprWithAggEval orderBy rs s p
+
 /-- Non-partial SELECT evaluator, parameterized by evaluation callbacks.
     Mirrors evalSelectWithContext (Semantics.lean) exactly, with partial def
     calls replaced by parameters. Not recursive — delegates to parameters
@@ -641,8 +733,15 @@ def evalSelectCore (db : Database) (outerRow : Row)
     | none => filteredRows
 
   -- 3. GROUP BY and 4. HAVING and 5. SELECT (projection)
-  let projectedRows : Table :=
+  -- Groups that survive HAVING, for the window path over groups (#429).
+  let windowGroups : List (Table × Row) :=
     if !sel.groupBy.isEmpty then
+      groupedSurvivors db exprEval exprWithAggEval sel.items sel.groupBy sel.having filteredRows
+    else aggSurvivors db exprEval exprWithAggEval sel.items sel.having filteredRows
+  let projectedRows : Table :=
+    if (!sel.groupBy.isEmpty || hasAgg sel.items) && hasWindowFn sel.items then
+      projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval sel.items windowGroups
+    else if !sel.groupBy.isEmpty then
       -- GROUP BY present: partition rows and evaluate aggregates per group
       -- Inline groupRowsByKey logic: rows.foldl addToGroups []
       let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
@@ -710,13 +809,19 @@ def evalSelectCore (db : Database) (outerRow : Row)
     ((!sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items) || groupedSort ||
       groupedDistinct || plainDistinct)
     (if groupedSort then
-      evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
-        sel.items sel.groupBy sel.having sel.orderBy filteredRows
+      (if hasWindowFn sel.items then
+        groupWindowOrderKeys db exprWithAggEval sel.orderBy windowGroups projectedRows
+       else
+        evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+          sel.items sel.groupBy sel.having sel.orderBy filteredRows)
      else if groupedDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         (projectedRows.zip
-          (evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
-            sel.items sel.groupBy sel.having sel.orderBy filteredRows))).map Prod.snd
+          (if hasWindowFn sel.items then
+            groupWindowOrderKeys db exprWithAggEval sel.orderBy windowGroups projectedRows
+           else
+            evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+              sel.items sel.groupBy sel.having sel.orderBy filteredRows))).map Prod.snd
      else if plainDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         ((havingRows.map fun row => sel.items.flatMap (selectItemEval db row)).zip
@@ -851,7 +956,12 @@ def evalSelectProjectDistinct (db : Database)
     (groupBy : List Expr) (having : Option Expr)
     (filteredRows : Table) : Table :=
   let projectedRows : Table :=
-    if !groupBy.isEmpty then
+    if (!groupBy.isEmpty || hasAgg items) && hasWindowFn items then
+      projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval items
+        (if !groupBy.isEmpty then
+          groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows
+         else aggSurvivors db exprEval exprWithAggEval items having filteredRows)
+    else if !groupBy.isEmpty then
       let addToGroups (groups : List (List (Option Value) × Table)) (row : Row) :
           List (List (Option Value) × Table) :=
         let key := groupBy.map (fun e => (exprEval db row e).map Value.setKey)
@@ -964,6 +1074,58 @@ theorem List.length_filterMap_congr_isSome {α β γ : Type _}
     have ih' := ih (fun y hy => h y (List.mem_cons_of_mem x hy))
     cases hf : f x <;> cases hg : g x <;> simp_all
 
+@[simp] theorem groupedSurvivors_nil (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr) :
+    groupedSurvivors db exprEval exprWithAggEval items groupBy having [] = [] := by
+  simp [groupedSurvivors]
+
+@[simp] theorem projectGroupsWithWindows_nil (db : Database)
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) :
+    projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval items [] = [] := by
+  simp [projectGroupsWithWindows, groupWindowRows]
+
+/-- The window projection over groups has one row per group (#429). -/
+theorem projectGroupsWithWindows_length (db : Database)
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (groups : List (Table × Row)) :
+    (projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval items groups).length =
+      groups.length := by
+  simp [projectGroupsWithWindows, groupWindowRows, List.length_zip]
+
+/-- The window sort keys over groups align with the window projection (#429). -/
+theorem groupWindowOrderKeys_length (db : Database)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (orderBy : List OrderByItem) (groups : List (Table × Row)) (projected : Table)
+    (h : projected.length = groups.length) :
+    (groupWindowOrderKeys db exprWithAggEval orderBy groups projected).length =
+      projected.length := by
+  simp [groupWindowOrderKeys, List.length_zip, h]
+
+/-- The grouped sort keys have one row per group that survives HAVING (#429). -/
+theorem evalSelectGroupOrderKeys_length_survivors (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (groupBy : List Expr) (having : Option Expr)
+    (orderBy : List OrderByItem) (filteredRows : Table) :
+    (evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+      items groupBy having orderBy filteredRows).length =
+    (groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows).length := by
+  simp only [evalSelectGroupOrderKeys, groupedSurvivors]
+  apply List.length_filterMap_congr_isSome
+  intro ⟨_k, groupRows⟩ _
+  dsimp only
+  cases bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
+  | none => rfl
+  | some sampleRow =>
+    dsimp only
+    split <;> (try split) <;> simp
+
 /-- In the grouped path without DISTINCT, the per-group sort-key rows align
     1:1 with the projected rows (#234): both are a `filterMap` over the same
     groups with the same per-group HAVING test. -/
@@ -987,16 +1149,57 @@ theorem evalSelectGroupOrderKeys_length_aligned (db : Database)
   simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
   obtain ⟨hd, hgb⟩ := h
   have hgb' : (!groupBy.isEmpty) = true := by simp [hgb]
-  simp only [evalSelectGroupOrderKeys, evalSelectProjectDistinct, hd, hgb', if_true,
-    Bool.false_eq_true, if_false]
-  apply List.length_filterMap_congr_isSome
-  intro ⟨_k, groupRows⟩ _
-  dsimp only
-  cases bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
-  | none => rfl
-  | some sampleRow =>
+  by_cases hw : hasWindowFn items = true
+  · simp only [evalSelectProjectDistinct, hd, hgb', hw, Bool.true_or, Bool.and_self, if_true,
+      Bool.false_eq_true, if_false, projectGroupsWithWindows_length]
+    exact evalSelectGroupOrderKeys_length_survivors _ _ _ _ _ _ _ _ _
+  · simp only [evalSelectGroupOrderKeys, evalSelectProjectDistinct, hd, hgb', hw, if_true,
+      Bool.false_eq_true, if_false, Bool.and_false]
+    apply List.length_filterMap_congr_isSome
+    intro ⟨_k, groupRows⟩ _
     dsimp only
-    split <;> (try split) <;> simp
+    cases bareSampleRow (exprEval db) (selectMinMaxCalls items having) groupRows with
+    | none => rfl
+    | some sampleRow =>
+      dsimp only
+      split <;> (try split) <;> simp
+
+/-- The grouped sort keys, with or without window items, align with the grouped projection
+    (#234, #429). -/
+theorem groupedOrderKeys_length_aligned (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (filteredRows : Table)
+    (hgb : (!groupBy.isEmpty) = true) :
+    (if hasWindowFn items then
+      groupWindowOrderKeys db exprWithAggEval orderBy
+        (if !groupBy.isEmpty then
+          groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows
+         else aggSurvivors db exprEval exprWithAggEval items having filteredRows)
+        (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+          exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
+          filteredRows)
+     else
+      evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+        items groupBy having orderBy filteredRows).length =
+    (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
+      filteredRows).length := by
+  by_cases hw : hasWindowFn items = true
+  · rw [if_pos hw]
+    apply groupWindowOrderKeys_length
+    simp only [evalSelectProjectDistinct, hgb, hw, Bool.true_or, Bool.and_self, if_true,
+      Bool.false_eq_true, if_false, projectGroupsWithWindows_length]
+  · rw [if_neg hw]
+    exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ false _ _ _ _ _
+      (by simp only [Bool.not_false, Bool.true_and]; exact hgb)
 
 /-- Steps 3-9 of the evaluation pipeline (after WHERE filtering).
     Takes filteredRows as input and applies GROUP BY, HAVING, projection,
@@ -1034,20 +1237,37 @@ def evalSelectAfterFilter (db : Database)
   let groupedDistinct := distinct && !groupBy.isEmpty
   let plainDistinct := distinct && groupBy.isEmpty && !hasAgg items && !hasWindowFn items
   let strippedSources := havingRows.map (fun r => r.take (r.length - ctxLen))
+  -- Groups that survive HAVING, for the window path over groups (#429).
+  let windowGroups : List (Table × Row) :=
+    if !groupBy.isEmpty then
+      groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows
+    else aggSurvivors db exprEval exprWithAggEval items having filteredRows
   applyOrderByLimitOffsetAligned compareEval db
     (if groupedSort || groupedDistinct then groupOrderByItems orderBy else orderBy) limit offset
     ((!distinct && groupBy.isEmpty && !hasAgg items) || groupedSort || groupedDistinct ||
       plainDistinct)
     (if groupedSort then
-      evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
-        items groupBy having orderBy filteredRows
+      (if hasWindowFn items then
+        groupWindowOrderKeys db exprWithAggEval orderBy windowGroups
+          (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+            exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
+            filteredRows)
+       else
+        evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+          items groupBy having orderBy filteredRows)
      else if groupedDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         ((evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
             exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
             filteredRows).zip
-          (evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
-            items groupBy having orderBy filteredRows))).map Prod.snd
+          (if hasWindowFn items then
+            groupWindowOrderKeys db exprWithAggEval orderBy windowGroups
+              (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+                exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
+                filteredRows)
+           else
+            evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+              items groupBy having orderBy filteredRows))).map Prod.snd
      else if plainDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         ((havingRows.map fun row => items.flatMap (selectItemEval db row)).zip
@@ -1085,14 +1305,17 @@ theorem evalSelectAfterFilter_orderBy_length (db : Database)
     intro huse
     by_cases hg : (!distinct && !groupBy.isEmpty) = true
     · rw [if_pos hg]
-      exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ _ hg
+      have hd : distinct = false := by simp only [Bool.and_eq_true] at hg; simpa using hg.1
+      have hgb : (!groupBy.isEmpty) = true := by simp only [Bool.and_eq_true] at hg; exact hg.2
+      subst hd
+      exact groupedOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ hgb
     · rw [if_neg hg]
       by_cases hgd : (distinct && !groupBy.isEmpty) = true
       · -- grouped DISTINCT: one first group key row per distinct row (#320)
-        have hgb : (!false && !groupBy.isEmpty) = true := by
-          simp only [Bool.and_eq_true] at hgd; simp [hgd.2]
+        have hgb : (!groupBy.isEmpty) = true := by
+          simp only [Bool.and_eq_true] at hgd; exact hgd.2
         rw [if_pos hgd, List.length_map, length_dedupByKey_zip _ _ _
-          (evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ false _ _ _ _ _ hgb).symm]
+          (groupedOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ hgb).symm]
         have hd : distinct = true := by simp only [Bool.and_eq_true] at hgd; exact hgd.1
         subst hd
         rw [evalSelectProjectDistinct_true]
@@ -1129,7 +1352,7 @@ theorem evalSelectProjectDistinct_nil (db : Database)
       groupBy having [] = [] := by
   simp only [evalSelectProjectDistinct, List.foldl, List.filterMap_nil,
     hNoAgg, List.head?_nil, Option.getD]
-  cases having <;> simp [List.map_nil]
+  cases having <;> simp [List.map_nil] <;> split <;> simp_all
 
 /-- evalSelectCore decomposes into base rows + filter + afterFilter -/
 theorem evalSelectCore_eq_afterFilter (db : Database) (outerRow : Row)
@@ -2342,7 +2565,8 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
         exprWithAggEval db rows1 s1 cond = exprWithAggEval db rows2 s2 cond)
     (h_ew : ∀ e alias_, .exprItem e alias_ ∈ items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
         p1.length = p2.length →
-        exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e) :
+        exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e)
+    (h_gwin : ((!groupBy.isEmpty || hasAgg items) && hasWindowFn items) = false) :
     evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       exprWithWindowEval hasWindowFn hasAgg distinct items groupBy having fr1 =
     evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval exprWithAggEval
@@ -2350,7 +2574,7 @@ theorem evalSelectProjectDistinct_eq_of_length_eq
   unfold evalSelectProjectDistinct
   -- Split on distinct (eraseDups wrapper)
   cases distinct
-  all_goals simp only [Bool.false_eq_true, ↓reduceIte]
+  all_goals simp only [Bool.false_eq_true, ↓reduceIte, h_gwin]
   -- Split on the 4 branches
   all_goals {
     split
@@ -2486,18 +2710,34 @@ theorem evalSelectProjectDistinct_grouped_length_le_one
   simp only [Bool.and_eq_true, Bool.not_eq_true'] at hg
   obtain ⟨hd, hgb⟩ := hg
   have hgb' : (!groupBy.isEmpty) = true := by simp [hgb]
-  simp only [evalSelectProjectDistinct, hd, hgb', if_true, Bool.false_eq_true, if_false]
-  cases fr with
-  | nil => simp
-  | cons row rest =>
-    have hk0 : ∀ r, groupBy.map (fun e => (exprEval db r e).map Value.setKey) = groupBy.map (fun e => (exprEval db row e).map Value.setKey) :=
-      fun r => List.map_congr_left fun e he => by rw [h_gb e he r row]
-    have hfold := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row rest
-      rfl (fun r _ => hk0 r)
-    unfold addToGroupsByKey at hfold
-    rw [hfold]
-    simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons]
-    split <;> simp
+  by_cases hw : hasWindowFn items = true
+  · -- windows over groups (#429): one row per surviving group
+    simp only [evalSelectProjectDistinct, hd, hgb', hw, Bool.true_or, Bool.and_self, if_true,
+      Bool.false_eq_true, if_false, projectGroupsWithWindows_length, groupedSurvivors]
+    cases fr with
+    | nil => simp
+    | cons row rest =>
+      have hk0 : ∀ r, groupBy.map (fun e => (exprEval db r e).map Value.setKey) = groupBy.map (fun e => (exprEval db row e).map Value.setKey) :=
+        fun r => List.map_congr_left fun e he => by rw [h_gb e he r row]
+      have hfold := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row rest
+        rfl (fun r _ => hk0 r)
+      unfold addToGroupsByKey at hfold
+      rw [hfold]
+      simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons]
+      split <;> (try split) <;> simp
+  · simp only [evalSelectProjectDistinct, hd, hgb', hw, Bool.and_false, if_true,
+      Bool.false_eq_true, if_false]
+    cases fr with
+    | nil => simp
+    | cons row rest =>
+      have hk0 : ∀ r, groupBy.map (fun e => (exprEval db r e).map Value.setKey) = groupBy.map (fun e => (exprEval db row e).map Value.setKey) :=
+        fun r => List.map_congr_left fun e he => by rw [h_gb e he r row]
+      have hfold := foldl_addToGroupsByKey_const_key exprEval db groupBy _ row rest
+        rfl (fun r _ => hk0 r)
+      unfold addToGroupsByKey at hfold
+      rw [hfold]
+      simp only [List.filterMap_cons, List.filterMap_nil, List.head?_cons]
+      split <;> simp
 
 -- ============================================================================
 -- evalSelectCore outer row congruence
@@ -2537,7 +2777,8 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
         exprWithAggEval db rows1 s1 e = exprWithAggEval db rows2 s2 e)
     (h_ew : ∀ e alias_, .exprItem e alias_ ∈ sel.items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
         p1.length = p2.length →
-        exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e) :
+        exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e)
+    (h_gwin : ((!sel.groupBy.isEmpty || hasAgg sel.items) && hasWindowFn sel.items) = false) :
     evalSelectCore db r1 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       compareEval exprWithWindowEval hasWindowFn hasAgg sel =
     evalSelectCore db r2 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
@@ -2567,7 +2808,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
       | none =>
         exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
           d items gb hv _ _ (by simp [List.length_map])
-          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew h_gwin
       | some wcond =>
         exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
           d items gb hv _ _
@@ -2575,10 +2816,13 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
                 (exprEval db r1 wcond == some (Value.bool true))
               · intro row; congr 1; exact h_wc wcond rfl row r1
               · simp [List.length_map])
-          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew h_gwin
     · exact evalSelectProjectDistinct_grouped_length_le_one _ _ _ _ _ _ _ _ _ _ _ _ _ h_gb hg
-    · exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ _ hg
-    · exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ _ hg
+    all_goals
+      have hd : d = false := by simp only [Bool.and_eq_true] at hg; simpa using hg.1
+      have hgb : (!gb.isEmpty) = true := by simp only [Bool.and_eq_true] at hg; exact hg.2
+      subst hd
+      exact groupedOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ hgb
   · have hg' : (!d && !gb.isEmpty) = false := by simpa using hg
     by_cases hgd : (d && !gb.isEmpty) = true
     · -- Grouped DISTINCT (#320): the GROUP BY keys are row-independent, so there is at most
@@ -2600,7 +2844,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
         | none =>
           exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
             d items gb hv _ _ (by simp [List.length_map])
-            h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+            h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew h_gwin
         | some wcond =>
           exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
             d items gb hv _ _
@@ -2608,7 +2852,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
                   (exprEval db r1 wcond == some (Value.bool true))
                 · intro row; congr 1; exact h_wc wcond rfl row r1
                 · simp [List.length_map])
-            h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+            h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew h_gwin
       · have hd : d = true := by simp only [Bool.and_eq_true] at hgd; exact hgd.1
         subst hd
         rw [evalSelectProjectDistinct_true]
@@ -2619,7 +2863,8 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
         have hd : d = true := by simp only [Bool.and_eq_true] at hgd; exact hgd.1
         subst hd
         rw [List.length_map, length_dedupByKey_zip _ _ _
-          (evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ false _ _ _ _ _ hgb).symm,
+          (groupedOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _
+            (by simpa using hgb)).symm,
           evalSelectProjectDistinct_true]
     have hgd' : (d && !gb.isEmpty) = false := by simpa using hgd
     simp only [hg', hgd', Bool.false_eq_true, ↓reduceIte, Bool.or_false]
@@ -2674,7 +2919,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
       | none =>
         exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
           d items gb hv _ _ (by simp [List.length_map])
-          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew h_gwin
       | some wcond =>
         exact evalSelectProjectDistinct_eq_of_length_eq db _ _ _ _ _ _ _
           d items gb hv _ _
@@ -2682,7 +2927,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
                 (exprEval db r1 wcond == some (Value.bool true))
               · intro row; congr 1; exact h_wc wcond rfl row r1
               · simp [List.length_map])
-          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew
+          h_gb h_hv h_items_no_star h_si h_sia h_ea h_ew h_gwin
 
 -- ============================================================================
 -- Callback congruence by computable size (#212)
@@ -2849,6 +3094,68 @@ theorem evalSelectGroupOrderKeys_congr (db : Database)
     simp only [evalSelectGroupOrderKeys, hG', hSIA, hK, hc, hB]
 
 
+theorem groupedSurvivors_congr (db : Database)
+    (eA eB : Database → Row → Expr → Option Value)
+    (aA aB : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (gb : List Expr) (hv : Option Expr) (rows : Table)
+    (hG : ∀ r, gb.map (eA db r) = gb.map (eB db r))
+    (hHa : ∀ c, hv = some c → ∀ rs r, aA db rs r c = aB db rs r c)
+    (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls items hv) rs =
+      bareSampleRow (eB db) (selectMinMaxCalls items hv) rs) :
+    groupedSurvivors db eA aA items gb hv rows = groupedSurvivors db eB aB items gb hv rows := by
+  have hG' := groupKey_congr hG
+  cases hv with
+  | none => simp only [groupedSurvivors, hG', hB]
+  | some c =>
+    have hc := hHa c rfl
+    simp only [groupedSurvivors, hG', hc, hB]
+
+theorem aggSurvivors_congr (db : Database)
+    (eA eB : Database → Row → Expr → Option Value)
+    (aA aB : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (hv : Option Expr) (rows : Table)
+    (hHa : ∀ c, hv = some c → ∀ rs r, aA db rs r c = aB db rs r c)
+    (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls items hv) rs =
+      bareSampleRow (eB db) (selectMinMaxCalls items hv) rs) :
+    aggSurvivors db eA aA items hv rows = aggSurvivors db eB aB items hv rows := by
+  cases hv with
+  | none => simp only [aggSurvivors, hB]
+  | some c =>
+    have hc := hHa c rfl
+    simp only [aggSurvivors, hc, hB]
+
+/-- The window projection over groups only uses the aggregate evaluator through the window
+    evaluator on the items' expressions, and the item evaluator on the items (#429). -/
+theorem projectGroupsWithWindows_congr (db : Database)
+    (siaA siaB : Database → Table → Row → SelectItem → List (String × Value))
+    (aA aB : Database → Table → Row → Expr → Option Value)
+    (items : List SelectItem) (gs : List (Table × Row))
+    (hSIA1 : ∀ item ∈ items, ∀ rs r, siaA db rs r item = siaB db rs r item)
+    (hGW : ∀ e a, SelectItem.exprItem e a ∈ items → ∀ r p sp i,
+      evalExprWithWindowParam (groupWindowEval aA gs) db r p sp i e =
+      evalExprWithWindowParam (groupWindowEval aB gs) db r p sp i e) :
+    projectGroupsWithWindows db siaA aA items gs = projectGroupsWithWindows db siaB aB items gs := by
+  simp only [projectGroupsWithWindows]
+  apply List.map_congr_left
+  intro x _
+  apply flatMap_congr_mem
+  intro item hmem
+  cases item with
+  | star t => exact hSIA1 _ hmem _ _
+  | exprItem e a =>
+    simp only []
+    split
+    · rw [hGW e a hmem]
+    · exact hSIA1 _ hmem _ _
+
+theorem groupWindowOrderKeys_congr (db : Database)
+    (aA aB : Database → Table → Row → Expr → Option Value) (ob : List OrderByItem)
+    (hOK : ∀ o ∈ ob, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr)
+    (gs : List (Table × Row)) (projected : Table) :
+    groupWindowOrderKeys db aA ob gs projected = groupWindowOrderKeys db aB ob gs projected := by
+  simp only [groupWindowOrderKeys, groupOrderKeyRow_congr db aA aB ob hOK]
+
+
 /-- `evalSelectCore` congruence over its callbacks: two callback tuples that
     agree wherever `evalSelectCore` uses them on `sel` give the same result. -/
 theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
@@ -2874,7 +3181,11 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
       cB db r1 r2 (groupOrderByItems sel.orderBy))
     (hOK : ∀ o ∈ sel.orderBy, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr)
     (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls sel.items sel.having) rs =
-      bareSampleRow (eB db) (selectMinMaxCalls sel.items sel.having) rs) :
+      bareSampleRow (eB db) (selectMinMaxCalls sel.items sel.having) rs)
+    (hSIA1 : ∀ item ∈ sel.items, ∀ rs r, siaA db rs r item = siaB db rs r item)
+    (hGW : ∀ e a, SelectItem.exprItem e a ∈ sel.items → ∀ gs r p sp i,
+      evalExprWithWindowParam (groupWindowEval aA gs) db r p sp i e =
+      evalExprWithWindowParam (groupWindowEval aB gs) db r p sp i e) :
     evalSelectCore db outerRow fA eA siA siaA aA cA wA hasWindowFn hasAgg sel =
     evalSelectCore db outerRow fB eB siB siaB aB cB wB hasWindowFn hasAgg sel := by
   obtain ⟨d, items, from_, w, gb, hv, ob, lim, off⟩ := sel
@@ -2906,7 +3217,11 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     | some f => exact hF f rfl
   simp only [evalSelectCore, SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
     SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having, SelectStmt.orderBy,
-    SelectStmt.limitVal, SelectStmt.offsetVal, groupKey_congr hG, hSI, hSIA, hWin, hGK, hB]
+    SelectStmt.limitVal, SelectStmt.offsetVal, groupKey_congr hG, hSI, hSIA, hWin, hGK, hB,
+    groupedSurvivors_congr db eA eB aA aB items gb hv _ hG hHa hB,
+    aggSurvivors_congr db eA eB aA aB items hv _ hHa hB,
+    projectGroupsWithWindows_congr db siaA siaB aA aB items _ hSIA1 (fun e a h => hGW e a h _),
+    groupWindowOrderKeys_congr db aA aB ob hOK]
   erw [hOrd]
   cases from_ <;> cases w <;> cases hv <;>
     (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>

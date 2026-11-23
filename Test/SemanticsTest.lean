@@ -1366,6 +1366,46 @@ def crossTypeTests : List TestResult := [
 -- is TRUE). The aggregate and window paths now do the same, so an item's value does not
 -- depend on whether another item has an aggregate or a window function.
 
+-- Window functions over groups (#429): the groups are formed and filtered by HAVING first, then
+-- each window runs over one row per group, with aggregates evaluated per group. Groups in order:
+-- Engineering (Alice 30, Carol 35: sum 65, count 2), Sales (Bob 25, Eve 22: 47, 2),
+-- Marketing (Dave 28: 28, 1). Values agree with sqlite, DuckDB and Postgres.
+def groupedWindowTests : List TestResult := [
+  testColumn "grouped_window_rank_over_sum"
+    "SELECT department, RANK() OVER (ORDER BY SUM(age) DESC) AS r FROM users GROUP BY department"
+    "r" [.int 1, .int 2, .int 3],
+  testColumn "grouped_window_sum_of_sums"
+    "SELECT department, SUM(SUM(age)) OVER () AS s FROM users GROUP BY department"
+    "s" [.int 140, .int 140, .int 140],
+  testColumn "grouped_window_after_having"
+    "SELECT department, ROW_NUMBER() OVER (ORDER BY department) AS rn FROM users GROUP BY department HAVING COUNT(*) = 2"
+    "rn" [.int 1, .int 2],
+  testColumn "grouped_window_partition_by_aggregate"
+    "SELECT COUNT(*) AS c, SUM(COUNT(*)) OVER (PARTITION BY COUNT(*)) AS s FROM users GROUP BY department"
+    "s" [.int 4, .int 4, .int 1],
+  testColumn "aggregate_query_window"
+    "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS rn FROM users"
+    "rn" [.int 1],
+  testColumn "aggregate_query_window_no_rows"
+    "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS rn FROM users WHERE age > 100"
+    "c" [.int 0],
+  testColumn "grouped_window_order_by_alias"
+    "SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department ORDER BY r"
+    "department" [.string "Marketing", .string "Sales", .string "Engineering"],
+  testColumn "grouped_window_under_operator"
+    "SELECT department, SUM(COUNT(*)) OVER () + 1 AS r FROM users GROUP BY department"
+    "r" [.int 6, .int 6, .int 6],
+  testColumn "grouped_window_distinct_order_by_alias"
+    "SELECT DISTINCT COUNT(*) AS c, RANK() OVER (ORDER BY COUNT(*)) AS r FROM users GROUP BY department ORDER BY r"
+    "c" [.int 1, .int 2],
+  testColumn "grouped_window_having_keeps_none"
+    "SELECT department, ROW_NUMBER() OVER () AS rn FROM users GROUP BY department HAVING COUNT(*) > 5"
+    "rn" [],
+  testColumn "grouped_window_in_derived_table"
+    "SELECT MAX(r) AS m FROM (SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department) t"
+    "m" [.int 3]
+]
+
 def errorPathTests : List TestResult := [
   testColumn "error_and_false_plain"
     "SELECT name, (1 = 'a') AND FALSE AS r FROM users WHERE id = 1" "r" [.bool false],
@@ -1603,7 +1643,7 @@ def allSemanticsTests : List TestResult :=
   setOpSubqueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
-  windowTests ++ errorPathTests ++ caseInsensitiveTests
+  windowTests ++ groupedWindowTests ++ errorPathTests ++ caseInsensitiveTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests

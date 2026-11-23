@@ -933,7 +933,7 @@ theorem evalSelectCore_agg (db : Database)
     (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
     (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
-    (hAgg : hasAgg items = true) :
+    (hAgg : hasAgg items = true) (hNoWin : hasWindowFn items = false) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) wh [] none [] none none) =
@@ -943,7 +943,7 @@ theorem evalSelectCore_agg (db : Database)
     [items.flatMap (selectItemWithAggEval db src
       ((bareSampleRow (exprEval db) (selectMinMaxCalls items none) src).getD []))] := by
   rw [evalSelectCore_eq_afterFilter]
-  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hAgg] <;> rfl
+  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hAgg, hNoWin] <;> rfl
 
 /-- `evalSelectCore_agg` under an outer row: the source rows carry it at the end. -/
 theorem evalSelectCore_agg_ctx (db : Database) (outerRow : Row)
@@ -956,7 +956,7 @@ theorem evalSelectCore_agg_ctx (db : Database) (outerRow : Row)
     (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
     (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
-    (hAgg : hasAgg items = true) :
+    (hAgg : hasAgg items = true) (hNoWin : hasWindowFn items = false) :
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) wh [] none [] none none) =
@@ -967,8 +967,21 @@ theorem evalSelectCore_agg_ctx (db : Database) (outerRow : Row)
     [items.flatMap (selectItemWithAggEval db src
       ((bareSampleRow (exprEval db) (selectMinMaxCalls items none) src).getD []))] := by
   rw [evalSelectCore_eq_afterFilter]
-  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hAgg] <;> rfl
+  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hAgg, hNoWin] <;> rfl
 open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder SqlBridge.CorrectJoin
+
+/-- Aggregate items have no window function (#429). -/
+theorem selectHasWindowFn_aggItems : ∀ {items : List SqlEquiv.SelectItem},
+    aggItems items = true → SqlEquiv.selectHasWindowFn items = false
+  | [], _ => rfl
+  | .exprItem a _ :: rest, h => by
+    simp only [aggItems, Bool.and_eq_true] at h
+    have ha : SqlEquiv.exprHasWindowFn a = false := by
+      cases a <;> simp_all [aggFragment, SqlEquiv.exprHasWindowFn]
+    have := selectHasWindowFn_aggItems h.2
+    simp only [SqlEquiv.selectHasWindowFn, List.any_cons, ha, Bool.false_or] at this ⊢
+    exact this
+  | .star _ :: _, h => by simp [aggItems] at h
 
 theorem selectHasAggregate_aggItems : ∀ {items : List SqlEquiv.SelectItem}, aggItems items = true →
     items ≠ [] → SqlEquiv.selectHasAggregate items = true
@@ -1150,7 +1163,7 @@ theorem elabStmt_correct_agg_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
   · -- `SqlEquiv`'s side: one row of the items' values
     simp only [SqlEquiv.evalQuery]
     rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_agg _ _ _ _ _ _ _ _ _ _ _ _ _
-      (selectHasAggregate_aggItems hai hne)]
+      (selectHasAggregate_aggItems hai hne) (selectHasWindowFn_aggItems hai)]
     refine .cons ?_ .nil
     unfold OutRel
     rw [items_vals db _ _ hai]
@@ -1158,7 +1171,7 @@ theorem elabStmt_correct_agg_w (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
     exact hwo'.rel hq₀ty hnbq₀ hRf hR hrows
   · -- under an outer row (a subquery body)
     rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore, evalSelectCore_agg_ctx _ _ _ _ _ _ _ _ _
-      _ _ _ _ _ (selectHasAggregate_aggItems hai hne)]
+      _ _ _ _ _ (selectHasAggregate_aggItems hai hne) (selectHasWindowFn_aggItems hai)]
     refine .cons ?_ .nil
     unfold OutRel
     rw [items_vals db _ _ hai]

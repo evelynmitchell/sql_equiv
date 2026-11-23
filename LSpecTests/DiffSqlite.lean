@@ -565,6 +565,19 @@ def runAllTests : IO TestSeq := do
       "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users",
     diffTest "SUM OVER PARTITION BY (window)"
       "SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users",
+    -- A window function over groups (#429)
+    diffTest "grouped window: rank over sum"
+      "SELECT department, RANK() OVER (ORDER BY SUM(age) DESC) AS r FROM users GROUP BY department ORDER BY department",
+    diffTest "grouped window: sum of sums"
+      "SELECT department, SUM(SUM(age)) OVER () AS s FROM users GROUP BY department ORDER BY department",
+    diffTest "grouped window: after having"
+      "SELECT department, ROW_NUMBER() OVER (ORDER BY department) AS rn FROM users GROUP BY department HAVING COUNT(*) = 2 ORDER BY department",
+    diffTest "grouped window: partition by an aggregate"
+      "SELECT department, COUNT(*) AS c, SUM(COUNT(*)) OVER (PARTITION BY COUNT(*)) AS s FROM users GROUP BY department ORDER BY department",
+    diffTest "grouped window: aggregate query"
+      "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS rn FROM users",
+    diffTest "grouped window: order by its alias"
+      "SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department ORDER BY r",
     -- (boolean-valued items are in DiffDuckdb and DiffPostgres: sqlite prints 1 / 0)
     -- Window functions under IN (list), BETWEEN, CASE and a function call (#418)
     diffTest "window: case condition"
