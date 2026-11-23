@@ -1,5 +1,9 @@
 # Documentation Coverage Matrix
 
+> **Note (23 Nov 2026):** the optimizer (`Optimizer.lean`, `OptimizerUtils.lean`,
+> `LSpecTests/OptimizerEquiv.lean`) was removed in PR #156. The optimizer items below are
+> historical; the certified rewriter `certifiedRewrite` (`SqlEquiv/Rewriter.lean`) took its place.
+
 Tracks the relationship between code implementation, tutorial coverage, and documentation status.
 
 ---

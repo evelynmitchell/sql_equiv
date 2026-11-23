@@ -6,14 +6,56 @@ A SQL parser and semantic equivalence prover written in Lean 4. This project pro
 
 SQL Equiv is a comprehensive toolkit for:
 
-- **Parsing SQL** - Full DML support with a hand-rolled recursive descent parser
+- **Parsing SQL** - SELECT (with subqueries, joins, set operations, CTEs, window functions), INSERT, UPDATE and DELETE, with a hand-rolled recursive descent parser
 - **Evaluating queries** - A relational algebra-based semantic model
-- **Proving equivalences** - Formal proofs that two SQL expressions/queries are semantically equivalent
+- **Proving equivalences** - Formal proofs that two SQL expressions/queries are semantically equivalent, for the fragment in **What is parsed, evaluated, and proved** below
 - **Custom tactics** - Lean 4 tactics specifically designed for SQL equivalence proofs
 
 The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations.
 
 **Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are total functions (no `partial def` remains in the semantics, #278) but have no equivalence theorems yet. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
+
+## What is parsed, evaluated, and proved
+
+The parser and the evaluator cover much more SQL than the theorems do. This table says, for
+each feature area, which of the three applies, and what kind of statement the proofs make. In
+the proved columns:
+- **equivalence** means two queries or expressions give the same result on every database;
+- **up to row order** means the same rows, possibly in a different order;
+- **fact** means a shape or cardinality property (for example, `LIMIT n` returns at most `n`
+  rows), not an equivalence;
+- **bridge** means elaborator correctness: the typed core (`SqlCore`) and the untyped evaluator
+  (`SqlEquiv`) give related results on a query (`SqlBridge/Correct*.lean`, 519 of the 564 Spider
+  dev queries).
+
+| Feature area | Parsed | Evaluated | Proved in `SqlEquiv` | Proved in the typed core and bridge |
+|---|---|---|---|---|
+| Expressions: arithmetic, comparison, AND/OR/NOT, LIKE, CASE, BETWEEN, IN (list), IS NULL, COALESCE/NULLIF, string functions | ✓ | ✓ | **Equivalence** `≃ₑ` on every database and row: algebraic and NULL laws (`Equiv/ExprAxioms.lean`, `Equiv/Comparison.lean`, `Equiv/ValueLemmas.lean`); the certified rewriter `certifiedRewrite`; the decision procedure `checkEquivFull`; the `sql_equiv` tactic | `Expr.simplify` and `Expr.checkEquiv`, sound for `Expr.Equiv Γ` over conforming rows; **bridge** for the expression fragment (`Translates`) |
+| WHERE | ✓ | ✓ | **Equivalence**: `≃ₑ` lifted to SELECT, EXISTS and IN-subquery bodies (`select_where_congr`, `exists_where_congr`, `inSubquery_where_congr`); the statement checkers rewrite WHERE only | **bridge** (`elabStmt_correct`, `elabStmt_correct_join`) |
+| Joins: INNER, CROSS, LEFT, RIGHT, FULL | ✓ | ✓ | Mostly **facts** (cardinality, empty inputs, `cross_join_cardinality`, `left_join_preserves_left`); a few **equivalences** with hypotheses (`inner_join_to_where`, `left_join_filter_null_is_inner`) | **bridge** for inner and cross joins |
+| Subqueries: scalar, IN, EXISTS, correlated, derived tables | ✓ | ✓ | **Equivalences** for EXISTS/IN laws (`not_not_exists`, `in_subquery_as_exists`, `in_empty_subquery_false`); unnesting to a join or anti-join for **one fixed query shape**, under per-database hypotheses (`in_subquery_unnest_to_join`: `hStable`, `hProjT`, `hNotInLeft`) | **bridge** for an uncorrelated `IN (subquery)` or comparison with a scalar subquery in WHERE, and `COUNT(*)` over a derived table |
+| Set operations: UNION [ALL], INTERSECT, EXCEPT | ✓ | ✓ | **Equivalences up to row order** (`≃ᵇᵛ`): commutativity, associativity, idempotence, distributivity (`Equiv/StatementAxioms.lean`) | `Query.simplify` / `Query.checkEquiv`; **bridge** up to row order (`elabStmt_correct_setOp`) |
+| Aggregates, GROUP BY, HAVING | ✓ | ✓ | **Facts** about the aggregate functions (`count_star_empty`, `sum_singleton`, `min_le_elem`), not query equivalences | **bridge** for COUNT/SUM/MIN/MAX/AVG items and HAVING, grouped and not (`elabStmt_correct_agg`, `elabStmt_correct_grouped`, `elabStmt_correct_aggBare`); AVG up to rounding (registry row 7) |
+| DISTINCT | ✓ | ✓ | A **fact** (`distinct_idempotent`) | **bridge** up to row order (`elabStmt_correct_distinct`) |
+| ORDER BY, LIMIT, OFFSET | ✓ | ✓ | **Facts** (`order_by_preserves_count`, `limit_upper_bound`, `limit_offset_compose`, pagination) | **bridge** in order, for column sort keys (`elabStmt_correct_join`, `elabStmt_correct_grouped`) |
+| Window functions | ✓ | ✓ | None: `≃ₑ` treats a window function as an error at expression level | None |
+| CTEs: WITH, WITH RECURSIVE | ✓ | ✓ (recursion stops after `maxCTEIterations` = 1000 rounds) | None | None |
+| DML: INSERT, UPDATE, DELETE | ✓ | ✓ | None | None |
+
+Every evaluator is a total function: no `partial def` remains in the semantics (#278). The
+remaining `partial def`s are the parser, the SQL printer and `toReprStr`, which no theorem uses.
+
+**Trust base.** The theorems use only Lean's standard axioms. See the paragraph above, and run
+`#print axioms` on any theorem to check.
+
+**Quiet errors (#270).** Where DuckDB or Postgres abort a query (a type mismatch such as
+`1 = 'a'`, an integer division by zero), `SqlEquiv` evaluates the expression to an error value
+instead. In WHERE that drops the row; in a SELECT list it shows as NULL. Its equivalences compare
+these quiet results. So an equivalence proved here holds in DuckDB or Postgres only for queries
+that raise no error there: two queries can be equivalent in the model while one of them aborts in
+the engine. The typed core is strict (an error is a separate result), so its theorems do not
+carry this caveat. See `docs/IMPLEMENTATION_DEFINED.md`, "What this means for proved
+equivalences"; whether `SqlEquiv` itself becomes strict is undecided (#270).
 
 ### For Lean / CSLib readers
 
@@ -60,7 +102,7 @@ This repository could become a basis for SQL support in
     the AST is total and kernel-reducible, `sql_equiv!` is kernel-checked
     (`decide +kernel`), and statement-level certified checkers exist
     (`checkSelectEquiv`, `checkQueryEquiv` in `Equiv/StatementChecker.lean`).
-    The 58 remaining `partial def`s (17 Nov 2026) are the parser (40), the SQL
+    The 66 remaining `partial def`s (23 Nov 2026) are the parser (48), the SQL
     pretty-printer (8) and the debug `Repr` printer `toReprStr` (10); no
     semantics, proof or checker code calls them;
   - the representation choices above were made for a checker, not a library.
@@ -90,7 +132,9 @@ This repository could become a basis for SQL support in
 
 ## Features
 
-### Full SQL DML Support
+### SQL Support (parsed and evaluated)
+
+What the theorems cover is narrower: see **What is parsed, evaluated, and proved** above.
 
 - **SELECT statements**: `*`, column lists, aliases, DISTINCT
 - **Expressions**: arithmetic, comparisons, boolean logic, CASE/WHEN, BETWEEN / NOT BETWEEN, IN, LIKE / NOT LIKE
