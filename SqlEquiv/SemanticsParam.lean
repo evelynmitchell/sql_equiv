@@ -78,6 +78,52 @@ where
     | none => false
     | some e => exprHasWindowFn e
 
+/-- Whether an expression has an aggregate call outside subqueries, inside window functions too
+    (their argument, `PARTITION BY` and `ORDER BY`): `SUM(SUM(x)) OVER ()`. `hasAggregate` does not
+    look inside window functions. Used to tell when a window query aggregates (#438). -/
+def exprHasAggregateDeep : Expr → Bool
+  | .agg _ _ _ => true
+  | .countStar => true
+  | .windowFn _ a spec =>
+    (match a with
+      | some x => exprHasAggregateDeep x
+      | none => false) ||
+    spec.partitionBy.attach.any (fun ⟨x, _⟩ => exprHasAggregateDeep x) ||
+    spec.orderBy.attach.any (fun ⟨o, _⟩ => exprHasAggregateDeep o.expr)
+  | .binOp _ l r => exprHasAggregateDeep l || exprHasAggregateDeep r
+  | .unaryOp _ e => exprHasAggregateDeep e
+  | .func _ args => args.attach.any (fun ⟨x, _⟩ => exprHasAggregateDeep x)
+  | .case branches else_ =>
+    branches.attach.any (fun ⟨p, _⟩ => exprHasAggregateDeep p.1 || exprHasAggregateDeep p.2) ||
+    (match else_ with
+      | some x => exprHasAggregateDeep x
+      | none => false)
+  | .inList e _ vals =>
+    exprHasAggregateDeep e || vals.attach.any (fun ⟨x, _⟩ => exprHasAggregateDeep x)
+  | .between e lo hi =>
+    exprHasAggregateDeep e || exprHasAggregateDeep lo || exprHasAggregateDeep hi
+  | .inSubquery e _ _ => exprHasAggregateDeep e
+  | _ => false
+termination_by e => e.size
+decreasing_by
+  all_goals simp only [Expr.size, Expr.sizeOpt]
+  all_goals first
+    | omega
+    | (have := Expr.size_le_sizeList_of_mem ‹_›; omega)
+    | (have := WindowSpec.partitionBy_size_lt ‹_›; omega)
+    | (have := WindowSpec.orderBy_size_lt ‹_›; omega)
+    | (have := Expr.size_le_sizePairs_of_mem (a := p.1) (b := p.2) ‹_›; omega)
+
+/-- A window query aggregates without `GROUP BY` and without an aggregate in its items outside
+    window functions when an aggregate occurs inside a window in the items or in `HAVING`
+    (`SELECT SUM(SUM(x)) OVER () FROM t`): sqlite, DuckDB and Postgres then form one group, as
+    for any aggregate query (#438). An aggregate only in `ORDER BY` is rejected by the parser.
+    The SELECT pipeline conjoins this with "the items have a window function"
+    (`windowAggregates`), so a query without one keeps its path. -/
+def windowQueryAggregates (items : List SelectItem) (having : Option Expr) : Bool :=
+  items.any (fun | .exprItem e _ => exprHasAggregateDeep e | .star _ => false) ||
+  having.any exprHasAggregateDeep
+
 /-- Check if SELECT items contain window functions -/
 def selectHasWindowFn (items : List SelectItem) : Bool :=
   items.any fun

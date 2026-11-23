@@ -239,9 +239,10 @@ theorem filter_true_elim' (db : Database) (items : List SelectItem) (from_ : Opt
 theorem filter_false_empty' (db : Database) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
-    (h_no_agg : selectHasAggregate items = false) :
+    (h_no_agg : selectHasAggregate items = false)
+    (h_no_win_agg : windowAggregates selectHasWindowFn items having = false) :
     (evalSelect db (.mk false items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset)).length = 0 :=
-  where_false_empty db items from_ groupBy having orderBy limit offset h_no_agg
+  where_false_empty db items from_ groupBy having orderBy limit offset h_no_agg h_no_win_agg
 
 -- ============================================================================
 -- NULL Theorems: IS NULL Laws

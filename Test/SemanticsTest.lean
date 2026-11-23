@@ -1401,6 +1401,23 @@ def groupedWindowTests : List TestResult := [
   testColumn "grouped_window_having_keeps_none"
     "SELECT department, ROW_NUMBER() OVER () AS rn FROM users GROUP BY department HAVING COUNT(*) > 5"
     "rn" [],
+  -- #438: no GROUP BY, an aggregate only inside a window or in HAVING: one group, as the
+  -- engines do (sum of all ages 140; COUNT(*) of the one group is 5)
+  testColumn "window_over_aggregate_one_group"
+    "SELECT SUM(SUM(age)) OVER () AS s FROM users"
+    "s" [.int 140],
+  testColumn "window_order_key_aggregate_one_group"
+    "SELECT RANK() OVER (ORDER BY COUNT(*)) AS r FROM users"
+    "r" [.int 1],
+  testColumn "window_having_aggregate_one_group"
+    "SELECT ROW_NUMBER() OVER () AS r FROM users HAVING COUNT(*) > 1"
+    "r" [.int 1],
+  testColumn "window_having_aggregate_no_group"
+    "SELECT ROW_NUMBER() OVER () AS r FROM users HAVING SUM(age) > 1000"
+    "r" [],
+  testColumn "window_over_aggregate_no_rows"
+    "SELECT SUM(SUM(age)) OVER () AS s FROM users WHERE age > 100"
+    "s" [.null none],
   testColumn "grouped_window_in_derived_table"
     "SELECT MAX(r) AS m FROM (SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department) t"
     "m" [.int 3]

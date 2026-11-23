@@ -127,4 +127,21 @@ theorem OrderByItem.expr_size_lt (o : OrderByItem) : o.expr.size < o.size := by
 theorem OrderByItem.size_pos (o : OrderByItem) : 0 < o.size := by
   cases o; simp [OrderByItem.size]; omega
 
+theorem WindowSpec.partitionBy_size_lt {spec : WindowSpec} {x : Expr}
+    (hx : x ∈ spec.partitionBy) : x.size < spec.size := by
+  cases spec with
+  | mk ps os =>
+    simp only [WindowSpec.partitionBy] at hx
+    have := Expr.size_le_sizeList_of_mem hx
+    simp [WindowSpec.size]; omega
+
+theorem WindowSpec.orderBy_size_lt {spec : WindowSpec} {o : OrderByItem}
+    (ho : o ∈ spec.orderBy) : o.expr.size < spec.size := by
+  cases spec with
+  | mk ps os =>
+    simp only [WindowSpec.orderBy] at ho
+    have := OrderByItem.size_le_sizeList_of_mem ho
+    have := OrderByItem.expr_size_lt o
+    simp [WindowSpec.size]; omega
+
 end SqlEquiv

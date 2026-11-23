@@ -867,35 +867,19 @@ partial def exprMentionsAggregate : Expr → Bool
     exprMentionsAggregate e || exprMentionsAggregate lo || exprMentionsAggregate hi
   | _ => false
 
-/-- Whether an expression has an aggregate outside window functions and subqueries: the
-    parser's copy of `hasAggregate` (`SqlEquiv/SemanticsParam.lean`), which decides whether the
-    evaluator takes the aggregate path (#429). -/
-partial def exprAggOutsideWindow : Expr → Bool
-  | .agg _ _ _ => true
-  | .countStar => true
-  | .binOp _ l r => exprAggOutsideWindow l || exprAggOutsideWindow r
-  | .unaryOp _ e => exprAggOutsideWindow e
-  | .func _ args => args.any exprAggOutsideWindow
-  | .case bs el => bs.any (fun (c, r) => exprAggOutsideWindow c || exprAggOutsideWindow r) ||
-      el.any exprAggOutsideWindow
-  | .inList e _ vs => exprAggOutsideWindow e || vs.any exprAggOutsideWindow
-  | .inSubquery e _ _ => exprAggOutsideWindow e
-  | .between e lo hi =>
-    exprAggOutsideWindow e || exprAggOutsideWindow lo || exprAggOutsideWindow hi
-  | _ => false
-
 /-- A window function in a grouped or aggregate SELECT is evaluated over the groups since #429
-    (it was rejected by #421). One shape is still rejected: no `GROUP BY` and no aggregate in
-    the items outside window functions, but an aggregate elsewhere (inside a window's argument
-    or keys, `SUM(SUM(x)) OVER ()`, or in `ORDER BY`) or a `HAVING`. The evaluator decides
-    that a query aggregates from its items alone, so it would take the window path and give
-    NULL. Checked per SELECT: subqueries are checked when they are parsed. -/
+    (it was rejected by #421). Without `GROUP BY` and without an aggregate in the items outside
+    window functions, an aggregate inside a window in the items or in `HAVING` makes the query
+    aggregate too (#438, `windowQueryAggregates`). Two shapes remain rejected, the window form of
+    #440: an aggregate only in `ORDER BY`, and a `HAVING` with no aggregate at all; the
+    evaluator would not aggregate. Checked per SELECT: subqueries are checked when they are
+    parsed. -/
 def groupedWindowUnsupported (items : List SelectItem) (groupBy : List Expr)
     (having : Option Expr) (orderBy : List OrderByItem) : Bool :=
   let itemExprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none)
-  let exprs := itemExprs ++ orderBy.map (fun | .mk e _ _ => e) ++ having.toList
-  exprs.any exprMentionsWindow && groupBy.isEmpty && !itemExprs.any exprAggOutsideWindow &&
-    (having.isSome || exprs.any exprMentionsAggregate)
+  itemExprs.any exprMentionsWindow && groupBy.isEmpty &&
+    !(itemExprs.any exprMentionsAggregate || having.any exprMentionsAggregate) &&
+    (having.isSome || orderBy.any (fun | .mk e _ _ => exprMentionsAggregate e))
 
 mutual
 
@@ -1745,8 +1729,8 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
       "give the window item an alias and order by the alias")
 
   if groupedWindowUnsupported items groupBy having orderBy then
-    Parser.fail ("window function over an aggregate that is not also outside a window in " ++
-      "the SELECT list, without GROUP BY, is not supported yet (#438)")
+    Parser.fail ("in a window query without GROUP BY, an aggregate only in ORDER BY, or a " ++
+      "HAVING without an aggregate, is not supported yet (#440)")
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
 
