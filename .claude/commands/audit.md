@@ -56,7 +56,7 @@ This is a thin adapter over the general **rewrite-audit** skill in
 
    When judging runtime/proof divergence, say which rewriter or decision
    procedure an override is on the path of. Since #278 no `partial def` is
-   on a proof or checker path: the remaining ones (58 on 17 Nov 2026) are
+   on a proof or checker path: the remaining ones (65 on 23 Nov 2026: 47 parser, 8 pretty-printer, 10 `toReprStr`) are
    the parser, the SQL pretty-printer and `toReprStr`. The count grows with
    the parser; what matters is where they are. Count declarations, not
    comments that mention them:
@@ -65,7 +65,7 @@ This is a thin adapter over the general **rewrite-audit** skill in
    ```
    Every hit must be in `Parser.lean`, `Pretty.lean` or a `toReprStr`. Run the same count
    over `SqlCore/ SqlBridge/`: the only hits allowed there are the Spider coverage reporter,
-   `SqlBridge/Coverage.lean` (7 on 21 Nov 2026), which no theorem or checker uses. A
+   `SqlBridge/Coverage.lean` (9 on 23 Nov 2026), which no theorem or checker uses. A
    `partial def` anywhere else, or reachable from the evaluator, a rewriter
    or a checker, is a finding. Since #278 there are no
    overrides left in `SqlEquiv/`: the AST's `DecidableEq` is a total generated
