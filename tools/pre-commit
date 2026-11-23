@@ -27,6 +27,7 @@ esac
 
 AUDIT_FILES="
 SqlEquiv/Semantics.lean
+SqlEquiv/SemanticsParam.lean
 SqlEquiv/Ast.lean
 SqlEquiv/Equiv.lean
 "
