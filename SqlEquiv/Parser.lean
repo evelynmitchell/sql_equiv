@@ -818,6 +818,33 @@ partial def exprMentionsWindow : Expr → Bool
   | .between e lo hi => exprMentionsWindow e || exprMentionsWindow lo || exprMentionsWindow hi
   | _ => false
 
+/-- Whether an expression has a window function inside another window function's argument,
+    `PARTITION BY` or `ORDER BY` (`SUM(ROW_NUMBER() OVER ()) OVER ()`), outside subqueries.
+    sqlite, DuckDB and Postgres reject it; the evaluator would quietly give NULL (#424). -/
+partial def exprNestsWindow : Expr → Bool
+  | .windowFn _ a spec =>
+    a.any exprMentionsWindow || spec.partitionBy.any exprMentionsWindow ||
+      spec.orderBy.any (fun | .mk e _ _ => exprMentionsWindow e)
+  | .binOp _ l r => exprNestsWindow l || exprNestsWindow r
+  | .unaryOp _ e => exprNestsWindow e
+  | .func _ args => args.any exprNestsWindow
+  | .agg _ a _ => a.any exprNestsWindow
+  | .case bs el => bs.any (fun (c, r) => exprNestsWindow c || exprNestsWindow r) ||
+      el.any exprNestsWindow
+  | .inList e _ vs => exprNestsWindow e || vs.any exprNestsWindow
+  | .inSubquery e _ _ => exprNestsWindow e
+  | .between e lo hi => exprNestsWindow e || exprNestsWindow lo || exprNestsWindow hi
+  | _ => false
+
+/-- #424: windows are computed after `WHERE`, `GROUP BY`, `HAVING` and join conditions, so a
+    window function there is an error in sqlite, DuckDB and Postgres; we would quietly treat it
+    as an error value (no rows, or one group). Fails naming the clause. A subquery inside the
+    clause may have windows of its own: `exprMentionsWindow` does not look into it. -/
+def rejectWindowIn (clause : String) (e : Expr) : Parser Unit :=
+  if exprMentionsWindow e then
+    Parser.fail s!"window functions are not allowed in {clause}"
+  else Parser.pure ()
+
 /-- Whether an expression contains an aggregate call outside subqueries,
     including inside a window function's argument, `PARTITION BY` or
     `ORDER BY` (`SUM(SUM(x)) OVER ()`), which `hasAggregate` does not see
@@ -1509,7 +1536,9 @@ where
         let t ← Parser.peek
         if isKeyword "ON" t then
           let _ ← Parser.advance
-          some <$> parseExpr
+          let c ← parseExpr
+          rejectWindowIn "JOIN conditions" c
+          Parser.pure (some c)
         else
           Parser.pure none
       parseJoins (.join left jtype right on_)
@@ -1636,7 +1665,9 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
   let whereClause ←
     if isKeyword "WHERE" t2 then
       let _ ← Parser.advance
-      some <$> parseExpr
+      let w ← parseExpr
+      rejectWindowIn "WHERE" w
+      Parser.pure (some w)
     else
       Parser.pure none
 
@@ -1646,7 +1677,9 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
     if isKeyword "GROUP" t3 then
       let _ ← Parser.advance
       Parser.expect (.keyword "BY") "Expected BY after GROUP"
-      Parser.sepBy1 parseExpr (Parser.expect .comma "")
+      let ks ← Parser.sepBy1 parseExpr (Parser.expect .comma "")
+      for k in ks do rejectWindowIn "GROUP BY" k
+      Parser.pure ks
     else
       Parser.pure []
 
@@ -1655,7 +1688,9 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
   let having ←
     if isKeyword "HAVING" t4 then
       let _ ← Parser.advance
-      some <$> parseExpr
+      let h ← parseExpr
+      rejectWindowIn "HAVING" h
+      Parser.pure (some h)
     else
       Parser.pure none
 
@@ -1679,6 +1714,16 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
   if distinct && dob == .reject &&
       orderBy.any (fun | .mk e _ _ => !distinctOrderKeySelected items e) then
     Parser.fail "for SELECT DISTINCT, ORDER BY expressions must appear in select list"
+
+  -- #424: nested windows are an error in all three engines; we would quietly give NULL.
+  let itemExprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none)
+  if itemExprs.any exprNestsWindow then
+    Parser.fail "window function calls cannot be nested"
+  -- #435: a window function as an ORDER BY key (also by position) is not evaluated yet; it
+  -- would quietly leave the rows unsorted. Ordering by an item's alias works.
+  if orderBy.any (fun | .mk e _ _ => exprMentionsWindow e) then
+    Parser.fail ("window function in ORDER BY is not supported yet (#435); " ++
+      "give the window item an alias and order by the alias")
 
   if groupedWindowUnsupported items groupBy having orderBy then
     Parser.fail "window function in a grouped or aggregate query is not supported yet (#421)"
@@ -1832,7 +1877,9 @@ partial def parseUpdate : Parser UpdateStmt := do
   let whereClause ←
     if isKeyword "WHERE" t then
       let _ ← Parser.advance
-      some <$> parseExpr
+      let w ← parseExpr
+      rejectWindowIn "WHERE" w
+      Parser.pure (some w)
     else
       Parser.pure none
 
@@ -1852,7 +1899,9 @@ partial def parseDelete : Parser DeleteStmt := do
   let whereClause ←
     if isKeyword "WHERE" t then
       let _ ← Parser.advance
-      some <$> parseExpr
+      let w ← parseExpr
+      rejectWindowIn "WHERE" w
+      Parser.pure (some w)
     else
       Parser.pure none
 

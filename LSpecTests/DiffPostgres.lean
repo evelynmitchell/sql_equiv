@@ -484,6 +484,19 @@ def runAllTests : IO TestSeq := do
       "SELECT department FROM users GROUP BY department HAVING MAX(age) IN (SELECT age FROM users WHERE id > 3) ORDER BY department",
     diffTest "aggregate: HAVING not in subquery"
       "SELECT department FROM users GROUP BY department HAVING COUNT(*) NOT IN (SELECT x FROM other) ORDER BY department",
+    -- A window function where windows are not computed yet, or nested (#424)
+    diffRejects "window: in WHERE"
+      "SELECT name FROM users WHERE SUM(age) OVER () > 0",
+    diffRejects "window: in HAVING"
+      "SELECT department FROM users GROUP BY department HAVING SUM(age) OVER () > 0",
+    diffRejects "window: in GROUP BY"
+      "SELECT 1 FROM users GROUP BY ROW_NUMBER() OVER ()",
+    diffRejects "window: in JOIN ON"
+      "SELECT u.name FROM users u JOIN other o ON ROW_NUMBER() OVER () = 1",
+    diffRejects "window: nested in a window"
+      "SELECT SUM(ROW_NUMBER() OVER ()) OVER () FROM users",
+    diffTest "window: ORDER BY its alias"
+      "SELECT name, ROW_NUMBER() OVER (ORDER BY age DESC) AS r FROM users ORDER BY r",
     -- CASE
     diffTest "CASE over a column"
       "SELECT name, CASE WHEN age >= 30 THEN 'senior' ELSE 'junior' END AS band FROM users",
