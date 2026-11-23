@@ -584,6 +584,8 @@ def runAllTests : IO TestSeq := do
       "SELECT id FROM users WHERE name > 1",
     diffErrors "SUM over strings"
       "SELECT SUM(name) AS s FROM users",
+    diffErrors "an error in the dividend of a modulo by zero"
+      "SELECT (name + 1) % (age - age) AS x FROM users",
     diffTest "modulo by zero is NULL"
       "SELECT id, id % (age - 30) AS x FROM users",
     diffTest "modulo by zero is NULL in WHERE and HAVING"

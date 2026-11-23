@@ -216,6 +216,32 @@ gained the typed core's rewriters.**
   proofs (`SqlBridge/Correct*.lean`) and extend `QNoBoolOrder` (a hypothesis of those
   theorems, not a guard of any rewriter).
 
+**Re-audited 23 Nov 2026 (master `aa9d068`, after #449): 1 issue, fixed; the config gained
+`nullOnDivZero`.**
+- **Trust base:** standard axioms for the `SqlEquiv` and `SqlCore` entry points and for #449's
+  `evalQueryIn_transfer`, `evalQueryIn_ok`, `evalQueryIn_ok_or_error` and `checkQuery`. Guard:
+  3401 theorems, 2746 definitions, 55 opaque constants (`SqlEquiv`); 1546 theorems, 955
+  definitions (`SqlCore`).
+- **`partial def`s:** 66 in `SqlEquiv/` (48 Parser, 8 Pretty, 10 `toReprStr`), none on-path;
+  9 in `SqlBridge/Coverage.lean`, off-path.
+- **Overrides:** none (every `unsafe` / `native_decide` hit is in a comment).
+- **Vacuous theorems:** none.
+- **Discovery:** `SqlEquiv.nullOnDivZero : Expr → Expr` (`SqlEquiv/Strict.lean`, #449) was not
+  in the config. It does not preserve `≃ₑ`, on purpose: the strict check of the duckdb dialect
+  evaluates `a / b`, `a % b` as `CASE WHEN b = 0 THEN … ELSE … END` so that a division by zero is
+  not counted as an error (registry row 23). Its contract: every other error still surfaces.
+  - **Issue (fixed):** the zero arm was `THEN NULL`, so an error in the dividend vanished when
+    the divisor was 0: `(name + 1) % 0` passed the duckdb check while DuckDB rejects it. Now
+    `THEN NULL = a`, which is NULL for every value and an error for an error. Regression tests in
+    `strictErrorTests` and a `diffErrors` case in DiffDuckdb.
+  - Divisor kinds traced: int/decimal 0 → NULL (DuckDB: `inf` / NULL); NULL → NULL; bool or an
+    error → error; a numeric string literal → error where DuckDB converts it (row 11 class).
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+- **Since the last entry:** no expression rewriter arm and no evaluator dispatch changed. The
+  statement laws in `ExprAxioms`/`StatementAxioms` (`where_false_empty` and kin) gained the
+  hypothesis `implicitGroup … = false` with #438/#440: a precondition, kernel-checked.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
