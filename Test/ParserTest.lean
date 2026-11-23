@@ -338,8 +338,8 @@ def windowParserTests : List TestResult := [
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
   testParseFailWith "window_with_aggregate_only_in_order_by_rejected" "(#440)"
     "SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)",
-  -- an ORDER BY window key is rejected on its own (#424, #435)
-  testParseFailWith "window_in_grouped_order_by_rejected" "(#435)"
+  -- an ORDER BY window key is evaluated over the groups (#435)
+  testParse "window_in_grouped_order_by_accepted"
     "SELECT department FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department)",
   -- #424: windows are computed after WHERE, GROUP BY, HAVING and join conditions; all three
   -- engines reject a window there (we gave no rows or one group), and nested windows (NULL)
@@ -369,12 +369,16 @@ def windowParserTests : List TestResult := [
     "SELECT CASE WHEN age > 1 THEN RANK() OVER (PARTITION BY ROW_NUMBER() OVER ()) END FROM users",
   testParseFailWith "window_nested_in_order_key_rejected" "cannot be nested"
     "SELECT ROW_NUMBER() OVER (ORDER BY SUM(age) OVER ()) FROM users",
-  -- #435: an ORDER BY window key was never evaluated (rows came back unsorted), so it is
-  -- rejected, by position too, until it is; ordering by the item's alias works
-  testParseFailWith "window_in_plain_order_by_rejected" "(#435)"
+  -- #435: a window function as an ORDER BY key is evaluated, by position too; with DISTINCT
+  -- it stays rejected (order by the item's alias), and nested windows are an error there too
+  testParse "window_in_plain_order_by_accepted"
     "SELECT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age)",
-  testParseFailWith "window_order_by_position_rejected" "(#435)"
+  testParse "window_order_by_position_accepted"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) FROM users ORDER BY 2",
+  testParseFailWith "window_order_by_with_distinct_rejected" "SELECT DISTINCT"
+    "SELECT DISTINCT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age)",
+  testParseFailWith "window_nested_in_order_by_key_rejected" "cannot be nested"
+    "SELECT name FROM users ORDER BY SUM(ROW_NUMBER() OVER ()) OVER ()",
   -- …but windows stay accepted outside those clauses and grouped/aggregate SELECTs
   testParse "window_order_by_alias_accepted"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users ORDER BY r",

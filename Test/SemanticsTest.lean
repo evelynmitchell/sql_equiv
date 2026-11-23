@@ -1418,6 +1418,23 @@ def groupedWindowTests : List TestResult := [
   testColumn "window_over_aggregate_no_rows"
     "SELECT SUM(SUM(age)) OVER () AS s FROM users WHERE age > 100"
     "s" [.null none],
+  -- #435: a window function as an ORDER BY key sorts the rows, as in the engines
+  -- (ages: Alice 30, Bob 25, Carol 35, Dave 28, Eve 22)
+  testColumn "order_by_window_key"
+    "SELECT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age DESC)"
+    "name" [.string "Carol", .string "Alice", .string "Dave", .string "Bob", .string "Eve"],
+  testColumn "order_by_window_position"
+    "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY 2 DESC"
+    "rn" [.int 5, .int 4, .int 3, .int 2, .int 1],
+  testColumn "order_by_window_partition_then_column"
+    "SELECT name FROM users ORDER BY SUM(age) OVER (PARTITION BY department), name"
+    "name" [.string "Dave", .string "Bob", .string "Eve", .string "Alice", .string "Carol"],
+  testColumn "order_by_window_after_where_limit"
+    "SELECT name FROM users WHERE age > 24 ORDER BY RANK() OVER (ORDER BY name DESC) LIMIT 2"
+    "name" [.string "Dave", .string "Carol"],
+  testColumn "grouped_order_by_window_key"
+    "SELECT department FROM users GROUP BY department ORDER BY RANK() OVER (ORDER BY SUM(age))"
+    "department" [.string "Marketing", .string "Sales", .string "Engineering"],
   testColumn "grouped_window_in_derived_table"
     "SELECT MAX(r) AS m FROM (SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department) t"
     "m" [.int 3]

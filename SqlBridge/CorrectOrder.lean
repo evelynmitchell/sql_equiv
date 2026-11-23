@@ -594,7 +594,8 @@ theorem evalSelectCore_project_ordered (db : Database)
     (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
     (orderBy : List OrderByItem) (lim off : Option Nat)
-    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false) :
+    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false)
+    (hOB : orderByHasWindow orderBy = false) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) wh [] none orderBy lim off) =
@@ -605,7 +606,7 @@ theorem evalSelectCore_project_ordered (db : Database)
       (src.map fun row => items.flatMap (selectItemEval db row)) := by
   rw [evalSelectCore_eq_afterFilter]
   cases wh <;>
-  simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin]
+  simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin, hOB]
 
 /-- `evalSelectCore_project_ordered` under an outer row, without `ORDER BY`: the source rows are
     the `FROM` rows with the outer row appended. (With `ORDER BY`, `SqlEquiv` aligns the sort on
@@ -651,7 +652,8 @@ theorem evalSelectCore_project_ordered_ctx (db : Database) (outerRow : Row)
     (hasWindowFn : List SelectItem → Bool) (hasAgg : List SelectItem → Bool)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
     (orderBy : List OrderByItem) (lim off : Option Nat)
-    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false) :
+    (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false)
+    (hOB : orderByHasWindow orderBy = false) :
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) wh [] none orderBy lim off) =
@@ -663,7 +665,15 @@ theorem evalSelectCore_project_ordered_ctx (db : Database) (outerRow : Row)
       (src.map fun r => r.take (r.length - outerRow.length))
       (src.map fun row => items.flatMap (selectItemEval db row)) := by
   rw [evalSelectCore_eq_afterFilter]
-  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin]
+  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin, hOB]
+
+/-- Column `ORDER BY` keys have no window function (#435). -/
+theorem orderByHasWindow_of_cols {orderBy : List OrderByItem}
+    (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c) : orderByHasWindow orderBy = false := by
+  simp only [orderByHasWindow, List.any_eq_false]
+  intro o ho
+  obtain ⟨c, hc⟩ := hcols o ho
+  simp [hc, exprHasWindowFn]
 
 end SqlBridge.CorrectOrder
 
@@ -1459,7 +1469,8 @@ theorem elabStmt_correct_ordered (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   -- `SqlEquiv`'s side, in closed form
   simp only [SqlEquiv.evalQuery]
   rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
-    _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)]
+    _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)
+    (orderByHasWindow_of_cols hcols)]
   -- the keys
   have hkr : keyList.length ≠ 0 → KeysRel (requalify (N.fold (al.getD name)) (N.S.columns T))
       N.fold db (N.S.ctx T) items orderBy hlen (fun i => keyList[i]) := fun hk0 => by

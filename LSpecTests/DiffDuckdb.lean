@@ -376,6 +376,19 @@ def runAllTests : IO TestSeq := do
       "SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS rn FROM users",
     diffTest "grouped window: order by its alias"
       "SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department ORDER BY r",
+    -- A window function as an ORDER BY key (#435)
+    diffTest "order by window: key"
+      "SELECT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age DESC)",
+    diffTest "order by window: position"
+      "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users ORDER BY 2 DESC",
+    diffTest "order by window: partition, then a column"
+      "SELECT name FROM users ORDER BY SUM(age) OVER (PARTITION BY department), name",
+    diffTest "order by window: after WHERE, with LIMIT"
+      "SELECT name FROM users WHERE age > 24 ORDER BY RANK() OVER (ORDER BY name DESC) LIMIT 2",
+    diffTest "order by window: grouped"
+      "SELECT department FROM users GROUP BY department ORDER BY RANK() OVER (ORDER BY SUM(age))",
+    diffTest "order by window: grouped, with an aggregate item"
+      "SELECT department, COUNT(*) AS c FROM users GROUP BY department ORDER BY ROW_NUMBER() OVER (ORDER BY department DESC)",
     diffTest "window over aggregate: one group"
       "SELECT SUM(SUM(age)) OVER () AS s FROM users",
     diffTest "window over aggregate: order key"

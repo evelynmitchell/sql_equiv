@@ -693,14 +693,81 @@ def projectGroupsWithWindows (db : Database)
         else selectItemWithAggEval db rs s item
       | .star _ => selectItemWithAggEval db rs s item
 
-/-- Sort-key rows of a grouped query with window items (#429), aligned with
-    `projectGroupsWithWindows`: as `groupOrderKeyRow`, against the projected row, so
-    `ORDER BY` a window item's alias sorts by its value. -/
+theorem filterMap_congr_mem {α β : Type} {f g : α → Option β} :
+    ∀ {l : List α}, (∀ x ∈ l, f x = g x) → l.filterMap f = l.filterMap g
+  | [], _ => rfl
+  | a :: t, h => by
+    simp only [List.filterMap_cons, h a List.mem_cons_self,
+      filterMap_congr_mem (fun x hx => h x (List.mem_cons_of_mem a hx))]
+
+/-- Whether an `ORDER BY` has a window function among its keys (#435). -/
+def orderByHasWindow (orderBy : List OrderByItem) : Bool :=
+  orderBy.any fun o => exprHasWindowFn o.expr
+
+@[simp] theorem orderByHasWindow_nil : orderByHasWindow [] = false := rfl
+
+/-- Hidden column holding the value of the `k`-th `ORDER BY` key when it is a window function
+    (#435). -/
+def windowOrderKeyName (k : Nat) : String := s!"__window_orderkey_{k}"
+
+/-- The `ORDER BY` of the plain path with each window key replaced by its hidden column (#435);
+    other keys are unchanged. -/
+def windowOrderByItems (orderBy : List OrderByItem) : List OrderByItem :=
+  ((List.range orderBy.length).zip orderBy).map fun (k, item) =>
+    match item with
+    | .mk e d n => if exprHasWindowFn e then .mk (.col ⟨none, windowOrderKeyName k⟩) d n else item
+
+@[simp] theorem windowOrderByItems_nil : windowOrderByItems [] = [] := rfl
+
+/-- The hidden window-key columns of one row of the plain path (#435): each window key evaluated
+    by the window evaluator over the HAVING-filtered rows, as a window item is. A key that
+    evaluates to an error has no column (it sorts as an error key does). -/
+def windowOrderKeyCols
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (db : Database) (row : Row) (rows : Table) (idx : Nat) (orderBy : List OrderByItem) : Row :=
+  ((List.range orderBy.length).zip orderBy).filterMap fun (k, item) =>
+    if exprHasWindowFn item.expr then
+      (exprWithWindowEval db row rows rows idx item.expr).map fun v => (windowOrderKeyName k, v)
+    else none
+
+/-- Sort-key row of one group (#429, #435): as `groupOrderKeyRow`, against the projected row, so
+    `ORDER BY` a window item's alias sorts by its value; a key with a window function is
+    evaluated by the window evaluator over the rows standing for the groups (`groupWindowEval`),
+    as a window item is. -/
+def groupWindowKeyRow (db : Database)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (orderBy : List OrderByItem) (groups : List (Table × Row)) (idx : Nat)
+    (groupRows : Table) (sampleRow projected : Row) : Row :=
+  let synth := groupWindowRows groups
+  ((List.range orderBy.length).zip orderBy).filterMap fun (k, item) =>
+    (if exprHasWindowFn item.expr then
+      evalExprWithWindowParam (groupWindowEval exprWithAggEval groups) db
+        (synth.getD idx []) synth synth idx item.expr
+     else exprWithAggEval db groupRows (projected ++ sampleRow) item.expr).map
+      fun v => (groupOrderKeyName k, v)
+
+/-- Without window keys, `groupWindowKeyRow` is `groupOrderKeyRow`. -/
+theorem groupWindowKeyRow_of_noWin (db : Database)
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (orderBy : List OrderByItem) (groups : List (Table × Row)) (idx : Nat)
+    (groupRows : Table) (sampleRow projected : Row) (h : orderByHasWindow orderBy = false) :
+    groupWindowKeyRow db exprWithAggEval orderBy groups idx groupRows sampleRow projected =
+    groupOrderKeyRow db exprWithAggEval orderBy groupRows sampleRow projected := by
+  simp only [groupWindowKeyRow, groupOrderKeyRow]
+  apply filterMap_congr_mem
+  intro x hx
+  have hk : exprHasWindowFn x.2.expr = false := by
+    simp only [orderByHasWindow, List.any_eq_false] at h
+    simpa using h x.2 (List.of_mem_zip hx).2
+  simp [hk]
+
+/-- Sort-key rows of a grouped query with window items or window `ORDER BY` keys (#429, #435),
+    aligned with the grouped projection. -/
 def groupWindowOrderKeys (db : Database)
     (exprWithAggEval : Database → Table → Row → Expr → Option Value)
     (orderBy : List OrderByItem) (groups : List (Table × Row)) (projected : Table) : Table :=
-  (groups.zip projected).map fun ((rs, s), p) =>
-    groupOrderKeyRow db exprWithAggEval orderBy rs s p
+  ((List.range groups.length).zip (groups.zip projected)).map fun (i, ((rs, s), p)) =>
+    groupWindowKeyRow db exprWithAggEval orderBy groups i rs s p
 
 /-- Non-partial SELECT evaluator, parameterized by evaluation callbacks.
     Mirrors evalSelectWithContext (Semantics.lean) exactly, with partial def
@@ -817,13 +884,14 @@ def evalSelectCore (db : Database) (outerRow : Row)
     !hasWindowFn sel.items
   let strippedSources := havingRows.map (fun r => r.take (r.length - outerRow.length))
   applyOrderByLimitOffsetAligned compareEval db
-    (if groupedSort || groupedDistinct then groupOrderByItems sel.orderBy else sel.orderBy)
+    (if groupedSort || groupedDistinct then groupOrderByItems sel.orderBy
+     else if orderByHasWindow sel.orderBy then windowOrderByItems sel.orderBy else sel.orderBy)
     sel.limitVal sel.offsetVal
     ((!sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items &&
         !windowAggregates hasWindowFn sel.items sel.having) || groupedSort ||
       groupedDistinct || plainDistinct)
     (if groupedSort then
-      (if hasWindowFn sel.items then
+      (if hasWindowFn sel.items || orderByHasWindow sel.orderBy then
         groupWindowOrderKeys db exprWithAggEval sel.orderBy windowGroups projectedRows
        else
         evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
@@ -831,7 +899,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
      else if groupedDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         (projectedRows.zip
-          (if hasWindowFn sel.items then
+          (if hasWindowFn sel.items || orderByHasWindow sel.orderBy then
             groupWindowOrderKeys db exprWithAggEval sel.orderBy windowGroups projectedRows
            else
             evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
@@ -840,6 +908,11 @@ def evalSelectCore (db : Database) (outerRow : Row)
       (dedupByKey (fun p => Row.valueKey p.1)
         ((havingRows.map fun row => sel.items.flatMap (selectItemEval db row)).zip
           strippedSources)).map Prod.snd
+     else if orderByHasWindow sel.orderBy then
+      -- window ORDER BY keys (#435): each source row carries their values in hidden columns
+      ((List.range havingRows.length).zip havingRows).map fun (i, r) =>
+        r.take (r.length - outerRow.length) ++
+          windowOrderKeyCols exprWithWindowEval db r havingRows i sel.orderBy
      else strippedSources)
     distinctRows
 
@@ -1194,6 +1267,48 @@ theorem groupedOrderKeys_length_aligned (db : Database)
     (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
     (filteredRows : Table)
     (hgb : (!groupBy.isEmpty) = true) :
+    (if hasWindowFn items || orderByHasWindow orderBy then
+      groupWindowOrderKeys db exprWithAggEval orderBy
+        (if !groupBy.isEmpty then
+          groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows
+         else aggSurvivors db exprEval exprWithAggEval items having filteredRows)
+        (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+          exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
+          filteredRows)
+     else
+      evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
+        items groupBy having orderBy filteredRows).length =
+    (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
+      exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
+      filteredRows).length := by
+  have hold := evalSelectGroupOrderKeys_length_aligned db exprEval selectItemEval
+    selectItemWithAggEval exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items
+    groupBy having orderBy filteredRows (by simp only [Bool.not_false, Bool.true_and]; exact hgb)
+  by_cases hw : (hasWindowFn items || orderByHasWindow orderBy) = true
+  · rw [if_pos hw]
+    apply groupWindowOrderKeys_length
+    by_cases hwi : hasWindowFn items = true
+    · simp only [evalSelectProjectDistinct, hgb, hwi, Bool.true_or, Bool.and_self, if_true,
+        Bool.false_eq_true, if_false, projectGroupsWithWindows_length]
+    · -- window keys only (#435): the grouped projection has one row per surviving group
+      rw [← hold, evalSelectGroupOrderKeys_length_survivors]
+      simp [hgb]
+  · rw [if_neg hw]
+    exact hold
+
+/-- `groupedOrderKeys_length_aligned` without window `ORDER BY` keys. -/
+theorem groupedOrderKeys_length_aligned_noWinKey (db : Database)
+    (exprEval : Database → Row → Expr → Option Value)
+    (selectItemEval : Database → Row → SelectItem → List (String × Value))
+    (selectItemWithAggEval : Database → Table → Row → SelectItem → List (String × Value))
+    (exprWithAggEval : Database → Table → Row → Expr → Option Value)
+    (exprWithWindowEval : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (hasWindowFn : List SelectItem → Bool)
+    (hasAgg : List SelectItem → Bool)
+    (items : List SelectItem)
+    (groupBy : List Expr) (having : Option Expr) (orderBy : List OrderByItem)
+    (filteredRows : Table)
+    (hgb : (!groupBy.isEmpty) = true) (hob : orderByHasWindow orderBy = false) :
     (if hasWindowFn items then
       groupWindowOrderKeys db exprWithAggEval orderBy
         (if !groupBy.isEmpty then
@@ -1208,14 +1323,10 @@ theorem groupedOrderKeys_length_aligned (db : Database)
     (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
       filteredRows).length := by
-  by_cases hw : hasWindowFn items = true
-  · rw [if_pos hw]
-    apply groupWindowOrderKeys_length
-    simp only [evalSelectProjectDistinct, hgb, hw, Bool.true_or, Bool.and_self, if_true,
-      Bool.false_eq_true, if_false, projectGroupsWithWindows_length]
-  · rw [if_neg hw]
-    exact evalSelectGroupOrderKeys_length_aligned _ _ _ _ _ _ _ _ false _ _ _ _ _
-      (by simp only [Bool.not_false, Bool.true_and]; exact hgb)
+  have h := groupedOrderKeys_length_aligned db exprEval selectItemEval selectItemWithAggEval
+    exprWithAggEval exprWithWindowEval hasWindowFn hasAgg items groupBy having orderBy
+    filteredRows hgb
+  simpa only [hob, Bool.or_false] using h
 
 /-- Steps 3-9 of the evaluation pipeline (after WHERE filtering).
     Takes filteredRows as input and applies GROUP BY, HAVING, projection,
@@ -1259,12 +1370,13 @@ def evalSelectAfterFilter (db : Database)
       groupedSurvivors db exprEval exprWithAggEval items groupBy having filteredRows
     else aggSurvivors db exprEval exprWithAggEval items having filteredRows
   applyOrderByLimitOffsetAligned compareEval db
-    (if groupedSort || groupedDistinct then groupOrderByItems orderBy else orderBy) limit offset
+    (if groupedSort || groupedDistinct then groupOrderByItems orderBy
+     else if orderByHasWindow orderBy then windowOrderByItems orderBy else orderBy) limit offset
     ((!distinct && groupBy.isEmpty && !hasAgg items &&
         !windowAggregates hasWindowFn items having) || groupedSort || groupedDistinct ||
       plainDistinct)
     (if groupedSort then
-      (if hasWindowFn items then
+      (if hasWindowFn items || orderByHasWindow orderBy then
         groupWindowOrderKeys db exprWithAggEval orderBy windowGroups
           (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
             exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
@@ -1277,7 +1389,7 @@ def evalSelectAfterFilter (db : Database)
         ((evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
             exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
             filteredRows).zip
-          (if hasWindowFn items then
+          (if hasWindowFn items || orderByHasWindow orderBy then
             groupWindowOrderKeys db exprWithAggEval orderBy windowGroups
               (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
                 exprWithAggEval exprWithWindowEval hasWindowFn hasAgg false items groupBy having
@@ -1289,6 +1401,9 @@ def evalSelectAfterFilter (db : Database)
       (dedupByKey (fun p => Row.valueKey p.1)
         ((havingRows.map fun row => items.flatMap (selectItemEval db row)).zip
           strippedSources)).map Prod.snd
+     else if orderByHasWindow orderBy then
+      ((List.range havingRows.length).zip havingRows).map fun (i, r) =>
+        r.take (r.length - ctxLen) ++ windowOrderKeyCols exprWithWindowEval db r havingRows i orderBy
      else strippedSources)
     (evalSelectProjectDistinct db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval exprWithWindowEval hasWindowFn hasAgg distinct items
@@ -1345,10 +1460,15 @@ theorem evalSelectAfterFilter_orderBy_length (db : Database)
           obtain ⟨⟨⟨hd, hg0⟩, ha⟩, hw⟩ := hpd
           subst hd hg0
           simp [evalSelectProjectDistinct, ha, hw]
-        · rw [if_neg hpd, List.length_map]
+        · rw [if_neg hpd]
           have hplain : (!distinct && groupBy.isEmpty && !hasAgg items &&
               !windowAggregates hasWindowFn items having) = true := by
             simpa [hg, hgd, hpd] using huse
+          -- the sources (with hidden window-key columns, #435, or without) are one per row
+          have hsrc : ∀ (b : Bool) (A B : Table), A.length = B.length →
+              (if b = true then A else B).length = B.length := by
+            intro b A B h; cases b <;> simp [h]
+          rw [hsrc _ _ _ (by simp [List.length_zip, List.length_range]), List.length_map]
           exact (evalSelectProjectDistinct_length_aligned _ _ _ _ _ _ _ _
             _ _ _ _ _ hplain).symm
 
@@ -2800,15 +2920,17 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
         p1.length = p2.length →
         exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e)
     (h_gwin : ((!sel.groupBy.isEmpty || hasAgg sel.items ||
-      windowAggregates hasWindowFn sel.items sel.having) && hasWindowFn sel.items) = false) :
+      windowAggregates hasWindowFn sel.items sel.having) && hasWindowFn sel.items) = false)
+    (h_obw : orderByHasWindow sel.orderBy = false) :
     evalSelectCore db r1 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       compareEval exprWithWindowEval hasWindowFn hasAgg sel =
     evalSelectCore db r2 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       compareEval exprWithWindowEval hasWindowFn hasAgg sel := by
   obtain ⟨d, items, from_, wc, gb, hv, ob, lim, off⟩ := sel
   simp only [SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having,
-             SelectStmt.items] at *
-  simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter]
+             SelectStmt.items, SelectStmt.orderBy] at *
+  simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter, h_obw, Bool.or_false,
+    Bool.false_eq_true, ↓reduceIte]
   by_cases hg : (!d && !gb.isEmpty) = true
   · -- Grouped, no DISTINCT (#234): ORDER BY uses per-group key rows. The
     -- GROUP BY keys are row-independent, so there is at most one group, and
@@ -2844,7 +2966,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
       have hd : d = false := by simp only [Bool.and_eq_true] at hg; simpa using hg.1
       have hgb : (!gb.isEmpty) = true := by simp only [Bool.and_eq_true] at hg; exact hg.2
       subst hd
-      exact groupedOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _ hgb
+      exact groupedOrderKeys_length_aligned_noWinKey _ _ _ _ _ _ _ _ _ _ _ _ _ hgb h_obw
   · have hg' : (!d && !gb.isEmpty) = false := by simpa using hg
     by_cases hgd : (d && !gb.isEmpty) = true
     · -- Grouped DISTINCT (#320): the GROUP BY keys are row-independent, so there is at most
@@ -2885,8 +3007,8 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
         have hd : d = true := by simp only [Bool.and_eq_true] at hgd; exact hgd.1
         subst hd
         rw [List.length_map, length_dedupByKey_zip _ _ _
-          (groupedOrderKeys_length_aligned _ _ _ _ _ _ _ _ _ _ _ _ _
-            (by simpa using hgb)).symm,
+          (groupedOrderKeys_length_aligned_noWinKey _ _ _ _ _ _ _ _ _ _ _ _ _
+            (by simpa using hgb) h_obw).symm,
           evalSelectProjectDistinct_true]
     have hgd' : (d && !gb.isEmpty) = false := by simpa using hgd
     simp only [hg', hgd', Bool.false_eq_true, ↓reduceIte, Bool.or_false]
@@ -3058,13 +3180,6 @@ theorem evalFromCore_congr (db : Database) :
 -- ============================================================================
 
 
-theorem filterMap_congr_mem {α β : Type} {f g : α → Option β} :
-    ∀ {l : List α}, (∀ x ∈ l, f x = g x) → l.filterMap f = l.filterMap g
-  | [], _ => rfl
-  | a :: t, h => by
-    simp only [List.filterMap_cons, h a List.mem_cons_self,
-      filterMap_congr_mem (fun x hx => h x (List.mem_cons_of_mem a hx))]
-
 theorem applyOrderByLimitOffsetAligned_congr
     (cA cB : Database → Row → Row → List OrderByItem → Bool)
     (db : Database) (ob : List OrderByItem) (lim off : Option Nat) (us : Bool) (src rows : Table)
@@ -3173,9 +3288,32 @@ theorem projectGroupsWithWindows_congr (db : Database)
 theorem groupWindowOrderKeys_congr (db : Database)
     (aA aB : Database → Table → Row → Expr → Option Value) (ob : List OrderByItem)
     (hOK : ∀ o ∈ ob, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr)
-    (gs : List (Table × Row)) (projected : Table) :
+    (gs : List (Table × Row))
+    (hOW : ∀ o ∈ ob, ∀ r p sp i,
+      evalExprWithWindowParam (groupWindowEval aA gs) db r p sp i o.expr =
+      evalExprWithWindowParam (groupWindowEval aB gs) db r p sp i o.expr)
+    (projected : Table) :
     groupWindowOrderKeys db aA ob gs projected = groupWindowOrderKeys db aB ob gs projected := by
-  simp only [groupWindowOrderKeys, groupOrderKeyRow_congr db aA aB ob hOK]
+  simp only [groupWindowOrderKeys, groupWindowKeyRow]
+  apply List.map_congr_left
+  intro x _
+  apply filterMap_congr_mem
+  intro y hy
+  have hm := (List.of_mem_zip hy).2
+  by_cases hw : exprHasWindowFn y.2.expr = true
+  · simp only [hw, if_true, hOW _ hm]
+  · simp only [hw, Bool.false_eq_true, if_false, hOK _ hm]
+
+/-- The hidden window-key columns only use the window evaluator on the `ORDER BY` keys (#435). -/
+theorem windowOrderKeyCols_congr
+    (wA wB : Database → Row → Table → Table → Nat → Expr → Option Value)
+    (db : Database) (row : Row) (rows : Table) (idx : Nat) (ob : List OrderByItem)
+    (h : ∀ o ∈ ob, ∀ r p sp i, wA db r p sp i o.expr = wB db r p sp i o.expr) :
+    windowOrderKeyCols wA db row rows idx ob = windowOrderKeyCols wB db row rows idx ob := by
+  simp only [windowOrderKeyCols]
+  apply filterMap_congr_mem
+  intro y hy
+  rw [h _ (List.of_mem_zip hy).2]
 
 
 /-- `evalSelectCore` congruence over its callbacks: two callback tuples that
@@ -3207,7 +3345,13 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     (hSIA1 : ∀ item ∈ sel.items, ∀ rs r, siaA db rs r item = siaB db rs r item)
     (hGW : ∀ e a, SelectItem.exprItem e a ∈ sel.items → ∀ gs r p sp i,
       evalExprWithWindowParam (groupWindowEval aA gs) db r p sp i e =
-      evalExprWithWindowParam (groupWindowEval aB gs) db r p sp i e) :
+      evalExprWithWindowParam (groupWindowEval aB gs) db r p sp i e)
+    (hOWp : ∀ o ∈ sel.orderBy, ∀ r p sp i, wA db r p sp i o.expr = wB db r p sp i o.expr)
+    (hOWg : ∀ o ∈ sel.orderBy, ∀ gs r p sp i,
+      evalExprWithWindowParam (groupWindowEval aA gs) db r p sp i o.expr =
+      evalExprWithWindowParam (groupWindowEval aB gs) db r p sp i o.expr)
+    (hC3 : ∀ r1 r2, cA db r1 r2 (windowOrderByItems sel.orderBy) =
+      cB db r1 r2 (windowOrderByItems sel.orderBy)) :
     evalSelectCore db outerRow fA eA siA siaA aA cA wA hasWindowFn hasAgg sel =
     evalSelectCore db outerRow fB eB siB siaB aB cB wB hasWindowFn hasAgg sel := by
   obtain ⟨d, items, from_, w, gb, hv, ob, lim, off⟩ := sel
@@ -3223,15 +3367,19 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
       (fun e a ha => hEW e a ha r p sp i)
   have hOrd : ∀ (us : Bool) (src rows : Table),
       applyOrderByLimitOffsetAligned cA db
-        (if (!d && !gb.isEmpty || d && !gb.isEmpty) = true then groupOrderByItems ob else ob)
+        (if (!d && !gb.isEmpty || d && !gb.isEmpty) = true then groupOrderByItems ob
+         else if orderByHasWindow ob = true then windowOrderByItems ob else ob)
         lim off us src rows =
       applyOrderByLimitOffsetAligned cB db
-        (if (!d && !gb.isEmpty || d && !gb.isEmpty) = true then groupOrderByItems ob else ob)
+        (if (!d && !gb.isEmpty || d && !gb.isEmpty) = true then groupOrderByItems ob
+         else if orderByHasWindow ob = true then windowOrderByItems ob else ob)
         lim off us src rows := by
     intro us src rows
     split
     · exact applyOrderByLimitOffsetAligned_congr cA cB db _ lim off us src rows hC2
-    · exact applyOrderByLimitOffsetAligned_congr cA cB db _ lim off us src rows hC1
+    · split
+      · exact applyOrderByLimitOffsetAligned_congr cA cB db _ lim off us src rows hC3
+      · exact applyOrderByLimitOffsetAligned_congr cA cB db _ lim off us src rows hC1
   have hFrom : (match from_ with | some f => fA db f | none => [[]]) =
       (match from_ with | some f => fB db f | none => [[]]) := by
     cases from_ with
@@ -3243,7 +3391,8 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     groupedSurvivors_congr db eA eB aA aB items gb hv _ hG hHa hB,
     aggSurvivors_congr db eA eB aA aB items hv _ hHa hB,
     projectGroupsWithWindows_congr db siaA siaB aA aB items _ hSIA1 (fun e a h => hGW e a h _),
-    groupWindowOrderKeys_congr db aA aB ob hOK]
+    groupWindowOrderKeys_congr db aA aB ob hOK _ (fun o ho => hOWg o ho _),
+    windowOrderKeyCols_congr wA wB db _ _ _ ob hOWp]
   erw [hOrd]
   cases from_ <;> cases w <;> cases hv <;>
     (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>
