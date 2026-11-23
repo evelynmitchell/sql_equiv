@@ -68,7 +68,10 @@ silent pass. Disagreements where DuckDB also disagrees with sqlite (or rejects
 the query) go to Postgres, the standards tiebreaker. If Postgres gives sqlite's
 answer the query is a failure of ours (**tiebroken against ours**); otherwise it is
 labelled **engine-divergent**: reported apart from failures of ours, but still not
-counted as agreement.
+counted as agreement. The report leads with the **exact** multiset-match rate, and the
+tolerated categories are added after it; exact matches and the combined count are
+ratcheted separately (#266), so a query that slips from an exact match into a tolerated
+category fails CI.
 
 ### 4. Changing a row
 

@@ -106,9 +106,9 @@
 - **`List.map_congr_left` bridges partial applications in `List.map`.** When `simp only [bridge]` can't rewrite inside `args.map (evalExprWithDb db row)`, use `congrArg (evalFunc name) (List.map_congr_left fun e _ => bridge.symm)`.
 
 ## Next Session TODO
-- **State (23 Nov 2026):** 0 axioms, 0 `sorry`, 711 theorems in `SqlEquiv` (`tools/count_axioms_theorems.py`); trust base clean; every evaluator total (#278). The old axiom batches and blocked join axioms below are history.
-- **Open issues:** #445 and #446 (known divergences, low priority), #270 (quiet errors: options 2 to 4 undecided), #266 (exact-match Spider ratchet), #245 (random database generator), #298 and #287 (typed core), #202, #210, #211.
-- **Spider:** parse 563, eval 559, elaborate 520, proved 519 of 564; the rest are left out by decision (#413 closed; 44 type-error queries).
+- **State (23 Nov 2026):** 0 axioms, 0 `sorry`, 714 theorems in `SqlEquiv` (`tools/count_axioms_theorems.py`); trust base clean; every evaluator total (#278). The old axiom batches and blocked join axioms below are history.
+- **Open issues:** #445 and #446 (known divergences, low priority), #245 (random database generator), #298 and #287 (typed core), #202, #210, #211. Done 23 Nov: #270 (strict error mode per dialect, `SqlEquiv/Strict.lean`, registry row 23) and #448 (its gaps; bind-time errors stay documented by decision), #266 (two Spider eval ratchets).
+- **Spider:** parse 563, eval 559 (exact 520, both ratcheted), elaborate 520, proved 519 of 564; the rest are left out by decision (#413 closed; 44 type-error queries).
 - **evalFrom .subquery now passes through** (PR #147). No column re-qualification.
 - **`rw` fails when bridge axiom LHS symbol appears in RHS arguments.** Use `Eq.trans` instead. Bridge axiom must be placed AFTER the mutual block defining the partial def.
 - **For evalSelectCore, factor large functions into composable helpers.** `applyOrderByLimitOffset` + `evalSelectProjectDistinct` + `evalSelectAfterFilter` makes proofs tractable. `evalSelectCore_eq_afterFilter` proves by `rfl` since all are `def`.
