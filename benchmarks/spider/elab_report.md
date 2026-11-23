@@ -12,6 +12,9 @@ Schemas come from `dev_tables.json`: names are lowercased and references folded 
 lowercase (sqlite names are case-insensitive), `number` columns are `int`, `text`/`time`/
 `others` are `text`. A `typeError` is a query that is ill-typed under the declared column
 types (sqlite accepts it through type affinity, e.g. a `text` column compared with `32`).
+The `typeError` queries are left out by decision (23 Nov 2026): they are ill-typed under
+Spider's declared schema, and the alternatives (typing columns from the data, or sqlite
+affinity coercions in the elaborator) were declined.
 
 ## Elaborator-correctness coverage (#352)
 
