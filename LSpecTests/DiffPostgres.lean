@@ -167,6 +167,11 @@ private def parsePostgresOutput (output : String) : Table :=
 -- Result comparison (multiset semantics, qualifier-insensitive)
 -- ============================================================================
 
+/-- Our result under the postgres dialect's error mode (#270, registry row 23): an evaluation
+    error the dialect raises fails the statement. -/
+private def ourStrict (stmt : Stmt) : Except String Table :=
+  (evalStmtIn Dialect.postgres.config.errors db stmt).map fun r => r.2.getD []
+
 private def stripQualifier (name : String) : String :=
   (name.splitOn ".").getLastD name
 
@@ -198,18 +203,22 @@ private def diffTest (description : String) (sql : String) : IO (String × Bool)
     IO.eprintln s!"  Our parser failed for '{description}': {e}"
     return (description, false)
   | .ok stmt =>
-    let ourResult := ((evalStmt db stmt).2).getD []
-    match ← runPostgresRaw sql with
-    | .error err =>
-      IO.eprintln s!"  Postgres error for '{description}': {err}"
+    match ourStrict stmt with
+    | .error e =>
+      IO.eprintln s!"  Our strict evaluation failed for '{description}': {e}"
       return (description, false)
-    | .ok output =>
-      let pgResult := parsePostgresOutput output
-      if sortTable ourResult == sortTable pgResult then
-        return (description, true)
-      else
-        IO.eprintln s!"  Mismatch for '{description}': ours={repr (sortTable ourResult)} postgres={repr (sortTable pgResult)}"
+    | .ok ourResult =>
+      match ← runPostgresRaw sql with
+      | .error err =>
+        IO.eprintln s!"  Postgres error for '{description}': {err}"
         return (description, false)
+      | .ok output =>
+        let pgResult := parsePostgresOutput output
+        if sortTable ourResult == sortTable pgResult then
+          return (description, true)
+        else
+          IO.eprintln s!"  Mismatch for '{description}': ours={repr (sortTable ourResult)} postgres={repr (sortTable pgResult)}"
+          return (description, false)
 
 /-- Both sides refuse the query: our parser (postgres dialect) and Postgres. -/
 private def diffRejects (description : String) (sql : String) : IO (String × Bool) := do
@@ -231,16 +240,20 @@ private def diffDiverges (description : String) (sql : String) : IO (String × B
     IO.eprintln s!"  Our parser failed for '{description}': {e}"
     return (description, false)
   | .ok stmt =>
-    let ourResult := ((evalStmt db stmt).2).getD []
-    match ← runPostgresRaw sql with
-    | .error err =>
-      IO.eprintln s!"  Postgres error for '{description}': {err}"
+    match ourStrict stmt with
+    | .error e =>
+      IO.eprintln s!"  Our strict evaluation failed for '{description}': {e}"
       return (description, false)
-    | .ok output =>
-      let theirs := parsePostgresOutput output
-      if sortTable ourResult != sortTable theirs then return (description, true)
-      IO.eprintln s!"  Expected a divergence for '{description}', both gave {repr (sortTable theirs)}"
-      return (description, false)
+    | .ok ourResult =>
+      match ← runPostgresRaw sql with
+      | .error err =>
+        IO.eprintln s!"  Postgres error for '{description}': {err}"
+        return (description, false)
+      | .ok output =>
+        let theirs := parsePostgresOutput output
+        if sortTable ourResult != sortTable theirs then return (description, true)
+        IO.eprintln s!"  Expected a divergence for '{description}', both gave {repr (sortTable theirs)}"
+        return (description, false)
 
 /-- `DISTINCT … LIMIT 1` without `ORDER BY` (registry T18): which distinct row comes first is the
     implementation's choice. `SqlEquiv` keeps first occurrences, as sqlite does; the typed core keeps
@@ -274,6 +287,21 @@ private def distinctLimitTest (description : String) (distinctSql : String) :
   | _, _ =>
     IO.eprintln s!"  Our parser failed for '{description}'"
     return (description, false)
+
+/-- Both sides fail at evaluation time (#270, registry row 23): our parser accepts the query,
+    our strict evaluation reports an error, and Postgres errors. -/
+private def diffErrors (description : String) (sql : String) : IO (String × Bool) := do
+  let ours := match parse sql (dialect := .postgres) with
+    | .error _ => false
+    | .ok stmt => match ourStrict stmt with
+      | .error _ => true
+      | .ok _ => false
+  let theirs := match ← runPostgresRaw sql with
+    | .error _ => true
+    | .ok _ => false
+  unless ours && theirs do
+    IO.eprintln s!"  Error mismatch for '{description}': ours errors={ours} postgres errors={theirs}"
+  return (description, ours && theirs)
 
 private def postgresAvailable : IO Bool := do
   try
@@ -599,6 +627,45 @@ def runAllTests : IO TestSeq := do
       "SELECT Élan, 日本 AS a€b FROM Été WHERE Élan > 1",
     diffTest "non-ASCII table alias as qualifier"
       "SELECT é.Élan FROM Été AS é WHERE é.日本 < 25",
+    -- Evaluation errors (#270, registry row 23): Postgres aborts the statement
+    diffErrors "division by zero in SELECT"
+      "SELECT id / (age - 30) AS x FROM users",
+    diffErrors "modulo by zero in SELECT"
+      "SELECT id % (age - 30) AS x FROM users",
+    diffErrors "division by zero in WHERE"
+      "SELECT id FROM users WHERE id / (age - 30) > 0",
+    diffErrors "division by zero in join ON"
+      "SELECT u.id FROM users u JOIN dups d ON u.id / (d.x - 1) = 1",
+    diffErrors "division by zero in an aggregate argument"
+      "SELECT SUM(id / (age - 30)) AS s FROM users",
+    diffErrors "division by zero in HAVING"
+      "SELECT department, COUNT(*) AS c FROM users GROUP BY department HAVING SUM(age) / (COUNT(*) - 2) > 0",
+    diffErrors "division by zero in a GROUP BY key"
+      "SELECT COUNT(*) AS c FROM users GROUP BY id / (age - 30)",
+    diffErrors "division by zero in ORDER BY"
+      "SELECT id FROM users ORDER BY id / (age - 30)",
+    diffErrors "division by zero in a derived table"
+      "SELECT x FROM (SELECT id / (age - 30) AS x FROM users) d",
+    diffErrors "division by zero in a set-operation branch"
+      "SELECT id FROM users UNION SELECT id / (age - 30) FROM users",
+    diffErrors "division by zero in a CTE body"
+      "WITH c AS (SELECT id / (age - 30) AS x FROM users) SELECT x FROM c",
+    diffErrors "string plus integer in SELECT"
+      "SELECT name + 1 AS x FROM users",
+    diffErrors "string compared with integer in WHERE"
+      "SELECT id FROM users WHERE name > 1",
+    diffErrors "SUM over strings"
+      "SELECT SUM(name) AS s FROM users",
+    diffTest "a lazy CASE guards a division by zero"
+      "SELECT id, CASE WHEN age = 30 THEN NULL ELSE id % (age - 30) END AS x FROM users",
+    diffTest "no error past LIMIT (no ORDER BY)"
+      "SELECT id / (id - 5) AS x FROM users LIMIT 4",
+    diffErrors "rows OFFSET skips are evaluated"
+      "SELECT id / (id - 2) AS x FROM users LIMIT 1 OFFSET 2",
+    diffErrors "DISTINCT evaluates every row"
+      "SELECT DISTINCT id / (id - 5) AS x FROM users LIMIT 1",
+    diffTest "no error on the rows LIMIT keeps"
+      "SELECT id / (age - 30) AS x FROM users WHERE id > 1 ORDER BY id LIMIT 2",
     diffTest "no WHERE returns all" "SELECT * FROM users"
   ].mapM id
   return results.foldr (fun (name, passed) acc => test name passed $ acc)

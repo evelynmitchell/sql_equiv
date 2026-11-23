@@ -99,7 +99,7 @@ def evalQuery (sql : String) : Except String Table :=
     | none => .error "statement produced no result table"
 
 /-- Parse for a dialect, then evaluate. -/
-def evalQueryIn (dialect : Dialect) (sql : String) : Except String Table :=
+def evalQueryDialect (dialect : Dialect) (sql : String) : Except String Table :=
   match parse sql (dialect := dialect) with
   | .error e => .error e
   | .ok stmt =>
@@ -133,7 +133,7 @@ def testNameOrder (testName : String) (ordering : NullOrdering) (sql : String)
 /-- First value of the result, parsed for a dialect -/
 def testContainsValueIn (name : String) (dialect : Dialect) (sql : String) (expected : Value) :
     TestResult :=
-  match evalQueryIn dialect sql with
+  match evalQueryDialect dialect sql with
   | .error e => .fail name s!"Parse/eval error: {e}"
   | .ok result =>
     match result.head?.bind (·.head?) with
@@ -468,7 +468,7 @@ def limitOffsetTests : List TestResult := [
 /-- Row count of a query parsed for a dialect -/
 def testRowCountIn (name : String) (dialect : Dialect) (sql : String) (expected : Nat) :
     TestResult :=
-  match evalQueryIn dialect sql with
+  match evalQueryDialect dialect sql with
   | .error e => .fail name s!"Parse/eval error: {e}"
   | .ok result =>
     if result.length == expected then .pass name
@@ -646,7 +646,7 @@ def registryPinTests : List TestResult := [
    | bad => .fail "distinct_order_by_selected_accepted" s!"rejected: {bad}"),
   -- In the sqlite and duckdb dialects each distinct row sorts by the key of its first source
   -- row, as the engines do (#320): Sales, Marketing, Engineering.
-  (match evalQueryIn .sqlite "SELECT DISTINCT department FROM users ORDER BY age" with
+  (match evalQueryDialect .sqlite "SELECT DISTINCT department FROM users ORDER BY age" with
    | .ok t =>
      let col := t.map fun row => ((row.find? (·.1 == "department")).map (·.2)).getD (.null none)
      if col == [.string "Sales", .string "Marketing", .string "Engineering"]
@@ -654,7 +654,7 @@ def registryPinTests : List TestResult := [
      else .fail "distinct_order_by_unselected_first_row" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_unselected_first_row" e),
   -- The issue's example: `a = 1` sorts by its first row's `b = 5`, not MIN 1 (sqlite: 2 3 1)
-  (match evalQueryIn .sqlite ("SELECT DISTINCT a FROM (SELECT 1 AS a, 5 AS b UNION ALL " ++
+  (match evalQueryDialect .sqlite ("SELECT DISTINCT a FROM (SELECT 1 AS a, 5 AS b UNION ALL " ++
       "SELECT 2, 3 UNION ALL SELECT 1, 1 UNION ALL SELECT 3, 4) AS t ORDER BY b") with
    | .ok t =>
      let col := t.map fun row => ((row.find? (·.1 == "a")).map (·.2)).getD (.null none)
@@ -662,7 +662,7 @@ def registryPinTests : List TestResult := [
      else .fail "distinct_order_by_first_row_not_min" s!"{col.map (·.toSql)}"
    | .error e => .fail "distinct_order_by_first_row_not_min" e),
   -- DISTINCT over GROUP BY sorts by the first group's key (duckdb: Sales, Marketing, Engineering)
-  (match evalQueryIn .duckdb
+  (match evalQueryDialect .duckdb
       "SELECT DISTINCT department FROM users GROUP BY department, age ORDER BY age" with
    | .ok t =>
      let col := t.map fun row => ((row.find? (·.1 == "department")).map (·.2)).getD (.null none)
@@ -931,7 +931,7 @@ def distinctAggTests : List TestResult := [
   -- …and in HAVING the error drops the group (sqlite keeps it)
   testRowCount "minmax_mixed_error_in_having"
     "SELECT COUNT(*) FROM users HAVING MAX(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" 0,
-  (match evalQueryIn .sqlite
+  (match evalQueryDialect .sqlite
       "SELECT COUNT(*) FROM users HAVING MAX(CASE WHEN age > 26 THEN name ELSE age END) IS NOT NULL" with
    | .ok rows => if rows.length == 1 then .pass "minmax_mixed_sqlite_in_having"
                  else .fail "minmax_mixed_sqlite_in_having" s!"expected 1 row, got {rows.length}"
@@ -1679,6 +1679,90 @@ def caseInsensitiveTests : List TestResult := [
 ]
 
 -- ============================================================================
+-- Evaluation errors per dialect (#270, registry row 23)
+-- ============================================================================
+
+/-- Parse for a dialect, then evaluate under the dialect's error mode. -/
+def evalStrict (dialect : Dialect) (sql : String) : Except String Table :=
+  match parse sql (dialect := dialect) with
+  | .error e => .error s!"parse error: {e}"
+  | .ok stmt =>
+    match evalStmtIn dialect.config.errors testDb stmt with
+    | .ok (_, some t) => .ok t
+    | .ok (_, none) => .error "statement produced no result table"
+    | .error e => .error e
+
+/-- `none`: the statement succeeds; `some what`: it fails with an error in clause `what`. -/
+def testStrict (name : String) (dialect : Dialect) (sql : String) (expected : Option String) :
+    TestResult :=
+  match evalStrict dialect sql, expected with
+  | .ok _, none => .pass name
+  | .ok _, some what => .fail name s!"expected an error in {what}, got rows"
+  | .error e, none => .fail name s!"expected rows, got: {e}"
+  | .error e, some what =>
+    if e == s!"evaluation error in {what}" then .pass name
+    else .fail name s!"expected an error in {what}, got: {e}"
+
+def strictErrorTests : List TestResult := [
+  testStrict "strict: division by zero in SELECT (postgres)" .postgres
+    "SELECT id / (age - 30) AS x FROM users" (some "SELECT"),
+  testStrict "strict: division by zero in SELECT (standard)" .standard
+    "SELECT id / (age - 30) AS x FROM users" (some "SELECT"),
+  testStrict "quiet: division by zero is NULL (sqlite)" .sqlite
+    "SELECT id / (age - 30) AS x FROM users" none,
+  testStrict "strictDivZeroNull: division by zero is not an error (duckdb)" .duckdb
+    "SELECT id / (age - 30) AS x FROM users" none,
+  testStrict "strictDivZeroNull: modulo by zero is not an error (duckdb)" .duckdb
+    "SELECT id % (age - 30) AS x FROM users" none,
+  testStrict "strictDivZeroNull: a type error still is (duckdb)" .duckdb
+    "SELECT name + 1 AS x FROM users" (some "SELECT"),
+  testStrict "strictDivZeroNull: a string divisor still is (duckdb)" .duckdb
+    "SELECT id / name AS x FROM users" (some "SELECT"),
+  testStrict "strict: WHERE" .postgres
+    "SELECT id FROM users WHERE name > 1" (some "WHERE"),
+  testStrict "strict: FALSE AND <error> is FALSE, no error" .postgres
+    "SELECT id FROM users WHERE FALSE AND id / 0 > 1" none,
+  testStrict "strict: lazy CASE, no error" .postgres
+    "SELECT CASE WHEN age = 30 THEN 0 ELSE id / (age - 30) END AS x FROM users" none,
+  testStrict "strict: WHERE drops the row before SELECT sees it" .postgres
+    "SELECT id / (age - 30) AS x FROM users WHERE age <> 30" none,
+  testStrict "strict: join ON" .postgres
+    "SELECT u.id FROM users u JOIN orders o ON u.id / (o.amount - o.amount) = 1" (some "ON"),
+  testStrict "strict: GROUP BY key" .postgres
+    "SELECT COUNT(*) AS c FROM users GROUP BY id / (age - 30)" (some "GROUP BY"),
+  testStrict "strict: aggregate argument" .postgres
+    "SELECT SUM(id / (age - 30)) AS s FROM users" (some "aggregate argument"),
+  testStrict "strict: aggregate argument under GROUP BY" .postgres
+    "SELECT department, MAX(id / (age - 30)) AS m FROM users GROUP BY department" (some "aggregate argument"),
+  testStrict "strict: HAVING" .postgres
+    "SELECT department FROM users GROUP BY department HAVING SUM(age) / (COUNT(*) - 2) > 0" (some "HAVING"),
+  testStrict "strict: select item of a surviving group" .postgres
+    "SELECT department, SUM(age) / (COUNT(*) - 2) AS r FROM users GROUP BY department" (some "SELECT"),
+  testStrict "strict: select item of a group HAVING removes, no error" .postgres
+    "SELECT department, SUM(age) / (COUNT(*) - 2) AS r FROM users GROUP BY department HAVING COUNT(*) = 1" none,
+  testStrict "strict: ORDER BY key" .postgres
+    "SELECT id FROM users ORDER BY id / (age - 30)" (some "ORDER BY"),
+  testStrict "strict: derived table" .postgres
+    "SELECT x FROM (SELECT id / (age - 30) AS x FROM users) d" (some "SELECT"),
+  testStrict "strict: set-operation branch" .postgres
+    "SELECT id FROM users UNION SELECT id / (age - 30) FROM users" (some "SELECT"),
+  testStrict "strict: CTE body" .postgres
+    "WITH c AS (SELECT id / (age - 30) AS x FROM users) SELECT x FROM c" (some "SELECT"),
+  testStrict "strict: rows after LIMIT are not evaluated" .postgres
+    "SELECT id / (id - 5) AS x FROM users LIMIT 4" none,
+  testStrict "strict: rows OFFSET skips are evaluated" .postgres
+    "SELECT id / (age - 30) AS x FROM users LIMIT 2 OFFSET 2" (some "SELECT"),
+  testStrict "strict: with DISTINCT every row is" .postgres
+    "SELECT DISTINCT id / (id - 5) AS x FROM users LIMIT 1" (some "SELECT"),
+  testStrict "strict: with ORDER BY every row is" .postgres
+    "SELECT id / (age - 30) AS x FROM users ORDER BY id LIMIT 2 OFFSET 2" (some "SELECT"),
+  testStrict "strict gap (#448): an error inside an expression subquery is not seen" .postgres
+    "SELECT id FROM users WHERE id IN (SELECT id / 0 FROM users)" none,
+  testStrict "strict gap (#448): a type error on no evaluated row is not seen (engines reject at bind time)" .postgres
+    "SELECT id FROM users WHERE FALSE AND name > 1" none
+]
+
+-- ============================================================================
 -- Test Runner
 -- ============================================================================
 
@@ -1691,7 +1775,8 @@ def allSemanticsTests : List TestResult :=
   setOpSubqueryTests ++
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
-  windowTests ++ groupedWindowTests ++ errorPathTests ++ caseInsensitiveTests
+  windowTests ++ groupedWindowTests ++ errorPathTests ++ caseInsensitiveTests ++
+  strictErrorTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
