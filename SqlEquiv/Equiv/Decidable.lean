@@ -1226,6 +1226,15 @@ private theorem evalSelectCore_ground_outerRow_eq
       simpa using exprHasWindowFn_false_of_isGround _ e (Nat.lt_succ_self _)
         (h_item_ground _ hitem e alias_ rfl)
     simp only [SelectStmt.items, hw, Bool.and_false]
+  -- h_obw (#435): ground ORDER BY keys have no window function
+  · have h_order_ok := hg.2
+    simp only [SelectStmt.orderBy, orderByHasWindow, List.any_eq_false]
+    intro o ho
+    have hf := foldl_and_true_forall_local h_order_ok ho
+    cases o with
+    | mk e d' n =>
+      simp only at hf
+      simpa [OrderByItem.expr] using exprHasWindowFn_false_of_isGround _ e (Nat.lt_succ_self _) hf
 
 /-- Bridge: if a SubQuery is ground, evalSubQueryWithContext is db row-independent (#218).
     Strong induction on sizeOf: a compound is handled by congruence of applySetOp

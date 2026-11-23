@@ -1004,6 +1004,38 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
     simp only [SelectStmt.orderBy] at ho
     exact evalExprWithAggParam_congr _ ee N hE db rs r o.expr.size o.expr (Nat.le_refl _)
       (hOb o ho)
+  case hOWp =>
+    -- window ORDER BY keys (#435)
+    intro o ho r p sp i
+    simp only [SelectStmt.orderBy] at ho
+    exact evalExprWithWindowParam_congr _ ee N hE db r p sp i o.expr.size o.expr (Nat.le_refl _)
+      (hOb o ho)
+  case hOWg =>
+    intro o ho gs r p sp i
+    simp only [SelectStmt.orderBy] at ho
+    apply evalExprWithWindowParam_congr _ _ N _ db r p sp i o.expr.size o.expr (Nat.le_refl _)
+      (hOb o ho)
+    intro e' he' db' r'
+    simp only [groupWindowEval]
+    split
+    · exact evalExprWithAggParam_congr _ ee N hE db' _ _ e'.size e' (Nat.le_refl _) he'
+    · rfl
+  case hC3 =>
+    intro r1 r2
+    apply compareByOrderItemsParam_congr _ ee N hE db r1 r2
+    intro o ho
+    simp only [SelectStmt.orderBy, windowOrderByItems, List.mem_map] at ho
+    obtain ⟨⟨k, item⟩, hk, rfl⟩ := ho
+    have hitem := (List.of_mem_zip hk).2
+    have h1 := OrderByItem.size_le_sizeList_of_mem hitem
+    have h2 := OrderByItem.size_pos item
+    have h3 := hOb item hitem
+    cases item with
+    | mk e d n =>
+      simp only []
+      split
+      · simp [OrderByItem.expr, Expr.size]; omega
+      · exact h3
 
 theorem evalSelect_eq_evalSelectCore (db : Database) (sel : SelectStmt) :
   evalSelect db sel = evalSelectCore db []

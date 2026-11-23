@@ -1722,10 +1722,14 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
   let itemExprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none)
   if itemExprs.any exprNestsWindow then
     Parser.fail "window function calls cannot be nested"
-  -- #435: a window function as an ORDER BY key (also by position) is not evaluated yet; it
-  -- would quietly leave the rows unsorted. Ordering by an item's alias works.
-  if orderBy.any (fun | .mk e _ _ => exprMentionsWindow e) then
-    Parser.fail ("window function in ORDER BY is not supported yet (#435); " ++
+  -- #435: a window function as an ORDER BY key (also by position) is evaluated, as in sqlite,
+  -- DuckDB and Postgres; nested windows there are an error, as in items. With DISTINCT it stays
+  -- rejected (decided 23 Nov 2026): DISTINCT sorts on the distinct rows, where the key is not
+  -- evaluated. Ordering by the window item's alias works.
+  if orderBy.any (fun | .mk e _ _ => exprNestsWindow e) then
+    Parser.fail "window function calls cannot be nested"
+  if distinct && orderBy.any (fun | .mk e _ _ => exprMentionsWindow e) then
+    Parser.fail ("for SELECT DISTINCT, a window function in ORDER BY is not supported; " ++
       "give the window item an alias and order by the alias")
 
   if groupedWindowUnsupported items groupBy having orderBy then
