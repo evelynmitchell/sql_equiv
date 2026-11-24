@@ -49,8 +49,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TARGET = Path("SqlEquiv/SemanticsBase.lean")
-# `Value.toBool` is not mutated: nothing calls it (the first trial run found it: every mutant
-# survived), so its mutants cannot be killed.
+# (`Value.toBool` was here until the first trial run found every one of its mutants surviving:
+# nothing called it. It was deleted.)
 SITES = ["Value.eq", "Value.compare", "evalBinOp", "evalUnaryOp", "evalFunc"]
 REPORT = Path("benchmarks/mutation/report.md")
 RESULTS = Path("benchmarks/mutation/results.json")
@@ -151,9 +151,9 @@ def value_mutation(rhs: str) -> tuple[str, str] | None:
 def mutants_for(site: str, idx: int, pat: str, rhs: str, last: int) -> list[Mutant]:
     out: list[tuple[str, str]] = []
     if rhs == "none":
-        # the Value-level sites return `Option Value`; Value.eq/toBool `Option Bool` and
+        # the Value-level sites return `Option Value`; Value.eq `Option Bool` and
         # Value.compare `Option Ordering`, which have no NULL: an error becomes a result
-        if site in ("Value.eq", "Value.toBool"):
+        if site == "Value.eq":
             out.append(("error-to-value", "some false"))
         elif site == "Value.compare":
             out.append(("error-to-value", "some .eq"))

@@ -129,14 +129,6 @@ def Value.compare : Value → Value → Option Ordering
   | .decimal u s, .int b => some (Ord.compare u (b * 10 ^ s))
   | _, _ => none
 
-/-- Convert value to boolean for WHERE clauses -/
-def Value.toBool : Value → Option Bool
-  | .bool b => some b
-  | .null _ => none
-  | .int n => some (n != 0)
-  | .decimal u _ => some (u != 0)
-  | _ => none
-
 -- ============================================================================
 -- Numeric Aggregation Helpers (#201)
 -- ============================================================================

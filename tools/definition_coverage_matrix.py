@@ -2,8 +2,8 @@
 """
 Definition Coverage Matrix Tool for sql_equiv Lean 4 project.
 
-Analyzes evalBinOp, evalUnaryOp, evalFunc, Value.eq, Value.compare, and
-Value.toBool to produce matrices showing which type combinations have
+Analyzes evalBinOp, evalUnaryOp, evalFunc, Value.eq and Value.compare
+(Value.toBool, unused, was removed in #210) to produce matrices showing which type combinations have
 explicit match arms, which fall through to wildcards, and which may be
 missing SQL semantics.
 
@@ -1305,9 +1305,6 @@ def run(args: argparse.Namespace) -> None:
     s, e = find_function_range(source, "Value.compare")
     value_compare_arms = parse_function_arms(source, "Value.compare", s, e)
 
-    s, e = find_function_range(source, "Value.toBool")
-    value_tobool_arms = parse_function_arms(source, "Value.toBool", s, e)
-
     # Build matrices
     matrices: list[CoverageMatrix] = []
 
@@ -1335,10 +1332,6 @@ def run(args: argparse.Namespace) -> None:
     if not filter_func or filter_func == "Value.compare":
         if not filter_op:
             matrices.append(build_value_func_matrix(source, "Value.compare", value_compare_arms))
-
-    if not filter_func or filter_func == "Value.toBool":
-        if not filter_op:
-            matrices.append(build_value_func_matrix(source, "Value.toBool", value_tobool_arms))
 
     if not filter_func or filter_func == "evalFunc":
         func_matrices = build_evalfunc_matrix(source, func_arms)
