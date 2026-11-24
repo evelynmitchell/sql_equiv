@@ -206,9 +206,10 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       **519/564 (92.0%)**, up from 479
 - [ ] Phase 9: retire the untyped semantics (#298), option B (port every feature first; plan
   below, chosen 24 Nov 2026)
-  - [ ] 9.0 Decisions D1–D3, D5 and the typed-coverage metric (#458)
+  - [ ] 9.0 Decisions and the typed-coverage metric (#458): metric, Postgres harness, D1–D4
+    done (24 Nov 2026); D5 open
   - [ ] 9.4a Spike for EXISTS and correlated subqueries, then go/no-go (#462)
-  - [ ] 9.1 Scalar functions (#459)
+  - [ ] 9.1a `SELECT` without `FROM`; 9.1 scalar functions, `IN` over non-literals (#459)
   - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
   - [ ] 9.3 Outer joins (#461)
   - [ ] 9.4b EXISTS and correlated subqueries, if go (#462)
@@ -257,7 +258,8 @@ inside areas listed as supported, and the plan is re-estimated then.
 |---|---|---|---|---|---|
 | 9.0 | Decisions, metric | D1 dialects (elaboration time only, or reopen decision 8); D2 sqlite's quiet errors (drop, or keep as oracle); D3 the fate of `SqlEquiv`'s 714 theorems; D5 Spider after the switch (below); the corpus metric; Postgres in the typed differential harness | D1, D2, D3, D5 | 1–2 | #458 |
 | 9.4a | **Spike** for EXISTS and correlated subqueries, on a throwaway branch | prototype queries over an outer context (`Query S o n`); alternatives: a `correlate` constructor, decorrelation at elaboration; count the theorems that break | **go/no-go**, and which design | 0 | #462 |
-| 9.1 | COALESCE, NULLIF, ABS, ROUND, LENGTH, UPPER/LOWER, CONCAT | `Expr` constructors, typing, soundness, simplifier congruence | | 1 | #459 |
+| 9.1a | `SELECT` without `FROM` | a one-row source in `Query` (80 corpus statements) | | 1 | #459 |
+| 9.1 | COALESCE, NULLIF, ABS, ROUND, LENGTH, UPPER/LOWER, CONCAT; `IN` over non-literals | `Expr` constructors, typing, soundness, simplifier congruence | | 1–2 | #459 |
 | 9.2 | `WITH` (non-recursive) | none: inlined at elaboration | | 1 | #460 |
 | 9.3 | LEFT / RIGHT / FULL joins | one `Query.outerJoin` with a kind (left, right, full), NULL padding from the schema, laws | | 2 | #461 |
 | 9.4b | EXISTS, correlated subqueries (if go) | the design the spike chose | | 4–6 | #462 |
@@ -266,6 +268,42 @@ inside areas listed as supported, and the plan is re-estimated then.
 | 9.7 | INSERT / UPDATE / DELETE | `Stmt.exec : Instance → Except Error Instance`, conformance preserved; UPDATE reads the old row; INSERT fills columns by position | | 2–3 | #465 |
 | 9.8 | Switch over | CLI, Spider harness and differential suites on the typed core, both semantics compared during the transition (the three divergences above are expected); typed simplifier and checker replace `certifiedRewrite`, `checkEquivFull` and the `sql_equiv` tactic; D3 and D5 carried out; `SqlEquiv/Strict.lean` removed (the typed core is strict); README trust sections | the final form: remove `SqlEquiv`'s evaluator, or keep it as a labelled test oracle | 3–5 | #466 |
 | 9.9 | Upstream | inventory of upstreamable modules, proposed order; the user opens the conversation | | | #467 |
+
+**First report of the metric (24 Nov 2026, `benchmarks/typed_corpus/report.md`).** 504 of 983
+test statements (51.3%) elaborate; 180 more strings are left out (parser rejections, tables or
+columns outside the test schema). What does not elaborate, by class:
+
+| Statements | Class | Step |
+|--:|---|---|
+| 171 | window functions | 9.5 |
+| 80 | `SELECT` without `FROM` (`SELECT 1`, `SELECT 0.1 + 0.2`) | **9.1a, new** |
+| 61 | subqueries the fragment lacks (EXISTS, correlated, other positions) | 9.4 |
+| 61 | type errors | none: mostly tests of ill-typed queries (aggregates over booleans or strings, mixed-type MIN/MAX, a number against a string literal), which the typed core rejects by design; to be sorted in 9.8 into kept rejections and sqlite-only behaviour (D2) |
+| 45 | DML | 9.7 |
+| 32 | scalar functions (ROUND 14, ABS 9, LOWER 6, UPPER 2, COALESCE 1) | 9.1 |
+| 12 | `WITH` | 9.2, 9.6 |
+| 7 | `IN` over non-literals (`a IN (b)`) | **9.1, added** |
+| 5 | outer joins | 9.3 |
+| 5 | bare columns outside the decided cases | none (rejections) |
+
+So the plan changes in two ways. A step 9.1a is added: `SELECT` without `FROM`, a one-row source
+(a `Query` constructor for the empty-arity single row, or `VALUES`), which is small and worth 80
+statements. And the order within 9.5–9.7 follows the corpus: windows (171) first, then DML (45).
+Outer joins matter least here (5 statements). The ceiling is about 920 of 983, since the
+type-error tests stay rejected.
+
+**D3 inventory** (theorem counts by `grep`, 714 in all; fates proposed, each confirmed in 9.8):
+
+| Module | Theorems | What they are | Proposed fate |
+|---|--:|---|---|
+| `Equiv/Comparison.lean` | 200 | comparison and three-valued-logic laws for `≃ₑ` | port what `SqlCore`'s scalar and expression laws lack; delete the rest |
+| `Equiv/StatementAxioms.lean` | 102 | statement-level laws: set operations, joins, subquery unnesting, pagination facts | port the laws that hold in the typed core (`QueryLaws`), delete facts tied to `SqlEquiv`'s row representation |
+| `SemanticsCore.lean`, `Semantics.lean`, `SemanticsBase.lean` | 193 | unfolding and congruence lemmas of the evaluator | delete with the evaluator (or keep with it, if it stays as an oracle) |
+| `Equiv/ValueLemmas.lean`, `Equiv/ExprAxioms.lean` | 102 | value-level and algebraic laws, `normalizeExpr` | port what `SqlCore.Simplify`/`Canon` lack; delete the rest |
+| `Equiv/Decidable.lean`, `Rewriter.lean` | 52 | `checkEquivFull`, `certifiedRewrite` and their soundness | replaced by `SqlCore.Check` and `SqlCore.Simplify`; delete |
+| `Equiv/Defs.lean`, `Equiv/SetBagLemmas.lean` | 52 | the relations `≃ₑ`, `≃ₛ`, `≃ᵩ`, bag and set lemmas | delete with the relations; list lemmas of general use move to `SqlCore` |
+| `AstSize.lean` | 10 | size lemmas for termination | stay if anything total over the AST stays (parser side) |
+| `Strict.lean` | 3 | strict-layer transfer | delete (the typed core is strict) |
 
 **D5, Spider after the switch (open).** 44 Spider queries do not elaborate (sqlite type
 affinity, left out by decision on 23 Nov). `SqlEquiv` evaluates them, so retiring its evaluator

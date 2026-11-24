@@ -160,7 +160,8 @@ open decision or issue), *gap* (behaviour matches no engine or is untested).
 
 The registry rows above describe `SqlEquiv`. The typed core makes its choices statically: what
 `SqlEquiv` drops as a row error is a type error at elaboration (`SqlBridge`) or an evaluation error.
-`SqlCoreTest/DuckdbDiffTest.lean` checks it against DuckDB on parsed SQL; the decisions are in
+`SqlCoreTest/DuckdbDiffTest.lean` checks it against DuckDB on parsed SQL, and
+`SqlCoreTest/PostgresDiffTest.lean` checks the same corpus against Postgres (#458); the decisions are in
 `docs/TYPED_CORE_DECISIONS.md` and `docs/TYPED_CORE_PLAN.md`.
 
 | # | Behaviour (example) | DuckDB | Postgres | **SqlCore** | Status | Tests |
