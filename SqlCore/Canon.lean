@@ -353,6 +353,8 @@ def canon : {n : ℕ} → Query S n → Query S n
   | _, difference q₁ q₂ => difference q₁.canon q₂.canon
   | _, attach kind sub q => attach kind sub.canon q.canon
   | _, one => one
+  | _, outer Γ => outer Γ
+  | _, lateral body q => lateral body q.canon
 
 theorem select_sexpr {p p' : Expr n} (hp : p.SEquiv p') (q : Query S n) :
     Equiv ℓ (select p q) (select p' q) := fun D _ => by
@@ -395,6 +397,8 @@ theorem equiv_canon (q : Query S n) : Equiv .ordered q q.canon := by
   | difference q₁ q₂ ih₁ ih₂ => exact Equiv.difference ih₁ ih₂
   | attach kind sub q ihs ihq => exact Equiv.attach kind ihs ihq
   | one => exact .refl _
+  | outer Γ => exact .refl _
+  | lateral body q _ ihq => exact Equiv.lateral body ihq
 
 end Query
 

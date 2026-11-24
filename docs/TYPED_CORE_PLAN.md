@@ -46,7 +46,7 @@ CSLib through the frontier.
 | `SqlCoreTest/OrderByExamples.lean` | `ORDER BY`, `LIMIT` and `OFFSET` checked by `decide` |
 | `SqlCoreTest/SetOpExamples.lean` | `INTERSECT`, `EXCEPT` and `LIKE` checked by `decide` |
 | `SqlCoreTest/SqliteDiffTest.lean` | sqlite-dialect bare columns and multi-row scalar subqueries through the bridge, against sqlite |
-| `SqlCoreTest/SubqueryExamples.lean` | uncorrelated subqueries (`Query.attach`) checked by `decide` |
+| `SqlCoreTest/SubqueryExamples.lean` | uncorrelated subqueries (`Query.attach`) and correlated bodies (`Query.lateral`) checked by `decide` |
 | `SqlCoreTest/LawExamples.lean` | the laws applied, and for every side condition an instance where the law fails without it |
 | `Test/TrustBaseCommands.lean` | the guard commands, shared with `Test/TrustBaseTest.lean` (`SqlEquiv`) |
 
@@ -217,10 +217,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
   - [ ] 9.3 Outer joins (#461)
   - [ ] 9.4b EXISTS and correlated subqueries, design D6 (#462):
-    - [ ] core: `outer`, `lateral`, `evalIn`/`typeOfIn`, `evalIn_spec`, `Equiv.lateral`, laws
-      (`lateral` over `one`, over `unionAll`)
-    - [ ] correlated subqueries and `EXISTS` in `WHERE`; `elabWhere_one_*` restated with an
-      uncorrelated-body hypothesis
+    - [x] core: `outer`, `lateral`, `evalIn`/`typeOfIn`, `evalIn_spec`, `Equiv.lateral`, the law
+      `lateral_closed` (a body that reads no outer row, and cannot fail, is a cross join)
+    - [x] correlated subqueries and `EXISTS` in `WHERE` (`elabCorrBody`: `SELECT items FROM f
+      [WHERE w] [LIMIT n]`, aggregates without `GROUP BY`); the 6b/6c theorems ask for an
+      `uncorrelated` body (`CorrectSub.uncorrelated`); 14 queries agree with SqlEquiv, DuckDB and
+      Postgres
     - [ ] subqueries in other positions (SELECT list, HAVING, over aggregates and windows, JOIN
       ON, CASE), correlated or not: about 40 corpus statements
     - [ ] richer bodies (GROUP BY or set operations in a correlated body), if the corpus asks

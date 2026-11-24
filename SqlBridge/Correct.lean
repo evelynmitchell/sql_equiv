@@ -1172,7 +1172,7 @@ theorem elabStmt_correct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = 
     subst hstep
     have hsel : (Query.select p (Query.table T)).typeOf = some (N.S.ctx T) := by
       revert hty
-      simp only [Query.typeOf]
+      simp only [Query.typeOf, Query.typeOfIn]
       by_cases hb : p.typeOf (N.S.ctx T) = some .bool <;> simp [hb, bind]
     obtain ⟨rs, hrs⟩ := Query.IsSafe.exists_eval_eq_ok (q := Query.project (fun i => (its[i]).1)
       (Query.select p (Query.table T)))
