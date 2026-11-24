@@ -104,6 +104,16 @@ def mulDec (a b : ℚ) : ℚ := a * b
 /-- Decimal negation. -/
 def negDec (a : ℚ) : ℚ := -a
 
+/-- `q` rounded half away from zero to a multiple of `10^-d` (`ROUND(q, d)`, registry row 16). -/
+def roundRat (d : ℤ) (q : ℚ) : ℚ :=
+  let m := q * (10 : ℚ) ^ d
+  let r : ℤ := if m < 0 then -(-m + 1 / 2).floor else (m + 1 / 2).floor
+  r / (10 : ℚ) ^ d
+
+/-- An integer rounded half away from zero to a multiple of `10^-d`; unchanged for `d ≥ 0`. -/
+def roundInt (d : ℤ) (z : ℤ) : ℤ :=
+  if 0 ≤ d then z else (roundRat d z).floor
+
 /-- Truncation toward zero. -/
 def truncRat (q : ℚ) : ℤ := if q < 0 then q.ceil else q.floor
 
@@ -418,6 +428,15 @@ inductive UnOp where
   | isNull
   /-- `IS NOT NULL`. -/
   | isNotNull
+  /-- `ROUND(x, d)` (phase 9.1, #459; registry row 16): half away from zero to `d` decimal places
+  (to a multiple of `10^-d` for a negative `d`), keeping the operand's type. -/
+  | round (d : ℤ)
+  /-- `LOWER(s)`: ASCII letters only (registry row 19). -/
+  | lower
+  /-- `UPPER(s)`: ASCII letters only (registry row 19). -/
+  | upper
+  /-- `LENGTH(s)`: the number of characters. -/
+  | length
   deriving DecidableEq, Repr
 
 /-- Arithmetic operators. -/
@@ -670,6 +689,12 @@ def evalUnOp : UnOp → Datum → Except EvalError Datum
   | .neg, d => Option.map (fun x => x.neg.toValue) <$> d.asNum
   | .isNull, d => .ok (some (.bool d.isNone))
   | .isNotNull, d => .ok (some (.bool d.isSome))
+  | .round k, d => Option.map (fun
+      | .int z => Value.int (roundInt k z)
+      | .decimal q => Value.decimal (roundRat k q)) <$> d.asNum
+  | .lower, d => Option.map (fun s => Value.text s.toLower) <$> d.asText
+  | .upper, d => Option.map (fun s => Value.text s.toUpper) <$> d.asText
+  | .length, d => Option.map (fun s => Value.int s.length) <$> d.asText
 
 /-- A binary operator on two datums. Both operands are checked, left first, before `NULL`
 propagates. -/

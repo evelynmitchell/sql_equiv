@@ -315,6 +315,27 @@ def corpus : List (String × Expect) := [
     .rejected "ambiguousColumn"),
   ("SELECT CASE WHEN id > 0 THEN 0 ELSE (SELECT MAX(age) FROM users) END FROM users",
     .rejected "unsupported: subquery in a CASE branch"),
+  -- scalar functions (phase 9.1, #459): ROUND, LOWER, UPPER, LENGTH as operators; COALESCE,
+  -- NULLIF, ABS, CONCAT written with CASE; IN over non-literals as OR
+  ("SELECT ROUND(2.5), ROUND(-2.5), ROUND(7.45, 1), ROUND(123.456, -1)", .agree),
+  ("SELECT ROUND(25, -1), ROUND(-25, -1), ROUND(7), ROUND(1.25, 5)", .agree),
+  ("SELECT ROUND(age, -1), ROUND(price, 1) FROM users, items WHERE users.id = items.id", .agree),
+  ("SELECT ROUND(NULL), ROUND(2.5, NULL)", .agree),
+  ("SELECT LOWER(name), UPPER(department), LENGTH(name) FROM users", .agree),
+  ("SELECT name FROM users WHERE LOWER(name) LIKE 'a%'", .agree),
+  ("SELECT COALESCE(NULL, 99), COALESCE(1, 2), COALESCE(NULL, NULL, 7), COALESCE(42)", .agree),
+  ("SELECT COALESCE(NULL, 'fallback'), COALESCE(NULLIF(1, 1), 99), NULLIF(5, 3)", .agree),
+  ("SELECT name, COALESCE(age, -1) FROM users", .agree),
+  ("SELECT NULLIF(department, 'Sales') FROM users", .agree),
+  ("SELECT ABS(-2.50), ABS(3), ABS(age - 30) FROM users", .agree),
+  ("SELECT department, ABS(COUNT(*) - 3) AS k FROM users GROUP BY department ORDER BY department", .agree),
+  -- SqlEquiv's CONCAT takes two arguments and propagates NULL; the engines take any number and
+  -- skip NULLs (decision D4: checked against the engines, SqlEquiv left as is)
+  ("SELECT CONCAT(name, '-', department) FROM users", .sqlEquivBug "CONCAT arity and NULL"),
+  ("SELECT CONCAT(name, NULL) FROM users", .sqlEquivBug "CONCAT arity and NULL"),
+  ("SELECT name, age IN (id, 30) AS r FROM users", .agree),
+  ("SELECT name FROM users WHERE age NOT IN (id * 10, 25)", .agree),
+  ("SELECT name FROM users WHERE 30 IN (age, NULL)", .agree),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
@@ -345,7 +366,7 @@ def corpus : List (String × Expect) := [
   ("SELECT name, COUNT(*) FROM users", .rejected "unsupported: column not in GROUP BY"),
   ("SELECT SUM(name) FROM users", .rejected "typeError"),
   ("SELECT * FROM users GROUP BY department", .rejected "unsupported: *"),
-  ("SELECT UPPER(name) FROM users", .rejected "unsupported: function"),
+  ("SELECT UPPER(name) FROM users", .agree),
   ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id", .rejected "unsupported: LEFT JOIN"),
   ("SELECT id FROM users u JOIN orders o ON u.id = o.user_id", .rejected "ambiguousColumn"),
   -- #384: with GROUP BY too (the aggregate's output keeps only the keys' names)

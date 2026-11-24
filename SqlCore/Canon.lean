@@ -93,7 +93,13 @@ def SqlType.rank : SqlType → ℕ
   | .int => 0 | .text => 1 | .bool => 2 | .decimal => 3
 
 def UnOp.rank : UnOp → ℕ
-  | .not => 0 | .neg => 1 | .isNull => 2 | .isNotNull => 3
+  | .not => 0 | .neg => 1 | .isNull => 2 | .isNotNull => 3 | .round _ => 4 | .lower => 5
+  | .upper => 6 | .length => 7
+
+/-- The parameter of a unary operator (`ROUND`'s places), to order operators of one rank. -/
+def UnOp.param : UnOp → ℤ
+  | .round d => d
+  | _ => 0
 
 def BinOp.rank : BinOp → ℕ
   | .arith .add => 0 | .arith .sub => 1 | .arith .mul => 2 | .arith .div => 3
@@ -129,7 +135,9 @@ def cmp : Expr n → Expr n → Ordering
   | lit a, lit b => cmpValue a b
   | null σ, null τ => compare (SqlType.rank σ) (SqlType.rank τ)
   | col i, col j => compare i j
-  | unary o a, unary p b => (compare (UnOp.rank o) (UnOp.rank p)).then (cmp a b)
+  | unary o a, unary p b =>
+    ((compare (UnOp.rank o) (UnOp.rank p)).then (compare (UnOp.param o) (UnOp.param p))).then
+      (cmp a b)
   | binary o a₁ a₂, binary p b₁ b₂ =>
     (compare (BinOp.rank o) (BinOp.rank p)).then ((cmp a₁ b₁).then (cmp a₂ b₂))
   | inList a vs, inList b ws => (cmp a b).then (cmpDatums vs ws)

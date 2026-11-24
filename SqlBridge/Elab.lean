@@ -122,8 +122,16 @@ def elabExpr (e : SqlEquiv.Expr) : ElabM (Expr n) :=
   | .unaryOp op a => return .unary (elabUnOp op) (← elabExpr a)
   | .inList e neg vs => do
     let e ← elabExpr e
-    let ds ← elabLits vs
-    let t := Expr.inList e ds
+    let t ← if vs.all (fun | .lit _ => true | _ => false) then do
+        pure (Expr.inList e (← elabLits vs))
+      else do
+        -- over non-literals (phase 9.1, #459): `e = v₁ OR … OR e = vₖ`, as the standard defines
+        -- `IN`; three-valued `OR` gives the same `NULL`s
+        match ← elabArgs vs with
+        | [] => throw (.unsupported "IN over an empty list")
+        | v :: vs' => pure (vs'.foldl
+            (fun acc w => .binary .or acc (.binary (.cmp .eq) e (retypeNull cols w e)))
+            (.binary (.cmp .eq) e (retypeNull cols v e)))
     pure (if neg then .unary .not t else t)
   | .«case» branches els => do
     let els ← match els with
@@ -136,13 +144,52 @@ def elabExpr (e : SqlEquiv.Expr) : ElabM (Expr n) :=
     let hi ← elabExpr hi
     pure (.binary .and (.binary (.cmp .ge) e (retypeNull cols lo e))
       (.binary (.cmp .le) e (retypeNull cols hi e)))
-  | .func name _ => throw (.unsupported s!"function {name}")
+  | .func name args => do
+    -- scalar functions (phase 9.1, #459): ROUND, LOWER, UPPER and LENGTH are operators of the
+    -- typed core; COALESCE, NULLIF, ABS and CONCAT are written with `CASE`, evaluating as the
+    -- engines do (later arguments of COALESCE only when needed)
+    let typeOfE (x : Expr n) : ElabM SqlType :=
+      match x.typeOf (ctx cols) with
+      | some τ => pure τ
+      | none => throw (.typeError s!"argument of {name}")
+    let es ← elabArgs args
+    match name.toUpper, es, args with
+    | "ROUND", [a], _ => pure (.unary (.round 0) a)
+    | "ROUND", [a, _], [_, .lit (.int d)] => pure (.unary (.round d) a)
+    | "ROUND", [a, _], [_, .unaryOp .neg (.lit (.int d))] => pure (.unary (.round (-d)) a)
+    | "ROUND", [a, _], [_, .lit (.null _)] => do
+      let τ ← typeOfE a
+      pure (.caseWhen (.unary .isNull a) (.null τ) (.null τ))
+    | "LOWER", [a], _ => pure (.unary .lower a)
+    | "UPPER", [a], _ => pure (.unary .upper a)
+    | "LENGTH", [a], _ => pure (.unary .length a)
+    | "ABS", [a], _ => pure (.caseWhen (.binary (.cmp .lt) a (.lit (.int 0))) (.unary .neg a) a)
+    | "NULLIF", [a, b], _ => do
+      let a := retypeNull cols a b
+      let τ ← typeOfE a
+      pure (.caseWhen (.binary (.cmp .eq) a (retypeNull cols b a)) (.null τ) a)
+    | "COALESCE", _ :: _, _ =>
+      match es.reverse with
+      | [] => throw (.unsupported "COALESCE()")
+      | last :: rest => pure (rest.foldl
+          (fun acc x => .caseWhen (.unary .isNotNull x) (retypeNull cols x acc) (retypeNull cols acc x))
+          last)
+    | "CONCAT", x :: xs, _ =>
+      let part (y : Expr n) : Expr n :=
+        .caseWhen (.unary .isNull y) (.lit (.text "")) (retypeNull cols y (.lit (.text "")))
+      pure (xs.foldl (fun acc y => .binary .concat acc (part y)) (part x))
+    | _, _, _ => throw (.unsupported s!"function {name}")
   | .agg _ _ _ => throw (.unsupported "aggregate")
   | .countStar => throw (.unsupported "aggregate")
   | .inSubquery _ _ _ => throw (.unsupported "subquery")
   | .exists _ _ => throw (.unsupported "subquery")
   | .subquery _ => throw (.unsupported "subquery")
   | .windowFn _ _ _ => throw (.unsupported "window function")
+
+/-- A list of arguments. -/
+def elabArgs : List SqlEquiv.Expr → ElabM (List (Expr n))
+  | [] => pure []
+  | a :: as => return (← elabExpr a) :: (← elabArgs as)
 
 /-- The literal list of `IN`. -/
 def elabLits : List SqlEquiv.Expr → ElabM (List Datum)

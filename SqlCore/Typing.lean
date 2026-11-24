@@ -67,6 +67,11 @@ def UnOp.typeOf : UnOp → SqlType → Option SqlType
   | .neg, .decimal => some .decimal
   | .isNull, _ => some .bool
   | .isNotNull, _ => some .bool
+  | .round _, .int => some .int
+  | .round _, .decimal => some .decimal
+  | .lower, .text => some .text
+  | .upper, .text => some .text
+  | .length, .text => some .int
   | _, _ => none
 
 /-- The result type of an arithmetic operator: integers stay integers (integer `/` truncates), and a
@@ -102,6 +107,10 @@ private theorem hasType_int_cases {d : Datum} (h : d.HasType .int) :
     d = none ∨ ∃ z, d = some (.int z) := by
   rcases d with _ | (z | _ | _ | _) <;> simp_all
 
+private theorem hasType_text_cases {d : Datum} (h : d.HasType .text) :
+    d = none ∨ ∃ t, d = some (.text t) := by
+  rcases d with _ | (_ | t | _ | _) <;> simp_all
+
 private theorem hasType_decimal_cases {d : Datum} (h : d.HasType .decimal) :
     d = none ∨ ∃ q, d = some (.decimal q) := by
   rcases d with _ | (_ | _ | _ | q) <;> simp_all
@@ -126,6 +135,31 @@ theorem evalUnOp_ok_of_typeOf {op : UnOp} {τ τ' : SqlType} (h : op.typeOf τ =
     · exact ⟨some (.decimal (negDec q)), rfl, rfl⟩
   | .isNull, _, h => cases h; exact ⟨_, rfl, rfl⟩
   | .isNotNull, _, h => cases h; exact ⟨_, rfl, rfl⟩
+  | .round k, .int, h =>
+    cases h
+    rcases hasType_int_cases hd with rfl | ⟨z, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.int (roundInt k z)), rfl, rfl⟩
+  | .round k, .decimal, h =>
+    cases h
+    rcases hasType_decimal_cases hd with rfl | ⟨q, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.decimal (roundRat k q)), rfl, rfl⟩
+  | .lower, .text, h =>
+    cases h
+    rcases hasType_text_cases hd with rfl | ⟨t, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.text t.toLower), rfl, rfl⟩
+  | .upper, .text, h =>
+    cases h
+    rcases hasType_text_cases hd with rfl | ⟨t, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.text t.toUpper), rfl, rfl⟩
+  | .length, .text, h =>
+    cases h
+    rcases hasType_text_cases hd with rfl | ⟨t, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.int t.length), rfl, rfl⟩
 
 private theorem hasType_numeric_cases {d : Datum} {τ : SqlType} (hτ : τ.isNumeric)
     (h : d.HasType τ) : d = none ∨ (∃ z, d = some (.int z)) ∨ ∃ q, d = some (.decimal q) := by

@@ -213,7 +213,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] 9.1a `SELECT` without `FROM` (24 Nov 2026): `Query.one`, a source of one row with no
     columns; typed corpus 504 → 553. Follow-ups: set operations across INT/DECIMAL and untyped
     NULL branches (#472); the parser rejects `WHERE`/`ORDER BY` after a FROM-less `SELECT`
-  - [ ] 9.1 scalar functions, `IN` over non-literals (#459)
+  - [x] 9.1 scalar functions, `IN` over non-literals (#459): `UnOp.round d`, `lower`, `upper`,
+    `length` in the typed core (typing, soundness, canonical order); COALESCE, NULLIF, ABS and
+    CONCAT written with `CASE` by the elaborator, `IN` over non-literals with `OR`. Corpus
+    597 → 630. SqlEquiv's CONCAT (two arguments, NULL propagates) differs from the engines (any
+    number, NULLs skipped); left as is (D4)
   - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
   - [ ] 9.3 Outer joins (#461)
   - [ ] 9.4b EXISTS and correlated subqueries, design D6 (#462):

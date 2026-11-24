@@ -87,4 +87,28 @@ example : evalUnOp .neg (d (3/2)) = .ok (d (-3/2)) := by decide +kernel
 example : evalBinOp (.cmp .eq) (d 1) (t "1") = .error .typeMismatch := by decide +kernel
 example : Datum.inList (i 1) [d 2, d 1] = .ok .true := by decide +kernel
 
+/-! ### Scalar functions (phase 9.1, #459; registry rows 16 and 19) -/
+
+-- `ROUND`: half away from zero, keeping the operand's type; a negative `d` rounds to a multiple
+-- of `10^-d`
+example : evalUnOp (.round 0) (some (.decimal (5/2))) = .ok (some (.decimal 3)) := by decide +kernel
+example : evalUnOp (.round 0) (some (.decimal (-5/2))) = .ok (some (.decimal (-3))) := by
+  decide +kernel
+example : evalUnOp (.round 1) (some (.decimal (745/100))) = .ok (some (.decimal (15/2))) := by
+  decide +kernel
+example : evalUnOp (.round (-1)) (some (.decimal (123456/1000))) = .ok (some (.decimal 120)) := by
+  decide +kernel
+example : evalUnOp (.round (-1)) (some (.int 25)) = .ok (some (.int 30)) := by decide +kernel
+example : evalUnOp (.round (-1)) (some (.int (-25))) = .ok (some (.int (-30))) := by decide +kernel
+example : evalUnOp (.round (-1)) (some (.int 14)) = .ok (some (.int 10)) := by decide +kernel
+example : evalUnOp (.round 2) (some (.int 7)) = .ok (some (.int 7)) := by decide +kernel
+example : evalUnOp (.round 0) none = .ok none := by decide +kernel
+example : evalUnOp (.round 0) (some (.text "x")) = .error .typeMismatch := by decide +kernel
+-- `LOWER`, `UPPER`: ASCII letters only; `LENGTH` counts characters
+example : evalUnOp .lower (some (.text "AbC")) = .ok (some (.text "abc")) := by decide +kernel
+example : evalUnOp .lower (some (.text "ÉCOLE")) = .ok (some (.text "École")) := by decide +kernel
+example : evalUnOp .upper (some (.text "école")) = .ok (some (.text "éCOLE")) := by decide +kernel
+example : evalUnOp .length (some (.text "école")) = .ok (some (.int 5)) := by decide +kernel
+example : evalUnOp .length (some (.int 5)) = .error .typeMismatch := by decide +kernel
+
 end SqlCoreTest.ScalarExamples
