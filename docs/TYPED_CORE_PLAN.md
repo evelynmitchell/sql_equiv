@@ -207,9 +207,12 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
 - [ ] Phase 9: retire the untyped semantics (#298), option B (port every feature first; plan
   below, chosen 24 Nov 2026)
   - [ ] 9.0 Decisions and the typed-coverage metric (#458): metric, Postgres harness, D1–D4
-    done (24 Nov 2026); D5 open
+    done (24 Nov 2026); D5 decided (accept and re-base)
   - [ ] 9.4a Spike for EXISTS and correlated subqueries, then go/no-go (#462)
-  - [ ] 9.1a `SELECT` without `FROM`; 9.1 scalar functions, `IN` over non-literals (#459)
+  - [x] 9.1a `SELECT` without `FROM` (24 Nov 2026): `Query.one`, a source of one row with no
+    columns; typed corpus 504 → 553. Follow-ups: set operations across INT/DECIMAL and untyped
+    NULL branches (#472); the parser rejects `WHERE`/`ORDER BY` after a FROM-less `SELECT`
+  - [ ] 9.1 scalar functions, `IN` over non-literals (#459)
   - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
   - [ ] 9.3 Outer joins (#461)
   - [ ] 9.4b EXISTS and correlated subqueries, if go (#462)
@@ -258,7 +261,7 @@ inside areas listed as supported, and the plan is re-estimated then.
 |---|---|---|---|---|---|
 | 9.0 | Decisions, metric | D1 dialects (elaboration time only, or reopen decision 8); D2 sqlite's quiet errors (drop, or keep as oracle); D3 the fate of `SqlEquiv`'s 714 theorems; D5 Spider after the switch (below); the corpus metric; Postgres in the typed differential harness | D1, D2, D3, D5 | 1–2 | #458 |
 | 9.4a | **Spike** for EXISTS and correlated subqueries, on a throwaway branch | prototype queries over an outer context (`Query S o n`); alternatives: a `correlate` constructor, decorrelation at elaboration; count the theorems that break | **go/no-go**, and which design | 0 | #462 |
-| 9.1a | `SELECT` without `FROM` | a one-row source in `Query` (80 corpus statements) | | 1 | #459 |
+| 9.1a | `SELECT` without `FROM` | a one-row source in `Query` (80 corpus statements); done, `Query.one` | | 1 | #459 |
 | 9.1 | COALESCE, NULLIF, ABS, ROUND, LENGTH, UPPER/LOWER, CONCAT; `IN` over non-literals | `Expr` constructors, typing, soundness, simplifier congruence | | 1–2 | #459 |
 | 9.2 | `WITH` (non-recursive) | none: inlined at elaboration | | 1 | #460 |
 | 9.3 | LEFT / RIGHT / FULL joins | one `Query.outerJoin` with a kind (left, right, full), NULL padding from the schema, laws | | 2 | #461 |
@@ -305,11 +308,12 @@ type-error tests stay rejected.
 | `AstSize.lean` | 10 | size lemmas for termination | stay if anything total over the AST stays (parser side) |
 | `Strict.lean` | 3 | strict-layer transfer | delete (the typed core is strict) |
 
-**D5, Spider after the switch (open).** 44 Spider queries do not elaborate (sqlite type
+**D5, Spider after the switch (decided 24 Nov 2026: accept and re-base).** 44 Spider queries do not elaborate (sqlite type
 affinity, left out by decision on 23 Nov). `SqlEquiv` evaluates them, so retiring its evaluator
 takes the Spider evaluate-agreement ratchet from 559 to at most 520. Either accept that (the
 ratchets are re-based on the typed core and `CLAUDE.md`'s north-star text updated), or keep
-`SqlEquiv`'s evaluator as a fallback for those queries.
+`SqlEquiv`'s evaluator as a fallback for those queries. Picked: accept; the 44 queries are
+recorded as rejected by design when #466 re-bases the ratchets.
 
 **Order:**
 1. 9.0.

@@ -460,6 +460,9 @@ inductive Query (S : DbSchema) : ℕ → Type where
   (phase 8f, #329): its value or the truth of `e [NOT] IN sub` on each row. `sub` is evaluated
   once, first. -/
   | attach {n : ℕ} (kind : SubKind n) (sub : Query S 1) (q : Query S n) : Query S (n + 1)
+  /-- The source of a `SELECT` without `FROM` (phase 9.1a, #459): one row with no columns. A
+  projection over it gives `SELECT 1`'s one row. -/
+  | one : Query S 0
 
 namespace Query
 
@@ -499,6 +502,7 @@ def eval (D : Database S) : {n : ℕ} → Query S n → Except EvalError (List (
     let ss ← sub.eval D
     let x ← kind.extra (ss.map (· 0))
     (← q.eval D).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))
+  | _, one => .ok [![]]
 
 section Eval
 
@@ -556,6 +560,8 @@ theorem eval_attach (kind : SubKind n) (sub : Query S 1) (q : Query S n) :
       let ss ← sub.eval D
       let x ← kind.extra (ss.map (· 0))
       (← q.eval D).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))) := rfl
+
+@[simp] theorem eval_one : (one : Query S 0).eval D = .ok [![]] := rfl
 
 end Eval
 
@@ -625,6 +631,7 @@ def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
     | .inSub _ e =>
       if (e.typeOf Γ).any (fun τ => decide (τ.Comparable (Δ 0))) then some (Fin.append Γ ![.bool])
       else none
+  | _, one => some ![]
 
 @[simp] theorem typeOf_table (t : S.Table) : (table t).typeOf = some (S.ctx t) := rfl
 
@@ -737,6 +744,7 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, intersect q₁ q₂ => q₁.divSafe && q₂.divSafe
   | _, difference q₁ q₂ => q₁.divSafe && q₂.divSafe
   | _, attach kind sub q => kind.divSafe && sub.divSafe && q.divSafe
+  | _, one => true
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -976,6 +984,9 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
             split_ifs at hP <;> simp_all [divSafe, SubKind.divSafe, Expr.divSafe]
         · exact .inr ⟨ee, by simp [eval_attach, hss, SubKind.extra, he'], hre, by simp [divSafe, hs]⟩
     · exact .inr ⟨ee, by simp [eval_attach, he], hre, by simp [divSafe, hs]⟩
+  | one =>
+    cases hq
+    exact fun _ _ i => i.elim0
 
 /-- Type soundness: on a conforming instance, a well-typed query returns rows of its type, or fails
 with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar subquery with several

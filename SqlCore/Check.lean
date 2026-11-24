@@ -87,6 +87,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, select (n := n) p q, q' =>
     match q' with
     | table _ => false
@@ -101,6 +102,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, project (n := n) (k := k) es q, q' =>
     match q' with
     | table _ => false
@@ -116,6 +118,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, join (n := n₁) (m := m₁) θ q₁ q₂, q' =>
     match q' with
     | table _ => false
@@ -133,6 +136,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, unionAll q₁ q₂, q' =>
     match q' with
     | table _ => false
@@ -147,6 +151,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, distinct q, q' =>
     match q' with
     | table _ => false
@@ -161,6 +166,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, aggregate (n := n) (g := g) (a := a) keys aggs q, q' =>
     match q' with
     | table _ => false
@@ -179,6 +185,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, orderBy (n := n) (k := k) keys q, q' =>
     match q' with
     | table _ => false
@@ -196,6 +203,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, limit c o q, q' =>
     match q' with
     | table _ => false
@@ -210,6 +218,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, intersect q₁ q₂, q' =>
     match q' with
     | table _ => false
@@ -224,6 +233,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect q₁' q₂' => beq q₁ q₁' && beq q₂ q₂'
     | difference _ _ => false
     | attach _ _ _ => false
+    | one => false
   | _, _, difference q₁ q₂, q' =>
     match q' with
     | table _ => false
@@ -238,6 +248,7 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | intersect _ _ => false
     | difference q₁' q₂' => beq q₁ q₁' && beq q₂ q₂'
     | attach _ _ _ => false
+    | one => false
   | _, _, attach (n := n) kind sub q, q' =>
     match q' with
     | table _ => false
@@ -253,6 +264,22 @@ def beq : {n m : ℕ} → Query S n → Query S m → Bool
     | difference _ _ => false
     | attach (n := n') kind' sub' q' =>
       if h : n = n' then decide (h ▸ kind = kind') && beq sub sub' && beq q q' else false
+    | one => false
+  | _, _, one, q' =>
+    match q' with
+    | table _ => false
+    | select _ _ => false
+    | project _ _ => false
+    | join _ _ _ => false
+    | unionAll _ _ => false
+    | distinct _ => false
+    | aggregate _ _ _ => false
+    | orderBy _ _ => false
+    | limit _ _ _ => false
+    | intersect _ _ => false
+    | difference _ _ => false
+    | attach _ _ _ => false
+    | one => true
 
 /-- `beq` is sound: equal results mean equal arities and equal queries. -/
 theorem eq_of_beq {n m : ℕ} {q : Query S n} {q' : Query S m} (h : beq q q' = true) :
@@ -368,6 +395,9 @@ theorem eq_of_beq {n m : ℕ} {q : Query S n} {q' : Query S m} (h : beq q q' = t
     obtain ⟨hn', e⟩ := ihq hq
     cases hn'
     subst e
+    exact ⟨rfl, rfl⟩
+  | one =>
+    cases q' <;> simp only [beq, reduceCtorEq] at h
     exact ⟨rfl, rfl⟩
 
 theorem eq_of_beq_self {n : ℕ} {q q' : Query S n} (h : beq q q' = true) : q = q' := by

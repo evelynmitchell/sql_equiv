@@ -253,6 +253,22 @@ def corpus : List (String × Expect) := [
   ("SELECT COUNT(*) FROM (SELECT user_id FROM orders EXCEPT SELECT id FROM users WHERE age > 26) AS t", .agree),
   ("SELECT COUNT(*) FROM (SELECT department FROM users GROUP BY department UNION ALL SELECT name FROM products)", .agree),
   ("SELECT COUNT(*) FROM (SELECT staff FROM museum INTERSECT SELECT staff FROM museum WHERE staff IS NULL OR staff > 20)", .agree),
+  -- SELECT without FROM (phase 9.1a, #459): one source row with no columns (`Query.one`). The
+  -- parser rejects WHERE or a trailing ORDER BY after a FROM-less SELECT, so those go through a
+  -- derived table
+  ("SELECT 1", .agree),
+  ("SELECT 1 + 2, 'a' || 'b', TRUE AND FALSE, 0.1 + 0.2", .agree),
+  ("SELECT NULL", .agree),
+  ("SELECT COUNT(*)", .agree),
+  ("SELECT DISTINCT 1", .agree),
+  ("SELECT 1 LIMIT 0", .agree),
+  ("SELECT 1 AS a UNION ALL SELECT 2", .agree),
+  ("SELECT a FROM (SELECT 2 AS a UNION SELECT 1 UNION SELECT 2) AS t ORDER BY a", .agree),
+  ("SELECT a FROM (SELECT 1 AS a) AS t WHERE a > 0", .agree),
+  ("SELECT a FROM (SELECT 1 AS a) AS t WHERE a > 1", .agree),
+  ("SELECT * FROM (SELECT 1 AS a, 'x' AS b) AS t", .agree),
+  ("SELECT name FROM users WHERE age IN (SELECT 30)", .agree),
+  ("SELECT name FROM users WHERE age = (SELECT 30)", .agree),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
