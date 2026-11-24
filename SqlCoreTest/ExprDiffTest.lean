@@ -16,8 +16,13 @@ import SqlCoreTest.SchemaDiffTest
 namespace SqlCoreTest.ExprDiff
 open SqlCore SqlCoreTest.SchemaExamples SqlCoreTest.ScalarDiff
 
-def unOld : UnOp → SqlEquiv.UnaryOp
-  | .not => .not | .neg => .neg | .isNull => .isNull | .isNotNull => .isNotNull
+/-- An operator of `SqlEquiv`, or the function call it is there (phase 9.1, #459). -/
+def unOld (op : UnOp) (e : SqlEquiv.Expr) : SqlEquiv.Expr :=
+  match op with
+  | .not => .unaryOp .not e | .neg => .unaryOp .neg e
+  | .isNull => .unaryOp .isNull e | .isNotNull => .unaryOp .isNotNull e
+  | .round d => .func "ROUND" [e, .lit (.int d)]
+  | .lower => .func "LOWER" [e] | .upper => .func "UPPER" [e] | .length => .func "LENGTH" [e]
 
 def binOld : BinOp → SqlEquiv.BinOp
   | .arith .add => .add | .arith .sub => .sub | .arith .mul => .mul
@@ -32,13 +37,14 @@ def toOldExpr {n : ℕ} (cols : Fin n → Column) : Expr n → SqlEquiv.Expr
   | .lit v => .lit (toOld v)
   | .null _ => .lit (.null none)
   | .col i => .col ⟨none, (cols i).name⟩
-  | .unary op e => .unaryOp (unOld op) (toOldExpr cols e)
+  | .unary op e => unOld op (toOldExpr cols e)
   | .binary op a b => .binOp (binOld op) (toOldExpr cols a) (toOldExpr cols b)
   | .inList e vs =>
     .inList (toOldExpr cols e) false (vs.map fun d => .lit ((datumToOld d).getD (.null none)))
   | .caseWhen c a b => .«case» [(toOldExpr cols c, toOldExpr cols a)] (some (toOldExpr cols b))
 
-def unOps : List UnOp := [.not, .neg, .isNull, .isNotNull]
+def unOps : List UnOp :=
+  [.not, .neg, .isNull, .isNotNull, .round 0, .round 1, .round (-1), .lower, .upper, .length]
 def binOps : List BinOp :=
   [.arith .add, .arith .sub, .arith .mul, .arith .div, .arith .mod,
    .cmp .eq, .cmp .ne, .cmp .lt, .cmp .le, .cmp .gt, .cmp .ge, .and, .or, .concat,
@@ -47,7 +53,8 @@ def binOps : List BinOp :=
 def atoms (n : ℕ) : List (Expr n) :=
   (List.finRange n).map .col ++
   [.lit (.int 0), .lit (.int 2), .lit (.int (-3)), .lit (.decimal (1/2)), .lit (.decimal 3),
-   .lit (.text "Sales"), .lit (.text "Bolt"), .lit (.bool true), .null .int, .null .decimal]
+   .lit (.text "Sales"), .lit (.text "Bolt"), .lit (.bool true), .null .int, .null .decimal,
+   .lit (.decimal (-5/2)), .lit (.decimal (745/100)), .lit (.int 25), .lit (.int (-25)), .null .text]
 
 /-- Well-typed expressions over `Γ`, without decimal `%` and `/`. -/
 def exprs {n : ℕ} (Γ : Fin n → SqlType) : List (Expr n) :=
