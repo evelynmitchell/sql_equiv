@@ -1,0 +1,115 @@
+name: Mutation testing
+
+# Mutation testing of the evaluator's dispatch arms (#210): each mutant of
+# SqlEquiv/SemanticsBase.lean is built and tested, and the report lists the mutants no proof or
+# test noticed. Too slow for pull requests (one build and test run per mutant), so it runs
+# weekly, split across shards. The report is an artifact and the job summary; nothing is
+# committed, and the Lake cache is only restored, never saved (the build holds mutants).
+
+on:
+  schedule:
+    - cron: '17 4 * * 0'  # weekly, Sunday 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      sites:
+        description: "Comma-separated sites (e.g. evalFunc,evalUnaryOp). Blank: all."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation
+  cancel-in-progress: false
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install elan
+        run: |
+          curl -sSfL -o /tmp/elan.tar.gz https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/elan.tar.gz -C /tmp
+          /tmp/elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      - name: Install duckdb (differential-test oracle)
+        run: |
+          curl -sSfL -o /tmp/duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.3/duckdb_cli-linux-amd64.zip
+          sudo unzip -o -q /tmp/duckdb.zip -d /usr/local/bin
+          duckdb --version
+
+      - name: Restore Lake packages (restore only)
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.elan/toolchains
+            .lake
+            !.lake/packages/mathlib/.lake/build
+          key: ${{ runner.os }}-lake-${{ hashFiles('lakefile.toml', 'lean-toolchain') }}
+          restore-keys: |
+            ${{ runner.os }}-lake-
+
+      - name: Start Postgres (differential-test oracle, preinstalled on the runner)
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres createuser -s "$USER"
+          sudo -u postgres createdb "$USER"
+
+      - name: Run the shard's mutants
+        env:
+          SITES: ${{ inputs.sites }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          case "$SITES" in *[!A-Za-z0-9.,]*) echo "invalid sites '$SITES'"; exit 1;; esac
+          python3 tools/mutation_test.py --shard "$SHARD/8" --sites "$SITES" \
+            --out "mutation-shard-$SHARD.json"
+
+      - name: Upload the shard's results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-shard-${{ matrix.shard }}
+          path: mutation-shard-${{ matrix.shard }}.json
+          if-no-files-found: warn
+
+  report:
+    needs: mutants
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the shards' results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: mutation-shard-*
+          merge-multiple: true
+
+      - name: Merge into the report
+        run: |
+          python3 tools/mutation_test.py --merge mutation-shard-*.json
+          cat benchmarks/mutation/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-report
+          path: |
+            benchmarks/mutation/report.md
+            benchmarks/mutation/results.json

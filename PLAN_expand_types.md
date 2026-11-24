@@ -164,7 +164,7 @@ Many SQL standard types collapse into fewer `SqlType` variants because Lean's ty
 |-----------------|--------------------------------------------------------------------|
 | `Value.eq`      | Add same-type equality for all new types. Decimal: compare scaled values (normalize scales first). Float: IEEE equality. Date/time/timestamp: string equality. Binary: byte equality. Interval: same-kind integer equality. |
 | `Value.compare` | Float: `Float.compare`. Decimal: normalize then compare scaled ints. Date/time/timestamp: `String.compare` (ISO order = chrono order). Interval: compare within same kind. Binary: lexicographic byte comparison. |
-| `Value.toBool`  | Float: `some (f != 0.0)`. Decimal: `some (n != 0)`. All others: `none` (not boolean-coercible). |
+| ~~`Value.toBool`~~ | Removed in #210: nothing called it. |
 
 **Expression evaluation:**
 
