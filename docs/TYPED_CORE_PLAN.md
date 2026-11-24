@@ -204,7 +204,62 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       errors (`Query.eval_ok_or_runtimeError`); congruence; simplifier and checker
     - [x] Bridge (nested, compound bodies, correlated rejected), differential tests, Spider rate:
       **519/564 (92.0%)**, up from 479
-- [ ] Phase 9: retire the untyped semantics (#298)
+- [ ] Phase 9: retire the untyped semantics (#298), option B (port every feature first; plan
+  below, chosen 24 Nov 2026)
+  - [ ] 9.0 Decisions D1–D3 and the typed-coverage metric (#458)
+  - [ ] 9.1 Scalar functions (#459)
+  - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
+  - [ ] 9.3 Outer joins (#461)
+  - [ ] 9.4 EXISTS and correlated subqueries: spike, then go/no-go (#462)
+  - [ ] 9.5 Window functions (#463)
+  - [ ] 9.6 Recursive CTEs (#464)
+  - [ ] 9.7 INSERT, UPDATE, DELETE (#465)
+  - [ ] 9.8 Switch over and retire `SqlEquiv`'s evaluator (#466)
+  - [ ] 9.9 Upstream conversation with cslib-frontier (#467)
+
+## Phase 9 plan (#298, option B)
+
+Chosen on 24 Nov 2026 over the alternatives:
+- (A) retire `SqlEquiv` now, at Spider parity, dropping what only it evaluates;
+- (C) make the typed core the default and keep `SqlEquiv` as a labelled oracle.
+
+Option B ports every feature `SqlEquiv` evaluates to the typed core first, each with a bridge
+proof, then switches over.
+
+**Done when** (#298): `lake build` and the full test suite pass with the typed core as the only
+semantics on the proof path, and `/doc-freshness` is clean.
+
+**Measuring progress.** Spider is saturated for this purpose: none of its 564 dev queries uses an
+outer join, EXISTS, a CTE, a window function, DML or a scalar function (at most 2 look
+correlated). Progress is measured instead by #458's metric: the share of the SQL in the unit
+tests and the three differential suites that elaborates into the typed core, ratcheted in CI.
+
+| Step | Feature | Typed-core work | Bridge, and divergences to decide | PRs | Issue |
+|---|---|---|---|---|---|
+| 9.0 | Decisions, metric | D1 dialects (elaboration time only, or reopen decision 8); D2 sqlite's quiet errors (drop, or keep as oracle); D3 the fate of `SqlEquiv`'s 714 theorems; the corpus metric | none | 1 | #458 |
+| 9.1 | COALESCE, NULLIF, ABS, ROUND, LENGTH, UPPER/LOWER, CONCAT | `Expr` constructors, typing, soundness, simplifier congruence | `Translates` | 1 | #459 |
+| 9.2 | `WITH` (non-recursive) | none: inlined at elaboration | a database-extension lemma | 1 | #460 |
+| 9.3 | LEFT / RIGHT / FULL joins | `Query.leftJoin` (RIGHT by swap, FULL by left plus anti-join), laws | **divergence:** `SqlEquiv` pads nothing when the other side is empty (padding comes from `rightRows.head?`), engines pad NULLs | 2–3 | #461 |
+| 9.4 | EXISTS, correlated subqueries | queries over an outer context (`Query S o n`), every theorem restated at `o = 0`; alternatives: a `correlate` constructor, or decorrelation at elaboration | **spike first, then a go/no-go gate** | 4–6 | #462 |
+| 9.5 | Window functions | `Query.window` (partition, sort, function per row), composing with `aggregate` | against `projectWindowItems` / `projectGroupsWithWindows`; ties via the stable-sort lemmas | 3–5 | #463 |
+| 9.6 | `WITH RECURSIVE` | `Query.fix`, fuel-bounded | **decision:** stop on list equality and 1000 rounds (as `SqlEquiv`), or on bag equality (as engines) | 2–3 | #464 |
+| 9.7 | INSERT / UPDATE / DELETE | `Stmt.exec : Instance → Except Error Instance`, conformance preserved | **divergence:** `SqlEquiv`'s UPDATE evaluates each SET on the row as already updated; engines use the old row | 3–4 | #465 |
+| 9.8 | Switch over | CLI, Spider harness and differential suites on the typed core, both semantics compared during the transition; typed simplifier and checker replace `certifiedRewrite`, `checkEquivFull` and the `sql_equiv` tactic; D3 carried out; README trust sections | | 3–5 | #466 |
+| 9.9 | Upstream | inventory of upstreamable modules, proposed order; the user opens the conversation | | | #467 |
+
+**Order:**
+1. 9.0.
+2. 9.1–9.3: cheap and independent.
+3. The 9.4 spike, then its go/no-go.
+4. 9.5–9.7, in any order (9.6 builds on 9.2).
+5. 9.8 last.
+
+9.9 can run at any time. That is about 20–30 PRs, each through the operating loop: code, proofs, tests and docs together, `/critical-self-review`, `/audit`, oracle cases.
+
+**Human gates:** D1–D3; the 9.4 go/no-go; each divergence decision (outer-join padding, UPDATE, the recursive-CTE stopping rule); the final form of the retirement (remove `SqlEquiv`'s evaluator, or keep it as a labelled test oracle).
+
+**Main risk:** 9.4 changes the core query type every typed-core and bridge proof is built on;
+the spike is there to measure that cost before committing to it.
 
 ## Elaborator correctness roadmap (#352)
 
