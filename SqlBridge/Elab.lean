@@ -490,10 +490,13 @@ termination_by fuel
 /-- Elaborate a `SELECT`; its subqueries are elaborated with less fuel. -/
 def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.S) :=
   match stmt with
-  | .mk distinct items (some from_) where_ groupBy having orderBy limitVal offsetVal => do
-    let ⟨n, q, cols⟩ ← elabFrom N (fun sq => match fuel with
-      | 0 => throw (.unsupported "subqueries nested too deeply")
-      | f + 1 => elabSubQuery f sq) from_
+  | .mk distinct items from_ where_ groupBy having orderBy limitVal offsetVal => do
+    -- Without `FROM` (phase 9.1a, #459) the source is one row with no columns.
+    let ⟨n, q, cols⟩ ← match from_ with
+      | some from_ => elabFrom N (fun sq => match fuel with
+        | 0 => throw (.unsupported "subqueries nested too deeply")
+        | f + 1 => elabSubQuery f sq) from_
+      | none => pure (⟨0, .one, Fin.elim0⟩ : Elaborated N.S)
     let q : Query N.S n ← elabWhere N (fun sq => match fuel with
       | 0 => throw (.unsupported "subqueries nested too deeply")
       | f + 1 => elabSubQuery f sq) cols q where_
@@ -566,7 +569,6 @@ def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.
           let name := al.getD (match e with | .col c => c.column | _ => "?column?")
           pure (e', ({ qualifier := none, name, type := τ } : Column))
       finishSelect N.fold ⟨g + a, q', outExpr, its⟩ distinct orderBy limitVal offsetVal
-  | .mk _ _ none _ _ _ _ _ _ => throw (.unsupported "SELECT without FROM")
 termination_by fuel
 
 end

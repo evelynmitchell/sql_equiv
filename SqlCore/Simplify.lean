@@ -381,6 +381,7 @@ join that it cannot enter. Where it stops, it is simplified in place (`Query.sim
   | _, p, q@(intersect _ _) => simpSelect p q
   | _, p, q@(difference _ _) => simpSelect p q
   | _, p, q@(attach _ _ _) => simpSelect p q
+  | _, p, q@one => simpSelect p q
 
 /-- `SELECT es FROM q` with projections fused: over a safe projection, the two fuse by
 substitution, and the result fuses further down. Where it stops, it is simplified in place
@@ -403,6 +404,7 @@ substitution, and the result fuses further down. Where it stops, it is simplifie
   | _, _, es, q@(intersect _ _) => simpProject es q
   | _, _, es, q@(difference _ _) => simpProject es q
   | _, _, es, q@(attach _ _ _) => simpProject es q
+  | _, _, es, q@one => simpProject es q
 
 /-- The query simplifier: simplify the inputs of each node, then move its `WHERE` down, fuse its
 projections or simplify its join predicate. `Query.equiv_simplify` certifies it on every
@@ -420,6 +422,7 @@ conforming instance. -/
   | _, intersect q₁ q₂ => intersect q₁.simplify q₂.simplify
   | _, difference q₁ q₂ => difference q₁.simplify q₂.simplify
   | _, attach kind sub q => attach kind sub.simplify q.simplify
+  | _, one => one
 
 theorem equiv_simpSelect (p : Expr n) (q : Query S n) :
     Equiv .ordered (select p q) (simpSelect p q) := by
@@ -535,6 +538,9 @@ theorem equiv_pushSelect (p : Expr n) (q : Query S n) :
   | attach kind sub q _ _ =>
     rw [pushSelect]
     exact equiv_simpSelect p _
+  | one =>
+    rw [pushSelect]
+    exact equiv_simpSelect p _
 
 theorem equiv_fuseProject (es : Fin k → Expr n) (q : Query S n) :
     Equiv .ordered (project es q) (fuseProject es q) := by
@@ -567,6 +573,7 @@ theorem equiv_simplify (q : Query S n) : Equiv .ordered q q.simplify := by
   | intersect q₁ q₂ ih₁ ih₂ => exact Equiv.intersect ih₁ ih₂
   | difference q₁ q₂ ih₁ ih₂ => exact Equiv.difference ih₁ ih₂
   | attach kind sub q ihs ihq => exact Equiv.attach kind ihs ihq
+  | one => rfl
 
 end Query
 
