@@ -237,8 +237,6 @@ def corpus : List (String × Expect) := [
   ("SELECT name FROM users WHERE id IN (SELECT user_id FROM orders UNION SELECT id FROM products)", .agree),
   ("SELECT name FROM users WHERE id IN (SELECT user_id FROM orders) AND age < (SELECT MAX(age) FROM users)", .agree),
   ("SELECT department, COUNT(*) FROM users WHERE id NOT IN (SELECT user_id FROM orders) GROUP BY department", .agree),
-  ("SELECT name FROM users u WHERE age > (SELECT AVG(age) FROM users v WHERE v.department = u.department)",
-    .rejected "unsupported: correlated subquery"),
   ("SELECT name FROM users WHERE id IN (SELECT id, age FROM users)", .rejected "typeError"),
   ("SELECT name FROM users WHERE name IN (SELECT id FROM users)", .rejected "typeError"),
   -- derived tables (phase 8f): the subquery's columns, requalified by the alias
@@ -269,6 +267,28 @@ def corpus : List (String × Expect) := [
   ("SELECT * FROM (SELECT 1 AS a, 'x' AS b) AS t", .agree),
   ("SELECT name FROM users WHERE age IN (SELECT 30)", .agree),
   ("SELECT name FROM users WHERE age = (SELECT 30)", .agree),
+  -- 9.4b (#462, decision D6): correlated subqueries and EXISTS in WHERE, as `Query.lateral` columns
+  ("SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)", .agree),
+  ("SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)", .agree),
+  ("SELECT name FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE amount > age * 10)", .agree),
+  ("SELECT name FROM users WHERE EXISTS (SELECT 1 / 0 FROM orders WHERE orders.user_id = users.id)", .agree),
+  ("SELECT id FROM users WHERE EXISTS (SELECT 1 FROM orders)", .agree),
+  ("SELECT id FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE amount > 1000000)", .agree),
+  ("SELECT name FROM users u WHERE age > (SELECT AVG(age) FROM users v WHERE v.department = u.department)", .agree),
+  ("SELECT name FROM users u WHERE age = (SELECT MAX(age) FROM users v WHERE v.department = u.department)", .agree),
+  ("SELECT name FROM users u WHERE (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) > 1", .agree),
+  ("SELECT name FROM users u WHERE (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) = 0", .agree),
+  ("SELECT name FROM users u WHERE id IN (SELECT user_id FROM orders o WHERE o.amount > u.age)", .agree),
+  ("SELECT name FROM users u WHERE id NOT IN (SELECT user_id FROM orders o WHERE o.amount > u.age)", .agree),
+  ("SELECT name FROM users u WHERE age > 20 AND EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.amount > 50)", .agree),
+  ("SELECT name FROM users u WHERE (SELECT amount FROM orders o WHERE o.user_id = u.id LIMIT 1) > 50", .agree),
+  -- a positive LIMIT in an EXISTS body changes nothing; LIMIT 0 is not expressed
+  ("SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id LIMIT 1)", .agree),
+  ("SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id LIMIT 0)",
+    .rejected "unsupported: EXISTS over LIMIT 0"),
+  -- a name the body has twice is ambiguous there, not the outer row's
+  ("SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM orders o, orders p WHERE id > 1)",
+    .rejected "ambiguousColumn"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

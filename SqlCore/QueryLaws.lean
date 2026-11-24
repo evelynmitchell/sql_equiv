@@ -633,6 +633,40 @@ theorem intersect_comm (q₁ q₂ : Query S n) :
   rw [h₁, h₂]
   tauto
 
+/-! ### `LATERAL` (phase 9.4b, #462, decision D6) -/
+
+/-- **A `LATERAL` body that reads no outer row is a cross join**, when the body cannot fail. (A
+body that can fail differs on an empty outer input: `LATERAL` never evaluates it, the join
+does.) -/
+theorem lateral_closed {body : Query S k} (hc : body.closed = true) (hs : body.IsSafe)
+    (q : Query S n) : Equiv .ordered (lateral body q) (join (lit (.bool true)) q body) := by
+  rw [equiv_ordered_iff]
+  intro D hD
+  obtain ⟨ss, hss⟩ := hs.exists_eval_eq_ok hD
+  have hbody : ∀ r : Row n, body.evalIn D (some ⟨n, r⟩) = .ok ss := fun r => by
+    rw [evalIn_of_closed D hc, hss]
+  rw [eval_lateral, eval_join, hss]
+  rcases q.eval D with e | rs
+  · rfl
+  · simp only [hbody, Except.ok_bind, Expr.filterRows_true]
+    have hm : ∀ l : List (Row n), (l.mapM fun r =>
+        (Except.ok (ss.map (Fin.append r)) : Except EvalError (List (Row (n + k))))) =
+        .ok (l.map fun r => ss.map (Fin.append r)) := by
+      intro l
+      induction l with
+      | nil => rfl
+      | cons r l ih => rw [List.mapM_cons]; simp only [bind, Except.bind, ih]; rfl
+    simp only [bind, Except.bind, pure, Except.pure]
+    rw [hm]
+    show Except.toOption (Except.ok _) = Except.toOption (Except.ok _)
+    congr 2
+    induction rs with
+    | nil => rfl
+    | cons r rs ih =>
+      simp only [List.map_cons, List.flatten_cons, ih, Row.product, List.product_cons,
+        List.map_append, List.map_map]
+      rfl
+
 end Query
 
 end SqlCore

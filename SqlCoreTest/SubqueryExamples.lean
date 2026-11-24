@@ -60,4 +60,31 @@ example (D' : Database S) (hD' : D'.Conforms) :
     ∃ rs, (attach (.inSub true (col 1)) deptIds emp).eval D' = .ok rs :=
   IsSafe.exists_eval_eq_ok (by decide) hD'
 
+/-! ### Correlated bodies (phase 9.4b, #462, decision D6) -/
+
+/-- The departments of the outer `emp` row: `dept` joined behind the outer row (`emp.dept` is
+column 1, `dept.id` column 2). -/
+abbrev myDepts : Query S 4 :=
+  select (binary (.cmp .eq) (col 1) (col 2)) (join (lit (.bool true)) (outer (S.ctx .emp)) dept)
+
+-- `SELECT *, (SELECT COUNT(*) FROM dept WHERE dept.id = emp.dept) FROM emp`: the body runs once
+-- per outer row; the NULL department matches nothing.
+example : ((lateral (aggregate (g := 0) ![] ![.countStar] myDepts) emp).eval D).toOption.map
+    (·.map (· 2)) = some [some (.int 2), some (.int 2), some (.int 0), some (.int 2)] := by
+  decide +kernel
+
+-- `LIMIT` applies per outer row: the first title of each employee's department.
+example : ((lateral (limit (some 1) 0 (project ![col 3] myDepts)) emp).eval D).toOption.map
+    (·.map (· 2)) = some [some (.text "eng"), some (.text "eng"), some (.text "eng")] := by
+  decide +kernel
+
+-- Well-typed, so it never fails on a conforming instance; a free `outer` is ill-typed.
+example : (lateral (aggregate (g := 0) ![] ![.countStar] myDepts) emp).typeOf =
+    some ![.text, .int, .int] := by decide
+example : (outer (S := S) (S.ctx .emp)).typeOf = none := by decide
+
+-- A body that reads no outer row is a cross join (`Query.lateral_closed`).
+example : Equiv .ordered (lateral deptIds emp) (join (lit (.bool true)) emp deptIds) :=
+  lateral_closed (by decide) (by decide) emp
+
 end SqlCoreTest.SubqueryExamples

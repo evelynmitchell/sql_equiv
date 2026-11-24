@@ -659,6 +659,7 @@ theorem elabWhere_one_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM
     {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {w e : SqlEquiv.Expr} {neg : Bool}
     {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n}
     (hs : subsOf w = [(.inSubquery e neg sq, sq)])
+    (hun : ∀ qq c, sub sq ≠ .error (.unknownColumn qq c))
     (h : elabWhere N sub cols q (some w) = .ok q₀) :
     ∃ (r : Elaborated N.S) (h1 : r.n = 1) (e' : Expr n) (P : Expr (n + 1)), sub sq = .ok r ∧
       elabExpr cols N.fold noHook e = .ok e' ∧
@@ -671,6 +672,7 @@ theorem elabWhere_one_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM
   rcases hsb : sub sq with err | r
   · rw [hsb] at h
     cases err <;> first
+      | exact absurd hsb (hun _ _)
       | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
       | (dsimp only at h; split at h <;>
           simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
@@ -699,11 +701,13 @@ theorem elabWhere_one_inSub (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM
   subst h
   exact ⟨r, h1, e', P, rfl, rfl, rfl, rfl⟩
 
+
 /-- The elaborated `WHERE w` when `w`'s one subquery is a scalar subquery. -/
 theorem elabWhere_one_scalar (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S))
     {n : ℕ} (cols : Fin n → Column) (q : Query N.S n) {w : SqlEquiv.Expr}
     {sq : SqlEquiv.SubQuery} {q₀ : Query N.S n}
     (hs : subsOf w = [(.subquery sq, sq)])
+    (hun : ∀ qq c, sub sq ≠ .error (.unknownColumn qq c))
     (h : elabWhere N sub cols q (some w) = .ok q₀) :
     ∃ (r : Elaborated N.S) (h1 : r.n = 1) (P : Expr (n + 1)), sub sq = .ok r ∧
       elabExpr (Fin.append cols ![subCol (r.cols ⟨0, by omega⟩).type]) N.fold
@@ -716,6 +720,7 @@ theorem elabWhere_one_scalar (N : NamedSchema) (sub : SqlEquiv.SubQuery → Elab
   rcases hsb : sub sq with err | r
   · rw [hsb] at h
     cases err <;> first
+      | exact absurd hsb (hun _ _)
       | (simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h; done)
       | (dsimp only at h; split at h <;>
           simp [throw, throwThe, MonadExceptOf.throw, bind, Except.bind] at h)
@@ -741,6 +746,7 @@ theorem elabWhere_one_scalar (N : NamedSchema) (sub : SqlEquiv.SubQuery → Elab
   subst h
   exact ⟨r, h1, P, rfl, hP, rfl⟩
 
+
 theorem conforms_append_single {n : ℕ} {Γ : Fin n → SqlType} {r : Row n} {τ : SqlType} {d : Datum}
     (hr : r.Conforms Γ) (hd : d.HasType τ) :
     Row.Conforms (Fin.append Γ ![τ]) (Fin.append r ![d] : Row (n + 1)) := by
@@ -763,7 +769,7 @@ theorem typeOf_attachWhere {S : DbSchema} {n : ℕ} {kind : SubKind n} {sub : Qu
   obtain ⟨Γ', hsel, hproj⟩ := Query.typeOf_project_eq_some.mp h
   obtain ⟨hatt, -⟩ := Query.typeOf_select_eq_some.mp hsel
   have hatt' := hatt
-  simp only [Query.typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at hatt
+  simp only [Query.typeOf, Query.typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at hatt
   obtain ⟨Δ, hΔ, Γq, hΓq, hk⟩ := hatt
   have key : ∃ τ, Γ' = Fin.append Γq ![τ] ∧ (∀ fr, kind = .scalar fr → τ = Δ 0) ∧
       (∀ neg e, kind = .inSub neg e → τ = .bool) := by
@@ -967,10 +973,11 @@ theorem subBody_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toL
     | zero => simp [elabSubQuery, throw, throwThe, MonadExceptOf.throw] at hl
     | succ fu =>
     have hΓ : ∃ Γ, ql.typeOf = some Γ ∧ qr.typeOf = some Γ := by
-      cases op <;> simp only [CorrectSetOp.setOpQuery, Query.typeOf, Option.bind_eq_bind] at hty <;>
-        cases hql : ql.typeOf <;> simp only [hql, Option.bind_none, Option.bind_some,
+      cases op <;> simp only [CorrectSetOp.setOpQuery, Query.typeOf, Query.typeOfIn,
+          Option.bind_eq_bind] at hty <;>
+        cases hql : ql.typeOfIn none <;> simp only [hql, Option.bind_none, Option.bind_some,
           Option.isSome_none, Bool.false_eq_true] at hty <;>
-        split at hty <;> first | exact ⟨_, rfl, by assumption⟩ | simp at hty
+        split at hty <;> first | exact ⟨_, hql, by assumption⟩ | simp at hty
     obtain ⟨Γ, hΓl, hΓr⟩ := hΓ
     have hnb' : QNoBoolOrder ql ∧ QNoBoolOrder qr := by
       cases op <;> simp only [CorrectSetOp.setOpQuery, QNoBoolOrder] at hnb <;> exact hnb
@@ -1051,16 +1058,31 @@ theorem inExpr_hasType {n : ℕ} {neg : Bool} {e' : Expr n} {vals : List Datum} 
     subst h; exact Truth.toDatum_hasType _
 
 
+/-- A subquery body that does not read the outer query (9.4b, decision D6): its elaboration does
+    not fail on an unknown column. A correlated body elaborates as a `Query.lateral` column,
+    which the engines validate (decision D4), and is outside the theorems of this file. -/
+def uncorrelated (N : NamedSchema) (sq : SqlEquiv.SubQuery) : Bool :=
+  match elabSubQuery N 15 sq with
+  | .error (.unknownColumn _ _) => false
+  | _ => true
+
+theorem not_unknownColumn_of_uncorrelated {N : NamedSchema} {sq : SqlEquiv.SubQuery}
+    (h : uncorrelated N sq = true) :
+    ∀ qq c, elabSubQuery N 15 sq ≠ .error (.unknownColumn qq c) := by
+  intro qq c he
+  simp [uncorrelated, he] at h
+
 /-- The subquery nodes of steps 6b and 6c, with their bodies: `e [NOT] IN (body)` with the probe
     in the expression fragment, or the scalar subquery `(body)` in a dialect that takes the
     first row of several (sqlite, `DialectConfig.scalarSubqueryRows`; the typed core's safety
     check asks for it, though a `BodyOk.agg` body has exactly one row). -/
 inductive NodeOk (N : NamedSchema) : SqlEquiv.Expr → SqlEquiv.SubQuery → Prop
   | inSub {e : SqlEquiv.Expr} {neg : Bool} {sq : SqlEquiv.SubQuery}
-      (he : isFragment e = true) (hb : SubBodyOk sq) :
+      (he : isFragment e = true) (hb : SubBodyOk sq) (hun : uncorrelated N sq = true) :
       NodeOk N (.inSubquery e neg sq) sq
   | scalar {body : SqlEquiv.SelectStmt} (hcfg : N.config.scalarSubqueryRows = .firstRow)
-      (hb : BodyOk body) : NodeOk N (.subquery (.simple body)) (.simple body)
+      (hb : BodyOk body) (hun : uncorrelated N (.simple body) = true) :
+      NodeOk N (.subquery (.simple body)) (.simple body)
 
 /-- The `WHERE` clauses of steps 6b and 6c: a `HoleCtx` predicate over such a node: the node,
     `a op node` for a comparison, or either under `AND` next to fragment conjuncts. The other
@@ -1080,10 +1102,11 @@ theorem whereOk_of_subWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower
     WhereOk cf N.fold db D (some w) qf q₀ := by
   obtain ⟨node, sq, hnode, hctxW⟩ := hw
   cases hnode with
-  | @inSub e neg sq he hb =>
+  | @inSub e neg sq he hb hun =>
     have hs := holeCtx_subs (fold := N.fold) (node := .inSubquery e neg sq)
       (sq := sq) (by simp [subsOf]) hctxW
-    obtain ⟨r, h1, e', P, hsub, he', hP, rfl⟩ := elabWhere_one_inSub N _ cf qf hs h
+    obtain ⟨r, h1, e', P, hsub, he', hP, rfl⟩ :=
+      elabWhere_one_inSub N _ cf qf hs (not_unknownColumn_of_uncorrelated hun) h
     obtain ⟨m, rq, rc⟩ := r
     dsimp only at h1
     subst h1
@@ -1115,10 +1138,11 @@ theorem whereOk_of_subWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower
     refine ⟨vn, hvn, hrn, conforms_append_single hc ?_⟩
     rw [hk2 neg e' rfl]
     exact inExpr_hasType hd
-  | @scalar body hcfg hb =>
+  | @scalar body hcfg hb hun =>
     have hs := holeCtx_subs (fold := N.fold) (node := .subquery (.simple body))
       (sq := .simple body) (by simp [subsOf]) hctxW
-    obtain ⟨r, h1, P, hsub, hP, rfl⟩ := elabWhere_one_scalar N _ cf qf hs h
+    obtain ⟨r, h1, P, hsub, hP, rfl⟩ :=
+      elabWhere_one_scalar N _ cf qf hs (not_unknownColumn_of_uncorrelated hun) h
     obtain ⟨m, rq, rc⟩ := r
     dsimp only at h1
     subst h1
@@ -1438,7 +1462,8 @@ theorem fromRows_table (N : NamedSchema) (sub : SqlEquiv.SubQuery → ElabM (Ela
     bound, in a dialect that takes the first row of several. -/
 def AvgWhere (N : NamedSchema) (D : Database N.S) (f : SqlEquiv.FromClause)
     (w : SqlEquiv.Expr) : Prop :=
-  N.config.scalarSubqueryRows = .firstRow ∧ ∃ body, AvgBody body ∧ AvgBound N D body ∧
+  N.config.scalarSubqueryRows = .firstRow ∧ ∃ body, AvgBody body ∧
+    uncorrelated N (.simple body) = true ∧ AvgBound N D body ∧
     w ≠ .subquery (.simple body) ∧ HoleCtx N.fold (NonDecimalIn N f) (.subquery (.simple body)) w
 
 /-- **Such a clause provides `WhereOk`**: `SqlEquiv` compares with the rounded average, the typed
@@ -1453,10 +1478,11 @@ theorem whereOk_of_avgWhere (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower
     (hf : elabFrom N (fun sq => elabSubQuery N 15 sq) f = .ok ⟨n, qf, cf⟩)
     (h : elabWhere N (fun sq => elabSubQuery N 15 sq) cf qf (some w) = .ok q₀) :
     WhereOk cf N.fold db D (some w) qf q₀ := by
-  obtain ⟨hcfg, body, hb, hbound, hne, hctxW⟩ := hw
+  obtain ⟨hcfg, body, hb, hun, hbound, hne, hctxW⟩ := hw
   have hs := holeCtx_subs (fold := N.fold) (node := .subquery (.simple body))
     (sq := .simple body) (by simp [subsOf]) hctxW
-  obtain ⟨r, h1, P, hsub, hP, rfl⟩ := elabWhere_one_scalar N _ cf qf hs h
+  obtain ⟨r, h1, P, hsub, hP, rfl⟩ :=
+    elabWhere_one_scalar N _ cf qf hs (not_unknownColumn_of_uncorrelated hun) h
   obtain ⟨m, rq, rc⟩ := r
   dsimp only at h1
   subst h1

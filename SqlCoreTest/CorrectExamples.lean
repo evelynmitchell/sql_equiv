@@ -891,9 +891,16 @@ def inSubSpider (sql : String) : Bool :=
 -- a plain body with `LIMIT` (#411)
 #guard inSubSpider ("SELECT name FROM singer WHERE singer_id NOT IN " ++
   "(SELECT singer_id FROM song LIMIT 1)")
--- a correlated subquery has the shape but does not elaborate
-#guard !inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
+-- a correlated subquery has the shape and elaborates, as a `Query.lateral` column (9.4b, D6), but
+-- its body is not `uncorrelated`, so the theorems leave it to the engine differential tests
+#guard inSubSpider ("SELECT name FROM singer WHERE singer_id IN " ++
   "(SELECT singer_id FROM song WHERE title = name)")
+#guard !SqlBridge.CorrectSub.uncorrelated singerSchema
+  (.simple (.mk false [.exprItem (.col ⟨none, "singer_id"⟩) none] (some (.table ⟨"song", none⟩))
+    (some (.binOp .eq (.col ⟨none, "title"⟩) (.col ⟨none, "name"⟩))) [] none [] none none))
+#guard SqlBridge.CorrectSub.uncorrelated singerSchema
+  (.simple (.mk false [.exprItem (.col ⟨none, "singer_id"⟩) none] (some (.table ⟨"song", none⟩))
+    none [] none [] none none))
 -- the coverage report agrees on each (`featuresSqlite` says "disagrees" otherwise)
 #guard featuresSqlite "SELECT name FROM singer WHERE singer_id NOT IN (SELECT singer_id FROM song)" == []
 #guard featuresSqlite ("SELECT name FROM singer WHERE age > 20 AND singer_id NOT IN " ++

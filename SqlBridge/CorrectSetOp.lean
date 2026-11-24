@@ -178,10 +178,10 @@ theorem elab_compound_shape (N : NamedSchema) {l r : SqlEquiv.Query} {op : SqlEq
   -- the result's type gives both branches the same type
   have hΓ : ∃ Γ, ql.typeOf = some Γ ∧ qr.typeOf = some Γ := by
     cases op <;> simp only [pure, Except.pure, Except.ok.injEq] at hraw <;> subst hraw <;>
-      simp only [Query.typeOf, Option.bind_eq_bind] at hty <;>
-      cases hql : ql.typeOf <;> simp only [hql, Option.bind_none, Option.bind_some,
+      simp only [Query.typeOf, Query.typeOfIn, Option.bind_eq_bind] at hty <;>
+      cases hql : ql.typeOfIn none <;> simp only [hql, Option.bind_none, Option.bind_some,
         Option.isSome_none, Bool.false_eq_true] at hty <;>
-      split at hty <;> first | exact ⟨_, rfl, by assumption⟩ | simp at hty
+      split at hty <;> first | exact ⟨_, hql, by assumption⟩ | simp at hty
   obtain ⟨Γ, hΓl, hΓr⟩ := hΓ
   refine ⟨m, ql, qr, cl, cr, Γ, ?_, ?_, hΓl, hΓr, ?_⟩
   · simp [elabQuery, hl, hΓl, bind, Except.bind, pure, Except.pure]

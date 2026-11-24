@@ -463,6 +463,12 @@ inductive Query (S : DbSchema) : ℕ → Type where
   /-- The source of a `SELECT` without `FROM` (phase 9.1a, #459): one row with no columns. A
   projection over it gives `SELECT 1`'s one row. -/
   | one : Query S 0
+  /-- The outer row of a correlated body (phase 9.4b, #462, decision D6), with its column types. Outside a
+  `lateral` body it is ill-typed. -/
+  | outer {n : ℕ} (Γ : Fin n → SqlType) : Query S n
+  /-- `q CROSS JOIN LATERAL body` (phase 9.4b, #462, decision D6): for each row `r` of `q`, the rows of
+  `body` evaluated with `r` as its outer row, each appended to `r`. -/
+  | lateral {n k : ℕ} (body : Query S k) (q : Query S n) : Query S (n + k)
 
 namespace Query
 
@@ -470,39 +476,52 @@ variable {S : DbSchema}
 
 /-- Evaluate a query on a database instance: the bag of result rows as a list, or the first error.
 Every predicate and projection is evaluated on every row of its input. -/
-def eval (D : Database S) : {n : ℕ} → Query S n → Except EvalError (List (Row n))
+def evalIn (D : Database S) (env : Option ((m : ℕ) × Row m)) :
+    {n : ℕ} → Query S n → Except EvalError (List (Row n))
   | _, table t => .ok (D t)
-  | _, select p q => do p.filterRows (← q.eval D)
-  | _, project es q => do (← q.eval D).mapM (Expr.evalRow es)
+  | _, select p q => do p.filterRows (← q.evalIn D env)
+  | _, project es q => do (← q.evalIn D env).mapM (Expr.evalRow es)
   | _, join θ q₁ q₂ => do
-    let rs ← q₁.eval D
-    let ss ← q₂.eval D
+    let rs ← q₁.evalIn D env
+    let ss ← q₂.evalIn D env
     θ.filterRows (Row.product rs ss)
   | _, unionAll q₁ q₂ => do
-    let rs ← q₁.eval D
-    let ss ← q₂.eval D
+    let rs ← q₁.evalIn D env
+    let ss ← q₂.evalIn D env
     return rs ++ ss
-  | _, distinct q => do return (← q.eval D).dedup
+  | _, distinct q => do return (← q.evalIn D env).dedup
   | _, aggregate keys aggs q => do
-    let rs ← q.eval D
+    let rs ← q.evalIn D env
     let keyed ← rs.mapM fun r => do return (← Expr.evalRow keys r, r)
     (Row.groups keyed).mapM fun kg => do return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)
   | _, orderBy keys q => do
-    let rs ← q.eval D
+    let rs ← q.evalIn D env
     let keyed ← rs.mapM fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r)
     return (sortKeyed keys keyed).map Prod.snd
   | _, limit count offset q => do
-    let rs ← q.eval D
+    let rs ← q.evalIn D env
     return match count with
       | some c => (rs.drop offset).take c
       | none => rs.drop offset
-  | _, intersect q₁ q₂ => do return Row.setOp true (← q₁.eval D) (← q₂.eval D)
-  | _, difference q₁ q₂ => do return Row.setOp false (← q₁.eval D) (← q₂.eval D)
+  | _, intersect q₁ q₂ => do return Row.setOp true (← q₁.evalIn D env) (← q₂.evalIn D env)
+  | _, difference q₁ q₂ => do return Row.setOp false (← q₁.evalIn D env) (← q₂.evalIn D env)
   | _, attach kind sub q => do
-    let ss ← sub.eval D
+    let ss ← sub.evalIn D env
     let x ← kind.extra (ss.map (· 0))
-    (← q.eval D).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))
+    (← q.evalIn D env).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))
   | _, one => .ok [![]]
+  | n, outer _ => match env with
+    | some ⟨m, r⟩ => if h : m = n then .ok [h ▸ r] else .error .typeMismatch
+    | none => .error .typeMismatch
+  | _, lateral body q => do
+    let rs ← q.evalIn D env
+    let parts ← rs.mapM fun r => do
+      return (← body.evalIn D (some ⟨_, r⟩)).map (Fin.append r)
+    return parts.flatten
+
+/-- Evaluate a query on a database instance, with no outer row. -/
+def eval (D : Database S) {n : ℕ} (q : Query S n) : Except EvalError (List (Row n)) :=
+  q.evalIn D none
 
 section Eval
 
@@ -565,6 +584,67 @@ theorem eval_attach (kind : SubKind n) (sub : Query S 1) (q : Query S n) :
 
 end Eval
 
+section EvalIn
+
+variable (D : Database S) (env : Option ((m : ℕ) × Row m))
+
+@[simp] theorem evalIn_table (t : S.Table) : (table t).evalIn D env = .ok (D t) := rfl
+
+theorem evalIn_select (p : Expr n) (q : Query S n) :
+    (select p q).evalIn D env = (do p.filterRows (← q.evalIn D env)) := rfl
+
+theorem evalIn_project (es : Fin k → Expr n) (q : Query S n) :
+    (project es q).evalIn D env = (do (← q.evalIn D env).mapM (Expr.evalRow es)) := rfl
+
+theorem evalIn_join (θ : Expr (n + m)) (q₁ : Query S n) (q₂ : Query S m) :
+    (join θ q₁ q₂).evalIn D env =
+      (do let rs ← q₁.evalIn D env; let ss ← q₂.evalIn D env; θ.filterRows (Row.product rs ss)) := rfl
+
+theorem evalIn_unionAll (q₁ q₂ : Query S n) :
+    (unionAll q₁ q₂).evalIn D env = (do let rs ← q₁.evalIn D env; let ss ← q₂.evalIn D env; return rs ++ ss) :=
+  rfl
+
+theorem evalIn_distinct (q : Query S n) :
+    (distinct q).evalIn D env = (do return (← q.evalIn D env).dedup) := rfl
+
+theorem evalIn_aggregate {g a : ℕ} (keys : Fin g → Expr n) (aggs : Fin a → AggCall n) (q : Query S n) :
+    (aggregate keys aggs q).evalIn D env = (do
+      let rs ← q.evalIn D env
+      let keyed ← rs.mapM fun r => do return (← Expr.evalRow keys r, r)
+      (Row.groups keyed).mapM fun kg => do return Fin.append kg.1 (← AggCall.evalAll aggs kg.2)) :=
+  rfl
+
+theorem evalIn_orderBy {k : ℕ} (keys : Fin k → SortKey n) (q : Query S n) :
+    (orderBy keys q).evalIn D env = (do
+      let rs ← q.evalIn D env
+      let keyed ← rs.mapM fun r => do return (← Expr.evalRow (fun i => (keys i).e) r, r)
+      return (sortKeyed keys keyed).map Prod.snd) := rfl
+
+theorem evalIn_limit (count : Option ℕ) (offset : ℕ) (q : Query S n) :
+    (limit count offset q).evalIn D env = (do
+      let rs ← q.evalIn D env
+      return match count with
+        | some c => (rs.drop offset).take c
+        | none => rs.drop offset) := rfl
+
+theorem evalIn_intersect (q₁ q₂ : Query S n) :
+    (intersect q₁ q₂).evalIn D env =
+      (do let rs ← q₁.evalIn D env; let ss ← q₂.evalIn D env; return Row.setOp true rs ss) := rfl
+
+theorem evalIn_difference (q₁ q₂ : Query S n) :
+    (difference q₁ q₂).evalIn D env =
+      (do let rs ← q₁.evalIn D env; let ss ← q₂.evalIn D env; return Row.setOp false rs ss) := rfl
+
+theorem evalIn_attach (kind : SubKind n) (sub : Query S 1) (q : Query S n) :
+    (attach kind sub q).evalIn D env = (do
+      let ss ← sub.evalIn D env
+      let x ← kind.extra (ss.map (· 0))
+      (← q.evalIn D env).mapM (Expr.evalRow (Fin.append (fun i => Expr.col i) ![x]))) := rfl
+
+@[simp] theorem evalIn_one : (one : Query S 0).evalIn D env = .ok [![]] := rfl
+
+end EvalIn
+
 /-- When the join predicate `θ` succeeds on every pair of input rows, the join succeeds and
 returns the joined rows of the pairs on which `θ` is `TRUE`, in the order of `rs ×ˢ ss`. -/
 theorem eval_join_eq_ok_of_forall {D : Database S} {θ : Expr (n + m)} {q₁ : Query S n}
@@ -588,25 +668,26 @@ theorem eval_join_eq_ok_of_forall {D : Database S} {θ : Expr (n + m)} {q₁ : Q
 /-- The typing context of the query's result rows, if the query is well-typed: `WHERE` and `ON`
 predicates are boolean over their input, the expressions of a `SELECT` list are well-typed, and
 the inputs of `UNION ALL` have the same types. -/
-def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
+def typeOfIn (Γo : Option ((m : ℕ) × (Fin m → SqlType))) :
+    {n : ℕ} → Query S n → Option (Fin n → SqlType)
   | _, table t => some (S.ctx t)
   | _, select p q => do
-    let Γ ← q.typeOf
+    let Γ ← q.typeOfIn Γo
     if p.typeOf Γ = some .bool then some Γ else none
   | _, project es q => do
-    let Γ ← q.typeOf
+    let Γ ← q.typeOfIn Γo
     if h : ∀ i, ((es i).typeOf Γ).isSome then some fun i => ((es i).typeOf Γ).get (h i)
     else none
   | _, join θ q₁ q₂ => do
-    let Γ ← q₁.typeOf
-    let Δ ← q₂.typeOf
+    let Γ ← q₁.typeOfIn Γo
+    let Δ ← q₂.typeOfIn Γo
     if θ.typeOf (Fin.append Γ Δ) = some .bool then some (Fin.append Γ Δ) else none
   | _, unionAll q₁ q₂ => do
-    let Γ ← q₁.typeOf
-    if q₂.typeOf = some Γ then some Γ else none
-  | _, distinct q => q.typeOf
+    let Γ ← q₁.typeOfIn Γo
+    if q₂.typeOfIn Γo = some Γ then some Γ else none
+  | _, distinct q => q.typeOfIn Γo
   | _, aggregate keys aggs q => do
-    let Γ ← q.typeOf
+    let Γ ← q.typeOfIn Γo
     if h₁ : ∀ i, ((keys i).typeOf Γ).isSome then
       if h₂ : ∀ j, ((aggs j).typeOf Γ).isSome then
         some (Fin.append (fun i => ((keys i).typeOf Γ).get (h₁ i))
@@ -614,30 +695,40 @@ def typeOf : {n : ℕ} → Query S n → Option (Fin n → SqlType)
       else none
     else none
   | _, orderBy keys q => do
-    let Γ ← q.typeOf
+    let Γ ← q.typeOfIn Γo
     if ∀ i, ((keys i).e.typeOf Γ).isSome then some Γ else none
-  | _, limit _ _ q => q.typeOf
+  | _, limit _ _ q => q.typeOfIn Γo
   | _, intersect q₁ q₂ => do
-    let Γ ← q₁.typeOf
-    if q₂.typeOf = some Γ then some Γ else none
+    let Γ ← q₁.typeOfIn Γo
+    if q₂.typeOfIn Γo = some Γ then some Γ else none
   | _, difference q₁ q₂ => do
-    let Γ ← q₁.typeOf
-    if q₂.typeOf = some Γ then some Γ else none
+    let Γ ← q₁.typeOfIn Γo
+    if q₂.typeOfIn Γo = some Γ then some Γ else none
   | _, attach kind sub q => do
-    let Δ ← sub.typeOf
-    let Γ ← q.typeOf
+    let Δ ← sub.typeOfIn Γo
+    let Γ ← q.typeOfIn Γo
     match kind with
     | .scalar _ => some (Fin.append Γ ![Δ 0])
     | .inSub _ e =>
       if (e.typeOf Γ).any (fun τ => decide (τ.Comparable (Δ 0))) then some (Fin.append Γ ![.bool])
       else none
   | _, one => some ![]
+  | n, outer Γ => match Γo with
+    | some ⟨m, Δ⟩ => if h : m = n then (if h ▸ Δ = Γ then some Γ else none) else none
+    | none => none
+  | _, lateral body q => do
+    let Γ ← q.typeOfIn Γo
+    let Δ ← body.typeOfIn (some ⟨_, Γ⟩)
+    some (Fin.append Γ Δ)
+
+/-- The typing context of the query's result rows, with no outer row. -/
+def typeOf {n : ℕ} (q : Query S n) : Option (Fin n → SqlType) := q.typeOfIn none
 
 @[simp] theorem typeOf_table (t : S.Table) : (table t).typeOf = some (S.ctx t) := rfl
 
 theorem typeOf_select_eq_some {p : Expr n} {q : Query S n} {Γ : Fin n → SqlType} :
     (select p q).typeOf = some Γ ↔ q.typeOf = some Γ ∧ p.typeOf Γ = some .bool := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
     Option.some.injEq]
   constructor
   · rintro ⟨Γ', h, hp, rfl⟩
@@ -648,7 +739,7 @@ theorem typeOf_select_eq_some {p : Expr n} {q : Query S n} {Γ : Fin n → SqlTy
 theorem typeOf_project_eq_some {es : Fin k → Expr n} {q : Query S n} {Δ : Fin k → SqlType} :
     (project es q).typeOf = some Δ ↔
       ∃ Γ, q.typeOf = some Γ ∧ ∀ i, (es i).typeOf Γ = some (Δ i) := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff]
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff]
   refine exists_congr fun Γ => and_congr_right fun _ => ?_
   split_ifs with h
   · simp only [Option.some.injEq]
@@ -667,7 +758,7 @@ theorem typeOf_join_eq_some {θ : Expr (n + m)} {q₁ : Query S n} {q₂ : Query
     (join θ q₁ q₂).typeOf = some Γ' ↔
       ∃ Γ Δ, q₁.typeOf = some Γ ∧ q₂.typeOf = some Δ ∧
         θ.typeOf (Fin.append Γ Δ) = some .bool ∧ Fin.append Γ Δ = Γ' := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
     Option.some.injEq]
   constructor
   · rintro ⟨Γ, h₁, Δ, h₂, hθ, rfl⟩
@@ -677,7 +768,7 @@ theorem typeOf_join_eq_some {θ : Expr (n + m)} {q₁ : Query S n} {q₂ : Query
 
 theorem typeOf_unionAll_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
     (unionAll q₁ q₂).typeOf = some Γ ↔ q₁.typeOf = some Γ ∧ q₂.typeOf = some Γ := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
     Option.some.injEq]
   constructor
   · rintro ⟨Γ', h₁, h₂, rfl⟩
@@ -689,7 +780,7 @@ theorem typeOf_unionAll_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType}
 
 theorem typeOf_intersect_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
     (intersect q₁ q₂).typeOf = some Γ ↔ q₁.typeOf = some Γ ∧ q₂.typeOf = some Γ := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
     Option.some.injEq]
   constructor
   · rintro ⟨Γ', h₁, h₂, rfl⟩
@@ -699,7 +790,7 @@ theorem typeOf_intersect_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType
 
 theorem typeOf_difference_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
     (difference q₁ q₂).typeOf = some Γ ↔ q₁.typeOf = some Γ ∧ q₂.typeOf = some Γ := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
     Option.some.injEq]
   constructor
   · rintro ⟨Γ', h₁, h₂, rfl⟩
@@ -710,7 +801,7 @@ theorem typeOf_difference_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlTyp
 theorem typeOf_orderBy_eq_some {k : ℕ} {keys : Fin k → SortKey n} {q : Query S n}
     {Γ : Fin n → SqlType} (h : (orderBy keys q).typeOf = some Γ) :
     q.typeOf = some Γ ∧ ∃ Δ : Fin k → SqlType, ∀ i, (keys i).e.typeOf Γ = some (Δ i) := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
   obtain ⟨Γ', hq, h⟩ := h
   split_ifs at h with hk
   cases h
@@ -723,7 +814,114 @@ theorem typeOf_aggregate_eq_some {g a : ℕ} {keys : Fin g → Expr n} {aggs : F
     {q : Query S n} {Γ' : Fin (g + a) → SqlType} (h : (aggregate keys aggs q).typeOf = some Γ') :
     ∃ Γ Δk Δa, q.typeOf = some Γ ∧ (∀ i, (keys i).typeOf Γ = some (Δk i)) ∧
       (∀ j, (aggs j).typeOf Γ = some (Δa j)) ∧ Fin.append Δk Δa = Γ' := by
-  simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨Γ, hq, h⟩ := h
+  split_ifs at h with h₁ h₂
+  cases h
+  exact ⟨Γ, _, _, hq, fun i => by simp, fun j => by simp, rfl⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+@[simp] theorem typeOfIn_table (t : S.Table) : (table t).typeOfIn Γo = some (S.ctx t) := rfl
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_select_eq_some {p : Expr n} {q : Query S n} {Γ : Fin n → SqlType} :
+    (select p q).typeOfIn Γo = some Γ ↔ q.typeOfIn Γo = some Γ ∧ p.typeOf Γ = some .bool := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ', h, hp, rfl⟩
+    exact ⟨h, hp⟩
+  · rintro ⟨h, hp⟩
+    exact ⟨Γ, h, hp, rfl⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_project_eq_some {es : Fin k → Expr n} {q : Query S n} {Δ : Fin k → SqlType} :
+    (project es q).typeOfIn Γo = some Δ ↔
+      ∃ Γ, q.typeOfIn Γo = some Γ ∧ ∀ i, (es i).typeOf Γ = some (Δ i) := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff]
+  refine exists_congr fun Γ => and_congr_right fun _ => ?_
+  split_ifs with h
+  · simp only [Option.some.injEq]
+    constructor
+    · rintro rfl i
+      simp
+    · intro hΔ
+      funext i
+      simp [hΔ i]
+  · simp only [false_iff, not_forall]
+    obtain ⟨i, hi⟩ := not_forall.mp h
+    exact ⟨i, fun h' => hi (by simp [h'])⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_join_eq_some {θ : Expr (n + m)} {q₁ : Query S n} {q₂ : Query S m}
+    {Γ' : Fin (n + m) → SqlType} :
+    (join θ q₁ q₂).typeOfIn Γo = some Γ' ↔
+      ∃ Γ Δ, q₁.typeOfIn Γo = some Γ ∧ q₂.typeOfIn Γo = some Δ ∧
+        θ.typeOf (Fin.append Γ Δ) = some .bool ∧ Fin.append Γ Δ = Γ' := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ, h₁, Δ, h₂, hθ, rfl⟩
+    exact ⟨Γ, Δ, h₁, h₂, hθ, rfl⟩
+  · rintro ⟨Γ, Δ, h₁, h₂, hθ, rfl⟩
+    exact ⟨Γ, h₁, Δ, h₂, hθ, rfl⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_unionAll_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
+    (unionAll q₁ q₂).typeOfIn Γo = some Γ ↔ q₁.typeOfIn Γo = some Γ ∧ q₂.typeOfIn Γo = some Γ := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ', h₁, h₂, rfl⟩
+    exact ⟨h₁, h₂⟩
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨Γ, h₁, h₂, rfl⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+@[simp] theorem typeOfIn_distinct (q : Query S n) : (distinct q).typeOfIn Γo = q.typeOfIn Γo := rfl
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_intersect_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
+    (intersect q₁ q₂).typeOfIn Γo = some Γ ↔ q₁.typeOfIn Γo = some Γ ∧ q₂.typeOfIn Γo = some Γ := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ', h₁, h₂, rfl⟩
+    exact ⟨h₁, h₂⟩
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨Γ, h₁, h₂, rfl⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_difference_eq_some {q₁ q₂ : Query S n} {Γ : Fin n → SqlType} :
+    (difference q₁ q₂).typeOfIn Γo = some Γ ↔ q₁.typeOfIn Γo = some Γ ∧ q₂.typeOfIn Γo = some Γ := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.ite_none_right_eq_some,
+    Option.some.injEq]
+  constructor
+  · rintro ⟨Γ', h₁, h₂, rfl⟩
+    exact ⟨h₁, h₂⟩
+  · rintro ⟨h₁, h₂⟩
+    exact ⟨Γ, h₁, h₂, rfl⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_orderBy_eq_some {k : ℕ} {keys : Fin k → SortKey n} {q : Query S n}
+    {Γ : Fin n → SqlType} (h : (orderBy keys q).typeOfIn Γo = some Γ) :
+    q.typeOfIn Γo = some Γ ∧ ∃ Δ : Fin k → SqlType, ∀ i, (keys i).e.typeOf Γ = some (Δ i) := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨Γ', hq, h⟩ := h
+  split_ifs at h with hk
+  cases h
+  exact ⟨hq, fun i => ((keys i).e.typeOf Γ).get (hk i), fun i => by simp⟩
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+@[simp] theorem typeOfIn_limit (count : Option ℕ) (offset : ℕ) (q : Query S n) :
+    (limit count offset q).typeOfIn Γo = q.typeOfIn Γo := rfl
+
+variable {Γo : Option ((m : ℕ) × (Fin m → SqlType))} in
+theorem typeOfIn_aggregate_eq_some {g a : ℕ} {keys : Fin g → Expr n} {aggs : Fin a → AggCall n}
+    {q : Query S n} {Γ' : Fin (g + a) → SqlType} (h : (aggregate keys aggs q).typeOfIn Γo = some Γ') :
+    ∃ Γ Δk Δa, q.typeOfIn Γo = some Γ ∧ (∀ i, (keys i).typeOf Γ = some (Δk i)) ∧
+      (∀ j, (aggs j).typeOf Γ = some (Δa j)) ∧ Fin.append Δk Δa = Γ' := by
+  simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
   obtain ⟨Γ, hq, h⟩ := h
   split_ifs at h with h₁ h₂
   cases h
@@ -745,6 +943,8 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, difference q₁ q₂ => q₁.divSafe && q₂.divSafe
   | _, attach kind sub q => kind.divSafe && sub.divSafe && q.divSafe
   | _, one => true
+  | _, outer _ => true
+  | _, lateral body q => body.divSafe && q.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -817,23 +1017,32 @@ theorem mapM_evalRow_append {rs : List (Row n)} {Γ : Fin n → SqlType} (hrs : 
       · exact .inr ⟨by simp [List.mapM_cons, ht, hts], hP⟩
     · exact .inr ⟨by simp [List.mapM_cons, ht], hP⟩
 
+/-- The outer row conforms to the outer typing context (phase 9.4b, #462, decision D6). -/
+def EnvOk (env : Option ((m : ℕ) × Row m)) (Γo : Option ((m : ℕ) × (Fin m → SqlType))) : Prop :=
+  ∀ m Γ, Γo = some ⟨m, Γ⟩ → ∃ r : Row m, env = some ⟨m, r⟩ ∧ r.Conforms Γ
+
 /-- Type soundness as a postcondition: on a conforming instance, a well-typed query returns rows
 of its type, or fails with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar
 subquery with several rows), which requires a part that is not `divSafe`. -/
-theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n → SqlType}
-    (hq : q.typeOf = some Γ) :
-    Except.Spec (q.eval D) (fun rs => ∀ r ∈ rs, r.Conforms Γ)
+theorem evalIn_spec {D : Database S} (hD : D.Conforms) {q : Query S n} :
+    ∀ {env : Option ((m : ℕ) × Row m)} {Γo : Option ((m : ℕ) × (Fin m → SqlType))}
+      {Γ : Fin n → SqlType}, EnvOk env Γo → q.typeOfIn Γo = some Γ →
+    Except.Spec (q.evalIn D env) (fun rs => ∀ r ∈ rs, r.Conforms Γ)
       fun e => e.IsRuntime ∧ q.divSafe = false := by
   induction q with
-  | table t => cases hq; exact hD t
+  | table t =>
+    intro env Γo Γ henv hq
+    cases hq; exact hD t
   | select p q ih =>
-    obtain ⟨hq, hp⟩ := typeOf_select_eq_some.mp hq
-    exact ((ih hq).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+    intro env Γo Γ henv hq
+    obtain ⟨hq, hp⟩ := typeOfIn_select_eq_some.mp hq
+    exact ((ih henv hq).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
       (Expr.filterRows_spec hrs hp).mono (fun _ h r hr => hrs r (h r hr))
         fun _ h => ⟨.inl h.1, by simp [divSafe, h.2]⟩
   | project es q ih =>
-    obtain ⟨Γ₀, hq, hes⟩ := typeOf_project_eq_some.mp hq
-    refine ((ih hq).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+    intro env Γo Γ henv hq
+    obtain ⟨Γ₀, hq, hes⟩ := typeOfIn_project_eq_some.mp hq
+    refine ((ih henv hq).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
       (Except.Spec.mapM fun r hr => Expr.evalRow_spec (hrs r hr) hes).mono
         (fun _ h d hd => by obtain ⟨_, _, h⟩ := h d hd; exact h) ?_
     rintro _ ⟨rfl, i, hi⟩
@@ -841,21 +1050,26 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
     simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
     exact .inl ⟨i, by simp [hi]⟩
   | join θ q₁ q₂ ih₁ ih₂ =>
-    obtain ⟨Γ₁, Γ₂, h₁, h₂, hθ, rfl⟩ := typeOf_join_eq_some.mp hq
-    exact ((ih₁ h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
-      ((ih₂ h₂).imp_right fun hs => by simp [divSafe, hs]).bind fun ss _ hss =>
+    intro env Γo Γ henv hq
+    obtain ⟨Γ₁, Γ₂, h₁, h₂, hθ, rfl⟩ := typeOfIn_join_eq_some.mp hq
+    exact ((ih₁ henv h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+      ((ih₂ henv h₂).imp_right fun hs => by simp [divSafe, hs]).bind fun ss _ hss =>
       (Expr.filterRows_spec (fun _ => Row.conforms_of_mem_product hrs hss) hθ).mono
         (fun _ h t ht => Row.conforms_of_mem_product hrs hss (h t ht))
         fun _ h => ⟨.inl h.1, by simp [divSafe, h.2]⟩
   | unionAll q₁ q₂ ih₁ ih₂ =>
-    obtain ⟨h₁, h₂⟩ := typeOf_unionAll_eq_some.mp hq
-    exact ((ih₁ h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
-      ((ih₂ h₂).imp_right fun hs => by simp [divSafe, hs]).bind fun ss _ hss r hr =>
+    intro env Γo Γ henv hq
+    obtain ⟨h₁, h₂⟩ := typeOfIn_unionAll_eq_some.mp hq
+    exact ((ih₁ henv h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+      ((ih₂ henv h₂).imp_right fun hs => by simp [divSafe, hs]).bind fun ss _ hss r hr =>
       (List.mem_append.mp hr).elim (hrs r) (hss r)
-  | distinct q ih => exact (ih hq).bind fun rs _ hrs r hr => hrs r (List.mem_dedup.mp hr)
+  | distinct q ih =>
+    intro env Γo Γ henv hq
+    exact (ih henv hq).bind fun rs _ hrs r hr => hrs r (List.mem_dedup.mp hr)
   | aggregate keys aggs q ih =>
-    obtain ⟨Γ₀, Δk, Δa, hq₀, hks, has, rfl⟩ := typeOf_aggregate_eq_some hq
-    refine ((ih hq₀).imp_right fun hs => by simp [divSafe, hs]).bind ?_
+    intro env Γo Γ henv hq
+    obtain ⟨Γ₀, Δk, Δa, hq₀, hks, has, rfl⟩ := typeOfIn_aggregate_eq_some hq
+    refine ((ih henv hq₀).imp_right fun hs => by simp [divSafe, hs]).bind ?_
     intro rs _ hconf
     have hk : Except.Spec (rs.mapM fun r => do return (← Expr.evalRow keys r, r))
         (fun keyed => ∀ x ∈ keyed, x.2 ∈ rs ∧ x.1.Conforms Δk)
@@ -886,8 +1100,9 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
       simp only [divSafe, Bool.and_eq_false_iff, decide_eq_false_iff_not, not_forall]
       exact .inl (.inr ⟨j, by simp [hj]⟩)
   | orderBy keys q ih =>
-    obtain ⟨hq₀, Δ, hks⟩ := typeOf_orderBy_eq_some hq
-    refine ((ih hq₀).imp_right fun hs => by simp [divSafe, hs]).bind ?_
+    intro env Γo Γ henv hq
+    obtain ⟨hq₀, Δ, hks⟩ := typeOfIn_orderBy_eq_some hq
+    refine ((ih henv hq₀).imp_right fun hs => by simp [divSafe, hs]).bind ?_
     intro rs _ hconf
     have hk : Except.Spec (rs.mapM fun r => do
           return (← Expr.evalRow (fun i => (keys i).e) r, r))
@@ -903,25 +1118,29 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
     obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hr
     exact hconf _ (hkeyed x ((List.perm_insertionSort _ keyed).subset hx)).1
   | limit count offset q ih =>
-    refine (ih hq).bind fun rs _ hconf r hr => ?_
+    intro env Γo Γ henv hq
+    refine (ih henv hq).bind fun rs _ hconf r hr => ?_
     cases count with
     | none => exact hconf r (List.mem_of_mem_drop hr)
     | some c => exact hconf r (List.mem_of_mem_drop (List.mem_of_mem_take hr))
   | intersect q₁ q₂ ih₁ ih₂ =>
-    obtain ⟨h₁, h₂⟩ := typeOf_intersect_eq_some.mp hq
-    exact ((ih₁ h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
-      ((ih₂ h₂).mono (fun _ _ => trivial) fun _ h => ⟨h.1, by simp [divSafe, h.2]⟩).bind
+    intro env Γo Γ henv hq
+    obtain ⟨h₁, h₂⟩ := typeOfIn_intersect_eq_some.mp hq
+    exact ((ih₁ henv h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+      ((ih₂ henv h₂).mono (fun _ _ => trivial) fun _ h => ⟨h.1, by simp [divSafe, h.2]⟩).bind
       fun ss _ _ r hr => hrs r (Row.mem_setOp.mp hr).1
   | difference q₁ q₂ ih₁ ih₂ =>
-    obtain ⟨h₁, h₂⟩ := typeOf_difference_eq_some.mp hq
-    exact ((ih₁ h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
-      ((ih₂ h₂).mono (fun _ _ => trivial) fun _ h => ⟨h.1, by simp [divSafe, h.2]⟩).bind
+    intro env Γo Γ henv hq
+    obtain ⟨h₁, h₂⟩ := typeOfIn_difference_eq_some.mp hq
+    exact ((ih₁ henv h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+      ((ih₂ henv h₂).mono (fun _ _ => trivial) fun _ h => ⟨h.1, by simp [divSafe, h.2]⟩).bind
       fun ss _ _ r hr => hrs r (Row.mem_setOp.mp hr).1
   | attach kind sub q ihs ihq =>
-    simp only [typeOf, Option.bind_eq_bind, Option.bind_eq_some_iff] at hq
+    intro env Γo Γ henv hq
+    simp only [typeOf, typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at hq
     obtain ⟨Δ, hs₀, Γ₀, hq₀, hk⟩ := hq
     refine Except.Spec.of_ok_or_error ?_
-    rcases (ihs hs₀).ok_or_error with ⟨ss, hss, hconfs⟩ | ⟨ee, he, hre, hs⟩
+    rcases (ihs henv hs₀).ok_or_error with ⟨ss, hss, hconfs⟩ | ⟨ee, he, hre, hs⟩
     · have hvals : ∀ v ∈ ss.map (· 0), v.HasType (Δ 0) := by
         intro v hv
         obtain ⟨r, hr, rfl⟩ := List.mem_map.mp hv
@@ -939,7 +1158,7 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
               cases hsc
               exact ⟨rfl, by simpa using hf⟩
           obtain ⟨rfl, hf⟩ := hcard
-          refine .inr ⟨_, by simp [eval_attach, hss, SubKind.extra, hsc], .inr rfl, ?_⟩
+          refine .inr ⟨_, by simp [evalIn_attach, hss, SubKind.extra, hsc], .inr rfl, ?_⟩
           simp [divSafe, SubKind.divSafe, hf]
         · have hv : v.HasType (Δ 0) := by
             rcases hm : ss.map (· 0) with _ | ⟨v₁, _ | ⟨v₂, rest⟩⟩ <;> rw [hm] at hsc hvals <;>
@@ -949,12 +1168,12 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
             · split_ifs at hsc
               cases hsc
               exact hvals _ (by simp)
-          rcases (ihq hq₀).ok_or_error with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
+          rcases (ihq henv hq₀).ok_or_error with ⟨rs, hrs, hconf⟩ | ⟨ee, he, hre, hs⟩
           · rcases mapM_evalRow_append hconf (x := Expr.ofDatum .int v) (σ := Δ 0) (P := False)
                 (fun _ _ => .inl ⟨v, by simp, hv⟩) with ⟨ts, hts, htc⟩ | ⟨_, hF⟩
-            · exact .inl ⟨ts, by simp [eval_attach, hss, SubKind.extra, hsc, hrs, hts], htc⟩
+            · exact .inl ⟨ts, by simp [evalIn_attach, hss, SubKind.extra, hsc, hrs, hts], htc⟩
             · exact hF.elim
-          · exact .inr ⟨ee, by simp [eval_attach, hss, SubKind.extra, hsc, he], hre,
+          · exact .inr ⟨ee, by simp [evalIn_attach, hss, SubKind.extra, hsc, he], hre,
               by simp [divSafe, hs]⟩
       | inSub neg e =>
         dsimp only at hk
@@ -976,17 +1195,53 @@ theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n
             simpa [List.all_eq_true] using hall
           split_ifs <;> simp only [Expr.typeOf, he₀, Option.bind_eq_bind, Option.bind_some] <;>
             split_ifs with H <;> first | rfl | exact absurd (by simpa using hall') H
-        rcases (ihq hq₀).ok_or_error with ⟨rs, hrs, hconf⟩ | ⟨ee, he', hre, hs⟩
+        rcases (ihq henv hq₀).ok_or_error with ⟨rs, hrs, hconf⟩ | ⟨ee, he', hre, hs⟩
         · rcases mapM_evalRow_append hconf (σ := .bool) (fun r hr => Expr.eval_ok_or_divisionByZero hr hx)
             with ⟨ts, hts, htc⟩ | ⟨hts, hP⟩
-          · exact .inl ⟨ts, by simp [eval_attach, hss, SubKind.extra, hrs, hts], htc⟩
-          · refine .inr ⟨_, by simp [eval_attach, hss, SubKind.extra, hrs, hts], .inl rfl, ?_⟩
+          · exact .inl ⟨ts, by simp [evalIn_attach, hss, SubKind.extra, hrs, hts], htc⟩
+          · refine .inr ⟨_, by simp [evalIn_attach, hss, SubKind.extra, hrs, hts], .inl rfl, ?_⟩
             split_ifs at hP <;> simp_all [divSafe, SubKind.divSafe, Expr.divSafe]
-        · exact .inr ⟨ee, by simp [eval_attach, hss, SubKind.extra, he'], hre, by simp [divSafe, hs]⟩
-    · exact .inr ⟨ee, by simp [eval_attach, he], hre, by simp [divSafe, hs]⟩
+        · exact .inr ⟨ee, by simp [evalIn_attach, hss, SubKind.extra, he'], hre, by simp [divSafe, hs]⟩
+    · exact .inr ⟨ee, by simp [evalIn_attach, he], hre, by simp [divSafe, hs]⟩
   | one =>
+    intro env Γo Γ henv hq
     cases hq
     exact fun _ _ i => i.elim0
+  | outer Γ' =>
+    intro env Γo Γ henv hq
+    rcases Γo with _ | ⟨m, Δ⟩
+    · cases hq
+    · simp only [typeOfIn] at hq
+      split_ifs at hq with h h'
+      subst h; subst h'; cases hq
+      obtain ⟨r, rfl, hr⟩ := henv _ _ rfl
+      simp only [evalIn, dite_true, Except.spec_ok, List.mem_singleton, forall_eq]
+      exact hr
+  | lateral body q ihb ihq =>
+    intro env Γo Γ henv hq
+    simp only [typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.some.injEq] at hq
+    obtain ⟨Γq, hq₀, Δ, hb, rfl⟩ := hq
+    refine ((ihq henv hq₀).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs => ?_
+    refine ((Except.Spec.mapM
+      (R := fun r (ts : List (Row _)) => ∀ t ∈ ts, t.Conforms (Fin.append Γq Δ))
+      fun r hr => ((ihb (env := some ⟨_, r⟩) (fun _ _ h => by cases h; exact ⟨r, rfl, hrs r hr⟩)
+        hb).imp_right fun hs => by simp [divSafe, hs]).bind fun ss _ hss =>
+          Except.spec_ok.mpr fun t ht => by
+            obtain ⟨s, hs, rfl⟩ := List.mem_map.mp ht
+            exact Row.conforms_append_iff.mpr ⟨hrs r hr, hss s hs⟩).bind
+      fun parts _ hparts => Except.spec_ok.mpr fun t ht => ?_)
+    obtain ⟨ts, hts, ht⟩ := List.mem_flatten.mp ht
+    obtain ⟨r, _, hr⟩ := hparts ts hts
+    exact hr t ht
+
+/-- Type soundness as a postcondition: on a conforming instance, a well-typed query returns rows
+of its type, or fails with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar
+subquery with several rows), which requires a part that is not `divSafe`. -/
+theorem eval_spec {D : Database S} (hD : D.Conforms) {q : Query S n} {Γ : Fin n → SqlType}
+    (hq : q.typeOf = some Γ) :
+    Except.Spec (q.eval D) (fun rs => ∀ r ∈ rs, r.Conforms Γ)
+      fun e => e.IsRuntime ∧ q.divSafe = false :=
+  evalIn_spec hD (env := none) (Γo := none) (fun _ _ h => by cases h) hq
 
 /-- Type soundness: on a conforming instance, a well-typed query returns rows of its type, or fails
 with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar subquery with several
@@ -1014,6 +1269,59 @@ theorem IsSafe.exists_eval_eq_ok {q : Query S n} (hs : q.IsSafe) {D : Database S
   obtain ⟨Γ, hΓ⟩ := Option.isSome_iff_exists.mp hs.1
   obtain ⟨rs, h, -⟩ := (eval_spec hD hΓ).exists_eq_ok fun e h => by simp [hs.2] at h
   exact ⟨rs, h⟩
+
+/-! ### Outer rows (phase 9.4b, #462, decision D6) -/
+
+/-- The query reads no outer row: it has no `outer` leaf outside the body of a `lateral` (whose
+leaves read the `lateral`'s own row). -/
+def closed : {n : ℕ} → Query S n → Bool
+  | _, table _ => true
+  | _, select _ q => q.closed
+  | _, project _ q => q.closed
+  | _, join _ q₁ q₂ => q₁.closed && q₂.closed
+  | _, unionAll q₁ q₂ => q₁.closed && q₂.closed
+  | _, distinct q => q.closed
+  | _, aggregate _ _ q => q.closed
+  | _, orderBy _ q => q.closed
+  | _, limit _ _ q => q.closed
+  | _, intersect q₁ q₂ => q₁.closed && q₂.closed
+  | _, difference q₁ q₂ => q₁.closed && q₂.closed
+  | _, attach _ sub q => sub.closed && q.closed
+  | _, one => true
+  | _, outer _ => false
+  | _, lateral _ q => q.closed
+
+/-- A closed query does not depend on the outer row. -/
+theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
+    (env : Option ((m : ℕ) × Row m)) : q.evalIn D env = q.eval D := by
+  induction q with
+  | table t => rfl
+  | select p q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | project es q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | join θ q₁ q₂ ih₁ ih₂ =>
+    simp only [closed, Bool.and_eq_true] at h; simp only [eval, evalIn, ih₁ h.1, ih₂ h.2]
+  | unionAll q₁ q₂ ih₁ ih₂ =>
+    simp only [closed, Bool.and_eq_true] at h; simp only [eval, evalIn, ih₁ h.1, ih₂ h.2]
+  | distinct q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | aggregate keys aggs q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | orderBy keys q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | limit c o q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | intersect q₁ q₂ ih₁ ih₂ =>
+    simp only [closed, Bool.and_eq_true] at h; simp only [eval, evalIn, ih₁ h.1, ih₂ h.2]
+  | difference q₁ q₂ ih₁ ih₂ =>
+    simp only [closed, Bool.and_eq_true] at h; simp only [eval, evalIn, ih₁ h.1, ih₂ h.2]
+  | attach kind sub q ihs ihq =>
+    simp only [closed, Bool.and_eq_true] at h; simp only [eval, evalIn, ihs h.1, ihq h.2]
+  | one => rfl
+  | outer Γ => simp [closed] at h
+  | lateral body q _ ihq => simp only [closed] at h; simp only [eval, evalIn, ihq h]
+
+theorem eval_lateral (D : Database S) (body : Query S k) (q : Query S n) :
+    (lateral body q).eval D = (do
+      let rs ← q.eval D
+      let parts ← rs.mapM fun r => do
+        return (← body.evalIn D (some ⟨_, r⟩)).map (Fin.append r)
+      return parts.flatten) := rfl
 
 end Query
 
