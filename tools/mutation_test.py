@@ -170,12 +170,28 @@ def mutants_for(site: str, idx: int, pat: str, rhs: str, last: int) -> list[Muta
                    original=rhs, mutated=new, end_line=last + 1) for op, new in out]
 
 
+# Equivalent mutants: no input tells them from the original, so they cannot be killed. Keyed
+# by (site, arm pattern, mutation), not line, so edits elsewhere do not unmark them. They are
+# not run, and the report lists them apart from the score.
+EQUIVALENT: dict[tuple[str, str, str], str] = {
+    ("Value.compare", ".null _, _", "error-to-value"):
+        "unreachable: every caller screens NULL out first (evalBinOp's NULL arms, minMaxAgg "
+        "skips NULLs, orderKeyCmp checks orderKeyIsNull) — first full run, #210",
+    ("Value.compare", "_, .null _", "error-to-value"):
+        "unreachable, as above",
+}
+
+
 def all_mutants(text: str) -> list[Mutant]:
     lines = text.split("\n")
     out: list[Mutant] = []
     for site, (s, e) in site_ranges(lines).items():
         for idx, pat, rhs, last in arms(lines, s + 1, e):
             out.extend(mutants_for(site, idx, pat, rhs, last))
+    for m in out:
+        reason = EQUIVALENT.get((m.site, m.pattern, m.op))
+        if reason:
+            m.status, m.detail = "equivalent", reason
     return out
 
 
@@ -271,6 +287,11 @@ def run_mutants(mutants: list[Mutant], out_path: Path, baseline_fails: set[str])
     results: list[dict] = []
     try:
         for k, m in enumerate(mutants, 1):
+            if m.status == "equivalent":
+                print(f"[{k}/{len(mutants)}] {m.id}: equivalent — {m.detail}", flush=True)
+                results.append(asdict(m))
+                out_path.write_text(json.dumps(results, indent=1))
+                continue
             t0 = time.time()
             path.write_text(apply(original, m))
             rc, out = run(["lake", "build", "sql_equiv_test", "sql_equiv_lspec"], timeout=3600)
@@ -300,10 +321,10 @@ def merge(files: list[Path]) -> None:
     for f in files:
         rows.extend(json.loads(f.read_text()))
     rows.sort(key=lambda r: (SITES.index(r["site"]), r["line"], r["op"]))
-    counts = {s: 0 for s in ["killed-proof", "killed-test", "survived", "invalid"]}
+    counts = {s: 0 for s in ["killed-proof", "killed-test", "survived", "invalid", "equivalent"]}
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
-    valid = len(rows) - counts["invalid"]
+    valid = len(rows) - counts["invalid"] - counts["equivalent"]
     killed = counts["killed-proof"] + counts["killed-test"]
     lines = [
         "# Mutation Testing Report",
@@ -319,6 +340,8 @@ def merge(files: list[Path]) -> None:
         f"differential oracles): {counts['killed-test']}",
         f"- **Survived** (no proof or test noticed): {counts['survived']}",
         f"- Invalid (the mutant does not compile): {counts['invalid']}",
+        f"- Equivalent (no input tells it apart; listed in `EQUIVALENT`, not run): "
+        f"{counts['equivalent']}",
         "",
         "## Per site",
         "",
@@ -332,6 +355,11 @@ def merge(files: list[Path]) -> None:
         c = lambda st: sum(1 for r in rs if r["status"] == st)
         lines.append(f"| `{s}` | {len(rs)} | {c('killed-proof')} | {c('killed-test')} | "
                      f"{c('survived')} | {c('invalid')} |")
+    eq = [r for r in rows if r["status"] == "equivalent"]
+    if eq:
+        lines += ["", "## Equivalent (not counted)", "", "| Site | Arm | Mutation | Why |", "|---|---|---|---|"]
+        for r in eq:
+            lines.append(f"| `{r['site']}` | `{r['pattern']}` | {r['op']} | {r['detail']} |")
     lines += ["", "## Survivors", ""]
     surv = [r for r in rows if r["status"] == "survived"]
     if not surv:

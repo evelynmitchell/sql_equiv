@@ -1057,6 +1057,32 @@ def arithmeticTests : List TestResult := [
    else .fail "neg_null_is_null" "-NULL must be NULL, not an error")
 ]
 
+/-- One value-level check: `got` must be `want`. -/
+def valueIs (name : String) (got want : Option Value) : TestResult :=
+  if got == want then .pass name else .fail name s!"expected {repr want}, got {repr got}"
+
+/-- Arms the first full mutation-testing run (#210) found no test sensitive to: decimal
+    subtraction (no test computed a decimal difference), and NULL propagation, which a query
+    cannot tell from an error (an error shows as NULL, `<error> IS NULL` is TRUE). -/
+def valueArmTests : List TestResult :=
+  let nul : Option Value := some (.null none)
+  [ valueIs "decimal_minus_decimal" (evalBinOp .sub (some (Value.mkDecimal 25 1)) (some (Value.mkDecimal 125 2)))
+      (some (Value.mkDecimal 125 2)),
+    valueIs "int_minus_decimal" (evalBinOp .sub (some (.int 3)) (some (Value.mkDecimal 125 2)))
+      (some (Value.mkDecimal 175 2)),
+    valueIs "decimal_minus_int" (evalBinOp .sub (some (Value.mkDecimal 25 1)) (some (.int 1)))
+      (some (Value.mkDecimal 15 1)),
+    valueIs "null_mod_int_is_null" (evalBinOp .mod nul (some (.int 3))) nul,
+    valueIs "int_mod_null_is_null" (evalBinOp .mod (some (.int 3)) nul) nul,
+    valueIs "null_concat_is_null" (evalBinOp .concat nul (some (.string "a"))) nul,
+    valueIs "concat_null_is_null" (evalBinOp .concat (some (.string "a")) nul) nul,
+    valueIs "like_null_pattern_is_null" (evalBinOp .like (some (.string "a")) nul) nul,
+    valueIs "null_likeCI_is_null" (evalBinOp .likeCI nul (some (.string "a"))) nul,
+    valueIs "likeCI_null_pattern_is_null" (evalBinOp .likeCI (some (.string "a")) nul) nul,
+    valueIs "round_null_is_null" (evalFunc "ROUND" [nul]) nul,
+    valueIs "round_null_places_is_null" (evalFunc "ROUND" [nul, some (.int 1)]) nul,
+    valueIs "round_by_null_places_is_null" (evalFunc "ROUND" [some (Value.mkDecimal 25 1), nul]) nul ]
+
 -- ============================================================================
 -- INSERT/UPDATE/DELETE Tests
 -- ============================================================================
@@ -1866,7 +1892,7 @@ def allSemanticsTests : List TestResult :=
   arithmeticTests ++ edgeCaseTests ++ mutationTests ++
   subqueryUnnestingTests ++ coalesceTests ++ crossTypeTests ++ decimalTests ++
   windowTests ++ groupedWindowTests ++ errorPathTests ++ caseInsensitiveTests ++
-  strictErrorTests ++ strictDmlTests
+  strictErrorTests ++ strictDmlTests ++ valueArmTests
 
 def runSemanticsTests : IO (Nat × Nat) :=
   runTests "Semantics Tests" allSemanticsTests
