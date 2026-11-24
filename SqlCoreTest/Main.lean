@@ -49,10 +49,13 @@ def main : IO UInt32 := do
   IO.println s!"Parsed SQL through SqlBridge vs SqlEquiv: {bn} queries, {bfails.length} failures"
   for line in bfails do
     IO.println s!"  FAIL: {line}"
+  -- In CI (`CI` is set) a missing engine is a failure, not a skip: a skipped harness is quiet.
+  let inCI := (← IO.getEnv "CI").isSome
+  let skipped (what : String) : List String := if inCI then [s!"{what} harness skipped in CI"] else []
   let duckFails ← match ← SqlCoreTest.DuckdbDiff.run with
     | none =>
       IO.println "Parsed SQL through SqlBridge vs DuckDB: SKIPPED (no duckdb binary; CI installs it)"
-      pure []
+      pure (skipped "DuckDB")
     | some (dn, ddoc, dfails) =>
       IO.println s!"Parsed SQL through SqlBridge vs DuckDB: {dn} queries, {ddoc} documented differences, {dfails.length} failures"
       for line in dfails do
@@ -61,7 +64,7 @@ def main : IO UInt32 := do
   let pgFails ← match ← SqlCoreTest.PostgresDiff.run with
     | none =>
       IO.println "Parsed SQL through SqlBridge vs Postgres: SKIPPED (no reachable Postgres; CI starts it)"
-      pure []
+      pure (skipped "Postgres")
     | some (pn, pdoc, pfails) =>
       IO.println s!"Parsed SQL through SqlBridge vs Postgres: {pn} queries, {pdoc} documented differences, {pfails.length} failures"
       for line in pfails do
@@ -70,7 +73,7 @@ def main : IO UInt32 := do
   let sqliteFails ← match ← SqlCoreTest.SqliteDiff.run with
     | none =>
       IO.println "Bare columns through SqlBridge vs sqlite: SKIPPED (no sqlite3 binary)"
-      pure []
+      pure (skipped "sqlite")
     | some (sn, sfails) =>
       IO.println s!"Bare columns through SqlBridge vs sqlite: {sn} queries, {sfails.length} failures"
       for line in sfails do

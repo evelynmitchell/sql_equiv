@@ -87,7 +87,10 @@ jobs:
           psql -X -At -c 'select version()'
 
       - name: Run typed core tests
-        run: lake exe sqlcore_test
+        run: |
+          set -o pipefail
+          lake exe sqlcore_test | tee /tmp/sqlcore_test.log
+          grep -E "vs (DuckDB|Postgres|sqlite):" /tmp/sqlcore_test.log >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CLI
         run: lake build sql_equiv
