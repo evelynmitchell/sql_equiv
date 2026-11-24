@@ -131,9 +131,10 @@ engines.
 - **Watch for:** the CI step pipes the runner through `tee`, so it needs `set -o pipefail` or a
   failing property is green. Properties over the hand-written fixtures (`EdgeCaseDb`,
   `QueryHelpers.testDb`) can still go vacuous if the fixture does not match the query
-  (`/test-vacuity`). LSpec shrinks a counterexample by one step only (the recursion in
-  `SlimCheck.minimizeAux` is commented out), so shrinkers list their most aggressive candidates
-  first. Findings go in `LSPEC_FINDINGS.md`.
+  (`/test-vacuity`). A counterexample is shrunk until no candidate still fails, up to
+  1000 steps (`varCheckableDeep`, #454; LSpec's own `SlimCheck.minimize` stops after one step,
+  its recursive call commented out); the "Shrinking (#454)" self-test checks a `GenDb`
+  counterexample shrinks to the minimal one. Findings go in `LSPEC_FINDINGS.md`.
 
 ### 8. Mutation testing (weekly, #210)
 

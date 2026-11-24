@@ -49,6 +49,49 @@ abbrev instTestableSeeded (p : Prop) (cfg : Configuration) (descr : String) [Che
       s!"Found problems at sample {numSamples + 1}! Replay: LSPEC_SEED={runSeed} LSPEC_SAMPLES={cfg.numInst} lake exe sql_equiv_lspec"
       xs n
 
+-- ============================================================================
+-- Shrinking to a minimal counterexample (#454)
+-- ============================================================================
+
+/-- Shrink steps at most, per counterexample. -/
+def maxShrinkSteps : Nat := 1000
+
+/-- Keep shrinking a counterexample while some candidate still fails, up to `fuel` steps
+    (#454). LSpec's own `SlimCheck.minimize` stops after one step: the recursive call in
+    `minimizeAux` is commented out. -/
+def minimizeDeep [SampleableExt α] {β : α → Prop} [∀ x, Checkable (β x)] (cfg : Configuration)
+    (x : SampleableExt.proxy α) (r : TestResult (β (SampleableExt.interp x))) (n : Nat) :
+    Nat → Gen (Σ x, TestResult (β (SampleableExt.interp x)))
+  | 0 => pure ⟨x, Checkable.addShrinks n r⟩
+  | fuel + 1 => do
+    for c in SampleableExt.shrink.shrink x do
+      let res ← Checkable.runProp (β (SampleableExt.interp c)) cfg true
+      if res.isFailure then
+        return ← minimizeDeep cfg c res (n + 1) fuel
+    pure ⟨x, Checkable.addShrinks n r⟩
+
+/-- `∀ x, β x` as LSpec checks it (`SlimCheck.varCheckable`), but shrinking a counterexample
+    until no candidate fails (#454). Its priority puts it ahead of `varCheckable` in every
+    module that imports this one: every property of the suite. -/
+instance (priority := 1100) varCheckableDeep [SampleableExt α] {β : α → Prop}
+    [∀ x, Checkable (β x)] : Checkable (NamedBinder var <| ∀ x : α, β x) where
+  run := fun cfg min => do
+    let x ← SampleableExt.sample
+    let r ← Checkable.runProp (β <| SampleableExt.interp x) cfg false
+    let ⟨finalX, finalR⟩ ←
+      if TestResult.isFailure r && min then minimizeDeep cfg x r 0 maxShrinkSteps
+      else pure ⟨x, r⟩
+    pure <| TestResult.addVarInfo var finalX (· <| SampleableExt.interp finalX) finalR
+
+open SlimCheck Decorations in
+/-- The counterexample a failing property reports (its printed variables) and the number of
+    shrink steps taken; `none` when it passes. For self-tests of shrinking (#454). -/
+def counterexampleOf (descr : String) (p : Prop) (cfg : Configuration)
+    (p' : DecorationsOf p := by mk_decorations) [Checkable p'] : Option (String × Nat) :=
+  match seededResult p' cfg descr with
+  | (.failure _ xs n, _) => some ("\n".intercalate xs, n)
+  | _ => none
+
 open SlimCheck Decorations in
 /-- `LSpec.check` with the samples drawn from `cfg.randomSeed` and the property's name (#395).
     Every property test in this suite uses it. -/
@@ -373,9 +416,9 @@ private def nullOneCell (rs : Table) : List Table :=
       | (_, .null _) => none
       | (k, _) => some (rs.set i (row.set j (k, .null none)))
 
-/-- Shrink by dropping rows first, then by replacing values with NULL. LSpec takes a single
-    shrink step (the recursive call in `SlimCheck.minimizeAux` is commented out), choosing the
-    first candidate that still fails, so the candidates come most aggressive first. -/
+/-- Shrink by dropping rows first, then by replacing values with NULL. The runner shrinks
+    greedily, taking the first candidate that still fails (`minimizeDeep`, #454), so the
+    candidates come most aggressive first: fewer steps to the minimal database. -/
 instance : Shrinkable GenDb where
   shrink g :=
     (dropOneRow g.users).map ({ g with users := · }) ++
