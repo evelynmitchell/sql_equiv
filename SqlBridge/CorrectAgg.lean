@@ -791,6 +791,15 @@ theorem colsOutsideAggsList_aggItems : ∀ items, aggItems items = true →
     simp [hf, colsOutsideAggsList, colsOutsideAggs_aggFragment e h.1,
       colsOutsideAggsList_aggItems rest h.2]
   | .star _ :: _, h => by simp [aggItems] at h
+theorem subsOfList_aggItems : ∀ items, aggItems items = true →
+    subsOfList (items.filterMap f) = []
+  | [], _ => by simp [subsOfList]
+  | .exprItem e _ :: rest, h => by
+    simp only [aggItems, Bool.and_eq_true] at h
+    have he : subsOf e = [] := by
+      cases e <;> simp_all [aggFragment, subsOf]
+    simp [hf, subsOfList, he, subsOfList_aggItems rest h.2]
+  | .star _ :: _, h => by simp [aggItems] at h
 omit hf in
 theorem forall₂_imp_mem {α β : Type _} {R S : α → β → Prop} : ∀ {l : List α} {l' : List β},
     List.Forall₂ R l l' → (∀ a ∈ l, ∀ b, R a b → S a b) → List.Forall₂ S l l'
@@ -860,6 +869,10 @@ theorem elab_agg_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     List.append_nil, List.eraseDups_nil, ite_self, List.filterMap_nil, List.isEmpty_nil,
     Bool.true_and, Option.isNone_none, Bool.and_true, List.mapM_nil, hne', Bool.false_eq_true,
     ↓reduceIte, pure, Except.pure, Bool.not_true, bind, Except.bind] at hraw
+  -- no subquery node in the items: not the elaborator's subquery path (9.4b step 3)
+  simp only [Option.toList_none, List.append_nil] at hraw
+  rw [distinctSubs_eq_nil (subsOfList_aggItems (fun _ _ => rfl) items hai)] at hraw
+  simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hraw
   refine ⟨n, qf, cf, hf, q₀, hq₀, ?_⟩
   all_goals
     split at hraw

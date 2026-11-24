@@ -180,6 +180,7 @@ def aggsOf : SqlEquiv.Expr → List SqlEquiv.Expr
   | .«case» bs els => aggsOfBranches bs ++ aggsOfOpt els
   | .between a b c => aggsOf a ++ aggsOf b ++ aggsOf c
   | .func _ args => aggsOfList args
+  | .inSubquery e _ _ => aggsOf e
   | _ => []
 
 def aggsOfList : List SqlEquiv.Expr → List SqlEquiv.Expr
@@ -255,6 +256,46 @@ def subsOfBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List (SqlEquiv.Ex
   | (c, a) :: bs => subsOf c ++ subsOf a ++ subsOfBranches bs
 
 end
+
+mutual
+
+/-- Whether a subquery sits in a `THEN` or `ELSE` of a `CASE` (phase 9.4b step 3). The typed core
+evaluates an attached subquery on every row, whether the branch is taken or not, and the engines
+evaluate it only when it is, so the elaborator rejects it there. -/
+def subInBranch : SqlEquiv.Expr → Bool
+  | .binOp _ a b => subInBranch a || subInBranch b
+  | .unaryOp _ a => subInBranch a
+  | .inList e _ vs => subInBranch e || subInBranchList vs
+  | .«case» bs els => subInBranchArms bs || (els.map fun e => !(subsOf e).isEmpty).getD false
+  | .between a b c => subInBranch a || subInBranch b || subInBranch c
+  | .func _ args => subInBranchList args
+  | _ => false
+
+def subInBranchList : List SqlEquiv.Expr → Bool
+  | [] => false
+  | e :: es => subInBranch e || subInBranchList es
+
+def subInBranchArms : List (SqlEquiv.Expr × SqlEquiv.Expr) → Bool
+  | [] => false
+  | (c, a) :: bs => subInBranch c || !(subsOf a).isEmpty || subInBranchArms bs
+
+end
+
+/-- The expression of a `SELECT` item; none for `*`. -/
+def itemExprOf : SqlEquiv.SelectItem → Option SqlEquiv.Expr
+  | .exprItem e _ => some e
+  | .star _ => none
+
+/-- The distinct subquery nodes of a list of expressions, in order. -/
+def distinctSubs (es : List SqlEquiv.Expr) : List (SqlEquiv.Expr × SqlEquiv.SubQuery) :=
+  (subsOfList es).foldl (fun acc x => if acc.any (·.1 == x.1) then acc else acc ++ [x]) []
+
+/-- The hook that reads subquery node `j` of `subs` from column `n + j` (phase 9.4b step 3). -/
+def subHookAt (n m : ℕ) (subs : List (SqlEquiv.Expr × SqlEquiv.SubQuery)) (e : SqlEquiv.Expr) :
+    Option (Expr m) :=
+  match subs.findIdx? (·.1 == e) with
+  | some j => if h : n + j < m then some (.col ⟨n + j, h⟩) else none
+  | none => none
 
 /-- Whether a branch of a compound subquery has `ORDER BY`, `LIMIT` or `OFFSET`. -/
 def subHasOrderOrLimit : SqlEquiv.SubQuery → Bool
@@ -444,7 +485,7 @@ def elabCorrBody {o : ℕ} (ocols : Fin o → Column) : SqlEquiv.SubQuery → El
     let q' : Query N.S (o + n) ← match where_ with
       | none => pure q₀
       | some w => do pure (Query.select (← elabExpr cols' N.fold hook w) q₀)
-    let itemExprs := items.filterMap fun | .exprItem e _ => some e | .star _ => none
+    let itemExprs := items.filterMap itemExprOf
     let aggExprs := (aggsOfList itemExprs).eraseDups
     let body : Elaborated N.S ← if aggExprs.isEmpty then do
         let its ← items.mapM fun
@@ -540,13 +581,18 @@ def elabWhere (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) {n : ℕ} (co
               | .exists neg _ => do
                 if let .simple (.mk _ _ _ _ _ _ _ (some 0) _) := sq then
                   throw (.unsupported "EXISTS over LIMIT 0")
-                let b ← elabCorrBody N acc.cols (existsBody sq)
-                if h : b.n = 1 then
-                  let cnt : Query N.S 1 := h ▸ b.q
-                  let op : CmpOp := if neg then .eq else .ne
-                  pure ((.project (fun _ => .binary (.cmp op) (.col 0) (.lit (.int 0))) cnt :
-                    Query N.S 1), SqlType.bool)
-                else throw (.typeError "EXISTS body")
+                let op : CmpOp := if neg then .eq else .ne
+                let cnt : Query N.S 1 ← match sq with
+                  | .simple _ => do
+                    let b ← elabCorrBody N acc.cols (existsBody sq)
+                    if h : b.n = 1 then pure (h ▸ b.q) else throw (.typeError "EXISTS body")
+                  | _ => do
+                    -- a set operation: uncorrelated only; its rows are compared, so its items
+                    -- are evaluated (9.4b step 3)
+                    let r ← sub sq
+                    pure (.aggregate (g := 0) (fun i => i.elim0) ![.countStar] r.q)
+                pure ((.project (fun _ => .binary (.cmp op) (.col 0) (.lit (.int 0))) cnt :
+                  Query N.S 1), SqlType.bool)
               | .subquery _ => do
                 let b ← elabCorrBody N acc.cols sq
                 if h : b.n = 1 then
@@ -575,6 +621,76 @@ def elabWhere (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) {n : ℕ} (co
       if h : n ≤ m then
         pure (.project (fun i : Fin n => .col (Fin.castLE h i)) (.select p acc.q))
       else throw (.typeError "subquery scope")
+
+/-- Attach a column per subquery node to `base` (phase 9.4b step 3, #462): an uncorrelated body
+with `Query.attach`, as `elabWhere` does, and a body that reads the row, or an `EXISTS`, with
+`Query.lateral` (decision D6). `probe` elaborates the probe of an `IN` node over `base`'s
+columns. Column `base.n + j` holds node `j`; read it with `subHookAt`. -/
+def attachSubs (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) (base : Elaborated N.S)
+    (probe : SqlEquiv.Expr → ElabM (Expr base.n)) (subs : List (SqlEquiv.Expr × SqlEquiv.SubQuery)) :
+    ElabM (Elaborated N.S) :=
+  subs.foldlM (init := base) fun acc (node, sq) => do
+    let lift (e : Expr base.n) : ElabM (Expr acc.n) :=
+      if h : base.n ≤ acc.n then pure (e.rename (Fin.castLE h))
+      else throw (.typeError "subquery scope")
+    let Γ : Fin acc.n → SqlType := fun i => (acc.cols i).type
+    let correlated : ElabM Bool := match sub sq with
+      | .ok _ => pure false
+      | .error (.unknownColumn qq c) =>
+        match resolveColumn acc.cols (qq.map N.fold) (N.fold c) with
+        | .ok _ => pure true
+        | .error _ => throw (.unknownColumn qq c)
+      | .error err => throw err
+    let push (x : Query N.S (acc.n + 1)) (ty : SqlType) : Elaborated N.S :=
+      ⟨acc.n + 1, x, Fin.append acc.cols ![{ qualifier := none, name := "?subquery?", type := ty }]⟩
+    match node with
+    | .exists neg _ =>
+      if let .simple (.mk _ _ _ _ _ _ _ (some 0) _) := sq then
+        throw (.unsupported "EXISTS over LIMIT 0")
+      let op : CmpOp := if neg then .eq else .ne
+      match sq with
+      | .simple _ => do
+        let b ← elabCorrBody N acc.cols (existsBody sq)
+        if h : b.n = 1 then
+          let cnt : Query N.S 1 := h ▸ b.q
+          pure (push (.lateral (.project (fun _ => .binary (.cmp op) (.col 0) (.lit (.int 0))) cnt :
+            Query N.S 1) acc.q) .bool)
+        else throw (.typeError "EXISTS body")
+      | _ => do
+        -- a set operation: uncorrelated only; its rows are compared, so its items are evaluated
+        let r ← sub sq
+        let cnt : Query N.S (0 + 1) := .aggregate (g := 0) (fun i => i.elim0) ![.countStar] r.q
+        pure (push (.attach (.scalar false)
+          (.project (fun _ => .binary (.cmp op) (.col 0) (.lit (.int 0))) cnt) acc.q) .bool)
+    | .subquery _ =>
+      if ← correlated then do
+        let b ← elabCorrBody N acc.cols sq
+        if h : b.n = 1 then
+          let body : Query N.S 1 := h ▸ b.q
+          pure (push (.lateral (.attach (.scalar (N.config.scalarSubqueryRows == .firstRow)) body
+            .one : Query N.S (0 + 1)) acc.q) (b.cols ⟨0, by omega⟩).type)
+        else throw (.typeError "subquery arity")
+      else do
+        let r ← sub sq
+        if h : r.n = 1 then
+          pure (push (.attach (.scalar (N.config.scalarSubqueryRows == .firstRow)) (h ▸ r.q) acc.q)
+            (r.cols ⟨0, by omega⟩).type)
+        else throw (.typeError "subquery arity")
+    | .inSubquery e neg _ => do
+      let e' ← lift (← probe e)
+      if ← correlated then do
+        let b ← elabCorrBody N acc.cols sq
+        if h : b.n = 1 then
+          let body : Query N.S 1 := h ▸ b.q
+          pure (push (.lateral (.project (fun _ => .col (Fin.last acc.n))
+            (.attach (.inSub neg (e'.rename (Fin.castAdd 0))) body (.outer Γ)) : Query N.S 1) acc.q)
+            .bool)
+        else throw (.typeError "subquery arity")
+      else do
+        let r ← sub sq
+        if h : r.n = 1 then pure (push (.attach (.inSub neg e') (h ▸ r.q) acc.q) .bool)
+        else throw (.typeError "subquery arity")
+    | _ => throw (.unsupported "subquery")
 
 mutual
 
@@ -611,13 +727,84 @@ def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.
     let q : Query N.S n ← elabWhere N (fun sq => match fuel with
       | 0 => throw (.unsupported "subqueries nested too deeply")
       | f + 1 => elabSubQuery f sq) cols q where_
-    let itemExprs := items.filterMap fun | .exprItem e _ => some e | .star _ => none
+    let itemExprs := items.filterMap itemExprOf
     let orderExprs := orderBy.map fun | .mk e _ _ => e
     let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having ++ aggsOfList orderExprs).eraseDups
+    let sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S) := fun sq => match fuel with
+      | 0 => throw (.unsupported "subqueries nested too deeply")
+      | f + 1 => elabSubQuery f sq
     if groupBy.isEmpty && aggExprs.isEmpty && having.isNone then
-      let its ← elabItems N cols items
-      finishSelect N.fold ⟨n, q, elabExpr cols N.fold noHook, its⟩ distinct orderBy limitVal
-        offsetVal
+      if (distinctSubs itemExprs).isEmpty then
+        let its ← elabItems N cols items
+        finishSelect N.fold ⟨n, q, elabExpr cols N.fold noHook, its⟩ distinct orderBy limitVal
+          offsetVal
+      else
+        -- subqueries in the SELECT list (phase 9.4b step 3): a column each, read by the items
+        if itemExprs.any subInBranch then throw (.unsupported "subquery in a CASE branch")
+        if items.any (fun | .star _ => true | _ => false) then
+          throw (.unsupported "* next to a subquery item")
+        let subs := distinctSubs itemExprs
+        let acc ← attachSubs N sub ⟨n, q, cols⟩ (elabExpr cols N.fold noHook) subs
+        let hook := subHookAt n acc.n subs
+        let its ← items.mapM fun
+          | .star _ => throw (.unsupported "* next to a subquery item")
+          | .exprItem e al => do
+            let e' ← elabExpr acc.cols N.fold hook e
+            let some τ := e'.typeOf (ctx acc.cols) | throw (.typeError "SELECT item")
+            let name := al.getD (match e with | .col c => c.column | _ => "?column?")
+            pure (e', ({ qualifier := none, name, type := τ } : Column))
+        finishSelect N.fold ⟨acc.n, acc.q, elabExpr acc.cols N.fold hook, its⟩ distinct orderBy
+          limitVal offsetVal
+    else if !(distinctSubs (itemExprs ++ having.toList)).isEmpty then
+      -- GROUP BY or aggregates with subqueries in the items or `HAVING` (phase 9.4b step 3, #462):
+      -- the keys and aggregates as below, without bare columns; then a column per subquery over
+      -- the aggregate's output (the probe of an `IN` may be an aggregate)
+      let gsubs := distinctSubs (itemExprs ++ having.toList)
+      if (itemExprs ++ having.toList).any subInBranch then
+        throw (.unsupported "subquery in a CASE branch")
+      if items.any (fun | .star _ => true | _ => false) then
+        throw (.unsupported "* with GROUP BY or aggregates")
+      let keyList ← groupBy.mapM (elabExpr cols N.fold noHook)
+      -- as below (#384): every column outside an aggregate resolves in the `FROM` scope
+      let _ ← (colsOutsideAggsList itemExprs ++ colsOutsideAggsOpt having).mapM fun c =>
+        elabExpr cols N.fold noHook (.col c)
+      let aggList ← aggExprs.mapM (elabAgg cols N.fold)
+      let g := keyList.length
+      let a := aggList.length
+      let keys : Fin g → Expr n := fun i => keyList[i]
+      let aggs : Fin a → AggCall n := fun j => aggList[j]
+      let out ← aggScope cols keys aggs
+      let hook := aggHook (a := a) cols N.fold keys aggExprs
+      let notGrouped (e : SqlEquiv.Expr) {m : ℕ} (r : ElabM (Expr m)) : ElabM (Expr m) :=
+        match r with
+        | .ok e' => pure e'
+        | .error (.unknownColumn q c) =>
+          match resolveColumn cols (q.map N.fold) (N.fold c) with
+          | .ok _ => throw (.unsupported "column not in GROUP BY or an aggregate")
+          | .error _ => throw (.unknownColumn q c)
+        | .error err => let _ := e; throw err
+      let outExpr (e : SqlEquiv.Expr) : ElabM (Expr (g + a)) :=
+        notGrouped e (elabExpr out N.fold hook e)
+      let acc ← attachSubs N sub ⟨g + a, .aggregate keys aggs q, out⟩ outExpr gsubs
+      if hle : g + a ≤ acc.n then
+        let hk : SqlEquiv.Expr → Option (Expr acc.n) := fun e =>
+          match subHookAt (g + a) acc.n gsubs e with
+          | some x => some x
+          | none => (hook e).map (·.rename (Fin.castLE hle))
+        let outExpr' (e : SqlEquiv.Expr) : ElabM (Expr acc.n) :=
+          notGrouped e (elabExpr acc.cols N.fold hk e)
+        let q2 : Query N.S acc.n ← match having with
+          | none => pure acc.q
+          | some h => do pure (Query.select (← outExpr' h) acc.q)
+        let its ← items.mapM fun
+          | .star _ => throw (.unsupported "* with GROUP BY or aggregates")
+          | .exprItem e al => do
+            let e' ← outExpr' e
+            let some τ := e'.typeOf (ctx acc.cols) | throw (.typeError "SELECT item")
+            let name := al.getD (match e with | .col c => c.column | _ => "?column?")
+            pure (e', ({ qualifier := none, name, type := τ } : Column))
+        finishSelect N.fold ⟨acc.n, q2, outExpr', its⟩ distinct orderBy limitVal offsetVal
+      else throw (.typeError "subquery scope")
     else
       -- GROUP BY and aggregates (phase 8a, #313)
       let keyList ← groupBy.mapM (elabExpr cols N.fold noHook)

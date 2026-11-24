@@ -163,6 +163,7 @@ theorem elab_distinct_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   obtain ⟨q₀, hq₀, hraw⟩ := bind_ok hraw
   simp only [hq₀]
   rw [aggsOfList_items (fun _ _ => rfl) items hit] at hraw ⊢
+  rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at hraw ⊢
   simp only [List.map_nil, aggsOfList, List.isEmpty_nil, aggsOfOpt, List.append_nil,
     List.eraseDups_nil, Option.isNone_none, Bool.and_self, ↓reduceIte, bind, Except.bind] at hraw ⊢
   rcases hits : elabItems N cf items with _ | its

@@ -815,6 +815,25 @@ theorem aggsOfList_items {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
     simp [hf, aggsOfList, aggsOf_frag e h.1, aggsOfList_items hf rest h.2]
   | .star _ :: _, h => by simp [itemsFragment] at h
 
+theorem subsOfList_items {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
+    (hf : ∀ e al, f (.exprItem e al) = some e) : ∀ items, itemsFragment items = true →
+    subsOfList (items.filterMap f) = []
+  | [], _ => by simp [subsOfList]
+  | .exprItem e _ :: rest, h => by
+    simp only [itemsFragment, Bool.and_eq_true] at h
+    simp [hf, subsOfList, subsOf_frag e h.1, subsOfList_items hf rest h.2]
+  | .star _ :: _, h => by simp [itemsFragment] at h
+
+theorem subsOfList_append : ∀ (a b : List SqlEquiv.Expr),
+    subsOfList (a ++ b) = subsOfList a ++ subsOfList b
+  | [], _ => by simp [subsOfList]
+  | x :: a, b => by simp [subsOfList, subsOfList_append a b]
+
+/-- No subquery node, no attached columns (phase 9.4b step 3). -/
+theorem distinctSubs_eq_nil {es : List SqlEquiv.Expr} (h : subsOfList es = []) :
+    distinctSubs es = [] := by
+  simp [distinctSubs, h]
+
 /-! ### Queries -/
 
 section Query
@@ -1114,6 +1133,7 @@ theorem elabStmt_correct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = 
     List.append_nil, List.isEmpty_nil, Option.isNone_none, Bool.and_true, Bool.true_and] at h
   rw [aggsOfList_items ?hf items hit] at h
   case hf => intros; rfl
+  rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at h
   rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
   · simp [hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
   have hmem : (N.fold name, T) ∈ N.tables := by
