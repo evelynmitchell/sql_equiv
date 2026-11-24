@@ -437,6 +437,9 @@ inductive UnOp where
   | upper
   /-- `LENGTH(s)`: the number of characters. -/
   | length
+  /-- The promotion of an integer to a decimal (#472): where the engines promote implicitly, the
+  elaborator writes it, so that both branches of a set operation, or of `CASE`, have one type. -/
+  | toDecimal
   deriving DecidableEq, Repr
 
 /-- Arithmetic operators. -/
@@ -695,6 +698,7 @@ def evalUnOp : UnOp → Datum → Except EvalError Datum
   | .lower, d => Option.map (fun s => Value.text s.toLower) <$> d.asText
   | .upper, d => Option.map (fun s => Value.text s.toUpper) <$> d.asText
   | .length, d => Option.map (fun s => Value.int s.length) <$> d.asText
+  | .toDecimal, d => Option.map (fun x => Value.decimal x.toRat) <$> d.asNum
 
 /-- A binary operator on two datums. Both operands are checked, left first, before `NULL`
 propagates. -/

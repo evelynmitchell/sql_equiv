@@ -944,10 +944,18 @@ inductive SubBodyOk : SqlEquiv.SubQuery → Prop
   | compound {l r : SqlEquiv.SubQuery} (op : SqlEquiv.SetOp) (hl : SubBodyOk l)
       (hr : SubBodyOk r) : SubBodyOk (.compound l op r)
 
+/-- A body of the fragment has a `FROM`, so its set operations are not aligned (#472). -/
+theorem subBranchFromless_of_subBodyOk {sq : SqlEquiv.SubQuery} (hb : SubBodyOk sq) :
+    subBranchFromless sq = false := by
+  induction hb with
+  | simple hb => cases hb <;> rfl
+  | compound op _ _ ihl ihr => simp [subBranchFromless, ihl, ihr]
+
 /-- A compound subquery that elaborates: its branches elaborate, with one fuel less, to queries
     of one arity, and the result is the corresponding typed operator over them. -/
 theorem elabSubQuery_compound_shape (N : NamedSchema) {fu : ℕ} {l r : SqlEquiv.SubQuery}
     {op : SqlEquiv.SetOp} {e : Elaborated N.S}
+    (hnf : (subBranchFromless l || subBranchFromless r) = false)
     (h : elabSubQuery N (fu + 1) (.compound l op r) = .ok e) :
     ∃ (n : ℕ) (ql qr : Query N.S n) (cl cr : Fin n → Column),
       elabSubQuery N fu l = .ok ⟨n, ql, cl⟩ ∧ elabSubQuery N fu r = .ok ⟨n, qr, cr⟩ ∧
@@ -963,6 +971,7 @@ theorem elabSubQuery_compound_shape (N : NamedSchema) {fu : ℕ} {l r : SqlEquiv
   · simp [throw, throwThe, MonadExceptOf.throw] at h
   rename_i hmn
   subst hmn
+  simp only [hnf, Bool.false_eq_true, ↓reduceIte] at h
   refine ⟨m, ql, qr, cl, cr, hl, hr, ?_⟩
   cases op <;> simp only [pure, Except.pure, Except.ok.injEq] at h <;>
     simpa [CorrectSetOp.setOpQuery] using h.symm
@@ -987,9 +996,10 @@ theorem subBody_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toL
     obtain ⟨hs, ss, hss, hctx⟩ := body_ctx N hfold hfoldCI hwn hfix hD hrel hb hsub hty hnb
     exact ⟨hs, ss, hss, fun ctx => by
       rw [SqlEquiv.evalSubQuery_simple]; exact .of_forall₂ (hctx ctx)⟩
-  | @compound l r op _ _ ihl ihr =>
+  | @compound l r op hbl hbr ihl ihr =>
     intro fu m rq rc hsub hty hnb
-    obtain ⟨n, ql, qr, cl, cr, hl, hr, he⟩ := elabSubQuery_compound_shape N hsub
+    obtain ⟨n, ql, qr, cl, cr, hl, hr, he⟩ := elabSubQuery_compound_shape N
+      (by simp [subBranchFromless_of_subBodyOk hbl, subBranchFromless_of_subBodyOk hbr]) hsub
     cases he
     cases fu with
     | zero => simp [elabSubQuery, throw, throwThe, MonadExceptOf.throw] at hl

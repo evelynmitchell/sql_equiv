@@ -99,6 +99,14 @@ def resolve (q : Option String) (name : String) : ElabM (Fin n) :=
   | .error .unknownColumn => throw (.unknownColumn q name)
   | .error .ambiguousColumn => throw (.ambiguousColumn q name)
 
+/-- Two operands that must have one type, with an integer next to a decimal promoted (#472), as
+the engines do for `CASE` branches and `COALESCE` arguments. -/
+def unifyNum (a b : Expr n) : Expr n × Expr n :=
+  match a.typeOf (ctx cols), b.typeOf (ctx cols) with
+  | some .int, some .decimal => (.unary .toDecimal a, b)
+  | some .decimal, some .int => (a, .unary .toDecimal b)
+  | _, _ => (a, b)
+
 mutual
 
 /-- Elaborate an expression in a scope. `hook` is consulted first at every node; with `GROUP BY`
@@ -172,7 +180,9 @@ def elabExpr (e : SqlEquiv.Expr) : ElabM (Expr n) :=
       match es.reverse with
       | [] => throw (.unsupported "COALESCE()")
       | last :: rest => pure (rest.foldl
-          (fun acc x => .caseWhen (.unary .isNotNull x) (retypeNull cols x acc) (retypeNull cols acc x))
+          (fun acc x =>
+            let (x', acc') := unifyNum cols (retypeNull cols x acc) (retypeNull cols acc x)
+            .caseWhen (.unary .isNotNull x) x' acc')
           last)
     | "CONCAT", x :: xs, _ =>
       let part (y : Expr n) : Expr n :=
@@ -204,7 +214,8 @@ def elabBranches (els : Expr n) : List (SqlEquiv.Expr × SqlEquiv.Expr) → Elab
     let c ← elabExpr c
     let a ← elabExpr a
     let rest ← elabBranches els rest
-    pure (.caseWhen c (retypeNull cols a rest) (retypeNull cols rest a))
+    let (a, rest) := unifyNum cols (retypeNull cols a rest) (retypeNull cols rest a)
+    pure (.caseWhen c a rest)
 
 end
 
@@ -739,6 +750,51 @@ def attachSubs (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) (base : Elab
         else throw (.typeError "subquery arity")
     | _ => throw (.unsupported "subquery")
 
+/-- Whether a branch of a compound query is a `SELECT` without `FROM` (#472). Only then does the
+elaborator align the branches' types: the compound queries the bridge theorems cover have none. -/
+def branchFromless : SqlEquiv.Query → Bool
+  | .simple (.mk _ _ none _ _ _ _ _ _) => true
+  | .compound l _ r => branchFromless l || branchFromless r
+  | _ => false
+
+/-- The same for the branches of a compound subquery. -/
+def subBranchFromless : SqlEquiv.SubQuery → Bool
+  | .simple (.mk _ _ none _ _ _ _ _ _) => true
+  | .compound l _ r => subBranchFromless l || subBranchFromless r
+  | _ => false
+
+/-- A `NULL` literal column of a projection takes the type `τ` (#472): `SELECT NULL` next to a
+decimal or text branch. Other queries are left as they are. -/
+def retypeNullCol {S : DbSchema} {n : ℕ} (i : Fin n) (τ : SqlType) : Query S n → Query S n
+  | .project es q =>
+    .project (fun j => if j = i then (match es j with | .null _ => .null τ | e => e) else es j) q
+  | q => q
+
+/-- Give the two branches of a set operation one type (#472), as the engines do: a `NULL` literal
+column takes the other branch's type, and an integer column next to a decimal one is promoted
+(`UnOp.toDecimal`). The result's columns are the left branch's, with the common types. -/
+def alignBranches {S : DbSchema} {n : ℕ} (ql qr : Query S n) (cl : Fin n → Column) :
+    Query S n × Query S n × (Fin n → Column) :=
+  -- NULL literal columns first
+  let (ql, qr) := (List.finRange n).foldl (fun (ql, qr) i =>
+    match ql.typeOf, qr.typeOf with
+    | some Γl, some Γr =>
+      if Γl i = Γr i then (ql, qr)
+      else (retypeNullCol i (Γr i) ql, retypeNullCol i (Γl i) qr)
+    | _, _ => (ql, qr)) (ql, qr)
+  match ql.typeOf, qr.typeOf with
+  | some Γl, some Γr =>
+    let promote (Γ Δ : Fin n → SqlType) (i : Fin n) : Expr n :=
+      if Γ i = .int ∧ Δ i = .decimal then .unary .toDecimal (.col i) else .col i
+    let needL := (List.finRange n).any fun i => Γl i = .int ∧ Γr i = .decimal
+    let needR := (List.finRange n).any fun i => Γr i = .int ∧ Γl i = .decimal
+    let ql' := if needL then .project (promote Γl Γr) ql else ql
+    let qr' := if needR then .project (promote Γr Γl) qr else qr
+    let τ (i : Fin n) : SqlType :=
+      if (Γl i = .int ∧ Γr i = .decimal) ∨ (Γl i = .decimal ∧ Γr i = .int) then .decimal else Γl i
+    (ql', qr', fun i => { cl i with type := τ i })
+  | _, _ => (ql, qr, cl)
+
 mutual
 
 /-- Elaborate a subquery body. `fuel` bounds the nesting of subqueries, so that elaboration is a
@@ -753,6 +809,15 @@ def elabSubQuery (fuel : ℕ) (sq : SqlEquiv.SubQuery) : ElabM (Elaborated N.S) 
     let ⟨n, ql, cl⟩ ← elabSubQuery f l
     let ⟨m, qr, _⟩ ← elabSubQuery f r
     if h : m = n then
+      if subBranchFromless l || subBranchFromless r then
+        -- a branch without `FROM`: give the branches one type (#472)
+        let (ql, qr, cl) := alignBranches ql (h ▸ qr) cl
+        match op with
+        | .unionAll => pure ⟨n, .unionAll ql qr, cl⟩
+        | .union => pure ⟨n, .distinct (.unionAll ql qr), cl⟩
+        | .intersect => pure ⟨n, .intersect ql qr, cl⟩
+        | .exceptOp => pure ⟨n, .difference ql qr, cl⟩
+      else
       match op with
       | .unionAll => pure ⟨n, .unionAll ql (h ▸ qr), cl⟩
       | .union => pure ⟨n, .distinct (.unionAll ql (h ▸ qr)), cl⟩
@@ -936,6 +1001,15 @@ def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
     let ⟨n, ql, cl⟩ ← elabQueryRaw l
     let ⟨m, qr, _⟩ ← elabQueryRaw r
     if h : m = n then
+      if branchFromless l || branchFromless r then
+        -- a branch without `FROM`: give the branches one type (#472)
+        let (ql, qr, cl) := alignBranches ql (h ▸ qr) cl
+        match op with
+        | .unionAll => pure ⟨n, .unionAll ql qr, cl⟩
+        | .union => pure ⟨n, .distinct (.unionAll ql qr), cl⟩
+        | .intersect => pure ⟨n, .intersect ql qr, cl⟩
+        | .exceptOp => pure ⟨n, .difference ql qr, cl⟩
+      else
       let u : Query N.S n := .unionAll ql (h ▸ qr)
       match op with
       | .unionAll => pure ⟨n, u, cl⟩

@@ -23,6 +23,7 @@ def unOld (op : UnOp) (e : SqlEquiv.Expr) : SqlEquiv.Expr :=
   | .isNull => .unaryOp .isNull e | .isNotNull => .unaryOp .isNotNull e
   | .round d => .func "ROUND" [e, .lit (.int d)]
   | .lower => .func "LOWER" [e] | .upper => .func "UPPER" [e] | .length => .func "LENGTH" [e]
+  | .toDecimal => .binOp .mul e (.lit (.decimal 10 1))
 
 def binOld : BinOp → SqlEquiv.BinOp
   | .arith .add => .add | .arith .sub => .sub | .arith .mul => .mul
@@ -44,7 +45,8 @@ def toOldExpr {n : ℕ} (cols : Fin n → Column) : Expr n → SqlEquiv.Expr
   | .caseWhen c a b => .«case» [(toOldExpr cols c, toOldExpr cols a)] (some (toOldExpr cols b))
 
 def unOps : List UnOp :=
-  [.not, .neg, .isNull, .isNotNull, .round 0, .round 1, .round (-1), .lower, .upper, .length]
+  [.not, .neg, .isNull, .isNotNull, .round 0, .round 1, .round (-1), .lower, .upper, .length,
+   .toDecimal]
 def binOps : List BinOp :=
   [.arith .add, .arith .sub, .arith .mul, .arith .div, .arith .mod,
    .cmp .eq, .cmp .ne, .cmp .lt, .cmp .le, .cmp .gt, .cmp .ge, .and, .or, .concat,

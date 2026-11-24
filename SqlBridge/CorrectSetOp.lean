@@ -151,7 +151,8 @@ def setOpQuery {S : DbSchema} {n : ℕ} (op : SqlEquiv.SetOp) (ql qr : Query S n
 /-- The branches of a compound query that elaborates elaborate too, to queries of one type, and
     the result is the corresponding typed operator over them, with the left branch's columns. -/
 theorem elab_compound_shape (N : NamedSchema) {l r : SqlEquiv.Query} {op : SqlEquiv.SetOp}
-    {e : Elaborated N.S} (h : elabQuery N (.compound l op r) = .ok e) :
+    {e : Elaborated N.S} (hnf : (branchFromless l || branchFromless r) = false)
+    (h : elabQuery N (.compound l op r) = .ok e) :
     ∃ (n : ℕ) (ql qr : Query N.S n) (cl cr : Fin n → Column) (Γ : Fin n → SqlType),
       elabQuery N l = .ok ⟨n, ql, cl⟩ ∧ elabQuery N r = .ok ⟨n, qr, cr⟩ ∧
       ql.typeOf = some Γ ∧ qr.typeOf = some Γ ∧
@@ -175,6 +176,8 @@ theorem elab_compound_shape (N : NamedSchema) {l r : SqlEquiv.Query} {op : SqlEq
   · simp [throw, throwThe, MonadExceptOf.throw] at hraw
   rename_i hmn
   subst hmn
+  -- no branch without `FROM`: the branches are not aligned (#472)
+  simp only [hnf, Bool.false_eq_true, ↓reduceIte] at hraw
   -- the result's type gives both branches the same type
   have hΓ : ∃ Γ, ql.typeOf = some Γ ∧ qr.typeOf = some Γ := by
     cases op <;> simp only [pure, Except.pure, Except.ok.injEq] at hraw <;> subst hraw <;>
@@ -230,11 +233,12 @@ def QueryRel {N : NamedSchema} (D : Database N.S) (db : SqlEquiv.Database)
     are related to `SqlEquiv`'s results, so is the compound query. -/
 theorem compound_rel (N : NamedSchema) {D : Database N.S} (hD : D.Conforms)
     (db : SqlEquiv.Database) {l r : SqlEquiv.Query} {op : SqlEquiv.SetOp} {e : Elaborated N.S}
+    (hnf : (branchFromless l || branchFromless r) = false)
     (h : elabQuery N (.compound l op r) = .ok e) :
     ∃ el er : Elaborated N.S, elabQuery N l = .ok el ∧ elabQuery N r = .ok er ∧
       (QNoBoolOrder e.q → QNoBoolOrder el.q ∧ QNoBoolOrder er.q) ∧
       (QueryRel D db l el → QueryRel D db r er → QueryRel D db (.compound l op r) e) := by
-  obtain ⟨n, ql, qr, cl, cr, Γ, hl, hr, hΓl, hΓr, he⟩ := elab_compound_shape N h
+  obtain ⟨n, ql, qr, cl, cr, Γ, hl, hr, hΓl, hΓr, he⟩ := elab_compound_shape N hnf h
   clear h
   subst he
   refine ⟨_, _, hl, hr, ?_, ?_⟩
@@ -255,13 +259,21 @@ theorem setOpTree_rel (N : NamedSchema) {D : Database N.S} (hD : D.Conforms)
     (db : SqlEquiv.Database) {leaf : SqlEquiv.Query → Prop}
     (hleaf : ∀ q (e : Elaborated N.S), leaf q → elabQuery N q = .ok e → QNoBoolOrder e.q →
       QueryRel D db q e)
+    (hleafF : ∀ q, leaf q → branchFromless q = false)
     {q : SqlEquiv.Query} (ht : SetOpTree leaf q) :
     ∀ e : Elaborated N.S, elabQuery N q = .ok e → QNoBoolOrder e.q → QueryRel D db q e := by
+  -- no leaf is a `SELECT` without `FROM`, so no branch is aligned (#472)
+  have hF : ∀ {q}, SetOpTree leaf q → branchFromless q = false := by
+    intro q ht
+    induction ht with
+    | leaf hq => exact hleafF _ hq
+    | node op _ _ ihl ihr => simp [branchFromless, ihl, ihr]
   induction ht with
   | leaf hq => exact fun e h hnb => hleaf _ e hq h hnb
-  | node op _ _ ihl ihr =>
+  | node op hl' hr' ihl ihr =>
     intro e h hnb
-    obtain ⟨el, er, hl, hr, hnb', hrel⟩ := compound_rel N hD db h
+    obtain ⟨el, er, hl, hr, hnb', hrel⟩ :=
+      compound_rel N hD db (by simp [hF hl', hF hr']) h
     exact hrel (ihl el hl (hnb' hnb).1) (ihr er hr (hnb' hnb).2)
 
 /-! ### The leaves, and the statement for parsed set operations -/
@@ -313,7 +325,7 @@ theorem elabStmt_correct_setOp (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLo
       ∃ out, (SqlEquiv.evalStmt db (.query q)).2 = some out ∧
         ∃ rs', rs.Perm rs' ∧ List.Forall₂ OutRel rs' out := by
   have key : QueryRel D db q e := by
-    refine setOpTree_rel N hD db (leaf := Leaf N) ?_ ht e h hnb
+    refine setOpTree_rel N hD db (leaf := Leaf N) ?_ (fun q hq => by cases hq <;> rfl) ht e h hnb
     intro q e hq h hnb
     cases hq with
     | @plain items f wh hit hff hw =>
