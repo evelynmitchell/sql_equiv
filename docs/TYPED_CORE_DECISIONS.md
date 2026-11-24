@@ -17,5 +17,15 @@ Changing one is a design decision: propose it on an issue and wait for a pick
 | 8 | Dialects | **A single semantics, with no dialect modes in the typed core.** Engine differences are listed as known divergences in the oracle tests and in `docs/IMPLEMENTATION_DEFINED.md`. |
 | 9 | Reference engines | **Postgres and DuckDB.** sqlite is kept only for Spider fidelity. |
 
+## Phase 9 decisions (#298, #458; 24 Nov 2026)
+
+| # | Question | Pick |
+|---|---|---|
+| D1 | Dialects in phase 9, given decision 8 | **Elaboration time only.** A dialect's choice is made by the elaborator from `DialectConfig`, as bare columns (`bareColumns`), NULL ordering and LIKE case already are; the typed semantics takes no dialect parameter. Decision 8 stands. |
+| D2 | sqlite's quiet errors (`ErrorMode.quiet`, registry row 23) | **Dropped.** The typed core is strict (decision 2). After the switch (#466) the sqlite dialect has no quiet mode; it is recorded as a divergence from sqlite in the registry then. |
+| D3 | `SqlEquiv`'s 714 theorems | **Inventory first, decided by group.** The inventory and a proposed fate per group are in `docs/TYPED_CORE_PLAN.md` ("D3 inventory"); each group's fate is confirmed when #466 reaches it. |
+| D4 | The oracle for features ported in phase 9 | **The engines.** Each is validated against DuckDB and Postgres through the typed core (`SqlCoreTest.DuckdbDiff`, `SqlCoreTest.PostgresDiff`); no bridge proof against `SqlEquiv` is required, and `SqlEquiv`'s divergences there (outer-join padding, UPDATE assignment order, INSERT column names) are not fixed. |
+| D5 | Spider after the switch: the evaluate ratchet falls from 559 to at most 520 (44 type-affinity queries do not elaborate) | **Open.** Accept and re-base the ratchets, or keep `SqlEquiv`'s evaluator as a fallback for those queries. |
+
 Still to agree before phase 6 (#295): the Spider elaboration-rate target for
 retiring the untyped semantics (#298).

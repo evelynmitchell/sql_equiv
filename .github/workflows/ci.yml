@@ -79,8 +79,18 @@ jobs:
       - name: Build typed core and its tests
         run: lake build SqlCore sqlcore_test
 
+      - name: Start Postgres (typed-core harness and Spider oracle, preinstalled on the runner)
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres createuser -s "$USER"
+          sudo -u postgres createdb "$USER"
+          psql -X -At -c 'select version()'
+
       - name: Run typed core tests
-        run: lake exe sqlcore_test
+        run: |
+          set -o pipefail
+          lake exe sqlcore_test | tee /tmp/sqlcore_test.log
+          grep -E "vs (DuckDB|Postgres|sqlite):" /tmp/sqlcore_test.log >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build CLI
         run: lake build sql_equiv
@@ -88,18 +98,14 @@ jobs:
       - name: Check Spider parse-rate ratchet
         run: python3 tools/spider_parse_baseline.py --check
 
-      - name: Start Postgres (Spider tiebreaker oracle, preinstalled on the runner)
-        run: |
-          sudo systemctl start postgresql.service
-          sudo -u postgres createuser -s "$USER"
-          sudo -u postgres createdb "$USER"
-          psql -X -At -c 'select version()'
-
       - name: Check Spider evaluate-rate ratchet
         run: python3 tools/spider_eval_baseline.py --check
 
       - name: Check Spider typed-core elaboration ratchet
         run: lake build spider_elab && python3 tools/spider_elab_baseline.py --check
+
+      - name: Check typed-core coverage of the test corpus (phase 9 metric, #458)
+        run: python3 tools/typed_corpus_baseline.py --check
 
       - name: Build tests
         run: lake build sql_equiv_test

@@ -20,6 +20,8 @@ open Lean SqlCore
 def spiderType : String → SqlType
   | "number" => .int
   | "boolean" => .bool
+  -- not a Spider type: used by the test-corpus schema (tools/typed_corpus_baseline.py, #458)
+  | "decimal" => .decimal
   | _ => .text
 
 /-- One table: its name and columns (name, type), names lowercased. -/
