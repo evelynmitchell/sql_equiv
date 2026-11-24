@@ -455,6 +455,18 @@ theorem aggsOfList_items_star {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
     simp [hs, aggsOfList_items_star hf hs rest h]
   | .star (some _) :: _, h => by simp [itemsStar] at h
 
+theorem subsOfList_items_star {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
+    (hf : ∀ e al, f (.exprItem e al) = some e) (hs : ∀ t, f (.star t) = none) :
+    ∀ items, itemsStar items = true → subsOfList (items.filterMap f) = []
+  | [], _ => by simp [subsOfList]
+  | .exprItem e _ :: rest, h => by
+    simp only [itemsStar, Bool.and_eq_true] at h
+    simp [hf, subsOfList, subsOf_frag e h.1, subsOfList_items_star hf hs rest h.2]
+  | .star none :: rest, h => by
+    simp only [itemsStar] at h
+    simp [hs, subsOfList_items_star hf hs rest h]
+  | .star (some _) :: _, h => by simp [itemsStar] at h
+
 theorem selectHasAggregate_star : ∀ items, itemsStar items = true →
     SqlEquiv.selectHasAggregate items = false
   | [], _ => rfl
@@ -663,6 +675,8 @@ theorem elab_join_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   case hs => intros; rfl
   simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
     Bool.and_self, ↓reduceIte] at hraw
+  rw [distinctSubs_eq_nil (subsOfList_items_star (fun _ _ => rfl) (fun _ => rfl) items hit)] at hraw
+  simp only [List.isEmpty_nil, ↓reduceIte] at hraw
   rcases hits : elabItems N cf items with _ | its
   · simp [hits, bind, Except.bind] at hraw
   simp only [hits, bind, Except.bind] at hraw

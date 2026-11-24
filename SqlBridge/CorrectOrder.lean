@@ -1294,6 +1294,8 @@ theorem elab_ordered_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem} 
     case hf => intros; rfl
     simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
       Bool.and_self, ↓reduceIte] at hraw
+    rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at hraw
+    simp only [List.isEmpty_nil, ↓reduceIte] at hraw
     rcases hits : elabItems N (requalify (N.fold (al.getD name)) (N.S.columns T)) items with _ | its
     · simp [hits] at hraw
     simp only [hits] at hraw
@@ -1310,6 +1312,8 @@ theorem elab_ordered_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem} 
     case hf => intros; rfl
     simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
       Bool.and_self, ↓reduceIte] at hraw
+    rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at hraw
+    simp only [List.isEmpty_nil, ↓reduceIte] at hraw
     rcases hits : elabItems N (requalify (N.fold (al.getD name)) (N.S.columns T)) items with _ | its
     · simp [hits] at hraw
     simp only [hits] at hraw

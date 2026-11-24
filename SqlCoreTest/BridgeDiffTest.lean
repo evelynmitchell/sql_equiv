@@ -289,6 +289,32 @@ def corpus : List (String × Expect) := [
   -- a name the body has twice is ambiguous there, not the outer row's
   ("SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM orders o, orders p WHERE id > 1)",
     .rejected "ambiguousColumn"),
+  -- 9.4b step 3 (#462): subqueries in the SELECT list, in HAVING and over the groups, correlated
+  -- or not; FROM-less outer queries
+  ("SELECT (SELECT MAX(amount) FROM orders WHERE orders.user_id = users.id) FROM users WHERE id = 1", .agree),
+  ("SELECT name, (SELECT COUNT(*) FROM orders WHERE orders.user_id = users.id) FROM users", .agree),
+  ("SELECT name, (SELECT MAX(age) FROM users) AS m FROM users", .agree),
+  ("SELECT u.name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS c FROM users u ORDER BY c DESC, u.name", .agree),
+  ("SELECT name, (SELECT amount FROM orders o WHERE o.user_id = u.id ORDER BY amount LIMIT 1) AS a FROM users u",
+    .rejected "unsupported: correlated subquery body shape"),
+  ("SELECT name, id IN (SELECT user_id FROM orders) AS buyer FROM users", .agree),
+  ("SELECT name, EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.amount > 100) AS big FROM users u", .agree),
+  ("SELECT 7 IN (SELECT 5 UNION SELECT NULL)", .agree),
+  ("SELECT 5 IN (SELECT 5 UNION SELECT NULL)", .agree),
+  ("SELECT (SELECT MAX(price) FROM products)", .agree),
+  ("SELECT MIN(age) IN (SELECT age FROM users WHERE department = 'Sales') AS r FROM users", .agree),
+  ("SELECT department, COUNT(*) IN (SELECT user_id FROM orders WHERE user_id > 1) AS r FROM users GROUP BY department ORDER BY department", .agree),
+  ("SELECT department FROM users GROUP BY department HAVING COUNT(*) NOT IN (SELECT user_id FROM orders WHERE user_id > 1) ORDER BY department", .agree),
+  ("SELECT department FROM users GROUP BY department HAVING MAX(age) IN (SELECT age FROM users WHERE id > 3) ORDER BY department", .agree),
+  ("SELECT department, (SELECT MAX(amount) FROM orders) AS m FROM users GROUP BY department ORDER BY department", .agree),
+  ("SELECT department, (SELECT COUNT(*) FROM users v WHERE v.department = users.department) AS c FROM users GROUP BY department ORDER BY department", .agree),
+  ("SELECT department FROM users GROUP BY department HAVING COUNT(*) < (SELECT COUNT(*) FROM orders) ORDER BY department", .agree),
+  ("SELECT name FROM users WHERE NOT EXISTS (SELECT product FROM orders EXCEPT SELECT name FROM products)", .agree),
+  -- #384 holds on this path too: `id` is ambiguous in the FROM scope, though only one key has it
+  ("SELECT u.id, (SELECT MAX(amount) FROM orders) FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id HAVING id > 0",
+    .rejected "ambiguousColumn"),
+  ("SELECT CASE WHEN id > 0 THEN 0 ELSE (SELECT MAX(age) FROM users) END FROM users",
+    .rejected "unsupported: subquery in a CASE branch"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

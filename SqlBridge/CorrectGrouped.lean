@@ -103,6 +103,52 @@ def groupedItems : List SqlEquiv.SelectItem → Bool
     (itemAggFragment e || match e with | .col _ => true | _ => false) && groupedItems rest
   | _ :: _ => false
 
+/-- A top-level aggregate call or column has no subquery node (phase 9.4b step 3). -/
+theorem subsOf_of_top {e : SqlEquiv.Expr}
+    (h : (match e with | .agg .. | .countStar | .col _ | .lit _ => true | _ => false) = true) :
+    subsOf e = [] := by
+  cases e <;> simp_all [subsOf]
+
+/-- Grouped items have no subquery node: the elaborator's subquery path is not taken. -/
+theorem subsOfList_groupedItems {f : SqlEquiv.SelectItem → Option SqlEquiv.Expr}
+    (hf : ∀ e al, f (.exprItem e al) = some e) : ∀ {items : List SqlEquiv.SelectItem},
+    groupedItems items = true → subsOfList (items.filterMap f) = []
+  | [], _ => by simp [subsOfList]
+  | .exprItem e _ :: rest, h => by
+    simp only [groupedItems, Bool.and_eq_true] at h
+    have he : subsOf e = [] := subsOf_of_top (by
+      rcases h.1 with h1
+      cases e <;> simp_all [itemAggFragment, aggFragment, CorrectAvg.avgFragment])
+    simp [hf, subsOfList, he, subsOfList_groupedItems hf h.2]
+  | .star _ :: _, h => by simp [groupedItems] at h
+
+/-- A `HAVING` of the fragment has no subquery node. -/
+theorem subsOf_havingFragment {groupBy : List SqlEquiv.Expr} :
+    ∀ e, CorrectGroup.havingFragment groupBy e = true → subsOf e = []
+  | .lit _, _ => by simp [subsOf]
+  | .col _, _ => by simp [subsOf]
+  | .binOp op x y, h => by
+    simp only [CorrectGroup.havingFragment, Bool.or_eq_true, Bool.and_eq_true] at h
+    rcases h with h | ⟨⟨_, hx⟩, hy⟩
+    · obtain ⟨z, c, rfl, -, hx⟩ := CorrectGroup.cmpAvgForm_spec h
+      have : subsOf x = [] := subsOf_of_top (by
+        cases x <;> simp_all [CorrectGroup.avgColFragment])
+      simp [subsOf, this]
+    · simp [subsOf, subsOf_havingFragment x hx, subsOf_havingFragment y hy]
+  | .unaryOp op x, h => by
+    cases op with
+    | not =>
+      simp only [CorrectGroup.havingFragment] at h
+      simp [subsOf, subsOf_havingFragment x h]
+    | _ => simp [CorrectGroup.havingFragment, aggFragment] at h
+  | .between x lo hi, h => by
+    simp only [CorrectGroup.havingFragment, Bool.and_eq_true] at h
+    simp [subsOf, subsOf_havingFragment x h.1.1, subsOf_havingFragment lo h.1.2,
+      subsOf_havingFragment hi h.2]
+  | .agg .., _ | .countStar, _ => by simp [subsOf]
+  | .func .., h | .«case» .., h | .inList .., h | .inSubquery .., h | .exists .., h | .subquery .., h
+  | .windowFn .., h => by simp [CorrectGroup.havingFragment, aggFragment] at h
+
 /-- Grouped items (aggregates, `AVG`, columns) have no window function (#429). -/
 theorem selectHasWindowFn_groupedItems : ∀ {items : List SqlEquiv.SelectItem},
     groupedItems items = true → SqlEquiv.selectHasWindowFn items = false
@@ -547,6 +593,18 @@ theorem elab_grouped_shape (N : NamedSchema)
         | cons _ _ => rfl
       rw [this, Bool.and_false, Bool.false_and]
   simp only [pure, Except.pure, bind, Except.bind] at hraw
+  -- no subquery node in the items or `HAVING`: not the elaborator's subquery path (9.4b step 3)
+  have hgs : ∀ f : SqlEquiv.SelectItem → Option SqlEquiv.Expr,
+      (∀ e al, f (.exprItem e al) = some e) →
+      distinctSubs (items.filterMap f ++ having.toList) = [] := by
+    intro f hf'
+    apply distinctSubs_eq_nil
+    rw [subsOfList_append, subsOfList_groupedItems hf' hgi]
+    cases having with
+    | none => rfl
+    | some hv => simp [subsOfList, subsOf_havingFragment hv (hhv hv rfl)]
+  rw [hgs _ (fun _ _ => rfl)] at hraw
+  simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ↓reduceIte, ite_false] at hraw
   refine ⟨n, qf, cf, hf, q₀, hq₀, ?_⟩
   all_goals
     have hob' : ∀ o ∈ orderBy, aggFragment o.expr = true ∨ ∃ c, o.expr = .col c := fun o ho =>

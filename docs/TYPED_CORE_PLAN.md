@@ -223,8 +223,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       [WHERE w] [LIMIT n]`, aggregates without `GROUP BY`); the 6b/6c theorems ask for an
       `uncorrelated` body (`CorrectSub.uncorrelated`); 14 queries agree with SqlEquiv, DuckDB and
       Postgres
-    - [ ] subqueries in other positions (SELECT list, HAVING, over aggregates and windows, JOIN
-      ON, CASE), correlated or not: about 40 corpus statements
+    - [x] subqueries in other positions, correlated or not (`attachSubs`): the SELECT list,
+      `HAVING`, and items over the groups (the probe of an `IN` may be an aggregate); FROM-less
+      outer queries; `EXISTS` over a set operation. Not done: JOIN ON, ORDER BY, over window
+      functions (9.5), a `CASE` branch (rejected: the typed core evaluates an attached subquery
+      whether or not the branch is taken), bare columns next to a subquery. Corpus 560 → 597
     - [ ] richer bodies (GROUP BY or set operations in a correlated body), if the corpus asks
   - [ ] 9.5 Window functions (#463)
   - [ ] 9.6 Recursive CTEs (#464)
