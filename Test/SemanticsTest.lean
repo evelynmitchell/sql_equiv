@@ -1049,7 +1049,12 @@ def setOpSubqueryTests : List TestResult := [
 def arithmeticTests : List TestResult := [
   testNonEmpty "add" "SELECT age + 10 FROM users",
   testNonEmpty "subtract" "SELECT age - 10 FROM users",
-  testNonEmpty "multiply" "SELECT amount * 2 FROM orders"
+  testNonEmpty "multiply" "SELECT amount * 2 FROM orders",
+  -- `-NULL` is NULL, not an error: an error looks like NULL in a result (and `<error> IS NULL`
+  -- is TRUE), so only the value or a strict dialect tells them apart. The one survivor of the
+  -- first mutation-testing trial (#210).
+  (if evalUnaryOp .neg (some (.null none)) == some (.null none) then .pass "neg_null_is_null"
+   else .fail "neg_null_is_null" "-NULL must be NULL, not an error")
 ]
 
 -- ============================================================================
@@ -1722,6 +1727,7 @@ def strictErrorTests : List TestResult := [
     "SELECT (name + 1) / 0 AS x FROM users" (some "SELECT"),
   testStrict "strictDivZeroNull: a string divisor still is (duckdb)" .duckdb
     "SELECT id / name AS x FROM users" (some "SELECT"),
+  testStrict "strict: -NULL is NULL, not an error (#210)" .postgres "SELECT -NULL AS x" none,
   testStrict "strict: WHERE" .postgres
     "SELECT id FROM users WHERE name > 1" (some "WHERE"),
   testStrict "strict: FALSE AND <error> is FALSE, no error" .postgres

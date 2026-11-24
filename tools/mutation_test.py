@@ -26,6 +26,7 @@ can show as killed by tests or as survived.
 Usage:
     python3 tools/mutation_test.py --list                  # the mutants, no build
     python3 tools/mutation_test.py --shard 0/8 --out s0.json [--limit N] [--sites evalFunc,...]
+    python3 tools/mutation_test.py --ids evalUnaryOp:676:null-to-error   # re-check one mutant
     python3 tools/mutation_test.py --merge s*.json         # report + results JSON
 
 Run it in a scratch checkout or worktree: it edits SemanticsBase.lean (restoring it after each
@@ -361,6 +362,7 @@ def main() -> None:
     ap.add_argument("--shard", default="0/1")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--sites", default="")
+    ap.add_argument("--ids", default="", help="comma-separated mutant ids (from --list)")
     ap.add_argument("--out", default="mutation-results.json")
     ap.add_argument("--merge", nargs="*")
     a = ap.parse_args()
@@ -371,6 +373,9 @@ def main() -> None:
     if a.sites:
         wanted = set(a.sites.split(","))
         ms = [m for m in ms if m.site in wanted]
+    if a.ids:
+        ids = set(a.ids.split(","))
+        ms = [m for m in ms if m.id in ids]
     i, n = (int(x) for x in a.shard.split("/"))
     ms = [m for k, m in enumerate(ms) if k % n == i]
     if a.limit:
