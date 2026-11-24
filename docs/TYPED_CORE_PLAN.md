@@ -208,14 +208,22 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   below, chosen 24 Nov 2026)
   - [ ] 9.0 Decisions and the typed-coverage metric (#458): metric, Postgres harness, D1–D4
     done (24 Nov 2026); D5 decided (accept and re-base)
-  - [ ] 9.4a Spike for EXISTS and correlated subqueries, then go/no-go (#462)
+  - [x] 9.4a Spike for EXISTS and correlated subqueries (24 Nov 2026): go, with `Query.outer` and
+    `Query.lateral` (decision D6 in `docs/TYPED_CORE_DECISIONS.md`; report in #462)
   - [x] 9.1a `SELECT` without `FROM` (24 Nov 2026): `Query.one`, a source of one row with no
     columns; typed corpus 504 → 553. Follow-ups: set operations across INT/DECIMAL and untyped
     NULL branches (#472); the parser rejects `WHERE`/`ORDER BY` after a FROM-less `SELECT`
   - [ ] 9.1 scalar functions, `IN` over non-literals (#459)
   - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
   - [ ] 9.3 Outer joins (#461)
-  - [ ] 9.4b EXISTS and correlated subqueries, if go (#462)
+  - [ ] 9.4b EXISTS and correlated subqueries, design D6 (#462):
+    - [ ] core: `outer`, `lateral`, `evalIn`/`typeOfIn`, `evalIn_spec`, `Equiv.lateral`, laws
+      (`lateral` over `one`, over `unionAll`)
+    - [ ] correlated subqueries and `EXISTS` in `WHERE`; `elabWhere_one_*` restated with an
+      uncorrelated-body hypothesis
+    - [ ] subqueries in other positions (SELECT list, HAVING, over aggregates and windows, JOIN
+      ON, CASE), correlated or not: about 40 corpus statements
+    - [ ] richer bodies (GROUP BY or set operations in a correlated body), if the corpus asks
   - [ ] 9.5 Window functions (#463)
   - [ ] 9.6 Recursive CTEs (#464)
   - [ ] 9.7 INSERT, UPDATE, DELETE (#465)
@@ -265,7 +273,7 @@ inside areas listed as supported, and the plan is re-estimated then.
 | 9.1 | COALESCE, NULLIF, ABS, ROUND, LENGTH, UPPER/LOWER, CONCAT; `IN` over non-literals | `Expr` constructors, typing, soundness, simplifier congruence | | 1–2 | #459 |
 | 9.2 | `WITH` (non-recursive) | none: inlined at elaboration | | 1 | #460 |
 | 9.3 | LEFT / RIGHT / FULL joins | one `Query.outerJoin` with a kind (left, right, full), NULL padding from the schema, laws | | 2 | #461 |
-| 9.4b | EXISTS, correlated subqueries (if go) | the design the spike chose | | 4–6 | #462 |
+| 9.4b | EXISTS, correlated subqueries | D6: `Query.outer` and `Query.lateral` | | 3–4 | #462 |
 | 9.5 | Window functions | `Query.window` (partition, sort, function per row), composing with `aggregate` | | 3–4 | #463 |
 | 9.6 | `WITH RECURSIVE` | `Query.fix`, fuel-bounded | stop on bag equality as engines do, or on list equality; what running out of fuel is (an error, in a strict core, or the rows so far as `SqlEquiv`) | 2 | #464 |
 | 9.7 | INSERT / UPDATE / DELETE | `Stmt.exec : Instance → Except Error Instance`, conformance preserved; UPDATE reads the old row; INSERT fills columns by position | | 2–3 | #465 |
@@ -317,21 +325,20 @@ recorded as rejected by design when #466 re-bases the ratchets.
 
 **Order:**
 1. 9.0.
-2. The 9.4a spike: the core query type may change, so it comes before anything is built on the
-   current one.
+2. The 9.4a spike (done: D6 keeps the core query type, so nothing after it waits on 9.4b).
 3. 9.1–9.3.
-4. 9.4b, if go.
+4. 9.4b.
 5. 9.5–9.7, in any order (9.6 builds on 9.2).
 6. 9.8 last.
 
 9.9 can run at any time. Each PR goes through the operating loop: code, proofs, tests and docs
 together, `/critical-self-review`, `/audit`, engine differential cases.
 
-**Human gates:** D1, D2, D3, D5; the 9.4 go/no-go; the recursive-CTE stopping rule; the final
+**Human gates:** D1, D2, D3, D5; the 9.4 go/no-go (decided: D6); the recursive-CTE stopping rule; the final
 form of the retirement.
 
-**Main risk:** 9.4 changes the core query type every typed-core proof is built on; the spike
-measures that cost first.
+**Main risk (retired 24 Nov 2026):** 9.4 might have changed the core query type every typed-core
+proof is built on. The spike found a design that does not (D6).
 
 ## Elaborator correctness roadmap (#352)
 
