@@ -234,6 +234,21 @@ def inJoinAgree (g : GenDb) (distinct : Bool := true) : Bool :=
   ((evalSelect g.db inForm).map Row.valueKey).isPerm
     ((evalSelect g.db (joinForm distinct)).map Row.valueKey)
 
+/-- How often `needle` occurs in `s`. -/
+private def occurrences (s needle : String) : Nat := (s.splitOn needle).length - 1
+
+/-- Shrinking self-test (#454): the join form without DISTINCT, run as a property, must report
+    a minimal counterexample, one user with two matching orders, not the database it first
+    failed on. LSpec alone shrinks once. -/
+def shrinkSelfTest : TestSeq :=
+  match counterexampleOf "shrink self-test" (∀ g : GenDb, inJoinAgree g false) (mkSlimCfg 500 0) with
+  | none => test "shrink self-test: the DISTINCT mutant fails as a property" false
+  | some (ce, steps) =>
+    let users := occurrences ce "\"department\""
+    let orders := occurrences ce "\"user_id\""
+    test s!"shrink self-test: the counterexample shrinks to {users} user(s) and {orders} order(s) in {steps} steps"
+      (users ≤ 1 && orders ≤ 2 && steps > 1)
+
 def unnestTests (cfg : Configuration) : TestSeq :=
   let inNonEmpty := countIn fun g => !(evalSelect g.db inForm).isEmpty
   let preHolds := countIn fun g => antijoinPre g && !(evalSelect g.db notInForm).isEmpty
@@ -256,6 +271,7 @@ def allTests (cfg : Configuration) : TestSeq :=
   group "Rewriter" (rewriterTests cfg) $
   group "Subquery laws" (subqueryTests cfg) $
   group "Select-level relations" (selectTests cfg) $
-  group "Unnesting" (unnestTests cfg)
+  group "Unnesting" (unnestTests cfg) $
+  group "Shrinking (#454)" shrinkSelfTest
 
 end DbProperties
