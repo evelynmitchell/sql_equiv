@@ -1753,6 +1753,17 @@ def strictErrorTests : List TestResult := [
     "SELECT (name + 1) / 0 AS x FROM users" (some "SELECT"),
   testStrict "strictDivZeroNull: a string divisor still is (duckdb)" .duckdb
     "SELECT id / name AS x FROM users" (some "SELECT"),
+  -- /audit 25 Nov 2026: a dividend of the wrong type over a zero divisor (DuckDB: binder error)
+  testStrict "strictDivZeroNull: a string dividend over zero still is (duckdb)" .duckdb
+    "SELECT name / 0 AS x FROM users" (some "SELECT"),
+  testStrict "strictDivZeroNull: a string dividend modulo zero still is (duckdb)" .duckdb
+    "SELECT name % (age - age) AS x FROM users" (some "SELECT"),
+  testStrict "strictDivZeroNull: a boolean dividend over zero still is (duckdb)" .duckdb
+    "SELECT (age > 1) / 0 AS x FROM users" (some "SELECT"),
+  testStrict "strictDivZeroNull: a decimal dividend over zero is NULL (duckdb)" .duckdb
+    "SELECT (age + 0.5) / (age - age) AS x FROM users" none,
+  testStrict "strictDivZeroNull: a NULL dividend over zero is NULL (duckdb)" .duckdb
+    "SELECT NULL / 0 AS x FROM users" none,
   testStrict "strict: -NULL is NULL, not an error (#210)" .postgres "SELECT -NULL AS x" none,
   testStrict "strict: WHERE" .postgres
     "SELECT id FROM users WHERE name > 1" (some "WHERE"),
