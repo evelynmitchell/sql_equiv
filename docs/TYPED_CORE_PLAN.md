@@ -230,7 +230,19 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     bug (#482). Corpus 874 → 879: every non-recursive `WITH` over the test schema. Not done: an
     `EXISTS` body over a CTE (a body over a derived table, 9.4b "richer bodies"); a CTE body with
     `ORDER BY`/`LIMIT` over a set operation; `WITH` before DML
-  - [ ] 9.3 Outer joins (#461)
+  - [x] 9.3 Outer joins (#461): `Query.outerJoin kind θ q₁ q₂` with `JoinKind` left, right or full
+    (`Row.outerRows`): `θ` evaluated on every pair, as for an inner join; each left row's matches,
+    or the row padded with `NULL` (left, full), then each right row that matches nothing, padded
+    (right, full). A `NULL` has every type, so the typing rule is the inner join's and soundness
+    is `Row.outerRows_spec`. Laws: `outerRows_left_nil`, `outerRows_full_nil_left`,
+    `eval_outerJoin_left_of_nil` (an empty side); the row counts of inner, left, right and full
+    joins with `NULL` keys on both sides, and the padded rows, are kernel examples
+    (`OuterJoinExamples`); inner ⊆ outer and right = left with the sides swapped are not general
+    theorems yet. Simplifier, canon and
+    checker: opaque. Elaborator: `joinOf` in `elabFrom`'s join case (`ON` required); the bridge
+    theorems are unchanged (their fragment has inner and cross joins only). 14 queries agree with
+    DuckDB and Postgres, 13 with SqlEquiv; the empty-side case is a SqlEquiv divergence (registry
+    T26). Corpus 884 → 889: every outer join in the corpus
   - [ ] 9.4b EXISTS and correlated subqueries, design D6 (#462):
     - [x] core: `outer`, `lateral`, `evalIn`/`typeOfIn`, `evalIn_spec`, `Equiv.lateral`, the law
       `lateral_closed` (a body that reads no outer row, and cannot fail, is a cross join)

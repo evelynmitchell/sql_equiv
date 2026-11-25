@@ -460,6 +460,16 @@ def lookupTable (name : String) : ElabM N.S.Table :=
   | some (_, t) => pure t
   | none => throw (.unknownTable name)
 
+/-- The join node of a `FROM` join: an inner join (`INNER`, `CROSS`), or an outer join (phase 9.3,
+#461) that pads unmatched rows with `NULL`. -/
+def joinOf {S : DbSchema} {n m : ℕ} (kind : SqlEquiv.JoinType) (θ : Expr (n + m)) (ql : Query S n)
+    (qr : Query S m) : Query S (n + m) :=
+  match kind with
+  | .left => .outerJoin .left θ ql qr
+  | .right => .outerJoin .right θ ql qr
+  | .full => .outerJoin .full θ ql qr
+  | _ => .join θ ql qr
+
 /-- Elaborate a `FROM` clause. `sub` elaborates the body of a derived table `(SELECT …) AS alias`
 (phase 8f): its columns are requalified by the alias, as in `SqlEquiv` (#257). -/
 def elabFrom (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) :
@@ -476,10 +486,11 @@ def elabFrom (sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S)) :
       | .inner, none => pure (.lit (.bool true))
       | .cross, none => pure (.lit (.bool true))
       | .cross, some e => elabExpr cols N.fold noHook e
-      | .left, _ => throw (.unsupported "LEFT JOIN")
-      | .right, _ => throw (.unsupported "RIGHT JOIN")
-      | .full, _ => throw (.unsupported "FULL JOIN")
-    pure ⟨n + m, .join θ ql qr, cols⟩
+      | .left, some e => elabExpr cols N.fold noHook e
+      | .right, some e => elabExpr cols N.fold noHook e
+      | .full, some e => elabExpr cols N.fold noHook e
+      | _, none => throw (.unsupported "outer join without ON")
+    pure ⟨n + m, joinOf kind θ ql qr, cols⟩
   | .subquery sq al => do
     let ⟨n, q, cols⟩ ← sub sq
     pure ⟨n, q, requalify (N.fold al) cols⟩
@@ -1210,6 +1221,7 @@ def bindView {S : DbSchema} {k : ℕ} {cols : Fin k → Column} (v : Query S k) 
   | _, .lateral body q => .lateral (bindView v body) (bindView v q)
   | _, .window c q => .window c (bindView v q)
   | _, .recurse d r b st => .recurse d r (bindView v b) (bindView v st)
+  | _, .outerJoin k θ q₁ q₂ => .outerJoin k θ (bindView v q₁) (bindView v q₂)
 
 /-- The round limit of `WITH RECURSIVE` (registry T25): after this many rounds that still add
 rows, the query fails with `recursionLimit`. -/

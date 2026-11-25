@@ -670,3 +670,54 @@ theorem lateral_closed {body : Query S k} (hc : body.closed = true) (hs : body.I
 end Query
 
 end SqlCore
+
+/-! ### Outer joins (phase 9.3, #461) -/
+
+namespace SqlCore
+
+namespace Query
+
+/-- The `NULL` row of `k` columns. -/
+abbrev nullRow (k : ℕ) : Row k := fun _ => none
+
+/-- `LEFT JOIN` against an empty right side keeps every left row, padded with `NULL`. -/
+theorem outerRows_left_nil {n m : ℕ} (θ : Expr (n + m)) (rs : List (Row n)) :
+    Row.outerRows .left θ rs ([] : List (Row m)) =
+      .ok (rs.map fun r => Fin.append r (nullRow m)) := by
+  have hm : rs.mapM (fun r => ([] : List (Row m)).mapM fun s => do
+      return (← θ.evalTruth (Fin.append r s)).isTrue) = .ok (rs.map fun _ => []) :=
+    Except.mapM_eq_ok_map fun _ _ => rfl
+  have hz : ∀ l : List (Row n), List.flatMap (fun x : Row n × List Bool =>
+      [Fin.append x.1 fun _ => none]) (l.zip (List.replicate l.length [])) =
+      l.map fun r => Fin.append r (nullRow m) := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons a l ih => simp [List.replicate_succ, ih]
+  simp only [Row.outerRows, hm, Except.ok_bind]
+  simp [hz]
+
+/-- `FULL JOIN` with an empty left side gives every right row, padded with `NULL` on the left. -/
+theorem outerRows_full_nil_left {n m : ℕ} (θ : Expr (n + m)) (ss : List (Row m)) :
+    Row.outerRows .full θ ([] : List (Row n)) ss =
+      .ok (ss.map fun s => Fin.append (nullRow n) s) := by
+  simp only [Row.outerRows, List.mapM_nil, Except.ok_bind, List.zip_nil_left, List.flatMap_nil,
+    List.nil_append, List.any_nil, Bool.not_false, pure, Except.pure, Except.ok.injEq]
+  have hz : ∀ (l : List (Row m)) (k : ℕ), List.map (fun x : Row m × ℕ =>
+      Fin.append (fun _ => none) x.1) (l.zipIdx k) = l.map fun s => Fin.append (nullRow n) s := by
+    intro l
+    induction l with
+    | nil => intro; rfl
+    | cons a l ih => intro k; simp [List.zipIdx_cons, ih]
+  simp [hz]
+
+/-- An outer join of two queries whose right side is empty: the left rows, padded. -/
+theorem eval_outerJoin_left_of_nil {D : Database S} {θ : Expr (n + m)} {q₁ : Query S n}
+    {q₂ : Query S m} {rs : List (Row n)} (h₁ : q₁.eval D = .ok rs) (h₂ : q₂.eval D = .ok []) :
+    (outerJoin .left θ q₁ q₂).eval D = .ok (rs.map fun r => Fin.append r (nullRow m)) := by
+  simp only [eval] at h₁ h₂
+  simp only [eval, evalIn, h₁, h₂, Except.ok_bind, outerRows_left_nil]
+
+end Query
+
+end SqlCore
