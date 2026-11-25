@@ -386,6 +386,7 @@ join that it cannot enter. Where it stops, it is simplified in place (`Query.sim
   | _, p, q@(lateral _ _) => simpSelect p q
   | _, p, q@(window _ _) => simpSelect p q
   | _, p, q@(recurse _ _ _ _) => simpSelect p q
+  | _, p, q@(outerJoin _ _ _ _) => simpSelect p q
 
 /-- `SELECT es FROM q` with projections fused: over a safe projection, the two fuse by
 substitution, and the result fuses further down. Where it stops, it is simplified in place
@@ -413,6 +414,7 @@ substitution, and the result fuses further down. Where it stops, it is simplifie
   | _, _, es, q@(lateral _ _) => simpProject es q
   | _, _, es, q@(window _ _) => simpProject es q
   | _, _, es, q@(recurse _ _ _ _) => simpProject es q
+  | _, _, es, q@(outerJoin _ _ _ _) => simpProject es q
 
 /-- The query simplifier: simplify the inputs of each node, then move its `WHERE` down, fuse its
 projections or simplify its join predicate. `Query.equiv_simplify` certifies it on every
@@ -436,6 +438,7 @@ conforming instance. -/
   | _, window c q => window c q.simplify
   -- not simplified inside: the step reads the working row
   | _, recurse d k b st => recurse d k b st
+  | _, outerJoin k θ q₁ q₂ => outerJoin k θ q₁ q₂
 
 theorem equiv_simpSelect (p : Expr n) (q : Query S n) :
     Equiv .ordered (select p q) (simpSelect p q) := by
@@ -566,6 +569,9 @@ theorem equiv_pushSelect (p : Expr n) (q : Query S n) :
   | recurse d k b st _ _ =>
     rw [pushSelect]
     exact equiv_simpSelect p _
+  | outerJoin k θ q₁ q₂ _ _ =>
+    rw [pushSelect]
+    exact equiv_simpSelect p _
 
 theorem equiv_fuseProject (es : Fin k → Expr n) (q : Query S n) :
     Equiv .ordered (project es q) (fuseProject es q) := by
@@ -603,6 +609,7 @@ theorem equiv_simplify (q : Query S n) : Equiv .ordered q q.simplify := by
   | lateral body q _ ihq => exact Equiv.lateral body ihq
   | window c q ih => exact Equiv.window c ih
   | recurse d k b st _ _ => rfl
+  | outerJoin k θ q₁ q₂ _ _ => rfl
 
 end Query
 

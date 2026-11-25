@@ -469,6 +469,22 @@ def corpus : List (String × Expect) := [
     .rejected "typeError"),
   ("WITH RECURSIVE r AS (SELECT n FROM r UNION ALL SELECT 1 AS n) SELECT n FROM r",
     .rejected "unsupported: WITH RECURSIVE: the CTE in its base part"),
+  -- outer joins (phase 9.3, #461): unmatched rows padded with NULL
+  ("SELECT u.name, o.amount FROM users u LEFT JOIN orders o ON u.id = o.user_id", .agree),
+  ("SELECT u.name, o.amount FROM orders o RIGHT JOIN users u ON u.id = o.user_id", .agree),
+  ("SELECT u.name, o.id FROM users u FULL JOIN orders o ON u.id = o.user_id + 2", .agree),
+  ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id WHERE o.id IS NULL", .agree),
+  ("SELECT u.name, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON u.id = o.user_id GROUP BY u.name", .agree),
+  ("SELECT m.name, i.name FROM museum m LEFT JOIN items i ON m.staff = i.id", .agree),
+  ("SELECT u.name, o.amount, p.price FROM users u LEFT JOIN orders o ON u.id = o.user_id LEFT JOIN products p ON o.product = p.name", .agree),
+  ("SELECT u.name, o.amount FROM users u LEFT JOIN orders o ON u.id = o.user_id AND o.amount > 150", .agree),
+  ("SELECT u.name, o.amount FROM users u LEFT JOIN orders o ON u.id = o.user_id WHERE o.amount > 150", .agree),
+  ("SELECT * FROM users u RIGHT JOIN orders o ON u.id = o.user_id", .agree),
+  ("SELECT u.name, o.amount FROM users u FULL JOIN orders o ON u.id = o.user_id ORDER BY u.name, o.amount", .agree),
+  ("SELECT p.name, SUM(o.amount) AS total FROM products p LEFT JOIN orders o ON o.product = p.name GROUP BY p.name", .agree),
+  -- an empty right side: SqlEquiv gives the left rows without the right columns (registry T26)
+  ("SELECT u.name, o.amount FROM users u LEFT JOIN (SELECT * FROM orders WHERE id > 100) o ON u.id = o.user_id",
+    .sqlEquivBug "registry T26: LEFT JOIN against an empty side drops the right columns"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
@@ -500,7 +516,7 @@ def corpus : List (String × Expect) := [
   ("SELECT SUM(name) FROM users", .rejected "typeError"),
   ("SELECT * FROM users GROUP BY department", .rejected "unsupported: *"),
   ("SELECT UPPER(name) FROM users", .agree),
-  ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id", .rejected "unsupported: LEFT JOIN"),
+  ("SELECT u.name FROM users u LEFT JOIN orders o ON u.id = o.user_id", .agree),
   ("SELECT id FROM users u JOIN orders o ON u.id = o.user_id", .rejected "ambiguousColumn"),
   -- #384: with GROUP BY too (the aggregate's output keeps only the keys' names)
   ("SELECT id FROM users u JOIN orders o ON u.id = o.user_id GROUP BY u.id", .rejected "ambiguousColumn"),

@@ -398,6 +398,30 @@ theorem Row.mem_setOp {n : ℕ} {keep : Bool} {rs ss : List (Row n)} {r : Row n}
     r ∈ Row.setOp keep rs ss ↔ r ∈ rs ∧ (r ∈ ss ↔ keep = true) := by
   cases keep <;> simp [Row.setOp, List.mem_dedup, List.mem_filter]
 
+/-- The kind of an outer join (phase 9.3, #461): `LEFT`, `RIGHT` or `FULL`. -/
+inductive JoinKind where
+  | left
+  | right
+  | full
+  deriving DecidableEq, Repr
+
+/-- The rows of an outer join of `rs` and `ss` on `θ` (phase 9.3, #461). `θ` is evaluated on every
+pair, left row outermost, as for an inner join; the result is, for each left row, its matching
+pairs, or (`LEFT`, `FULL`) the row padded with `NULL` when none matches, then (`RIGHT`, `FULL`) each
+right row that matches no left row, padded with `NULL` on the left. -/
+def Row.outerRows {n m : ℕ} (kind : JoinKind) (θ : Expr (n + m)) (rs : List (Row n))
+    (ss : List (Row m)) : Except EvalError (List (Row (n + m))) := do
+  let marks ← rs.mapM fun r => ss.mapM fun s => do
+    return (← θ.evalTruth (Fin.append r s)).isTrue
+  let leftPart := (rs.zip marks).flatMap fun (r, row) =>
+    let ms := (ss.zip row).filterMap fun (s, b) => if b then some (Fin.append r s) else none
+    if ms.isEmpty && kind != .right then [Fin.append r (fun _ => none)] else ms
+  let rightPart := ss.zipIdx.filterMap fun (s, j) =>
+    if kind != .left && !(marks.any fun row => row.getD j false) then
+      some (Fin.append (fun _ => none) s)
+    else none
+  return leftPart ++ rightPart
+
 /-- How an uncorrelated subquery contributes a column to each row of the outer query (phase 8f,
 #329): its value (`scalar`), or the truth of `e [NOT] IN (subquery)` (`inSub`). With `firstRow`, a
 scalar subquery with several rows gives its first row's value (sqlite); otherwise it is a
@@ -538,6 +562,9 @@ inductive Query (S : DbSchema) : ℕ → Type where
   `distinct` (`UNION`), duplicates are removed, against every row so far. After `rounds` rounds
   that still add rows the evaluation fails with `recursionLimit`. -/
   | recurse {n : ℕ} (distinct : Bool) (rounds : ℕ) (base step : Query S n) : Query S n
+  /-- `q₁ LEFT | RIGHT | FULL JOIN q₂ ON θ` (phase 9.3, #461): `Row.outerRows`. -/
+  | outerJoin {n m : ℕ} (kind : JoinKind) (θ : Expr (n + m)) (q₁ : Query S n) (q₂ : Query S m) :
+      Query S (n + m)
 
 namespace Query
 
@@ -610,6 +637,10 @@ def evalIn (D : Database S) (env : Option ((m : ℕ) × Row m)) :
     let rs ← base.evalIn D env
     let rs := if dist then rs.dedup else rs
     recurseRounds (fun w => step.evalIn D (some ⟨n, w⟩)) dist rounds rs rs
+  | _, outerJoin kind θ q₁ q₂ => do
+    let rs ← q₁.evalIn D env
+    let ss ← q₂.evalIn D env
+    Row.outerRows kind θ rs ss
 
 /-- Evaluate a query on a database instance, with no outer row. -/
 def eval (D : Database S) {n : ℕ} (q : Query S n) : Except EvalError (List (Row n)) :=
@@ -819,6 +850,10 @@ def typeOfIn (Γo : Option ((m : ℕ) × (Fin m → SqlType))) :
   | n, recurse _ _ base step => do
     let Γ ← base.typeOfIn Γo
     if step.typeOfIn (some ⟨n, Γ⟩) = some Γ then some Γ else none
+  | _, outerJoin _ θ q₁ q₂ => do
+    let Γ ← q₁.typeOfIn Γo
+    let Δ ← q₂.typeOfIn Γo
+    if θ.typeOf (Fin.append Γ Δ) = some .bool then some (Fin.append Γ Δ) else none
 
 /-- The typing context of the query's result rows, with no outer row. -/
 def typeOf {n : ℕ} (q : Query S n) : Option (Fin n → SqlType) := q.typeOfIn none
@@ -1047,6 +1082,7 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, window c q => c.divSafe && q.divSafe
   -- the round limit can always be reached
   | _, recurse _ _ _ _ => false
+  | _, outerJoin _ θ q₁ q₂ => θ.divSafe && q₁.divSafe && q₂.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -1190,6 +1226,43 @@ theorem recurseRounds_spec {Γ : Fin n → SqlType} {f : Row n → Except EvalEr
       rcases List.mem_append.mp hr with h | h
       · exact hacc r h
       · exact hnew r h) hnew
+
+/-- Type soundness of an outer join's rows: on rows of types `Γ` and `Δ` and a boolean `θ`, every
+row has type `Γ ++ Δ` (a `NULL` has every type), or `θ` divides by zero. -/
+theorem Row.outerRows_spec {Γ : Fin n → SqlType} {Δ : Fin m → SqlType} {rs : List (Row n)}
+    {ss : List (Row m)} (hrs : ∀ r ∈ rs, r.Conforms Γ) (hss : ∀ s ∈ ss, s.Conforms Δ)
+    {θ : Expr (n + m)} (hθ : θ.typeOf (Fin.append Γ Δ) = some .bool) (kind : JoinKind) :
+    Except.Spec (Row.outerRows kind θ rs ss) (fun ts => ∀ t ∈ ts, t.Conforms (Fin.append Γ Δ))
+      fun e => e = .divisionByZero ∧ θ.divSafe = false := by
+  have hnull : ∀ {k} (Ξ : Fin k → SqlType), Row.Conforms Ξ (fun _ => none) := fun _ _ => trivial
+  simp only [Row.outerRows]
+  refine (Except.Spec.mapM (R := fun _ _ => True) fun r hr =>
+    ((Except.Spec.mapM (R := fun _ _ => True) fun s hs =>
+      (Expr.evalTruth_spec (Row.conforms_append_iff.mpr ⟨hrs r hr, hss s hs⟩) hθ).bind
+        fun _ _ _ => Except.spec_ok.mpr trivial).mono (fun _ _ => trivial) fun _ h => h)).bind
+    fun marks _ _ => Except.spec_ok.mpr fun t ht => ?_
+  rcases List.mem_append.mp ht with ht | ht
+  · obtain ⟨⟨r, row⟩, hrow, ht⟩ := List.mem_flatMap.mp ht
+    have hr := hrs r (List.of_mem_zip hrow).1
+    dsimp only at ht
+    split at ht
+    · rw [List.mem_singleton] at ht
+      subst ht
+      exact Row.conforms_append_iff.mpr ⟨hr, hnull Δ⟩
+    · obtain ⟨⟨s, b⟩, hsb, ht⟩ := List.mem_filterMap.mp ht
+      have hs := hss s (List.of_mem_zip hsb).1
+      dsimp only at ht
+      split at ht
+      · cases ht
+        exact Row.conforms_append_iff.mpr ⟨hr, hs⟩
+      · cases ht
+  · obtain ⟨⟨s, j⟩, hsj, ht⟩ := List.mem_filterMap.mp ht
+    have hs := hss s (mem_of_mem_zipIdx hsj)
+    dsimp only at ht
+    split at ht
+    · cases ht
+      exact Row.conforms_append_iff.mpr ⟨hnull Γ, hs⟩
+    · cases ht
 
 /-- The outer row conforms to the outer typing context (phase 9.4b, #462, decision D6). -/
 def EnvOk (env : Option ((m : ℕ) × Row m)) (Γo : Option ((m : ℕ) × (Fin m → SqlType))) : Prop :=
@@ -1474,6 +1547,16 @@ theorem evalIn_spec {D : Database S} (hD : D.Conforms) {q : Query S n} :
       (fun w hw => (ihs (env := some ⟨_, w⟩) (Γo := some ⟨_, Γ⟩)
         (fun _ _ h => by cases h; exact ⟨w, rfl, hw⟩) hs).imp_right fun _ => by simp [divSafe])
       dist k _ _ hrs' hrs'
+  | outerJoin kind θ q₁ q₂ ih₁ ih₂ =>
+    intro env Γo Γ henv hq
+    simp only [typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at hq
+    obtain ⟨Γ₁, h₁, Γ₂, h₂, hq⟩ := hq
+    split_ifs at hq with hθ
+    cases hq
+    exact ((ih₁ henv h₁).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs =>
+      ((ih₂ henv h₂).imp_right fun hs => by simp [divSafe, hs]).bind fun ss _ hss =>
+      (Row.outerRows_spec hrs hss hθ kind).mono (fun _ h => h)
+        fun _ h => ⟨.inl h.1, by simp [divSafe, h.2]⟩
 
 /-- Type soundness as a postcondition: on a conforming instance, a well-typed query returns rows
 of its type, or fails with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar
@@ -1534,6 +1617,7 @@ def closed : {n : ℕ} → Query S n → Bool
   | _, window _ q => q.closed
   -- the step reads its own outer row, the working row
   | _, recurse _ _ base _ => base.closed
+  | _, outerJoin _ _ q₁ q₂ => q₁.closed && q₂.closed
 
 /-- A closed query does not depend on the outer row. -/
 theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
@@ -1561,6 +1645,8 @@ theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
   | lateral body q _ ihq => simp only [closed] at h; simp only [eval, evalIn, ihq h]
   | window c q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
   | recurse dist k base step ihb _ => simp only [closed] at h; simp only [eval, evalIn, ihb h]
+  | outerJoin kind θ q₁ q₂ ih₁ ih₂ =>
+    simp only [closed, Bool.and_eq_true] at h; simp only [eval, evalIn, ih₁ h.1, ih₂ h.2]
 
 theorem eval_lateral (D : Database S) (body : Query S k) (q : Query S n) :
     (lateral body q).eval D = (do
