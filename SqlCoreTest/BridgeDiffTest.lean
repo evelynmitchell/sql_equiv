@@ -356,6 +356,58 @@ def corpus : List (String × Expect) := [
     .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
   ("SELECT COALESCE(NULL, 1, 2.5), COALESCE(2.5, 1)",
     .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  -- window functions (phase 9.5, #463): tie-free sort keys where the function depends on the
+  -- order of tied rows (ROW_NUMBER)
+  ("SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users", .agree),
+  ("SELECT name, ROW_NUMBER() OVER (PARTITION BY department ORDER BY age DESC) AS rn FROM users", .agree),
+  ("SELECT name, RANK() OVER (ORDER BY department) AS r FROM users", .agree),
+  ("SELECT name, DENSE_RANK() OVER (ORDER BY department) AS dr FROM users", .agree),
+  ("SELECT name, SUM(age) OVER (PARTITION BY department) AS s FROM users", .agree),
+  ("SELECT name, SUM(age) OVER (ORDER BY age) AS s FROM users", .agree),
+  ("SELECT name, SUM(age) OVER (ORDER BY department) AS s FROM users", .agree),
+  ("SELECT name, AVG(age) OVER (PARTITION BY department) AS a FROM users", .agree),
+  ("SELECT name, COUNT(*) OVER () AS c FROM users", .agree),
+  ("SELECT name, MIN(age) OVER (PARTITION BY department) AS lo, MAX(age) OVER (PARTITION BY department) AS hi FROM users", .agree),
+  ("SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users ORDER BY r", .agree),
+  ("SELECT name FROM users ORDER BY ROW_NUMBER() OVER (ORDER BY age DESC)", .agree),
+  ("SELECT name, age, SUM(age) OVER (PARTITION BY department) - age AS rest FROM users", .agree),
+  ("SELECT name, CASE WHEN SUM(age) OVER (PARTITION BY department) > 50 THEN 'big' ELSE 'small' END AS r FROM users", .agree),
+  ("SELECT department, RANK() OVER (ORDER BY SUM(age) DESC) AS r FROM users GROUP BY department", .agree),
+  ("SELECT department, SUM(SUM(age)) OVER () AS s FROM users GROUP BY department", .agree),
+  ("SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS r FROM users", .agree),
+  ("SELECT department, COUNT(*) AS c, SUM(COUNT(*)) OVER (PARTITION BY COUNT(*)) AS s FROM users GROUP BY department ORDER BY department", .agree),
+  ("SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS rn FROM users WHERE age > 24 ORDER BY rn LIMIT 2", .agree),
+  ("SELECT *, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM users", .agree),
+  ("SELECT name, SUM(age) OVER (PARTITION BY department) IN (65, 28) AS r FROM users", .agree),
+  ("SELECT name, COUNT(*) OVER (PARTITION BY price) AS c FROM items", .agree),
+  ("SELECT name, RANK() OVER (ORDER BY price) AS r FROM items", .agree),
+  ("SELECT name, RANK() OVER (ORDER BY price DESC) AS r FROM items", .agree),
+  ("SELECT department, ROW_NUMBER() OVER (ORDER BY department) AS rn FROM users GROUP BY department HAVING COUNT(*) = 2", .agree),
+  ("SELECT name, COUNT(price) OVER () AS c, SUM(price) OVER () AS s FROM items", .agree),
+  ("SELECT name, RANK() OVER (ORDER BY price DESC NULLS LAST) AS r FROM items", .agree),
+  ("SELECT name, ROW_NUMBER() OVER (ORDER BY price NULLS FIRST, name) AS r FROM items", .agree),
+  -- probes from the self-review
+  ("SELECT COUNT(*) AS c, ROW_NUMBER() OVER () AS r FROM users WHERE age > 100", .agree),
+  ("SELECT name, ROW_NUMBER() OVER () AS r FROM users WHERE age > 100", .agree),
+  ("SELECT u.name, o.amount, RANK() OVER (PARTITION BY u.id ORDER BY o.amount DESC) AS r FROM users u JOIN orders o ON u.id = o.user_id", .agree),
+  ("SELECT name, SUM(age) OVER (PARTITION BY age > 25) AS s FROM users", .agree),
+  ("SELECT name, SUM(price) OVER (ORDER BY name) AS s FROM items", .agree),
+  ("SELECT name, AVG(price) OVER (ORDER BY name) AS a FROM items", .agree),
+  ("SELECT name, MIN(name) OVER (ORDER BY age DESC) AS m FROM users", .agree),
+  ("SELECT department, MAX(age) - MIN(age) AS spread, DENSE_RANK() OVER (ORDER BY MAX(age) - MIN(age)) AS d FROM users GROUP BY department", .agree),
+  ("SELECT name, ROW_NUMBER() OVER (ORDER BY age) * 10 AS r FROM users ORDER BY 2 DESC", .agree),
+  -- DISTINCT after the windows: duplicates of the window columns collapse
+  ("SELECT DISTINCT department, COUNT(*) OVER (PARTITION BY department) AS c FROM users", .agree),
+  ("SELECT DISTINCT department, RANK() OVER (ORDER BY department) AS r FROM users ORDER BY r", .agree),
+  ("SELECT DISTINCT COUNT(*) AS c, RANK() OVER (ORDER BY COUNT(*)) AS r FROM users GROUP BY department ORDER BY r", .agree),
+  -- a window function as the probe of `IN (subquery)` (windows attached first); a subquery inside
+  -- a window's argument is not attached
+  ("SELECT name, SUM(age) OVER (PARTITION BY department) IN (SELECT amount - 35 FROM orders) AS r FROM users", .agree),
+  ("SELECT name, ROW_NUMBER() OVER (ORDER BY age) NOT IN (SELECT id FROM users WHERE id < 3) AS r FROM users", .agree),
+  ("SELECT name, CASE WHEN SUM(age) OVER (PARTITION BY department) IN (SELECT amount - 35 FROM orders) THEN 1 ELSE 0 END AS r FROM users", .agree),
+  ("SELECT name, SUM(age + (SELECT MAX(amount) FROM orders)) OVER (PARTITION BY department) AS s FROM users",
+    .rejected "unsupported: subquery"),
+  ("SELECT name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = users.id) AS n, RANK() OVER (ORDER BY age) AS r FROM users", .agree),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),
@@ -410,9 +462,20 @@ def eraseNullType : SqlEquiv.Value → SqlEquiv.Value
 def bag (rows : List (List SqlEquiv.Value)) : List String :=
   (rows.map fun r => toString (repr (r.map eraseNullType))).mergeSort (· ≤ ·)
 
+/-- The SQL text with every parenthesised part removed, so that `OVER (ORDER BY …)` and an
+`ORDER BY` inside a subquery do not count as sorting the result. -/
+def topLevel (sql : String) : String := Id.run do
+  let mut depth := 0
+  let mut out := ""
+  for c in sql.toList do
+    if c == '(' then depth := depth + 1
+    else if c == ')' then depth := depth - 1
+    else if depth == 0 then out := out.push c
+  return out
+
 /-- Rows in order when the query sorts, as a bag otherwise. -/
 def rowsFor (sql : String) (rows : List (List SqlEquiv.Value)) : List String :=
-  if (sql.splitOn "ORDER BY").length > 1 then rows.map fun r => toString (repr (r.map eraseNullType))
+  if ((topLevel sql).splitOn "ORDER BY").length > 1 then rows.map fun r => toString (repr (r.map eraseNullType))
   else bag rows
 
 def newRows (e : Elaborated schema) : Except EvalError (List (List SqlEquiv.Value)) :=

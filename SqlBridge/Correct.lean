@@ -1034,6 +1034,16 @@ theorem selectHasAggregate_frag : ∀ items, itemsFragment items = true →
     exact this
   | .star _ :: _, h => by simp [itemsFragment] at h
 
+/-- `ORDER BY` keys without a window function: not the elaborator's window path (phase 9.5). -/
+theorem orderExprs_noWindow {orderBy : List SqlEquiv.OrderByItem}
+    (h : ∀ o ∈ orderBy, SqlEquiv.exprHasWindowFn o.expr = false) :
+    (orderBy.map orderExprOf).any SqlEquiv.exprHasWindowFn = false := by
+  rw [List.any_eq_false]
+  intro x hx
+  obtain ⟨o, ho, rfl⟩ := List.mem_map.mp hx
+  cases o
+  simpa [orderExprOf, SqlEquiv.OrderByItem.expr] using h _ ho
+
 theorem selectHasWindowFn_frag : ∀ items, itemsFragment items = true →
     SqlEquiv.selectHasWindowFn items = false
   | [], _ => rfl
@@ -1133,7 +1143,10 @@ theorem elabStmt_correct (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = 
     List.append_nil, List.isEmpty_nil, Option.isNone_none, Bool.and_true, Bool.true_and] at h
   rw [aggsOfList_items ?hf items hit] at h
   case hf => intros; rfl
-  rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at h
+  rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit),
+    selectHasWindowFn_frag items hit] at h
+  simp only [List.map_nil, List.any_nil, List.isEmpty_nil, Bool.not_false, Bool.and_self,
+    ↓reduceIte] at h
   rcases hT : N.tables.find? (fun x => x.1 == N.fold name) with _ | ⟨nm, T⟩
   · simp [hT, bind, Except.bind, throw, throwThe, MonadExceptOf.throw] at h
   have hmem : (N.fold name, T) ∈ N.tables := by

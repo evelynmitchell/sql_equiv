@@ -603,8 +603,14 @@ theorem elab_grouped_shape (N : NamedSchema)
     cases having with
     | none => rfl
     | some hv => simp [subsOfList, subsOf_havingFragment hv (hhv hv rfl)]
-  rw [hgs _ (fun _ _ => rfl)] at hraw
-  simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ↓reduceIte, ite_false] at hraw
+  -- nor a window function: not the elaborator's window path (9.5)
+  have hwo := orderExprs_noWindow (orderBy := orderBy) fun o ho => by
+    have h := orderByHasWindow_of_orderKeyOk hob
+    simp only [SqlEquiv.orderByHasWindow, List.any_eq_false] at h
+    simpa using h o ho
+  rw [hgs _ (fun _ _ => rfl), selectHasWindowFn_groupedItems hgi, hwo] at hraw
+  simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, Bool.or_self, ↓reduceIte,
+    ite_false] at hraw
   refine ⟨n, qf, cf, hf, q₀, hq₀, ?_⟩
   all_goals
     have hob' : ∀ o ∈ orderBy, aggFragment o.expr = true ∨ ∃ c, o.expr = .col c := fun o ho =>

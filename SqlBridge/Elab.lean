@@ -239,7 +239,13 @@ def aggsOf : SqlEquiv.Expr → List SqlEquiv.Expr
   | .between a b c => aggsOf a ++ aggsOf b ++ aggsOf c
   | .func _ args => aggsOfList args
   | .inSubquery e _ _ => aggsOf e
+  -- the aggregates of a window over groups (`RANK() OVER (ORDER BY SUM(x))`, phase 9.5)
+  | .windowFn _ a (.mk part order) => aggsOfOpt a ++ aggsOfList part ++ aggsOfOrder order
   | _ => []
+
+def aggsOfOrder : List SqlEquiv.OrderByItem → List SqlEquiv.Expr
+  | [] => []
+  | .mk e _ _ :: os => aggsOf e ++ aggsOfOrder os
 
 def aggsOfList : List SqlEquiv.Expr → List SqlEquiv.Expr
   | [] => []
@@ -344,9 +350,74 @@ def itemExprOf : SqlEquiv.SelectItem → Option SqlEquiv.Expr
   | .exprItem e _ => some e
   | .star _ => none
 
+/-- The expression of an `ORDER BY` item. -/
+def orderExprOf : SqlEquiv.OrderByItem → SqlEquiv.Expr
+  | .mk e _ _ => e
+
 /-- The distinct subquery nodes of a list of expressions, in order. -/
 def distinctSubs (es : List SqlEquiv.Expr) : List (SqlEquiv.Expr × SqlEquiv.SubQuery) :=
   (subsOfList es).foldl (fun acc x => if acc.any (·.1 == x.1) then acc else acc ++ [x]) []
+
+mutual
+
+/-- The window-function nodes of an expression (phase 9.5, #463), outermost first; nodes inside a
+window or a subquery are not visited. -/
+def winsOf : SqlEquiv.Expr → List SqlEquiv.Expr
+  | .windowFn f a spec => [.windowFn f a spec]
+  | .binOp _ a b => winsOf a ++ winsOf b
+  | .unaryOp _ a => winsOf a
+  | .inList e _ vs => winsOf e ++ winsOfList vs
+  | .«case» bs els => winsOfBranches bs ++ winsOfOpt els
+  | .between a b c => winsOf a ++ winsOf b ++ winsOf c
+  | .func _ args => winsOfList args
+  | .inSubquery e _ _ => winsOf e
+  | _ => []
+
+def winsOfList : List SqlEquiv.Expr → List SqlEquiv.Expr
+  | [] => []
+  | e :: es => winsOf e ++ winsOfList es
+
+def winsOfOpt : Option SqlEquiv.Expr → List SqlEquiv.Expr
+  | none => []
+  | some e => winsOf e
+
+def winsOfBranches : List (SqlEquiv.Expr × SqlEquiv.Expr) → List SqlEquiv.Expr
+  | [] => []
+  | (c, a) :: bs => winsOf c ++ winsOf a ++ winsOfBranches bs
+
+end
+
+/-- The distinct window nodes of a list of expressions, in order. -/
+def distinctWins (es : List SqlEquiv.Expr) : List SqlEquiv.Expr :=
+  (winsOfList es).foldl (fun acc x => if acc.contains x then acc else acc ++ [x]) []
+
+/-- The hook that reads expression node `j` of `nodes` from column `n + j`. -/
+def nodeHookAt (n m : ℕ) (nodes : List SqlEquiv.Expr) (e : SqlEquiv.Expr) : Option (Expr m) :=
+  match nodes.findIdx? (· == e) with
+  | some j => if h : n + j < m then some (.col ⟨n + j, h⟩) else none
+  | none => none
+
+/-- Elaborate a window-function node (phase 9.5, #463); `ex` elaborates its argument and keys in
+the window's input scope (over groups, an aggregate reads its column). -/
+def elabWin {m : ℕ} (ex : SqlEquiv.Expr → ElabM (Expr m)) : SqlEquiv.Expr → ElabM (WinCall m)
+  | .windowFn fn arg (.mk part order) => do
+    let part ← part.mapM ex
+    let order ← order.mapM fun | .mk e dir nulls => do
+      pure ({ e := ← ex e, desc := dir == .desc, nullsFirst := nulls == .first } : SortKey m)
+    let f : WinFn m ← match fn, arg with
+      | .rowNumber, _ => pure .rowNumber
+      | .rank, _ => pure .rank
+      | .denseRank, _ => pure .denseRank
+      | .count, none => pure (.agg .countStar)
+      | .count, some e => do pure (WinFn.agg (.call .count false (← ex e)))
+      | .sum _, some e => do pure (WinFn.agg (.call .sum false (← ex e)))
+      | .avg _, some e => do pure (WinFn.agg (.call .avg false (← ex e)))
+      | .min _, some e => do pure (WinFn.agg (.call .min false (← ex e)))
+      | .max _, some e => do pure (WinFn.agg (.call .max false (← ex e)))
+      | _, _ => throw (.unsupported "window function")
+    pure ⟨part, order, f⟩
+  | _ => throw (.unsupported "window function")
+
 
 /-- The hook that reads subquery node `j` of `subs` from column `n + j` (phase 9.4b step 3). -/
 def subHookAt (n m : ℕ) (subs : List (SqlEquiv.Expr × SqlEquiv.SubQuery)) (e : SqlEquiv.Expr) :
@@ -795,6 +866,22 @@ def alignBranches {S : DbSchema} {n : ℕ} (ql qr : Query S n) (cl : Fin n → C
     (ql', qr', fun i => { cl i with type := τ i })
   | _, _ => (ql, qr, cl)
 
+/-- A column per window node, over `base` (phase 9.5, #463): `Query.window`, one per node, in
+order. `hook` maps the scope's other nodes (aggregates over groups, subqueries) to columns of
+`base`; column `base.n + j` holds window `j`. -/
+def attachWins (base : Elaborated N.S)
+    (hook : SqlEquiv.Expr → Option (Expr base.n)) (wins : List SqlEquiv.Expr) :
+    ElabM (Elaborated N.S) :=
+  wins.foldlM (init := base) fun acc w => do
+    if h : base.n ≤ acc.n then
+      let hk : SqlEquiv.Expr → Option (Expr acc.n) := fun e =>
+        (hook e).map (·.rename (Fin.castLE h))
+      let c ← elabWin (elabExpr acc.cols N.fold hk) w
+      let some τ := c.typeOf (ctx acc.cols) | throw (.typeError "window function")
+      pure ⟨acc.n + 1, .window c acc.q,
+        Fin.append acc.cols ![{ qualifier := none, name := "?window?", type := τ }]⟩
+    else throw (.typeError "window scope")
+
 mutual
 
 /-- Elaborate a subquery body. `fuel` bounds the nesting of subqueries, so that elaboration is a
@@ -840,34 +927,52 @@ def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.
       | 0 => throw (.unsupported "subqueries nested too deeply")
       | f + 1 => elabSubQuery f sq) cols q where_
     let itemExprs := items.filterMap itemExprOf
-    let orderExprs := orderBy.map fun | .mk e _ _ => e
+    let orderExprs := orderBy.map orderExprOf
     let aggExprs := (aggsOfList itemExprs ++ aggsOfOpt having ++ aggsOfList orderExprs).eraseDups
     let sub : SqlEquiv.SubQuery → ElabM (Elaborated N.S) := fun sq => match fuel with
       | 0 => throw (.unsupported "subqueries nested too deeply")
       | f + 1 => elabSubQuery f sq
     if groupBy.isEmpty && aggExprs.isEmpty && having.isNone then
-      if (distinctSubs itemExprs).isEmpty then
+      if (distinctSubs itemExprs).isEmpty && !SqlEquiv.selectHasWindowFn items &&
+          !orderExprs.any SqlEquiv.exprHasWindowFn then
         let its ← elabItems N cols items
         finishSelect N.fold ⟨n, q, elabExpr cols N.fold noHook, its⟩ distinct orderBy limitVal
           offsetVal
       else
-        -- subqueries in the SELECT list (phase 9.4b step 3): a column each, read by the items
+        -- subqueries in the SELECT list (phase 9.4b step 3) and window functions in the items or
+        -- ORDER BY (phase 9.5, #463): a column each, read by the items
         if itemExprs.any subInBranch then throw (.unsupported "subquery in a CASE branch")
-        if items.any (fun | .star _ => true | _ => false) then
-          throw (.unsupported "* next to a subquery item")
         let subs := distinctSubs itemExprs
-        let acc ← attachSubs N sub ⟨n, q, cols⟩ (elabExpr cols N.fold noHook) subs
-        let hook := subHookAt n acc.n subs
-        let its ← items.mapM fun
-          | .star _ => throw (.unsupported "* next to a subquery item")
-          | .exprItem e al => do
-            let e' ← elabExpr acc.cols N.fold hook e
-            let some τ := e'.typeOf (ctx acc.cols) | throw (.typeError "SELECT item")
-            let name := al.getD (match e with | .col c => c.column | _ => "?column?")
-            pure (e', ({ qualifier := none, name, type := τ } : Column))
-        finishSelect N.fold ⟨acc.n, acc.q, elabExpr acc.cols N.fold hook, its⟩ distinct orderBy
-          limitVal offsetVal
-    else if !(distinctSubs (itemExprs ++ having.toList)).isEmpty then
+        let wins := distinctWins (itemExprs ++ orderExprs)
+        if !subs.isEmpty && items.any (fun | .star _ => true | _ => false) then
+          throw (.unsupported "* next to a subquery item")
+        -- the windows first, then the subqueries, so that the probe of an `IN (subquery)` may be
+        -- a window function; `subsOf` does not look inside a window, so a subquery in a window's
+        -- argument or keys is rejected
+        let accW ← attachWins N ⟨n, q, cols⟩ noHook wins
+        let hookW := nodeHookAt n accW.n wins
+        let acc2 ← attachSubs N sub accW (elabExpr accW.cols N.fold hookW) subs
+        if h2 : accW.n ≤ acc2.n then
+          let hook : SqlEquiv.Expr → Option (Expr acc2.n) := fun e =>
+            match subHookAt accW.n acc2.n subs e with
+            | some x => some x
+            | none => (hookW e).map (·.rename (Fin.castLE h2))
+          if h1 : n ≤ acc2.n then
+            let its ← items.flatMapM fun
+              | .star none => pure ((List.finRange n).map fun i =>
+                  ((.col (Fin.castLE h1 i) : Expr acc2.n), cols i))
+              | .star (some _) => throw (.unsupported "t.* next to a window function")
+              | .exprItem e al => do
+                let e' ← elabExpr acc2.cols N.fold hook e
+                let some τ := e'.typeOf (ctx acc2.cols) | throw (.typeError "SELECT item")
+                let name := al.getD (match e with | .col c => c.column | _ => "?column?")
+                pure [(e', ({ qualifier := none, name, type := τ } : Column))]
+            finishSelect N.fold ⟨acc2.n, acc2.q, elabExpr acc2.cols N.fold hook, its⟩ distinct
+              orderBy limitVal offsetVal
+          else throw (.typeError "window scope")
+        else throw (.typeError "subquery scope")
+    else if !(distinctSubs (itemExprs ++ having.toList)).isEmpty || SqlEquiv.selectHasWindowFn items ||
+        orderExprs.any SqlEquiv.exprHasWindowFn then
       -- GROUP BY or aggregates with subqueries in the items or `HAVING` (phase 9.4b step 3, #462):
       -- the keys and aggregates as below, without bare columns; then a column per subquery over
       -- the aggregate's output (the probe of an `IN` may be an aggregate)
@@ -908,14 +1013,25 @@ def elabSelectF (fuel : ℕ) (stmt : SqlEquiv.SelectStmt) : ElabM (Elaborated N.
         let q2 : Query N.S acc.n ← match having with
           | none => pure acc.q
           | some h => do pure (Query.select (← outExpr' h) acc.q)
-        let its ← items.mapM fun
-          | .star _ => throw (.unsupported "* with GROUP BY or aggregates")
-          | .exprItem e al => do
-            let e' ← outExpr' e
-            let some τ := e'.typeOf (ctx acc.cols) | throw (.typeError "SELECT item")
-            let name := al.getD (match e with | .col c => c.column | _ => "?column?")
-            pure (e', ({ qualifier := none, name, type := τ } : Column))
-        finishSelect N.fold ⟨acc.n, q2, outExpr', its⟩ distinct orderBy limitVal offsetVal
+        -- window functions over the groups (phase 9.5, #463), after `HAVING`
+        let wins := distinctWins (itemExprs ++ orderExprs)
+        let acc2 ← attachWins N ⟨acc.n, q2, acc.cols⟩ hk wins
+        if h2 : acc.n ≤ acc2.n then
+          let hk2 : SqlEquiv.Expr → Option (Expr acc2.n) := fun e =>
+            match nodeHookAt acc.n acc2.n wins e with
+            | some x => some x
+            | none => (hk e).map (·.rename (Fin.castLE h2))
+          let outExpr2 (e : SqlEquiv.Expr) : ElabM (Expr acc2.n) :=
+            notGrouped e (elabExpr acc2.cols N.fold hk2 e)
+          let its ← items.mapM fun
+            | .star _ => throw (.unsupported "* with GROUP BY or aggregates")
+            | .exprItem e al => do
+              let e' ← outExpr2 e
+              let some τ := e'.typeOf (ctx acc2.cols) | throw (.typeError "SELECT item")
+              let name := al.getD (match e with | .col c => c.column | _ => "?column?")
+              pure (e', ({ qualifier := none, name, type := τ } : Column))
+          finishSelect N.fold ⟨acc2.n, acc2.q, outExpr2, its⟩ distinct orderBy limitVal offsetVal
+        else throw (.typeError "window scope")
       else throw (.typeError "subquery scope")
     else
       -- GROUP BY and aggregates (phase 8a, #313)

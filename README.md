@@ -38,7 +38,7 @@ the proved columns:
 | Aggregates, GROUP BY, HAVING | ✓ | ✓ | **Facts** about the aggregate functions (`count_star_empty`, `sum_singleton`, `min_le_elem`), not query equivalences | **bridge** for COUNT/SUM/MIN/MAX/AVG items and HAVING, grouped and not (`elabStmt_correct_agg`, `elabStmt_correct_grouped`, `elabStmt_correct_aggBare`); AVG up to rounding (registry row 7) |
 | DISTINCT | ✓ | ✓ | A **fact** (`distinct_idempotent`) | **bridge** up to row order (`elabStmt_correct_distinct`) |
 | ORDER BY, LIMIT, OFFSET | ✓ | ✓ | **Facts** (`order_by_preserves_count`, `limit_upper_bound`, `limit_offset_compose`, pagination) | **bridge** in order, for column sort keys (`elabStmt_correct_join`, `elabStmt_correct_grouped`) |
-| Window functions | ✓ | ✓ | None: `≃ₑ` treats a window function as an error at expression level | None |
+| Window functions | ✓ | ✓ | None: `≃ₑ` treats a window function as an error at expression level | `Query.window` (ROW_NUMBER, RANK, DENSE_RANK, COUNT/SUM/AVG/MIN/MAX over the default frame), typed and sound (`evalIn_spec`); window queries in the SELECT list and ORDER BY, plain or over groups, elaborate (#463), validated against DuckDB and Postgres rather than by a bridge theorem |
 | CTEs: WITH, WITH RECURSIVE | ✓ | ✓ (recursion stops after `maxCTEIterations` = 1000 rounds) | None | None |
 | DML: INSERT, UPDATE, DELETE | ✓ | ✓ | None | None |
 
