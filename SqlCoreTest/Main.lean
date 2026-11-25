@@ -24,10 +24,12 @@ import SqlCoreTest.OrderByExamples
 import SqlCoreTest.SetOpExamples
 import SqlCoreTest.SubqueryExamples
 import SqlCoreTest.WindowExamples
+import SqlCoreTest.StmtExamples
 import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest
 import SqlCoreTest.PostgresDiffTest
+import SqlCoreTest.DmlDiffTest
 import SqlCoreTest.SqliteDiffTest
 import SqlCoreTest.CorrectExamples
 import SqlCoreTest.CoverageAgreeTest
@@ -71,6 +73,10 @@ def main : IO UInt32 := do
       for line in pfails do
         IO.println s!"  FAIL: {line}"
       pure pfails
+  let (mn, dmlFails) ← SqlCoreTest.DmlDiff.run
+  IO.println s!"INSERT/UPDATE/DELETE through SqlBridge vs DuckDB and Postgres: {mn} comparisons, {dmlFails.length} failures"
+  for line in dmlFails do
+    IO.println s!"  FAIL: {line}"
   let sqliteFails ← match ← SqlCoreTest.SqliteDiff.run with
     | none =>
       IO.println "Bare columns through SqlBridge vs sqlite: SKIPPED (no sqlite3 binary)"
@@ -92,6 +98,6 @@ def main : IO UInt32 := do
         IO.println s!"  FAIL: only {cn} queries parsed (expected at least {SqlCoreTest.CoverageAgree.minParsed})"
       pure (cbad.isEmpty && cn ≥ SqlCoreTest.CoverageAgree.minParsed)
   if bad.isEmpty && documented > 0 && schemaBad.isEmpty && ebad.isEmpty && en > 0 && bfails.isEmpty &&
-      duckFails.isEmpty && pgFails.isEmpty && sqliteFails.isEmpty && covOk then
+      duckFails.isEmpty && pgFails.isEmpty && dmlFails.isEmpty && sqliteFails.isEmpty && covOk then
     return 0
   else return 1

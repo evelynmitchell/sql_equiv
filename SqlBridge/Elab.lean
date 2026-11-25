@@ -1156,4 +1156,114 @@ def elabStmt : SqlEquiv.Stmt → ElabM (Elaborated N.S)
   | .query q => elabQuery N q
   | _ => throw (.unsupported "DML")
 
+/-! ### INSERT, UPDATE, DELETE (phase 9.7, #465) -/
+
+/-- A value for a column of type `τ` (registry T20): an expression of type `τ`, a `NULL` (given the
+column's type), or an integer into a `DECIMAL` column (promoted, as decision 6). Every other type
+is an error, where the engines cast (`1` into a `TEXT` column, `1.5` into an `INTEGER` one). -/
+def assignTo {n : ℕ} (cols : Fin n → Column) (τ : SqlType) (e : Expr n) : ElabM (Expr n) :=
+  match e with
+  | .null _ => pure (.null τ)
+  | _ =>
+    match e.typeOf (ctx cols) with
+    | some σ =>
+      if σ = τ then pure e
+      else if σ = .int ∧ τ = .decimal then pure (.unary .toDecimal e)
+      else throw (.typeError "assignment")
+    | none => throw (.typeError "assignment")
+
+/-- The target columns of an `INSERT` with `k` values per row: the column list resolved against the
+table, or the first `k` columns; a column listed twice is an error. With no list and fewer values
+than columns, the dialect decides (registry T19): an error, or the remaining columns `NULL`. -/
+def insertTargets (t : N.S.Table) (columns : Option (List String)) (k : ℕ) :
+    ElabM (List (Fin (N.S.arity t))) := do
+  let cols := N.S.columns t
+  match columns with
+  | some names =>
+    let is ← names.mapM fun c => resolve cols N.fold none c
+    if is.length ≠ k then throw (.typeError "INSERT: number of values and columns")
+    if is.eraseDups.length ≠ is.length then throw (.typeError "INSERT: column listed twice")
+    pure is
+  | none =>
+    if k > N.S.arity t then throw (.typeError "INSERT: more values than columns")
+    if k < N.S.arity t && N.config.shortInsert == .reject then
+      throw (.typeError "INSERT: fewer values than columns")
+    pure ((List.finRange (N.S.arity t)).take k)
+
+/-- The row an `INSERT` writes: value `j` into target column `j`, `NULL` elsewhere. -/
+def insertRow {m : ℕ} (t : N.S.Table) (targets : List (Fin (N.S.arity t)))
+    (vals : List (Expr m)) (vcols : Fin m → Column) : ElabM (Fin (N.S.arity t) → Expr m) := do
+  let es ← (List.finRange (N.S.arity t)).mapM fun i => do
+    let τ := (N.S.columns t i).type
+    match targets.idxOf? i with
+    | some j =>
+      match vals[j]? with
+      | some e => assignTo vcols τ e
+      | none => throw (.typeError "INSERT: number of values and columns")
+    | none => pure (.null τ)
+  if h : es.length = N.S.arity t then pure fun i => es[i]'(by omega)
+  else throw (.typeError "INSERT row")
+
+/-- Elaborate a data-modifying statement into `SqlCore.Stmt` (phase 9.7, #465). `INSERT … VALUES`
+is a `UNION ALL` of one-row projections, `INSERT … SELECT` a projection of the `SELECT`;
+`UPDATE` assigns `col i` to every column it does not set, so every assignment reads the old row.
+`WHERE` and the values have no subqueries yet. -/
+def elabDml : SqlEquiv.Stmt → ElabM (SqlCore.Stmt N.S)
+  | .query _ => throw (.unsupported "a query is not a data-modifying statement")
+  | .insert ⟨name, columns, source⟩ => do
+    let t ← lookupTable N name
+    let q : Query N.S (N.S.arity t) ← match source with
+      | .values rows => do
+        -- every row has one length, as in every engine (Postgres: "VALUES lists must all be the
+        -- same length"), before the dialect's rule for short rows (T19)
+        if (rows.map List.length).eraseDups.length > 1 then
+          throw (.typeError "INSERT: VALUES rows of different lengths")
+        let qs ← rows.mapM fun vs => do
+          let targets ← insertTargets N t columns vs.length
+          let es ← vs.mapM (elabExpr (n := 0) Fin.elim0 N.fold noHook)
+          let row ← insertRow N t targets es Fin.elim0
+          pure (Query.project row (.one : Query N.S 0))
+        match qs with
+        | [] => throw (.typeError "INSERT without rows")
+        | q :: rest => pure (rest.foldl (fun acc q' => .unionAll acc q') q)
+      | .selectStmt sel => do
+        let e ← elabSelect N sel
+        let targets ← insertTargets N t columns e.n
+        -- a `NULL` literal column of the `SELECT` takes its target column's type (as #472 does
+        -- for set-operation branches)
+        let q := (List.finRange e.n).foldl (fun q j =>
+          match targets[j.val]? with
+          | some i => retypeNullCol j (N.S.columns t i).type q
+          | none => q) e.q
+        let some Γ := q.typeOf | throw (.typeError "INSERT … SELECT")
+        let row ← insertRow N t targets ((List.finRange e.n).map fun j => (.col j : Expr e.n))
+          fun j => { e.cols j with type := Γ j }
+        pure (.project row q)
+    let s : SqlCore.Stmt N.S := .insert t q
+    if s.WellTyped then pure s else throw (.typeError "INSERT")
+  | .update ⟨name, assignments, where_⟩ => do
+    let t ← lookupTable N name
+    let cols := requalify (N.fold name) (N.S.columns t)
+    let assigned ← assignments.mapM fun ⟨c, v⟩ => do
+      let i ← resolve cols N.fold none c
+      let e ← elabExpr cols N.fold noHook v
+      pure (i, ← assignTo cols (cols i).type e)
+    if (assigned.map (·.1)).eraseDups.length ≠ assigned.length then
+      throw (.typeError "UPDATE: column assigned twice")
+    let set : Fin (N.S.arity t) → Expr (N.S.arity t) := fun i =>
+      ((assigned.find? (·.1 == i)).map (·.2)).getD (.col i)
+    let w ← match where_ with
+      | some w => elabExpr cols N.fold noHook w
+      | none => pure (.lit (.bool true))
+    let s : SqlCore.Stmt N.S := .update t set w
+    if s.WellTyped then pure s else throw (.typeError "UPDATE")
+  | .delete ⟨name, where_⟩ => do
+    let t ← lookupTable N name
+    let cols := requalify (N.fold name) (N.S.columns t)
+    let w ← match where_ with
+      | some w => elabExpr cols N.fold noHook w
+      | none => pure (.lit (.bool true))
+    let s : SqlCore.Stmt N.S := .delete t w
+    if s.WellTyped then pure s else throw (.typeError "DELETE")
+
 end SqlBridge

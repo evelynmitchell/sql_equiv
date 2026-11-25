@@ -30,9 +30,15 @@ def main (args : List String) : IO UInt32 := do
     let N := { schemaOf ts with config := dialect.config }
     match SqlEquiv.parse q (dialect := dialect) with
     | .error _ => IO.println "err\tparse error"
-    | .ok stmt =>
+    | .ok (.query q) =>
+      let stmt := SqlEquiv.Stmt.query q
       match elabStmt N stmt with
       -- second field: the features outside the correctness theorem's fragment (#352)
       | .ok _ => IO.println s!"ok\t{",".intercalate (SqlBridge.Coverage.outsideFragment stmt)}"
+      | .error e => IO.println s!"err\t{e.category}"
+    | .ok stmt =>
+      -- INSERT, UPDATE, DELETE (phase 9.7, #465)
+      match elabDml N stmt with
+      | .ok _ => IO.println "ok\tdml"
       | .error e => IO.println s!"err\t{e.category}"
   return 0

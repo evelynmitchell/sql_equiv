@@ -40,7 +40,7 @@ the proved columns:
 | ORDER BY, LIMIT, OFFSET | ✓ | ✓ | **Facts** (`order_by_preserves_count`, `limit_upper_bound`, `limit_offset_compose`, pagination) | **bridge** in order, for column sort keys (`elabStmt_correct_join`, `elabStmt_correct_grouped`) |
 | Window functions | ✓ | ✓ | None: `≃ₑ` treats a window function as an error at expression level | `Query.window` (ROW_NUMBER, RANK, DENSE_RANK, COUNT/SUM/AVG/MIN/MAX over the default frame), typed and sound (`evalIn_spec`); window queries in the SELECT list and ORDER BY, plain or over groups, elaborate (#463), validated against DuckDB and Postgres rather than by a bridge theorem |
 | CTEs: WITH, WITH RECURSIVE | ✓ | ✓ (recursion stops after `maxCTEIterations` = 1000 rounds) | None | None |
-| DML: INSERT, UPDATE, DELETE | ✓ | ✓ | None | None |
+| DML: INSERT, UPDATE, DELETE | ✓ | ✓ | None | `SqlCore.Stmt` with type soundness (`Stmt.exec_spec`: a well-typed statement keeps the instance conforming); elaborated by `elabDml` (#465), validated against DuckDB and Postgres. Every `SET` reads the old row, as in the engines (registry T21) |
 
 Every evaluator is a total function: no `partial def` remains in the semantics (#278). The
 remaining `partial def`s are the parser, the SQL printer and `toReprStr`, which no theorem uses.
