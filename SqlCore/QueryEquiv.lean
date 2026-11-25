@@ -347,6 +347,20 @@ theorem attach (kind : SubKind n) {sub sub' : Query S 1} (hs : Equiv .ordered su
   · exact .none
   · exact (hq D hD).bind fun _ _ hrel => hrel.mapM_evalRow fun _ _ => rfl
 
+/-- A window function (phase 9.5, #463) is a congruence in its input, at the ordered level. -/
+theorem window (c : WinCall n) {q q' : Query S n} (h : Equiv .ordered q q') :
+    Equiv .ordered (Query.window c q) (Query.window c q') := by
+  rw [equiv_ordered_iff] at h ⊢
+  intro D hD
+  have hq := h D hD
+  simp only [Query.eval] at hq ⊢
+  simp only [Query.evalIn]
+  rcases hx : q.evalIn D none with e | rs <;> rcases hy : q'.evalIn D none with e' | rs' <;>
+    simp only [hx, hy, Except.toOption, reduceCtorEq, Option.some.injEq] at hq ⊢
+  · rfl
+  · subst hq
+    rfl
+
 /-- `LATERAL` (phase 9.4b, #462, decision D6) is a congruence in its outer input, at the ordered level. -/
 theorem lateral {k : ℕ} (body : Query S k) {q q' : Query S n} (h : Equiv .ordered q q') :
     Equiv .ordered (Query.lateral body q) (Query.lateral body q') := by
