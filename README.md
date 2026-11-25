@@ -275,10 +275,12 @@ lake exe sql_equiv
 Since phase 9.8 (#466) the REPL's `eval` and `equiv` and the batch mode (`--file`) run on the typed
 core (`SqlBridge.Cli`): `eval` elaborates the statement and evaluates it on the sample database
 (an `INSERT`, `UPDATE` or `DELETE` shows the table it writes), and `equiv` reports a proof from
-`Query.checkEquiv`, or else whether the two queries give the same rows on the sample database.
+`Query.checkEquiv`, or else whether the two queries give the same rows on the sample database
+(as bags; in order when either has an `ORDER BY`; two queries that fail with the same error count
+as the same).
 `SqlEquiv`'s evaluator is the reference oracle (decision D7): its answer is shown, labelled, where
 the typed core does not elaborate a statement or disagrees with it (for `UPDATE t SET a = b, b =
-a`, registry T21). `normalize` still shows `SqlEquiv`'s normal form.
+a`, registry T21). `normalize` shows `SqlEquiv`'s normal form, labelled as the oracle's (D3).
 
 ## Dialects
 
