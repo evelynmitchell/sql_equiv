@@ -1147,26 +1147,155 @@ def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
       | none, none => q
       | l, off => .limit l (off.getD 0) q), cols⟩
 
-/-- Inline the non-recursive CTEs of a top-level `WITH` (phase 9.2, #460) as derived tables
-(`SqlBridge.Inline`), in order, so a CTE sees the earlier ones. Every body must elaborate, used
-or not, as Postgres checks it (registry T23). `WITH RECURSIVE` is phase 9.6. -/
-def inlineWith (ctes : List SqlEquiv.CTEDef) (q : SqlEquiv.Query) : ElabM SqlEquiv.Query := do
-  if ctes.any (·.isRecursive) then throw (.unsupported "WITH RECURSIVE")
-  let names := ctes.map fun c => N.fold c.name
-  if names.eraseDups.length ≠ names.length then throw (.typeError "WITH: a name defined twice")
-  let env ← ctes.foldlM (init := ([] : List (String × SqlEquiv.SubQuery))) fun env c => do
+/-- The substitution environment of non-recursive CTEs (phase 9.2, #460): each body, with the
+earlier ones inlined (`SqlBridge.Inline`), so a CTE sees the earlier ones. Every body must
+elaborate, used or not, as Postgres checks it (registry T23). -/
+def inlineEnv (env₀ : List (String × SqlEquiv.SubQuery)) (ctes : List SqlEquiv.CTEDef) :
+    ElabM (List (String × SqlEquiv.SubQuery)) :=
+  ctes.foldlM (init := env₀) fun env c => do
     let some b := Inline.body c.query
       | throw (.unsupported "WITH: a CTE body with ORDER BY/LIMIT over a set operation")
     let b := Inline.sub N.fold env b
     let _ ← elabSubQuery N 16 b
     pure (env ++ [(N.fold c.name, b)])
+
+/-- Inline the non-recursive CTEs of a top-level `WITH` as derived tables. -/
+def inlineWith (ctes : List SqlEquiv.CTEDef) (q : SqlEquiv.Query) : ElabM SqlEquiv.Query := do
+  let env ← inlineEnv N [] ctes
   let some q := Inline.query N.fold env q | throw (.unsupported "WITH inside WITH")
   pure q
+
+end SqlBridge
+
+/-! ### WITH RECURSIVE (phase 9.6, #464) -/
+
+namespace SqlBridge
+
+open SqlCore
+
+/-- The schema `S` with one more table, `none`: a recursive CTE of `k` columns. -/
+def viewSchema (S : DbSchema) (k : ℕ) (cols : Fin k → Column) : DbSchema where
+  Table := Option S.Table
+  arity | none => k | some t => S.arity t
+  columns | none => cols | some t => S.columns t
+
+/-- The named schema with a recursive CTE `name` as one more table; the CTE comes first, so it
+hides a base table of the same name. -/
+def NamedSchema.withView (N : NamedSchema) (name : String) (k : ℕ) (cols : Fin k → Column) :
+    NamedSchema where
+  S := viewSchema N.S k cols
+  tables := (N.fold name, none) :: N.tables.map fun (s, t) => (s, some t)
+  fold := N.fold
+  config := N.config
+
+/-- Replace the recursive CTE's table by the query `v`: the `recurse` query in the main query, the
+working row (`outer`) in the recursive step. A syntactic map over every node. -/
+def bindView {S : DbSchema} {k : ℕ} {cols : Fin k → Column} (v : Query S k) :
+    {n : ℕ} → Query (viewSchema S k cols) n → Query S n
+  | _, .table none => v
+  | _, .table (some t) => .table t
+  | _, .select p q => .select p (bindView v q)
+  | _, .project es q => .project es (bindView v q)
+  | _, .join θ q₁ q₂ => .join θ (bindView v q₁) (bindView v q₂)
+  | _, .unionAll q₁ q₂ => .unionAll (bindView v q₁) (bindView v q₂)
+  | _, .distinct q => .distinct (bindView v q)
+  | _, .aggregate keys aggs q => .aggregate keys aggs (bindView v q)
+  | _, .orderBy keys q => .orderBy keys (bindView v q)
+  | _, .limit c o q => .limit c o (bindView v q)
+  | _, .intersect q₁ q₂ => .intersect (bindView v q₁) (bindView v q₂)
+  | _, .difference q₁ q₂ => .difference (bindView v q₁) (bindView v q₂)
+  | _, .attach kind sub q => .attach kind (bindView v sub) (bindView v q)
+  | _, .one => .one
+  | _, .outer Γ => .outer Γ
+  | _, .lateral body q => .lateral (bindView v body) (bindView v q)
+  | _, .window c q => .window c (bindView v q)
+  | _, .recurse d r b st => .recurse d r (bindView v b) (bindView v st)
+
+/-- The round limit of `WITH RECURSIVE` (registry T25): after this many rounds that still add
+rows, the query fails with `recursionLimit`. -/
+def recursionRounds : ℕ := 1000
+
+/-- The number of times the table `name` is a source of a `FROM` tree, outside derived tables. -/
+def topRefs (fold : String → String) (name : String) : SqlEquiv.FromClause → ℕ
+  | .table ⟨t, _⟩ => if fold t == name then 1 else 0
+  | .subquery _ _ => 0
+  | .join l _ r _ => topRefs fold name l + topRefs fold name r
+
+/-- The `FROM` tree with its top-level references to `name` renamed out of the way. -/
+def renameTop (fold : String → String) (name : String) : SqlEquiv.FromClause → SqlEquiv.FromClause
+  | .table ⟨t, al⟩ => if fold t == name then .table ⟨"?recursive?", some (al.getD t)⟩ else .table ⟨t, al⟩
+  | .subquery sq al => .subquery sq al
+  | .join l k r on => .join (renameTop fold name l) k (renameTop fold name r) on
+
+variable (N : NamedSchema)
+
+/-- A recursive step that Postgres accepts (registry T24): linear recursion, the CTE `name` once,
+as a source of the step's `FROM` (not in a derived table, a subquery or an expression), and no
+aggregate, window function, `DISTINCT`, `GROUP BY`, `HAVING`, `ORDER BY` or `LIMIT`. -/
+def stepOk (name : String) : SqlEquiv.SelectStmt → Bool
+  | s@(.mk distinct items (some f) w groupBy having orderBy limitVal offsetVal) =>
+    let marker : SqlEquiv.SubQuery := .simple (.mk false [] none none [] none [] none none)
+    let s' : SqlEquiv.SelectStmt :=
+      .mk distinct items (some (renameTop N.fold name f)) w groupBy having orderBy limitVal offsetVal
+    let _ := s
+    !distinct && groupBy.isEmpty && having.isNone && orderBy.isEmpty && limitVal.isNone &&
+      offsetVal.isNone && (aggsOfList (items.filterMap itemExprOf)).isEmpty &&
+      !SqlEquiv.selectHasWindowFn items && topRefs N.fold name f == 1 &&
+      decide (Inline.select N.fold [(name, marker)] s' = s')
+  | _ => false
+
+/-- Elaborate a top-level `WITH`: non-recursive CTEs are inlined (phase 9.2); one recursive CTE
+(phase 9.6, #464) becomes `Query.recurse` over its base and step, the step reading the working row
+through `outer`, and the CTEs after it and the main query are elaborated with the CTE as one more
+table (`NamedSchema.withView`), which `bindView` then replaces by the `recurse` query. -/
+def elabWith (ctes : List SqlEquiv.CTEDef) (q : SqlEquiv.Query) : ElabM (Elaborated N.S) := do
+  let names := ctes.map fun c => N.fold c.name
+  if names.eraseDups.length ≠ names.length then throw (.typeError "WITH: a name defined twice")
+  let marker : SqlEquiv.SubQuery := .simple (.mk false [] none none [] none [] none none)
+  let mentions (name : String) (x : SqlEquiv.Query) : Bool :=
+    Inline.query N.fold [(N.fold name, marker)] x != some x
+  -- recursive: under `WITH RECURSIVE` and naming itself (otherwise its name is the base table's)
+  let isRec (c : SqlEquiv.CTEDef) : Bool := c.isRecursive && mentions c.name c.query
+  match ctes.findIdx? isRec with
+  | none => elabQueryRaw N (← inlineWith N ctes q)
+  | some i =>
+    let before := ctes.take i
+    let after := ctes.drop (i + 1)
+    let some rc := ctes[i]? | throw (.typeError "WITH")
+    if after.any isRec then throw (.unsupported "WITH RECURSIVE: more than one recursive CTE")
+    let r := N.fold rc.name
+    let env₀ ← inlineEnv N [] before
+    let .compound baseQ op (.simple stepSel) := rc.query
+      | throw (.unsupported "WITH RECURSIVE: the body must be <base> UNION [ALL] <step>")
+    let dist ← match op with
+      | .union => pure true
+      | .unionAll => pure false
+      | _ => throw (.unsupported "WITH RECURSIVE: the body must be <base> UNION [ALL] <step>")
+    if mentions rc.name baseQ then
+      throw (.unsupported "WITH RECURSIVE: the CTE in its base part")
+    let some baseQ := Inline.query N.fold env₀ baseQ | throw (.unsupported "WITH inside WITH")
+    let stepSel := Inline.select N.fold env₀ stepSel
+    if !stepOk N r stepSel then
+      throw (.unsupported "WITH RECURSIVE: a recursive step outside Postgres's rules")
+    let ⟨k, qb, cb⟩ ← elabQueryRaw N baseQ
+    let some Γ := qb.typeOf | throw (.typeError "WITH RECURSIVE: base")
+    let N' := N.withView rc.name k (requalify r cb)
+    let es ← elabSelect N' stepSel
+    if h : es.n = k then
+      let qs : Query N.S k := bindView (.outer Γ) (h ▸ es.q)
+      let v : Query N.S k := .recurse dist recursionRounds qb qs
+      if v.typeOf.isNone then
+        throw (.typeError "WITH RECURSIVE: the recursive step changes a column's type")
+      let env ← inlineEnv N' env₀ after
+      let some q := Inline.query N'.fold env q | throw (.unsupported "WITH inside WITH")
+      let e ← elabQueryRaw N' q
+      pure ⟨e.n, bindView v e.q, e.cols⟩
+    else throw (.typeError "WITH RECURSIVE: the step's number of columns")
 
 /-- Elaborate a parsed query, and check that the result is well-typed. -/
 def elabQuery : SqlEquiv.Query → ElabM (Elaborated N.S)
   | .withCTE ctes q => do
-    let e ← elabQueryRaw N (← inlineWith N ctes q)
+    let e ← elabWith N ctes q
     if e.q.typeOf.isSome then pure e else throw (.typeError "query")
   | q => do
   let e ← elabQueryRaw N q

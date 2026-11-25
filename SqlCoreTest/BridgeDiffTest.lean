@@ -439,6 +439,36 @@ def corpus : List (String × Expect) := [
   -- skips an unused one)
   ("WITH c AS (SELECT nope FROM users) SELECT name FROM users", .rejected "unknownColumn"),
   ("WITH c AS (SELECT 1), c AS (SELECT 2) SELECT * FROM c", .rejected "typeError"),
+  -- WITH RECURSIVE (phase 9.6, #464): linear recursion, Postgres's rules (registry T24)
+  ("WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 5) SELECT n FROM c", .agree),
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION SELECT (n % 3) + 1 FROM r) SELECT n FROM r", .agree),
+  ("WITH RECURSIVE r AS (SELECT id, age FROM users WHERE id = 1 UNION ALL SELECT u.id, u.age FROM r JOIN users u ON u.id = r.id + 1 WHERE u.id <= 3) SELECT id, age FROM r", .agree),
+  ("WITH RECURSIVE r AS (SELECT user_id AS u FROM orders WHERE id = 1 UNION SELECT o.user_id + 1 FROM r JOIN orders o ON o.user_id = r.u) SELECT u FROM r", .agree),
+  ("WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 10) SELECT SUM(n), COUNT(*) FROM c", .agree),
+  ("WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 3) SELECT u.name FROM users u JOIN c ON u.id = c.n", .agree),
+  ("WITH RECURSIVE base AS (SELECT 2 AS n), c AS (SELECT n FROM base UNION ALL SELECT n + 2 FROM c WHERE n < 8) SELECT n FROM c", .agree),
+  ("WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 4), d AS (SELECT n * 10 AS m FROM c) SELECT m FROM d", .agree),
+  ("WITH RECURSIVE r AS (SELECT department AS d FROM users UNION SELECT d FROM r) SELECT d FROM r", .agree),
+  ("WITH RECURSIVE r AS (SELECT department AS d FROM users UNION ALL SELECT d FROM r WHERE FALSE) SELECT d FROM r", .agree),
+  ("WITH RECURSIVE c AS (SELECT 1 AS n, 'a' AS s UNION ALL SELECT n + 1, s FROM c WHERE n < 3) SELECT n, s FROM c ORDER BY n DESC", .agree),
+  ("WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 6) SELECT name FROM users WHERE id IN (SELECT n FROM c WHERE n > 3)", .agree),
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT 10 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n FROM r", .agree),
+  ("WITH RECURSIVE c AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM c WHERE n < 4) SELECT a.n, b.n FROM c a, c b WHERE a.n + 1 = b.n", .agree),
+  ("WITH RECURSIVE r AS (SELECT 0.5 AS x UNION ALL SELECT x * 2 FROM r WHERE x < 4) SELECT x FROM r", .agree),
+  ("WITH RECURSIVE r AS (SELECT 'a' AS s UNION ALL SELECT s || 'b' FROM r WHERE LENGTH(s) < 3) SELECT s FROM r", .agree),
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT u.id FROM users u JOIN r ON u.id = r.n + 2) SELECT n FROM r", .agree),
+  -- outside Postgres's rules: the CTE twice, an aggregate in the step, a subquery naming it, the
+  -- CTE in the base part (registry T24); a column type that changes (Postgres: an error)
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT a.n + b.n FROM r a, r b WHERE a.n < 4) SELECT n FROM r",
+    .rejected "unsupported: WITH RECURSIVE: a recursive step outside"),
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT MAX(n) + 1 FROM r WHERE n < 3) SELECT n FROM r",
+    .rejected "unsupported: WITH RECURSIVE: a recursive step outside"),
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n IN (SELECT n FROM r)) SELECT n FROM r",
+    .rejected "unsupported: WITH RECURSIVE: a recursive step outside"),
+  ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 0.5 FROM r WHERE n < 2) SELECT n FROM r",
+    .rejected "typeError"),
+  ("WITH RECURSIVE r AS (SELECT n FROM r UNION ALL SELECT 1 AS n) SELECT n FROM r",
+    .rejected "unsupported: WITH RECURSIVE: the CTE in its base part"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

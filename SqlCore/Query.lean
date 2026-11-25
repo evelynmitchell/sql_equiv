@@ -532,10 +532,30 @@ inductive Query (S : DbSchema) : ℕ → Type where
   /-- `q` with a window function's value appended to each row (phase 9.5, #463), the rows in
   their input order. -/
   | window {n : ℕ} (c : WinCall n) (q : Query S n) : Query S (n + 1)
+  /-- `WITH RECURSIVE r AS (base UNION [ALL] step)` with linear recursion (phase 9.6, #464): the
+  rows of `base`, then rounds in which `step` is evaluated once per row of the previous round's new
+  rows (the working table), that row being its outer row (`outer`), until a round adds no row. With
+  `distinct` (`UNION`), duplicates are removed, against every row so far. After `rounds` rounds
+  that still add rows the evaluation fails with `recursionLimit`. -/
+  | recurse {n : ℕ} (distinct : Bool) (rounds : ℕ) (base step : Query S n) : Query S n
 
 namespace Query
 
 variable {S : DbSchema}
+
+/-- The rounds of `WITH RECURSIVE` (`Query.recurse`): `f` evaluates the step on one row of the
+working table; `acc` holds every row so far and `work` the previous round's new rows. A round's
+new rows are the step's rows on every working row (with `distinct`, without duplicates and without
+rows already in `acc`); the iteration stops when there are none, and fails with `recursionLimit`
+when the round budget is spent first. -/
+def recurseRounds {n : ℕ} (f : Row n → Except EvalError (List (Row n))) (distinct : Bool) :
+    ℕ → List (Row n) → List (Row n) → Except EvalError (List (Row n))
+  | _, acc, [] => .ok acc
+  | 0, _, _ :: _ => .error .recursionLimit
+  | k + 1, acc, w :: ws => do
+    let out := (← (w :: ws).mapM f).flatten
+    let new := if distinct then out.dedup.filter (· ∉ acc) else out
+    recurseRounds f distinct k (acc ++ new) new
 
 /-- Evaluate a query on a database instance: the bag of result rows as a list, or the first error.
 Every predicate and projection is evaluated on every row of its input. -/
@@ -586,6 +606,10 @@ def evalIn (D : Database S) (env : Option ((m : ℕ) × Row m)) :
     let keyed ← rs.zipIdx.mapM fun (r, i) => do
       return ((← c.part.mapM (·.eval r)), (← c.order.mapM (·.e.eval r)), r, i)
     keyed.mapM fun x => do return Fin.append x.2.2.1 ![← c.value keyed x]
+  | n, recurse dist rounds base step => do
+    let rs ← base.evalIn D env
+    let rs := if dist then rs.dedup else rs
+    recurseRounds (fun w => step.evalIn D (some ⟨n, w⟩)) dist rounds rs rs
 
 /-- Evaluate a query on a database instance, with no outer row. -/
 def eval (D : Database S) {n : ℕ} (q : Query S n) : Except EvalError (List (Row n)) :=
@@ -792,6 +816,9 @@ def typeOfIn (Γo : Option ((m : ℕ) × (Fin m → SqlType))) :
     let Γ ← q.typeOfIn Γo
     let τ ← c.typeOf Γ
     some (Fin.append Γ ![τ])
+  | n, recurse _ _ base step => do
+    let Γ ← base.typeOfIn Γo
+    if step.typeOfIn (some ⟨n, Γ⟩) = some Γ then some Γ else none
 
 /-- The typing context of the query's result rows, with no outer row. -/
 def typeOf {n : ℕ} (q : Query S n) : Option (Fin n → SqlType) := q.typeOfIn none
@@ -1018,6 +1045,8 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, outer _ => true
   | _, lateral body q => body.divSafe && q.divSafe
   | _, window c q => c.divSafe && q.divSafe
+  -- the round limit can always be reached
+  | _, recurse _ _ _ _ => false
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -1130,6 +1159,37 @@ theorem winValue_spec (c : WinCall n) {Γ : Fin n → SqlType} {all : List (WinR
       ⟨h.1, by simp [WinCall.divSafe, h.2]⟩
     obtain ⟨y, hy, rfl⟩ := List.mem_map.mp hr
     exact hall y (List.mem_of_mem_filter (List.mem_of_mem_filter hy))
+
+/-- The rounds of `WITH RECURSIVE` keep rows of the step's type: if the step maps a row of type
+`Γ` to rows of type `Γ`, or fails with an error in `E`, so do the rounds, which may also fail with
+`recursionLimit` (in `E`). -/
+theorem recurseRounds_spec {Γ : Fin n → SqlType} {f : Row n → Except EvalError (List (Row n))}
+    {E : EvalError → Prop} (hE : E .recursionLimit)
+    (hf : ∀ w : Row n, w.Conforms Γ → Except.Spec (f w) (fun rs => ∀ r ∈ rs, r.Conforms Γ) E)
+    (dist : Bool) : ∀ (k : ℕ) (acc work : List (Row n)), (∀ r ∈ acc, r.Conforms Γ) →
+      (∀ r ∈ work, r.Conforms Γ) →
+      Except.Spec (recurseRounds f dist k acc work) (fun rs => ∀ r ∈ rs, r.Conforms Γ) E
+  | _, acc, [], hacc, _ => by simpa [recurseRounds] using hacc
+  | 0, _, _ :: _, _, _ => by simpa [recurseRounds] using hE
+  | k + 1, acc, w :: ws, hacc, hwork => by
+    simp only [recurseRounds]
+    refine (Except.Spec.mapM (R := fun _ (ts : List (Row n)) => ∀ t ∈ ts, t.Conforms Γ)
+      fun x hx => hf x (hwork x hx)).bind fun parts _ hparts => ?_
+    have hout : ∀ r ∈ parts.flatten, r.Conforms Γ := by
+      intro r hr
+      obtain ⟨ts, hts, hr⟩ := List.mem_flatten.mp hr
+      obtain ⟨_, _, h⟩ := hparts ts hts
+      exact h r hr
+    have hnew : ∀ r ∈ (if dist then parts.flatten.dedup.filter (· ∉ acc) else parts.flatten),
+        r.Conforms Γ := by
+      split
+      · intro r hr
+        exact hout r (List.mem_dedup.mp (List.mem_of_mem_filter hr))
+      · exact hout
+    exact recurseRounds_spec hE hf dist k _ _ (fun r hr => by
+      rcases List.mem_append.mp hr with h | h
+      · exact hacc r h
+      · exact hnew r h) hnew
 
 /-- The outer row conforms to the outer typing context (phase 9.4b, #462, decision D6). -/
 def EnvOk (env : Option ((m : ℕ) × Row m)) (Γo : Option ((m : ℕ) × (Fin m → SqlType))) : Prop :=
@@ -1272,7 +1332,7 @@ theorem evalIn_spec {D : Database S} (hD : D.Conforms) {q : Query S n} :
               cases hsc
               exact ⟨rfl, by simpa using hf⟩
           obtain ⟨rfl, hf⟩ := hcard
-          refine .inr ⟨_, by simp [evalIn_attach, hss, SubKind.extra, hsc], .inr rfl, ?_⟩
+          refine .inr ⟨_, by simp [evalIn_attach, hss, SubKind.extra, hsc], .inr (.inl rfl), ?_⟩
           simp [divSafe, SubKind.divSafe, hf]
         · have hv : v.HasType (Δ 0) := by
             rcases hm : ss.map (· 0) with _ | ⟨v₁, _ | ⟨v₂, rest⟩⟩ <;> rw [hm] at hsc hvals <;>
@@ -1397,6 +1457,23 @@ theorem evalIn_spec {D : Database S} (hD : D.Conforms) {q : Query S n} :
     obtain ⟨ts, hts, ht⟩ := List.mem_flatten.mp ht
     obtain ⟨r, _, hr⟩ := hparts ts hts
     exact hr t ht
+  | recurse dist k base step ihb ihs =>
+    intro env Γo Γ henv hq
+    simp only [typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff] at hq
+    obtain ⟨Γb, hb, hq⟩ := hq
+    split_ifs at hq with hs
+    cases hq
+    refine ((ihb henv hb).imp_right fun _ => by simp [divSafe]).bind fun rs _ hrs => ?_
+    have hrs' : ∀ r ∈ (if dist then rs.dedup else rs), r.Conforms Γ := by
+      split
+      · intro r hr
+        exact hrs r (List.mem_dedup.mp hr)
+      · exact hrs
+    exact recurseRounds_spec (E := fun e => e.IsRuntime ∧ (recurse dist k base step).divSafe = false)
+      ⟨.inr (.inr rfl), by simp [divSafe]⟩
+      (fun w hw => (ihs (env := some ⟨_, w⟩) (Γo := some ⟨_, Γ⟩)
+        (fun _ _ h => by cases h; exact ⟨w, rfl, hw⟩) hs).imp_right fun _ => by simp [divSafe])
+      dist k _ _ hrs' hrs'
 
 /-- Type soundness as a postcondition: on a conforming instance, a well-typed query returns rows
 of its type, or fails with a runtime error (`EvalError.IsRuntime`: division by zero, or a scalar
@@ -1419,7 +1496,7 @@ theorem eval_ok_or_runtimeError {D : Database S} (hD : D.Conforms) {q : Query S 
 /-- A well-typed query never raises a type error on a conforming instance. -/
 theorem eval_ne_typeMismatch {D : Database S} (hD : D.Conforms) {q : Query S n}
     {Γ : Fin n → SqlType} (hq : q.typeOf = some Γ) : q.eval D ≠ .error .typeMismatch :=
-  (eval_spec hD hq).ne_error fun h => by rcases h.1 with h | h <;> cases h
+  (eval_spec hD hq).ne_error fun h => by rcases h.1 with h | h | h <;> cases h
 
 /-- The rows of a well-typed query on a conforming instance conform to its type. -/
 theorem conforms_of_eval_eq_ok {D : Database S} (hD : D.Conforms) {q : Query S n}
@@ -1455,6 +1532,8 @@ def closed : {n : ℕ} → Query S n → Bool
   | _, outer _ => false
   | _, lateral _ q => q.closed
   | _, window _ q => q.closed
+  -- the step reads its own outer row, the working row
+  | _, recurse _ _ base _ => base.closed
 
 /-- A closed query does not depend on the outer row. -/
 theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
@@ -1481,6 +1560,7 @@ theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
   | outer Γ => simp [closed] at h
   | lateral body q _ ihq => simp only [closed] at h; simp only [eval, evalIn, ihq h]
   | window c q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
+  | recurse dist k base step ihb _ => simp only [closed] at h; simp only [eval, evalIn, ihb h]
 
 theorem eval_lateral (D : Database S) (body : Query S k) (q : Query S n) :
     (lateral body q).eval D = (do

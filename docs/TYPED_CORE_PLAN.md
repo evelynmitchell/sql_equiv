@@ -260,7 +260,22 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     `ON`, where no subquery elaborates yet. Not done: a subquery inside a window's argument
     (`subsOf` does not look inside a window); explicit frames (`ROWS`, `RANGE … PRECEDING`), rejected by the parser; a window as the
     probe of an `IN (subquery)` under `GROUP BY` (the subqueries attach before `HAVING`)
-  - [ ] 9.6 Recursive CTEs (#464)
+  - [ ] 9.6 Recursive CTEs (#464). Decided 25 Nov 2026: the engines' working-table iteration;
+    an error (`EvalError.recursionLimit`) after 1000 rounds that still add rows (registry T25);
+    what the recursive step may contain is per dialect (T24).
+    - [x] linear recursion, Postgres's rules, in every dialect: `Query.recurse distinct rounds
+      base step`, the step evaluated once per row of the previous round's new rows, that row
+      being its outer row (`outer`); `UNION` removes duplicates against every row so far; typing
+      (the step keeps the base's types), soundness (`recurseRounds_spec`), simplifier, canon and
+      checker arms (opaque); kernel examples mirroring the engine probes (`RecurseExamples`).
+      Elaborator (`elabWith`): one recursive CTE per `WITH`, its body `base UNION [ALL] step`, the
+      step naming the CTE once as a source of its `FROM` and without aggregates, `DISTINCT`,
+      `GROUP BY`, `ORDER BY` or `LIMIT`; the step and everything after the CTE are elaborated with
+      the CTE as one more table (`NamedSchema.withView`), which `bindView` replaces by `outer` and
+      by the `recurse` query; the bridge theorems are unchanged. 22 queries agree with SqlEquiv,
+      DuckDB and Postgres or are Postgres's rejections. Corpus 879 → 884
+    - [ ] the duckdb dialect's extras (the CTE twice, aggregates in the step, a type cast back),
+      which read the whole working table (#485)
   - [x] 9.7 INSERT, UPDATE, DELETE (#465): `SqlCore.Stmt` (`insert t q`, `update t set w`,
     `delete t w`) and `Stmt.exec : Database S → Except EvalError (Database S)`, atomic; type
     soundness `Stmt.exec_spec` (a well-typed statement on a conforming instance gives a conforming
