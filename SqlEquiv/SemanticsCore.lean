@@ -450,7 +450,7 @@ def evalQueryCore (db : Database)
           if cte.isRecursive then
             cteEval db' cte.name cte.query
           else
-            queryEval db' cte.query
+            (queryEval db' cte.query).map unqualifyRow
         else
           db' name
     ) db

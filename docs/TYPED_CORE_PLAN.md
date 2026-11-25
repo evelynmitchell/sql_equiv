@@ -227,7 +227,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     `elabQuery`, so `elabQueryRaw` and the bridge theorems are unchanged (`elabQuery_of_raw`).
     Every body must elaborate, used or not (registry T23); a name defined twice is an error. 22
     `WITH` queries agree with SqlEquiv, DuckDB and Postgres or are rejections; one is a SqlEquiv
-    bug (#482). Corpus 874 → 879: every non-recursive `WITH` over the test schema. Not done: an
+    bug (#482, since fixed in the oracle). Corpus 874 → 879: every non-recursive `WITH` over the test schema. Not done: an
     `EXISTS` body over a CTE (a body over a derived table, 9.4b "richer bodies"); a CTE body with
     `ORDER BY`/`LIMIT` over a set operation; `WITH` before DML
   - [x] 9.3 Outer joins (#461): `Query.outerJoin kind θ q₁ q₂` with `JoinKind` left, right or full
