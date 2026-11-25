@@ -343,6 +343,7 @@ def cmdEquiv (input : String) : IO Unit := do
     let result : EquivResult := match typed with
       | .proved => .equivalent "proved by the typed core's checker (Query.checkEquiv) on every conforming database"
       | .sameOnSample => .maybeEquivalent "not proved; same rows on the sample database (typed core)"
+      | .bothFail why => .maybeEquivalent s!"not proved; {why} on the sample database (typed core)"
       | .differOnSample why => .notEquivalent s!"{why} (typed core)"
       | .notElaborated why =>
       -- outside the typed core: the reference oracle's syntactic checks (SqlEquiv)
@@ -529,8 +530,12 @@ partial def replLoop : IO Unit := do
   (← IO.getStdout).flush
 
   let stdin <- IO.getStdin
-  let input <- stdin.getLine
-  let input := input.trimAscii.toString
+  let raw <- stdin.getLine
+  -- end of input: `getLine` returns "" (an empty line is "\n"); stop instead of looping forever
+  if raw.isEmpty then
+    IO.println ""
+    return
+  let input := raw.trimAscii.toString
 
   match parseCommand input with
   | none => replLoop

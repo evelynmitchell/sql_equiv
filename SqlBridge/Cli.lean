@@ -67,12 +67,28 @@ def typedRun (decls : List TableDecl) (db : SqlEquiv.Database) (dialect : SqlEqu
              rows := (D' t).map fun r => (List.finRange k).map fun i =>
                SpiderEval.renderDatum (r i) }
 
+/-- Whether a query's top level fixes the order of its rows (an `ORDER BY`); without one the
+order is unspecified, and results are compared as bags. -/
+def ordersRows : SqlEquiv.Query → Bool
+  | .simple s => !s.orderBy.isEmpty
+  | .ordered _ o _ _ => !o.isEmpty
+  | .withCTE _ q => ordersRows q
+  | .compound .. => false
+
+/-- Whether a statement is a query whose top level fixes the order of its rows. -/
+def stmtOrdersRows : SqlEquiv.Stmt → Bool
+  | .query q => ordersRows q
+  | _ => false
+
 /-- The typed core's verdict on two queries. -/
 inductive Verdict where
   /-- `Query.checkEquiv` proved them equivalent on every conforming instance. -/
   | proved
-  /-- Not proved; the sample database gives the same rows (as bags). -/
+  /-- Not proved; the sample database gives the same rows (as bags; in order when either query has
+  an `ORDER BY`). -/
   | sameOnSample
+  /-- Not proved; both fail with the same error on the sample database. -/
+  | bothFail (why : String)
   /-- Not proved; the sample database tells them apart. -/
   | differOnSample (why : String)
   /-- One of them does not elaborate. -/
@@ -93,11 +109,19 @@ def typedEquiv (decls : List TableDecl) (db : SqlEquiv.Database) (dialect : SqlE
       | .unknown =>
         match e₁.q.eval D, e₂.q.eval D with
         | .ok r₁, .ok r₂ =>
-          let render := fun {k : ℕ} (rs : List (Row k)) => (rs.map fun r =>
-            ((List.finRange k).map fun i => SpiderEval.renderDatum (r i))).mergeSort
-              (fun a b => decide (toString a ≤ toString b))
-          if render r₁ == render r₂ then .sameOnSample
-          else .differOnSample "different rows on the sample database"
+          let render := fun {k : ℕ} (rs : List (Row k)) => rs.map fun r =>
+            (List.finRange k).map fun i => SpiderEval.renderDatum (r i)
+          let bag := fun (rs : List (List String)) =>
+            rs.mergeSort (fun a b => decide (toString a ≤ toString b))
+          let l₁ := render r₁
+          let l₂ := render r₂
+          if bag l₁ != bag l₂ then .differOnSample "different rows on the sample database"
+          else if (stmtOrdersRows s₁ || stmtOrdersRows s₂) && l₁ != l₂ then
+            .differOnSample "the same rows in a different order on the sample database"
+          else .sameOnSample
+        | .error e₁, .error e₂ =>
+          if reprStr e₁ == reprStr e₂ then .bothFail s!"both fail with {repr e₁}"
+          else .differOnSample s!"query 1 fails with {repr e₁}, query 2 with {repr e₂}"
         | .error e, _ => .differOnSample s!"query 1 fails: {repr e}"
         | _, .error e => .differOnSample s!"query 2 fails: {repr e}"
     else .differOnSample "different numbers of columns"
