@@ -1,6 +1,11 @@
 /-
   Certified statement-level equivalence checkers (#213, #278 step 4).
 
+  **Over the reference oracle (decisions D3, D7, #466).** This works over `SqlEquiv`'s untyped
+  evaluator, now a labelled reference oracle; its theorems are laws about that oracle. The
+  project's rewriter and checker are the typed core's (`SqlCore.Expr.simplify`,
+  `SqlCore.Query.checkEquiv`).
+
   `checkSelectEquiv` and `checkQueryEquiv` return a proof of `≃ₛ` / `≃ᵩ`, or
   `unknown`. They are sound by construction (every `proved` result carries a
   kernel-checked proof) and deliberately incomplete:

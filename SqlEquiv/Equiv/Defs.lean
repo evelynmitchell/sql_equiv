@@ -1,5 +1,10 @@
 /-
   SQL Equivalence Definitions
+
+  **Over the reference oracle (decisions D3, D7, #466).** This works over `SqlEquiv`'s untyped
+  evaluator, now a labelled reference oracle; its theorems are laws about that oracle. The
+  project's rewriter and checker are the typed core's (`SqlCore.Expr.simplify`,
+  `SqlCore.Query.checkEquiv`).
 -/
 import SqlEquiv.Ast
 import SqlEquiv.Semantics

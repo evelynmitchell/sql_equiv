@@ -1,6 +1,11 @@
 /-
   Certified Expression Rewriter
 
+  **Over the reference oracle (decisions D3, D7, #466).** This works over `SqlEquiv`'s untyped
+  evaluator, now a labelled reference oracle; its theorems are laws about that oracle. The
+  project's rewriter and checker are the typed core's (`SqlCore.Expr.simplify`,
+  `SqlCore.Query.checkEquiv`).
+
   Each simplification step is justified by an existing proven theorem —
   producing both the simplified expression AND a proof of equivalence.
   The rewriter itself adds no `axiom` declarations, `sorry`, or

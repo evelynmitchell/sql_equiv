@@ -3,59 +3,62 @@
     {
       "name": "certifiedRewrite",
       "file": "SqlEquiv/Rewriter.lean",
-      "proof": "certifiedRewriteAux_equiv"
+      "proof": "certifiedRewriteAux_equiv",
+      "note": "over the reference oracle (SqlEquiv's evaluator, decisions D3/D7): kept and audited, but not the project's checker"
     },
     {
       "name": "normalizeExpr",
       "file": "SqlEquiv/Equiv/ExprAxioms.lean",
-      "proof": "normalizeExpr_equiv"
+      "proof": "normalizeExpr_equiv",
+      "note": "over the reference oracle (SqlEquiv's evaluator, decisions D3/D7): kept and audited, but not the project's checker"
     },
     {
       "name": "checkEquivFull",
       "file": "SqlEquiv/Equiv/Decidable.lean",
-      "proof": "checkEquivFull"
+      "proof": "checkEquivFull",
+      "note": "over the reference oracle (SqlEquiv's evaluator, decisions D3/D7): kept and audited, but not the project's checker"
     },
     {
       "name": "checkSelectEquiv",
       "file": "SqlEquiv/Equiv/StatementChecker.lean",
       "proof": "checkSelectEquiv",
-      "note": "decision procedure; proved results carry SelectEquiv (≃ₛ, every database); WHERE case lifted from checkEquivFull via select_where_congr"
+      "note": "decision procedure; proved results carry SelectEquiv (≃ₛ, every database); WHERE case lifted from checkEquivFull via select_where_congr; over the reference oracle (SqlEquiv's evaluator, decisions D3/D7): kept and audited, but not the project's checker"
     },
     {
       "name": "checkQueryEquiv",
       "file": "SqlEquiv/Equiv/StatementChecker.lean",
       "proof": "checkQueryEquiv",
-      "note": "decision procedure; proved results carry QueryEquiv (≃ᵩ, every database); .simple via checkSelectEquiv, .compound congruence"
+      "note": "decision procedure; proved results carry QueryEquiv (≃ᵩ, every database); .simple via checkSelectEquiv, .compound congruence; over the reference oracle (SqlEquiv's evaluator, decisions D3/D7): kept and audited, but not the project's checker"
     },
     {
       "name": "decideClosedExprEquivInst",
       "file": "SqlEquiv/Equiv/Decidable.lean",
       "proof": "decideClosedExprEquivInst",
-      "note": "Decidable (≃ₑ) for closed expressions only (isClosed); see also decideGroundExprEquiv_sound_closed"
+      "note": "Decidable (≃ₑ) for closed expressions only (isClosed); see also decideGroundExprEquiv_sound_closed; over the reference oracle (SqlEquiv's evaluator, decisions D3/D7): kept and audited, but not the project's checker"
     },
     {
       "name": "SqlCore.Expr.simplify",
       "file": "SqlCore/Simplify.lean",
       "proof": "SqlCore.Expr.equiv_simplify",
-      "note": "typed core (phase 7); concludes SqlCore.Expr.Equiv Γ: every row conforming to Γ, the typed core's domain"
+      "note": "typed core (phase 7); concludes SqlCore.Expr.Equiv Γ: every row conforming to Γ, the typed core's domain; since #466 (decision D7) one of the project's rewriter/checker (the CLI's equiv asks Query.checkEquiv first)"
     },
     {
       "name": "SqlCore.Query.simplify",
       "file": "SqlCore/Simplify.lean",
       "proof": "SqlCore.Query.equiv_simplify",
-      "note": "typed core; concludes SqlCore.Query.Equiv .ordered: every conforming instance, rows in order"
+      "note": "typed core; concludes SqlCore.Query.Equiv .ordered: every conforming instance, rows in order; since #466 (decision D7) one of the project's rewriter/checker (the CLI's equiv asks Query.checkEquiv first)"
     },
     {
       "name": "SqlCore.Expr.checkEquiv",
       "file": "SqlCore/Check.lean",
       "proof": "SqlCore.Expr.equiv_of_check",
-      "note": "decision procedure (normalize = simplify then canon, then compare); proof-carrying Check (Expr.Equiv Γ e₁ e₂)"
+      "note": "decision procedure (normalize = simplify then canon, then compare); proof-carrying Check (Expr.Equiv Γ e₁ e₂); since #466 (decision D7) one of the project's rewriter/checker (the CLI's equiv asks Query.checkEquiv first)"
     },
     {
       "name": "SqlCore.Query.checkEquiv",
       "file": "SqlCore/Check.lean",
       "proof": "SqlCore.Query.equiv_of_check",
-      "note": "decision procedure; proof-carrying Check (Query.Equiv .ordered q₁ q₂); syntactic step via Query.beq (eq_of_beq)"
+      "note": "decision procedure; proof-carrying Check (Query.Equiv .ordered q₁ q₂); syntactic step via Query.beq (eq_of_beq); since #466 (decision D7) one of the project's rewriter/checker (the CLI's equiv asks Query.checkEquiv first)"
     },
     {
       "name": "nullOnDivZero",

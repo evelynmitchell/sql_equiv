@@ -20,7 +20,8 @@ This is a thin adapter over the general **rewrite-audit** skill in
    skill's discovery searches** and report any rewriter or decision procedure
    that is not in the config. A new one may not be listed. The config names:
    - the rewriters: `certifiedRewrite`, `normalizeExpr`, `checkEquivFull`, the statement
-     checkers, and the typed core's `SqlCore.Expr.simplify`, `SqlCore.Query.simplify` and
+     checkers (over the reference oracle since #466, decisions D3/D7: still audited), and the
+     typed core's (the project's rewriter and checker) `SqlCore.Expr.simplify`, `SqlCore.Query.simplify` and
      checkers `Expr.checkEquiv` / `Query.checkEquiv` (relations `Expr.Equiv Γ` and
      `Query.Equiv .ordered`, over conforming rows and instances);
    - the evaluator dispatch: `evalBinOp`, `evalUnaryOp`, `evalFunc` in

@@ -1,6 +1,10 @@
 /-
   Strict evaluation per dialect (#270, registry row 23)
 
+  **Part of the reference oracle (decision D7 as amended, #466).** The typed core (`SqlCore`) is
+  strict by construction; this layer stays as the oracle's error mode, which the oracle's DuckDB
+  and Postgres differential suites use to compare error cases.
+
   The evaluator is quiet: an evaluation error (`none`) drops the row in `WHERE` and shows as NULL
   in the select list, and every theorem is stated over that evaluator. Postgres and DuckDB abort
   the statement instead. This module layers the dialect's choice on top, without touching the

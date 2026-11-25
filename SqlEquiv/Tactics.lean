@@ -1,6 +1,11 @@
 /-
   SQL Equivalence Tactics
 
+  **Over the reference oracle (decisions D3, D7, #466).** This works over `SqlEquiv`'s untyped
+  evaluator, now a labelled reference oracle; its theorems are laws about that oracle. The
+  project's rewriter and checker are the typed core's (`SqlCore.Expr.simplify`,
+  `SqlCore.Query.checkEquiv`).
+
   Custom tactics for proving SQL equivalence properties:
   - sql_equiv: Automated equivalence proving
   - sql_equiv!: Aggressive version with all rewrites

@@ -7,13 +7,13 @@ A SQL parser and semantic equivalence prover written in Lean 4. This project pro
 SQL Equiv is a comprehensive toolkit for:
 
 - **Parsing SQL** - SELECT (with subqueries, joins, set operations, CTEs, window functions), INSERT, UPDATE and DELETE, with a hand-rolled recursive descent parser
-- **Evaluating queries** - A relational algebra-based semantic model
-- **Proving equivalences** - Formal proofs that two SQL expressions/queries are semantically equivalent, for the fragment in **What is parsed, evaluated, and proved** below
-- **Custom tactics** - Lean 4 tactics specifically designed for SQL equivalence proofs
+- **Evaluating queries** - A typed core (`SqlCore`): statically typed queries over schemas, strict errors, and a type-soundness theorem. Parsed SQL reaches it through an elaborator (`SqlBridge`). The original untyped evaluator (`SqlEquiv`) stays as a labelled reference oracle (decision D7)
+- **Proving equivalences** - Formal proofs that two SQL expressions/queries are semantically equivalent, for the fragment in **What is parsed, evaluated, and proved** below. The typed core's certified simplifier and checker (`Expr.simplify`, `Query.checkEquiv`) are the project's; `SqlEquiv`'s rewriter, checkers and laws stay as theory about the reference oracle (decision D3)
+- **Custom tactics** - Lean 4 tactics for equivalence proofs over the reference oracle (`sql_equiv`)
 
 The project is designed for compatibility with the Spider benchmark and supports complex SQL features including subqueries, aggregates, joins, and set operations. On the 564 Spider dev queries, 563 parse. Evaluated on the typed core (since #466), 489 (86.7%) give exactly sqlite's rows on synthetic data, and 520 (92.2%) with answers that differ only in breaking a tie at a `LIMIT`; the other 44 do not elaborate, by design (sqlite's type affinity compares a number with a TEXT column, a type error in the typed core; decision D5). `SqlEquiv`'s evaluator, now a reference oracle, still evaluates those 44 and agrees with the typed core on every other query. Both counts are ratcheted in CI (`benchmarks/spider/eval_report.md`).
 
-**Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. What the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are total functions (no `partial def` remains in the semantics, #278) but have no equivalence theorems yet. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
+**Trust base.** Every theorem and proof-carrying definition in the library is checked by Lean's kernel using only Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`): no `sorry`, no `native_decide`, no project axioms. `Test/TrustBaseTest.lean` checks this for every constant in the namespace, private ones included. It is part of `lake build sql_equiv_test`, which CI builds; plain `lake build` does not run it. In `SqlEquiv` (the reference oracle), what the theorems cover is narrower than what the evaluator runs: aggregate, window, INSERT and UPDATE evaluation are total functions (no `partial def` remains in the semantics, #278) but have no equivalence theorems yet. Expression equivalence `≃ₑ` treats aggregates and window functions as errors at expression level, so `≃ₑ` says nothing about them; it is lifted into WHERE only (`select_where_congr`).
 
 ## What is parsed, evaluated, and proved
 
@@ -28,7 +28,7 @@ the proved columns:
   (`SqlEquiv`) give related results on a query (`SqlBridge/Correct*.lean`, 519 of the 564 Spider
   dev queries).
 
-| Feature area | Parsed | Evaluated | Proved in `SqlEquiv` | Proved in the typed core and bridge |
+| Feature area | Parsed | Evaluated | Proved in `SqlEquiv` (reference oracle) | Proved in the typed core and bridge |
 |---|---|---|---|---|
 | Expressions: arithmetic, comparison, AND/OR/NOT, LIKE, CASE, BETWEEN, IN (list), IS NULL, COALESCE/NULLIF, string functions | ✓ | ✓ | **Equivalence** `≃ₑ` on every database and row: algebraic and NULL laws (`Equiv/ExprAxioms.lean`, `Equiv/Comparison.lean`, `Equiv/ValueLemmas.lean`); the certified rewriter `certifiedRewrite`; the decision procedure `checkEquivFull`; the `sql_equiv` tactic | `Expr.simplify` and `Expr.checkEquiv`, sound for `Expr.Equiv Γ` over conforming rows; **bridge** for the expression fragment (`Translates`). ROUND, LOWER, UPPER, LENGTH, COALESCE, NULLIF, ABS, CONCAT and `IN` over expressions elaborate (#459), checked against DuckDB and Postgres |
 | WHERE | ✓ | ✓ | **Equivalence**: `≃ₑ` lifted to SELECT, EXISTS and IN-subquery bodies (`select_where_congr`, `exists_where_congr`, `inSubquery_where_congr`); the statement checkers rewrite WHERE only | **bridge** (`elabStmt_correct`, `elabStmt_correct_join`) |
@@ -49,7 +49,7 @@ remaining `partial def`s are the parser, the SQL printer and `toReprStr`, which 
 `#print axioms` on any theorem to check.
 
 **Quiet errors (#270).** Where DuckDB or Postgres abort a query (a type mismatch such as
-`1 = 'a'`, an integer division by zero), `SqlEquiv` evaluates the expression to an error value
+`1 = 'a'`, an integer division by zero), `SqlEquiv` (the reference oracle) evaluates the expression to an error value
 instead. In WHERE that drops the row; in a SELECT list it shows as NULL. Its equivalences compare
 these quiet results. So an equivalence proved here holds in DuckDB or Postgres only for queries
 that raise no error there: two queries can be equivalent in the model while one of them aborts in
@@ -69,7 +69,13 @@ INSERT/UPDATE/DELETE, but not errors engines raise at bind or plan time (a type 
 This repository could become a basis for SQL support in
 [CSLib](https://github.com/leanprover/cslib). In brief:
 
-- **Semantics.** An executable evaluator (`SqlEquiv/Semantics*.lean`) over
+- **Two semantics (decision D7, #466).** The typed core `SqlCore` (last bullet) is the
+  project's semantics, rewriter and checker. The untyped evaluator described next stays as a
+  labelled **reference oracle**: the differential suites run it beside the engines, the bridge
+  theorems prove the elaborator agrees with it on their fragment, and its 714 theorems stay as
+  laws about it (decision D3). Its known divergences from the engines are registry rows T21,
+  T22, T25 and T26.
+- **Semantics of the reference oracle.** An executable evaluator (`SqlEquiv/Semantics*.lean`) over
   three representations:
   - `Row := List (String × Value)`;
   - `Table := List Row`;
@@ -136,7 +142,11 @@ This repository could become a basis for SQL support in
   rows (registry T18), `SELECT *` without `ORDER BY` (#407), and `COUNT(*)` over a derived table whose body may be a set operation, the elaborator is proved correct
   against SqlEquiv (#309, #352; `SqlBridge/Correct.lean`, `CorrectOrder.lean`,
   `CorrectJoin.lean`, `CorrectAgg.lean`, `CorrectGroup.lean`, `CorrectGroupOrder.lean`,
-  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`, `CorrectSetOp.lean`, `CorrectSub.lean`, `CorrectLike.lean`, `CorrectDerived.lean`); 519 of the Spider queries have that shape. Phase 9 retires the untyped semantics. These are
+  `CorrectGrouped.lean`, `CorrectExtreme.lean`, `CorrectAggBare.lean`, `CorrectAvg.lean`, `CorrectDistinct.lean`, `CorrectSetOp.lean`, `CorrectSub.lean`, `CorrectLike.lean`, `CorrectDerived.lean`); 519 of the Spider queries have that shape. Phase 9 ported every feature the untyped
+  evaluator runs (outer joins, EXISTS and correlated subqueries, window functions, `WITH` and
+  `WITH RECURSIVE`, INSERT/UPDATE/DELETE, scalar functions), validated against DuckDB and
+  Postgres, and switched the CLI and the Spider harness over; the untyped evaluator stays as
+  the reference oracle. These are
   offered upstream. See `docs/TYPED_CORE_PLAN.md` and `docs/TYPED_CORE_DECISIONS.md`.
 
 ## Features
@@ -419,6 +429,9 @@ The recursive CTE evaluator uses fixed-point iteration with a maximum of 1000 it
 
 ### Using the sql_equiv Tactic
 
+The tactic proves `≃ₑ` goals about the reference oracle (decision D3). For the typed core, use
+`SqlCore.Expr.checkEquiv` / `Query.checkEquiv`, which return a proof or `unknown`.
+
 ```lean
 import SqlEquiv
 import SqlEquiv.Tactics
@@ -447,6 +460,12 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
 
 ### Module Overview
 
+The modules below are `SqlEquiv`: the parser, AST and printer, which everything uses, and the
+untyped evaluator with its theorems, rewriter, checkers and tactic, which since #466 are the
+labelled reference oracle (decisions D3, D7). The typed core is `SqlCore/` (values, expressions,
+queries, statements, laws, `Simplify`, `Check`) and the elaborator with its correctness proofs is
+`SqlBridge/`; see `docs/TYPED_CORE_PLAN.md`.
+
 | Module | Description |
 |--------|-------------|
 | `SqlEquiv.Ast` | Abstract Syntax Tree definitions for all SQL constructs |
@@ -454,7 +473,7 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
 | `SqlEquiv.Pretty` | Pretty printer for converting AST back to SQL strings |
 | `SqlEquiv.SemanticsBase` | Core types and helpers for the evaluation model |
 | `SqlEquiv.SemanticsCore` | Non-partial evaluation mirrors and lemmas |
-| `SqlEquiv.Semantics` | Well-founded recursive evaluator with bridge theorems |
+| `SqlEquiv.Semantics` | Well-founded recursive evaluator with bridge theorems (the reference oracle) |
 | `SqlEquiv.Equiv` | Re-export hub for all equivalence submodules |
 | `SqlEquiv.Equiv.Defs` | Equivalence relation definitions (ExprEquiv, SelectEquiv, etc.) |
 | `SqlEquiv.Equiv.ValueLemmas` | Value-level lemmas for evalBinOp/evalUnaryOp |
@@ -464,7 +483,8 @@ example (h1 : a ≃ₑ b) (h2 : b ≃ₑ c) : a ≃ₑ c := by
 | `SqlEquiv.Equiv.StatementChecker` | Certified statement checkers `checkSelectEquiv` / `checkQueryEquiv` (proof or unknown) |
 | `SqlEquiv.Equiv.SetBagLemmas` | Set/bag algebra helper lemmas |
 | `SqlEquiv.Equiv.Decidable` | Decidable equality for AST types |
-| `SqlEquiv.Tactics` | Custom Lean 4 tactics for SQL proofs |
+| `SqlEquiv.Strict` | Strict error mode per dialect over the oracle (registry row 23) |
+| `SqlEquiv.Tactics` | Custom Lean 4 tactics for SQL proofs over the reference oracle |
 | `SqlEquiv.Basic` | Re-exports all modules for convenience |
 
 ### Key Types
@@ -516,6 +536,10 @@ inductive Stmt where
 - **Database**: `String -> Table` - A mapping from table names to tables
 
 ## Available Theorems
+
+The theorems listed in this section are about `SqlEquiv`'s evaluator, the reference oracle
+(decision D3). The typed core's laws are in `SqlCore/Equiv.lean`, `QueryEquiv.lean` and
+`QueryLaws.lean`.
 
 ### Expression Equivalence Properties
 
