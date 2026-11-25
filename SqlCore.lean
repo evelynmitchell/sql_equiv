@@ -25,6 +25,7 @@ public import SqlCore.Typing
 public import SqlCore.Aggregate
 public import SqlCore.Preconditions
 public import SqlCore.Query
+public import SqlCore.Stmt
 public import SqlCore.Equiv
 public import SqlCore.QueryEquiv
 public import SqlCore.QueryLaws

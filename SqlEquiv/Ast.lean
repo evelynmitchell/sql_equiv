@@ -268,6 +268,16 @@ inductive BareColumns where
   | sqlite
   deriving Repr, BEq, Inhabited, DecidableEq
 
+/-- `INSERT` without a column list and fewer values than the table has columns
+    (`INSERT INTO t VALUES (6, 'x')` into a three-column table; registry T19, typed-core bridge).
+    - `reject`: an error, as the standard, sqlite and DuckDB do.
+    - `padNull`: the missing trailing columns are `NULL` (Postgres).
+    More values than columns is an error in every dialect. -/
+inductive ShortInsert where
+  | reject
+  | padNull
+  deriving Repr, BEq, Inhabited, DecidableEq
+
 /-- A scalar subquery that returns several rows (`WHERE x > (SELECT a FROM t)` with two rows in
     `t`).
     - `error`: an evaluation error, as the standard, Postgres and DuckDB do.
@@ -412,6 +422,9 @@ structure DialectConfig where
   implicitGroup : ImplicitGroup := .oneGroup
   /-- What an evaluation error means (row 23, #270) -/
   errors : ErrorMode := .strict
+  /-- `INSERT` with fewer values than columns and no column list (registry T19; typed-core
+      bridge) -/
+  shortInsert : ShortInsert := .reject
   deriving Repr, BEq, Inhabited, DecidableEq
 
 /-- Each dialect's choices. `standard` has to pick a NULL position (the standard
@@ -432,7 +445,7 @@ def Dialect.config : Dialect → DialectConfig
                    errors := .strictDivZeroNull }
   | .postgres => { nullOrdering := .nullsLargest,    mixedMinMax := .error,
                    boolMinMax := .error,   likeCase := .sensitive,
-                   distinctOrderBy := .reject }
+                   distinctOrderBy := .reject, shortInsert := .padNull }
 
 /-- The MIN/MAX mode a dialect configuration records on each MIN/MAX node. -/
 def DialectConfig.minMaxMode (c : DialectConfig) : MinMaxMode :=

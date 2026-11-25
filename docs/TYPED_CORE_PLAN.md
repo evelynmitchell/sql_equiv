@@ -253,7 +253,18 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     (`subsOf` does not look inside a window); explicit frames (`ROWS`, `RANGE … PRECEDING`), rejected by the parser; a window as the
     probe of an `IN (subquery)` under `GROUP BY` (the subqueries attach before `HAVING`)
   - [ ] 9.6 Recursive CTEs (#464)
-  - [ ] 9.7 INSERT, UPDATE, DELETE (#465)
+  - [x] 9.7 INSERT, UPDATE, DELETE (#465): `SqlCore.Stmt` (`insert t q`, `update t set w`,
+    `delete t w`) and `Stmt.exec : Database S → Except EvalError (Database S)`, atomic; type
+    soundness `Stmt.exec_spec` (a well-typed statement on a conforming instance gives a conforming
+    instance or a runtime error). `UPDATE` holds every column's new value as an expression over the
+    old row, so `SET a = b, b = a` swaps (T21), and evaluates it only on rows `WHERE` keeps.
+    `SqlBridge.elabDml`: `INSERT … VALUES` as a `UNION ALL` of one-row projections, `INSERT …
+    SELECT` as a projection of the `SELECT`, by position or column list (others `NULL`); fewer
+    values than columns per dialect (T19); only values of the column's type, `NULL` or an integer
+    into `DECIMAL` (T20). 47 statements checked against DuckDB and Postgres, statement then
+    `SELECT *` (`DmlDiffTest`, 76 comparisons). Corpus 834 → 874. Not done: subqueries in
+    `UPDATE`/`DELETE` and in `VALUES`; `INSERT … SELECT` over a set operation (the parser takes one
+    `SELECT`); `RETURNING`
   - [ ] 9.8 Switch over and retire `SqlEquiv`'s evaluator (#466)
   - [ ] 9.9 Upstream conversation with cslib-frontier (#467)
 
