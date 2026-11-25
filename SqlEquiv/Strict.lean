@@ -32,19 +32,22 @@ namespace SqlEquiv
 -- DuckDB: division and modulo by zero are not errors
 -- ============================================================================
 
-/-- `a / b` and `a % b` become `CASE WHEN b = 0 THEN NULL = a ELSE … END`, so a division by zero
-    yields NULL instead of an error when the expression is checked (`ErrorMode.strictDivZeroNull`).
-    A divisor that is itself an error, or not a number, still yields an error, and so does an error
-    in the dividend: `NULL = a` is NULL for every value of `a` and an error when `a` is one (a
-    plain `THEN NULL` hid `(s + 1) % 0`, found by `/audit` on 23 Nov 2026). Does not enter
-    subqueries or window functions. Used only by the checker, never for results; it does not
-    preserve `≃ₑ`, on purpose. -/
+/-- `a / b` and `a % b` become `CASE WHEN b = 0 THEN NULL = (a op 1) ELSE … END`, so a division
+    by zero yields NULL instead of an error when the expression is checked
+    (`ErrorMode.strictDivZeroNull`). A divisor that is itself an error, or not a number, still
+    yields an error, and so does a dividend that is an error or not a number: `a op 1` is the
+    operator's own type check of `a` with a divisor that cannot be zero, and `NULL = x` is NULL for
+    every value `x` and an error when `x` is one. A plain `THEN NULL` hid `(s + 1) % 0` (`/audit`,
+    23 Nov 2026); `THEN NULL = a` still hid `s % 0` and `TRUE / 0`, which DuckDB rejects at bind
+    time (`/audit`, 25 Nov 2026). Does not enter subqueries or window functions. Used only by the
+    checker, never for results; it does not preserve `≃ₑ`, on purpose. -/
 def nullOnDivZero : Expr → Expr
   | .binOp op l r =>
     let l' := nullOnDivZero l
     let r' := nullOnDivZero r
     if op == .div || op == .mod then
-      .case [(.binOp .eq r' (.lit (.int 0)), .binOp .eq (.lit (.null none)) l')]
+      .case [(.binOp .eq r' (.lit (.int 0)),
+          .binOp .eq (.lit (.null none)) (.binOp op l' (.lit (.int 1))))]
         (some (.binOp op l' r'))
     else .binOp op l' r'
   | .unaryOp op e => .unaryOp op (nullOnDivZero e)

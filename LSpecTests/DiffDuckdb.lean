@@ -586,6 +586,11 @@ def runAllTests : IO TestSeq := do
       "SELECT SUM(name) AS s FROM users",
     diffErrors "an error in the dividend of a modulo by zero"
       "SELECT (name + 1) % (age - age) AS x FROM users",
+    -- /audit 25 Nov 2026: a dividend of the wrong type over a zero divisor is a binder error
+    diffErrors "a string dividend modulo zero"
+      "SELECT name % (age - age) AS x FROM users",
+    diffErrors "a boolean dividend over zero"
+      "SELECT (age > 1) / 0 AS x FROM users",
     diffTest "modulo by zero is NULL"
       "SELECT id, id % (age - 30) AS x FROM users",
     diffTest "modulo by zero is NULL in WHERE and HAVING"
