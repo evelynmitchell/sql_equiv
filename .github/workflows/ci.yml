@@ -98,11 +98,13 @@ jobs:
       - name: Check Spider parse-rate ratchet
         run: python3 tools/spider_parse_baseline.py --check
 
-      - name: Check Spider evaluate-rate ratchet
-        run: python3 tools/spider_eval_baseline.py --check
-
       - name: Check Spider typed-core elaboration ratchet
         run: lake build spider_elab && python3 tools/spider_elab_baseline.py --check
+
+      # since #466 the evaluate harness measures the typed core (`spider_elab --eval`), with
+      # SqlEquiv's evaluator (the CLI) beside it; both are built above
+      - name: Check Spider evaluate-rate ratchet
+        run: python3 tools/spider_eval_baseline.py --check
 
       - name: Check typed-core coverage of the test corpus (phase 9 metric, #458)
         run: python3 tools/typed_corpus_baseline.py --check

@@ -302,7 +302,18 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     `SELECT *` (`DmlDiffTest`, 76 comparisons). Corpus 834 → 874. Not done: subqueries in
     `UPDATE`/`DELETE` and in `VALUES`; `INSERT … SELECT` over a set operation (the parser takes one
     `SELECT`); `RETURNING`
-  - [ ] 9.8 Switch over and retire `SqlEquiv`'s evaluator (#466)
+  - [ ] 9.8 Switch over and retire `SqlEquiv`'s evaluator (#466). Final form decided: D7 (a
+    labelled reference oracle, with the bridge theorems).
+    - [x] Spider evaluate harness on the typed core (`spider_elab --eval`,
+      `SqlBridge.SpiderEval`), `SqlEquiv` beside it; ratchets re-based (D5): exact 520 → 489,
+      evaluate-agreement 559 → 520; the 44 queries the typed core does not elaborate are the only
+      disagreements between the two (report section "Typed core vs SqlEquiv")
+    - [ ] the CLI (REPL and `--file`) on the typed core
+    - [ ] `certifiedRewrite`, `checkEquivFull`, the statement checkers and the `sql_equiv` tactic
+      replaced by `SqlCore.simplify` / `checkEquiv`; `/audit` config
+    - [ ] D3, group by group (each confirmed)
+    - [ ] `Strict.lean` removed; the evaluator labelled as the reference oracle; README trust
+      sections, mutation testing, coverage matrix, `TESTING_STRATEGY.md`
   - [ ] 9.9 Upstream conversation with cslib-frontier (#467)
 
 ## Phase 9 plan (#298, option B)

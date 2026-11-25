@@ -46,4 +46,7 @@ After editing any of these files, suggest running `/audit` before committing:
   Issues are the memory between sessions — write them so a cold session can
   execute them. Goal generation: the Spider parse-rate baseline
   (`tools/spider_parse_baseline.py`) is the north-star metric; failure
-  classes in its report become issues.
+  classes in its report become issues. Since #466 the Spider evaluate ratchets
+  (`tools/spider_eval_baseline.py`) measure the typed core; the 44 queries it
+  rejects for sqlite type affinity are rejected by design (decision D5), not
+  failure classes.
