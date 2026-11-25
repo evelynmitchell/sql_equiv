@@ -308,7 +308,11 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       `SqlBridge.SpiderEval`), `SqlEquiv` beside it; ratchets re-based (D5): exact 520 → 489,
       evaluate-agreement 559 → 520; the 44 queries the typed core does not elaborate are the only
       disagreements between the two (report section "Typed core vs SqlEquiv")
-    - [ ] the CLI (REPL and `--file`) on the typed core
+    - [x] the CLI (REPL `eval` and `equiv`, and `--file`) on the typed core (`SqlBridge.Cli`):
+      `eval` elaborates and evaluates (DML: the written table), `equiv` asks `Query.checkEquiv`
+      for a proof, else compares on the sample database; the reference oracle's answer is shown,
+      labelled, where the typed core does not elaborate or disagrees. `normalize` waits for the
+      rewriter swap
     - [ ] `certifiedRewrite`, `checkEquivFull`, the statement checkers and the `sql_equiv` tactic
       replaced by `SqlCore.simplify` / `checkEquiv`; `/audit` config
     - [ ] D3, group by group (each confirmed)
