@@ -204,7 +204,7 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       errors (`Query.eval_ok_or_runtimeError`); congruence; simplifier and checker
     - [x] Bridge (nested, compound bodies, correlated rejected), differential tests, Spider rate:
       **519/564 (92.0%)**, up from 479
-- [ ] Phase 9: retire the untyped semantics (#298), option B (port every feature first; plan
+- [ ] Phase 9: switch over to the typed core (#298; the untyped semantics stays as a labelled reference oracle, D7), option B (port every feature first; plan
   below, chosen 24 Nov 2026)
   - [ ] 9.0 Decisions and the typed-coverage metric (#458): metric, Postgres harness, D1–D4
     done (24 Nov 2026); D5 decided (accept and re-base)
@@ -302,8 +302,8 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     `SELECT *` (`DmlDiffTest`, 76 comparisons). Corpus 834 → 874. Not done: subqueries in
     `UPDATE`/`DELETE` and in `VALUES`; `INSERT … SELECT` over a set operation (the parser takes one
     `SELECT`); `RETURNING`
-  - [ ] 9.8 Switch over and retire `SqlEquiv`'s evaluator (#466). Final form decided: D7 (a
-    labelled reference oracle, with the bridge theorems).
+  - [x] 9.8 Switch over (#466, done 25 Nov 2026). Final form decided: D7 (`SqlEquiv`'s evaluator
+    stays as a labelled reference oracle, with the bridge theorems).
     - [x] Spider evaluate harness on the typed core (`spider_elab --eval`,
       `SqlBridge.SpiderEval`), `SqlEquiv` beside it; ratchets re-based (D5): exact 520 → 489,
       evaluate-agreement 559 → 520; the 44 queries the typed core does not elaborate are the only
@@ -336,7 +336,8 @@ semantics on the proof path, and `/doc-freshness` is clean.
 **The engines are the oracle (decided 24 Nov 2026).** A feature ported in phase 9 is validated
 against DuckDB and Postgres by differential tests through the typed core (the harness in
 `SqlCoreTest`, today DuckDB only: #458 adds Postgres). No bridge proof against `SqlEquiv` is
-required for it. The reason: `SqlEquiv` is wrong in exactly these features, and is being retired.
+required for it. The reason: `SqlEquiv` is wrong in exactly these features, and was to be retired (it stays as a
+labelled reference oracle, D7).
 Confirmed on sqlite and DuckDB:
 
 | Statement | `SqlEquiv` | Engines |
@@ -437,8 +438,8 @@ proof is built on. The spike found a design that does not (D6).
 
 `elabStmt_correct` is what connects the two evaluators: whenever the elaborator accepts a query,
 the typed query's result rows match `SqlEquiv`'s, which the differential tests check against
-sqlite, DuckDB and Postgres. It is also the precondition for retiring the untyped semantics
-(phase 9, #298). Its fragment today (steps 1 to 3b-6 done) is
+sqlite, DuckDB and Postgres. It was also the precondition for phase 9's switch-over
+(#298; the untyped semantics stays as a labelled reference oracle, D7). Its fragment today (steps 1 to 3b-6 done) is
 `SELECT e₁, …, eₖ FROM f [WHERE p] [ORDER BY c₁, …] [LIMIT n] [OFFSET m]`
 (`elabStmt_correct_join`), where `f` nests tables (optionally aliased) under inner joins and
 cross joins without `ON`, with literals, columns, comparisons, `BETWEEN`, `AND`, `OR` and `NOT` (in `ON`

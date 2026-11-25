@@ -1,6 +1,6 @@
 # Batteries Migration Plan
 
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 2026-11 the codebase has **0 axioms** (all proved since PR #173) and **697 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 25 Nov 2026 the codebase has **0 axioms** (all proved since PR #173) and **714 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count.
 
 ## Motivation
 

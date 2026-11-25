@@ -106,9 +106,9 @@
 - **`List.map_congr_left` bridges partial applications in `List.map`.** When `simp only [bridge]` can't rewrite inside `args.map (evalExprWithDb db row)`, use `congrArg (evalFunc name) (List.map_congr_left fun e _ => bridge.symm)`.
 
 ## Next Session TODO
-- **State (23 Nov 2026):** 0 axioms, 0 `sorry`, 714 theorems in `SqlEquiv` (`tools/count_axioms_theorems.py`); trust base clean; every evaluator total (#278). The old axiom batches and blocked join axioms below are history.
-- **Open issues:** #445 and #446 (known divergences, low priority), #245 (random database generator), #298 and #287 (typed core), #202, #210, #211. Done 23 Nov: #270 (strict error mode per dialect, `SqlEquiv/Strict.lean`, registry row 23) and #448 (its gaps; bind-time errors stay documented by decision), #266 (two Spider eval ratchets).
-- **Spider:** parse 563, eval 559 (exact 520, both ratcheted), elaborate 520, proved 519 of 564; the rest are left out by decision (#413 closed; 44 type-error queries).
+- **State (25 Nov 2026):** 0 axioms, 0 `sorry`, 714 theorems in `SqlEquiv` (`tools/count_axioms_theorems.py`); trust base clean; every evaluator total (#278). Phase 9 switch-over done (#466): the typed core (`SqlCore`, via `SqlBridge`) is the project's semantics, rewriter and checker; `SqlEquiv`'s evaluator, its 714 theorems, rewriter, checkers, tactic and `Strict.lean` stay as a labelled reference oracle (decisions D3, D7). The old axiom batches and blocked join axioms below are history.
+- **Open issues:** #467 (9.9, upstream conversation with cslib-frontier; the user opens it), #445 and #446 (known divergences, low priority), #245 (random database generator), #298 and #287 (typed core umbrellas), #202, #210, #211.
+- **Spider:** parse 563; evaluate on the typed core: exact 489, agreement 520 (both ratcheted, D5 re-base); elaborate 520, proved 519 of 564; the 44 type-affinity queries are rejected by design (D5). Typed corpus ratchet 889.
 - **evalFrom .subquery now passes through** (PR #147). No column re-qualification.
 - **`rw` fails when bridge axiom LHS symbol appears in RHS arguments.** Use `Eq.trans` instead. Bridge axiom must be placed AFTER the mutual block defining the partial def.
 - **For evalSelectCore, factor large functions into composable helpers.** `applyOrderByLimitOffset` + `evalSelectProjectDistinct` + `evalSelectAfterFilter` makes proofs tractable. `evalSelectCore_eq_afterFilter` proves by `rfl` since all are `def`.
