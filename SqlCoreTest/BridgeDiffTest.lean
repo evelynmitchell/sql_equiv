@@ -408,6 +408,37 @@ def corpus : List (String × Expect) := [
   ("SELECT name, SUM(age + (SELECT MAX(amount) FROM orders)) OVER (PARTITION BY department) AS s FROM users",
     .rejected "unsupported: subquery"),
   ("SELECT name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = users.id) AS n, RANK() OVER (ORDER BY age) AS r FROM users", .agree),
+  -- non-recursive WITH (phase 9.2, #460), inlined as derived tables
+  ("WITH c AS (SELECT name, age FROM users WHERE age > 25) SELECT name FROM c", .agree),
+  ("WITH c AS (SELECT * FROM users) SELECT c.name, o.amount FROM c JOIN orders o ON c.id = o.user_id",
+    .sqlEquivBug "#482: a CTE joined on a qualified key gives no rows"),
+  ("WITH a AS (SELECT id, age FROM users), b AS (SELECT id FROM a WHERE age > 25) SELECT * FROM b", .agree),
+  ("WITH c AS (SELECT department, COUNT(*) AS n FROM users GROUP BY department) SELECT department FROM c WHERE n > 1", .agree),
+  ("WITH c AS (SELECT id FROM users WHERE age > 28) SELECT name FROM users WHERE id IN (SELECT id FROM c)", .agree),
+  ("WITH users AS (SELECT * FROM users WHERE age > 25) SELECT COUNT(*) FROM users", .agree),
+  ("WITH c AS (SELECT 1 AS x UNION ALL SELECT 2) SELECT x FROM c", .agree),
+  ("WITH c AS (SELECT age FROM users) SELECT x.age FROM c AS x WHERE x.age < 30", .agree),
+  ("WITH c AS (SELECT age FROM users) SELECT a.age, b.age FROM c a, c b WHERE a.age + 3 = b.age", .agree),
+  ("WITH c AS (SELECT 1 / 0 AS x) SELECT name FROM users", .agree),
+  ("WITH c AS (SELECT name, age FROM users ORDER BY age LIMIT 2) SELECT name FROM c", .agree),
+  -- an `EXISTS` body over a CTE is a body over a derived table, which the 9.4b body elaborator
+  -- (`elabCorrBody`, used for every `EXISTS`) does not take yet ("richer bodies"); `IN` above is
+  -- elaborated as an ordinary subquery
+  ("WITH c AS (SELECT age FROM users) SELECT name FROM users WHERE EXISTS (SELECT 1 FROM c WHERE c.age > 30)",
+    .rejected "unsupported: nested subquery in a correlated body"),
+  ("WITH c AS (SELECT age FROM users) SELECT name FROM users u WHERE EXISTS (SELECT 1 FROM c WHERE c.age > u.age + 9)",
+    .rejected "unsupported: nested subquery in a correlated body"),
+  ("WITH c AS (SELECT name, age FROM users) SELECT name FROM c ORDER BY age DESC", .agree),
+  ("WITH c AS (SELECT department FROM users) SELECT DISTINCT department FROM c", .agree),
+  ("WITH c AS (SELECT name FROM users) SELECT name, (SELECT COUNT(*) FROM c) AS n FROM users", .agree),
+  ("WITH c AS (SELECT name, age FROM users) SELECT d.name FROM (SELECT * FROM c WHERE age > 25) d", .agree),
+  ("WITH c AS (SELECT department FROM users) SELECT department FROM c UNION SELECT department FROM c", .agree),
+  ("WITH c AS (SELECT age FROM users) SELECT age FROM c UNION ALL SELECT age + 100 FROM c ORDER BY age DESC", .agree),
+  ("WITH a AS (SELECT * FROM b), b AS (SELECT 1 AS x) SELECT * FROM a", .rejected "unknownTable"),
+  -- every CTE body must elaborate, used or not, as Postgres checks it (registry T23; DuckDB
+  -- skips an unused one)
+  ("WITH c AS (SELECT nope FROM users) SELECT name FROM users", .rejected "unknownColumn"),
+  ("WITH c AS (SELECT 1), c AS (SELECT 2) SELECT * FROM c", .rejected "typeError"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

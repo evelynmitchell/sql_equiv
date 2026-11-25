@@ -6,6 +6,7 @@
 -/
 import SqlCore
 import SqlBridge.Elab
+import SqlBridge.Inline
 import SqlBridge.Correct
 import SqlBridge.CorrectLike
 import SqlBridge.CorrectOrder

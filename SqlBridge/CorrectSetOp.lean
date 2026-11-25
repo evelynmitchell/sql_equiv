@@ -148,6 +148,14 @@ def setOpQuery {S : DbSchema} {n : ℕ} (op : SqlEquiv.SetOp) (ql qr : Query S n
   | .intersect => .intersect ql qr
   | .exceptOp => .difference ql qr
 
+/-- A query that `elabQueryRaw` elaborates to a well-typed query is not a `WITH` (`elabQueryRaw`
+rejects one), so `elabQuery` gives the same result. -/
+theorem elabQuery_of_raw (N : NamedSchema) {q : SqlEquiv.Query} {e : Elaborated N.S}
+    (h : elabQueryRaw N q = .ok e) (hty : e.q.typeOf.isSome) : elabQuery N q = .ok e := by
+  cases q with
+  | withCTE _ _ => simp [elabQueryRaw, throw, throwThe, MonadExceptOf.throw] at h
+  | _ => simp [elabQuery, h, hty, bind, Except.bind, pure, Except.pure]
+
 /-- The branches of a compound query that elaborates elaborate too, to queries of one type, and
     the result is the corresponding typed operator over them, with the left branch's columns. -/
 theorem elab_compound_shape (N : NamedSchema) {l r : SqlEquiv.Query} {op : SqlEquiv.SetOp}
@@ -187,8 +195,8 @@ theorem elab_compound_shape (N : NamedSchema) {l r : SqlEquiv.Query} {op : SqlEq
       split at hty <;> first | exact ⟨_, hql, by assumption⟩ | simp at hty
   obtain ⟨Γ, hΓl, hΓr⟩ := hΓ
   refine ⟨m, ql, qr, cl, cr, Γ, ?_, ?_, hΓl, hΓr, ?_⟩
-  · simp [elabQuery, hl, hΓl, bind, Except.bind, pure, Except.pure]
-  · simp [elabQuery, hr, hΓr, bind, Except.bind, pure, Except.pure]
+  · exact elabQuery_of_raw N hl (by simp [hΓl])
+  · exact elabQuery_of_raw N hr (by simp [hΓr])
   · cases op <;> simp only [pure, Except.pure, Except.ok.injEq] at hraw <;>
       simpa [setOpQuery] using hraw.symm
 

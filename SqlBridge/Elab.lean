@@ -17,6 +17,7 @@
 -/
 import SqlEquiv
 import SqlCore
+import SqlBridge.Inline
 
 namespace SqlBridge
 
@@ -1133,7 +1134,7 @@ def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
       | .intersect => pure ⟨n, .intersect ql (h ▸ qr), cl⟩
       | .exceptOp => pure ⟨n, .difference ql (h ▸ qr), cl⟩
     else throw (.typeError "set operation arity")
-  | .withCTE _ _ => throw (.unsupported "WITH")
+  | .withCTE _ _ => throw (.unsupported "WITH inside a query")
   | .ordered q orderBy limitVal offsetVal => do
     -- #317: ORDER BY/LIMIT over a whole compound query. Keys refer to its output columns (the
     -- parser has already turned positions into output names).
@@ -1146,8 +1147,28 @@ def elabQueryRaw : SqlEquiv.Query → ElabM (Elaborated N.S)
       | none, none => q
       | l, off => .limit l (off.getD 0) q), cols⟩
 
+/-- Inline the non-recursive CTEs of a top-level `WITH` (phase 9.2, #460) as derived tables
+(`SqlBridge.Inline`), in order, so a CTE sees the earlier ones. Every body must elaborate, used
+or not, as Postgres checks it (registry T23). `WITH RECURSIVE` is phase 9.6. -/
+def inlineWith (ctes : List SqlEquiv.CTEDef) (q : SqlEquiv.Query) : ElabM SqlEquiv.Query := do
+  if ctes.any (·.isRecursive) then throw (.unsupported "WITH RECURSIVE")
+  let names := ctes.map fun c => N.fold c.name
+  if names.eraseDups.length ≠ names.length then throw (.typeError "WITH: a name defined twice")
+  let env ← ctes.foldlM (init := ([] : List (String × SqlEquiv.SubQuery))) fun env c => do
+    let some b := Inline.body c.query
+      | throw (.unsupported "WITH: a CTE body with ORDER BY/LIMIT over a set operation")
+    let b := Inline.sub N.fold env b
+    let _ ← elabSubQuery N 16 b
+    pure (env ++ [(N.fold c.name, b)])
+  let some q := Inline.query N.fold env q | throw (.unsupported "WITH inside WITH")
+  pure q
+
 /-- Elaborate a parsed query, and check that the result is well-typed. -/
-def elabQuery (q : SqlEquiv.Query) : ElabM (Elaborated N.S) := do
+def elabQuery : SqlEquiv.Query → ElabM (Elaborated N.S)
+  | .withCTE ctes q => do
+    let e ← elabQueryRaw N (← inlineWith N ctes q)
+    if e.q.typeOf.isSome then pure e else throw (.typeError "query")
+  | q => do
   let e ← elabQueryRaw N q
   if e.q.typeOf.isSome then pure e else throw (.typeError "query")
 

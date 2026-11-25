@@ -221,7 +221,15 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
   - [x] Set operations across INT/DECIMAL and untyped NULL branches, `CASE`/`COALESCE` promotion
     (#472): `UnOp.toDecimal`; branches aligned when one has no `FROM` (the bridge theorems'
     branches all have one). Corpus 630 → 647
-  - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
+  - [x] 9.2 Non-recursive CTEs, by inlining (#460): `SqlBridge.Inline` substitutes each CTE as a
+    derived table (`FROM c AS x` → `FROM (body) AS x`) wherever a table can occur, the bodies in
+    order (a CTE sees the earlier ones; a body naming its own CTE reads the base table), in
+    `elabQuery`, so `elabQueryRaw` and the bridge theorems are unchanged (`elabQuery_of_raw`).
+    Every body must elaborate, used or not (registry T23); a name defined twice is an error. 22
+    `WITH` queries agree with SqlEquiv, DuckDB and Postgres or are rejections; one is a SqlEquiv
+    bug (#482). Corpus 874 → 879: every non-recursive `WITH` over the test schema. Not done: an
+    `EXISTS` body over a CTE (a body over a derived table, 9.4b "richer bodies"); a CTE body with
+    `ORDER BY`/`LIMIT` over a set operation; `WITH` before DML
   - [ ] 9.3 Outer joins (#461)
   - [ ] 9.4b EXISTS and correlated subqueries, design D6 (#462):
     - [x] core: `outer`, `lateral`, `evalIn`/`typeOfIn`, `evalIn_spec`, `Equiv.lateral`, the law
