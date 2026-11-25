@@ -61,7 +61,7 @@
       "name": "nullOnDivZero",
       "file": "SqlEquiv/Strict.lean",
       "proof": "none (by design)",
-      "note": "NOT a ≃ₑ rewriter: used only by the strict check of the duckdb dialect (checkQuery, registry row 23) so that a division or modulo by zero is not counted as an error. Contract: every other error still surfaces (a divisor that errors or is not a number, and an error in the dividend: the zero arm is NULL = a). Audit it against that contract, not against ≃ₑ; it must never feed a result or a rewriter"
+      "note": "NOT a ≃ₑ rewriter: used only by the strict check of the duckdb dialect (checkQuery, registry row 23) so that a division or modulo by zero is not counted as an error. Contract: every other error still surfaces (a divisor that errors or is not a number, and a dividend that errors or is not a number: the zero arm is NULL = (a op 1), the operator's own type check of the dividend; since 25 Nov 2026, when NULL = a still hid name / 0). Audit it against that contract, not against ≃ₑ; it must never feed a result or a rewriter"
     }
   ],
   "evaluator": {

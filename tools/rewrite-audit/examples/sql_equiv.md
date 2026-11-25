@@ -242,6 +242,36 @@ gained the typed core's rewriters.**
   statement laws in `ExprAxioms`/`StatementAxioms` (`where_false_empty` and kin) gained the
   hypothesis `implicitGroup … = false` with #438/#440: a precondition, kernel-checked.
 
+**Re-audited 25 Nov 2026 (master `78db5f3`, after #470–#479): 1 issue, fixed.**
+- **Trust base:** standard axioms for the nine `SqlEquiv` entry points (the seven above,
+  `evalQueryIn_transfer`, `checkQuery`) and the `SqlCore` ones (`Expr`/`Query.equiv_simplify`,
+  `checkEquiv`, `equiv_of_check`, `Query.evalIn_spec`). Guard: 3467 theorems, 2777 definitions,
+  55 opaque constants (`SqlEquiv`); 1893 theorems, 1039 definitions (`SqlCore`).
+- **`partial def`s:** 66 in `SqlEquiv/` (48 Parser, 8 Pretty, 10 `toReprStr`), none on-path; 9
+  in `SqlBridge/Coverage.lean`, off-path.
+- **Overrides:** none. **Vacuous theorems:** none.
+- **Discovery:** no new `≃` rewriter or decision procedure. The typed core's new constructors
+  (`one`, `outer`, `lateral`, `window`) reach `Query.simplify`, `canon` and `Query.beq` as
+  congruence or identity arms, each with a kernel-checked `Equiv` case; `canon` orders
+  `ROUND` by its places too. Three elaboration transforms from #472 have the rewriter shape but
+  no `≃` claim (their oracle is the engines, decision D4): `unifyNum` (wrap an int next to a
+  decimal in `toDecimal`), `retypeNullCol` (a `NULL` literal column's type tag) and
+  `alignBranches`. Traced: values are kept (an int's value as a decimal, NULL as NULL), and any
+  other type mismatch is left to fail typing.
+- **`SqlEquiv` evaluator:** `Value.toBool` (unused) deleted; no dispatch arm changed.
+- **`nullOnDivZero`, issue (fixed):** the zero arm `NULL = a` is NULL for every value of `a`, so a
+  dividend of the wrong type over a zero divisor passed the duckdb strict check: `name / 0`,
+  `name % (age - age)`, `TRUE / 0`, `(age > 1) / 0`, all binder errors in DuckDB (while
+  `name / 1` was reported). The arm is now `NULL = (a op 1)`: the operator's own type check of
+  the dividend with a divisor that cannot be zero. Kinds traced for the dividend over a zero
+  divisor: int → NULL; decimal → error, as over any divisor, since `SqlEquiv` has no decimal `/`
+  yet (#201); NULL → NULL; string, bool → error; an error → error. Regression tests in
+  `strictErrorTests` and `DiffDuckdb.diffErrors`. Not changed (a bind-time type error, the
+  documented limit of the check): `name / NULL` passes, as the evaluator returns NULL for any
+  operand next to NULL.
+- **Probe:** unchanged: 54,876 expressions, 7,850 rewritten, 0 mismatches; the mutant is
+  caught on 45 cases.
+
 The report below is kept as recorded on 13 Nov.
 
 ## Rewrite Audit: Full Scan (sql_equiv, 2a67c43)
