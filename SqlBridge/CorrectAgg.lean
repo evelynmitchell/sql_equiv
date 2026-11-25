@@ -819,6 +819,19 @@ theorem aggItems_mem : ∀ {items : List SqlEquiv.SelectItem}, aggItems items = 
   | .star _ :: _, h, _, _ => by simp [aggItems] at h
 
 omit hf in
+theorem selectHasWindowFn_aggItems : ∀ {items : List SqlEquiv.SelectItem},
+    aggItems items = true → SqlEquiv.selectHasWindowFn items = false
+  | [], _ => rfl
+  | .exprItem a _ :: rest, h => by
+    simp only [aggItems, Bool.and_eq_true] at h
+    have ha : SqlEquiv.exprHasWindowFn a = false := by
+      cases a <;> simp_all [aggFragment, SqlEquiv.exprHasWindowFn]
+    have := selectHasWindowFn_aggItems h.2
+    simp only [SqlEquiv.selectHasWindowFn, List.any_cons, ha, Bool.false_or] at this ⊢
+    exact this
+  | .star _ :: _, h => by simp [aggItems] at h
+
+omit hf in
 set_option maxHeartbeats 1000000 in
 /-- The query the elaborator builds for `SELECT agg₁, …, aggₖ FROM f [WHERE p]`: the aggregate of
     the input with no keys, projected onto one column per item, the column of the item's own
@@ -871,8 +884,10 @@ theorem elab_agg_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
     ↓reduceIte, pure, Except.pure, Bool.not_true, bind, Except.bind] at hraw
   -- no subquery node in the items: not the elaborator's subquery path (9.4b step 3)
   simp only [Option.toList_none, List.append_nil] at hraw
-  rw [distinctSubs_eq_nil (subsOfList_aggItems (fun _ _ => rfl) items hai)] at hraw
-  simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hraw
+  rw [distinctSubs_eq_nil (subsOfList_aggItems (fun _ _ => rfl) items hai),
+    selectHasWindowFn_aggItems hai] at hraw
+  simp only [List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, List.map_nil, List.any_nil,
+    Bool.or_self, ↓reduceIte] at hraw
   refine ⟨n, qf, cf, hf, q₀, hq₀, ?_⟩
   all_goals
     split at hraw
@@ -984,18 +999,6 @@ theorem evalSelectCore_agg_ctx (db : Database) (outerRow : Row)
 open SqlCore SqlBridge SqlBridge.Correct SqlBridge.CorrectOrder SqlBridge.CorrectJoin
 
 /-- Aggregate items have no window function (#429). -/
-theorem selectHasWindowFn_aggItems : ∀ {items : List SqlEquiv.SelectItem},
-    aggItems items = true → SqlEquiv.selectHasWindowFn items = false
-  | [], _ => rfl
-  | .exprItem a _ :: rest, h => by
-    simp only [aggItems, Bool.and_eq_true] at h
-    have ha : SqlEquiv.exprHasWindowFn a = false := by
-      cases a <;> simp_all [aggFragment, SqlEquiv.exprHasWindowFn]
-    have := selectHasWindowFn_aggItems h.2
-    simp only [SqlEquiv.selectHasWindowFn, List.any_cons, ha, Bool.false_or] at this ⊢
-    exact this
-  | .star _ :: _, h => by simp [aggItems] at h
-
 theorem selectHasAggregate_aggItems : ∀ {items : List SqlEquiv.SelectItem}, aggItems items = true →
     items ≠ [] → SqlEquiv.selectHasAggregate items = true
   | [], _, h => absurd rfl h

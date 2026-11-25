@@ -219,7 +219,9 @@ theorem elabSelectF_fuel (N : NamedSchema) (a b : ℕ) {items : List SqlEquiv.Se
     (hff : fromFragment f = true) (hw : ∀ w ∈ wh, isFragment w = true)
     (hsi : ∀ g : SqlEquiv.SelectItem → Option SqlEquiv.Expr, (∀ e al, g (.exprItem e al) = some e) →
       (∀ t, g (.star t) = none) → subsOfList (items.filterMap g) = [])
-    (hsh : ∀ h ∈ having, subsOf h = []) :
+    (hsh : ∀ h ∈ having, subsOf h = [])
+    (hwi : SqlEquiv.selectHasWindowFn items = false)
+    (hwo : (orderBy.map orderExprOf).any SqlEquiv.exprHasWindowFn = false) :
     elabSelectF N a (.mk false items (some f) wh groupBy having orderBy lim off) =
       elabSelectF N b (.mk false items (some f) wh groupBy having orderBy lim off) := by
   -- no subquery in the items or `HAVING`: the branches that elaborate one (9.4b step 3), the only
@@ -237,12 +239,12 @@ theorem elabSelectF_fuel (N : NamedSchema) (a b : ℕ) {items : List SqlEquiv.Se
   conv_rhs => rw [elabFrom_congr N _ (fun sq => elabSubQuery N 15 sq) f hff]
   cases wh with
   | none =>
-    simp only [elabWhere, hd1, hd2,
+    simp only [elabWhere, hd1, hd2, hwi, hwo, Bool.not_false, Bool.and_true, Bool.or_false,
       List.isEmpty_nil, Bool.not_true, Bool.false_eq_true, ↓reduceIte, ite_true]
   | some w =>
     simp only [elabWhere,
-      subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil, ↓reduceIte, hd1, hd2,
-      Bool.not_true, Bool.false_eq_true, ite_true]
+      subsOf_frag w (hw w rfl), List.foldl_nil, List.isEmpty_nil, ↓reduceIte, hd1, hd2, hwi, hwo,
+      Bool.not_false, Bool.and_true, Bool.or_false, Bool.not_true, Bool.false_eq_true, ite_true]
 
 /-! ### Weakening, the pipeline for any predicate, and `WhereOk` -/
 
@@ -907,7 +909,9 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
       rw [elabSubQuery] at hsub
       simp only [joinStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
       rw [elabSelectF_fuel N 16 fu hff hw
-        (fun _ h1 _ => subsOfList_items h1 items hit) (fun _ hh => by simp at hh), hsub]
+        (fun _ h1 _ => subsOfList_items h1 items hit) (fun _ hh => by simp at hh)
+        (selectHasWindowFn_frag items hit) (orderExprs_noWindow fun o ho => by
+          obtain ⟨c, hc⟩ := hcols o ho; rw [hc]; rfl), hsub]
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := elabStmt_correct_join_ctx N hfold hfoldCI hwn hfix hD
       hrel hit hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hcols hnamed hst hnbq
@@ -917,7 +921,8 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
       rw [elabSubQuery] at hsub
       simp only [CorrectAgg.aggStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
       rw [elabSelectF_fuel N 16 fu hff hw
-        (fun _ h1 _ => CorrectAgg.subsOfList_aggItems h1 items hai) (fun _ hh => by simp at hh), hsub]
+        (fun _ h1 _ => CorrectAgg.subsOfList_aggItems h1 items hai) (fun _ hh => by simp at hh)
+        (CorrectAgg.selectHasWindowFn_aggItems hai) rfl, hsub]
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, -, -, -, hctx'⟩ := CorrectAgg.elabStmt_correct_agg_w N hfold hfoldCI hwn
       hfix hD hrel hai hne hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hst hnbq
@@ -929,7 +934,11 @@ theorem body_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toLowe
       simp only [CorrectGrouped.groupedStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
       rw [elabSelectF_fuel N 16 fu hff hw
         (fun _ h1 _ => CorrectGrouped.subsOfList_groupedItems h1 hgi)
-        (fun h hh => CorrectGrouped.subsOf_havingFragment h (hhv h hh)), hsub]
+        (fun h hh => CorrectGrouped.subsOf_havingFragment h (hhv h hh))
+        (CorrectGrouped.selectHasWindowFn_groupedItems hgi) (orderExprs_noWindow fun o ho => by
+          have h := CorrectGrouped.orderByHasWindow_of_orderKeyOk hob
+          simp only [SqlEquiv.orderByHasWindow, List.any_eq_false] at h
+          simpa using h o ho), hsub]
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, hctx'⟩ := CorrectGrouped.elabStmt_correct_grouped_ctx N hfold hfoldCI hwn
       hfix hD hrel hgi hgb hgc hff (fun _ _ _ _ hq => whereOk_frag N _ db D hw hq) hhv
@@ -1268,7 +1277,8 @@ theorem avgBody_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLower = s.toL
       simp only [CorrectGrouped.groupedStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
       have hsa : subsOf a = [] := by cases a <;> simp_all [CorrectAvg.avgFragment, subsOf]
       rw [elabSelectF_fuel N 16 14 hff hw
-        (fun _ h1 _ => by simp [h1, subsOfList, hsa]) (fun _ hh => by simp at hh), hsub]
+        (fun _ h1 _ => by simp [h1, subsOfList, hsa]) (fun _ hh => by simp at hh)
+        (by cases a <;> simp_all [CorrectAvg.avgFragment, SqlEquiv.selectHasWindowFn, SqlEquiv.exprHasWindowFn]) rfl, hsub]
       simp [hty, bind, Except.bind, pure, Except.pure]
     obtain ⟨hs, ss, hss, -, hctx'⟩ := CorrectAggBare.elabStmt_correct_aggBare_ctx N hfold hfoldCI
       hwn hfix hD hrel (items := [.exprItem a al])
@@ -1474,7 +1484,8 @@ theorem avgBound_of_rows (N : NamedSchema)
     rw [elabSubQuery] at hsub
     simp only [CorrectGrouped.groupedStmt, elabStmt, elabQuery, elabQueryRaw, elabSelect]
     rw [elabSelectF_fuel N 16 14 hff hw
-        (fun _ h1 _ => by simp [h1, subsOfList, subsOf]) (fun _ hh => by simp at hh), hsub]
+        (fun _ h1 _ => by simp [h1, subsOfList, subsOf]) (fun _ hh => by simp at hh)
+        (by cases e <;> simp [SqlEquiv.selectHasWindowFn, SqlEquiv.exprHasWindowFn]) rfl, hsub]
     simp [hty, bind, Except.bind, pure, Except.pure]
   exact avg_stmt_den N hfoldCI hD he hw hne hrows hst hty hss s hs 0 q hq
 

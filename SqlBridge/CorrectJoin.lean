@@ -675,8 +675,12 @@ theorem elab_join_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem}
   case hs => intros; rfl
   simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
     Bool.and_self, ↓reduceIte] at hraw
-  rw [distinctSubs_eq_nil (subsOfList_items_star (fun _ _ => rfl) (fun _ => rfl) items hit)] at hraw
-  simp only [List.isEmpty_nil, ↓reduceIte] at hraw
+  have hwo := orderExprs_noWindow (orderBy := orderBy) fun o ho => by
+    obtain ⟨c, hc⟩ := hcols o ho
+    rw [hc]; rfl
+  rw [distinctSubs_eq_nil (subsOfList_items_star (fun _ _ => rfl) (fun _ => rfl) items hit),
+    selectHasWindowFn_star items hit, hwo] at hraw
+  simp only [List.isEmpty_nil, Bool.not_false, Bool.and_self, ↓reduceIte] at hraw
   rcases hits : elabItems N cf items with _ | its
   · simp [hits, bind, Except.bind] at hraw
   simp only [hits, bind, Except.bind] at hraw

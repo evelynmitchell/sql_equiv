@@ -23,6 +23,7 @@ import SqlCoreTest.AggregateExamples
 import SqlCoreTest.OrderByExamples
 import SqlCoreTest.SetOpExamples
 import SqlCoreTest.SubqueryExamples
+import SqlCoreTest.WindowExamples
 import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest

@@ -23,7 +23,9 @@ def expectedDifferences : List (String × String) := [
   ("SELECT id * 10 + 1, age - 1, age / 7, age % 7 FROM users",
     "integer `/`: DuckDB divides as DOUBLE (registry row 6)"),
   ("SELECT name, staff FROM museum ORDER BY staff DESC, name",
-    "default NULL position: DuckDB puts NULLs last under DESC, the standard dialect first (registry row 1)")
+    "default NULL position: DuckDB puts NULLs last under DESC, the standard dialect first (registry row 1)"),
+  ("SELECT name, RANK() OVER (ORDER BY price DESC) AS r FROM items",
+    "default NULL position inside a window's ORDER BY: as above (registry row 1)")
 ]
 
 def sqlType : SqlType → String
@@ -96,7 +98,7 @@ def duckdbAvailable : IO Bool := do
 /-- Rows in order when the query sorts, as a bag otherwise. -/
 def bagOf (sql : String) (rows : List (List String)) : List String :=
   let rs := rows.map fun r => " | ".intercalate r
-  if (sql.splitOn "ORDER BY").length > 1 then rs else rs.mergeSort (· ≤ ·)
+  if ((topLevel sql).splitOn "ORDER BY").length > 1 then rs else rs.mergeSort (· ≤ ·)
 
 /-- Queries parsed in the `duckdb` dialect, for behaviour that the default dialect rejects at
 parse time. Registry row 5 (`firstRow`): `SELECT DISTINCT … ORDER BY` a key that is not selected

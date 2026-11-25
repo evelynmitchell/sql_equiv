@@ -426,6 +426,66 @@ def SubKind.divSafe {n : ℕ} : SubKind n → Bool
   | .scalar firstRow => firstRow
   | .inSub _ e => e.divSafe
 
+/-- A window function (phase 9.5, #463). -/
+inductive WinFn (n : ℕ) where
+  /-- `ROW_NUMBER()`: the row's position in its sorted partition (ties in input order). -/
+  | rowNumber
+  /-- `RANK()`: one more than the number of rows of the partition sorted before it. -/
+  | rank
+  /-- `DENSE_RANK()`: one more than the number of distinct sort keys before it. -/
+  | denseRank
+  /-- An aggregate over the window frame. -/
+  | agg (a : AggCall n)
+  deriving DecidableEq, Repr
+
+/-- `fn OVER (PARTITION BY part ORDER BY order)` (phase 9.5, #463), with SQL's default frame:
+the whole partition without `ORDER BY`; with it, the rows sorted up to the current one and its
+peers (rows with equal sort keys). -/
+structure WinCall (n : ℕ) where
+  part : List (Expr n)
+  order : List (SortKey n)
+  fn : WinFn n
+  deriving DecidableEq, Repr
+
+/-- Lexicographic comparison of two lists of sort-key values. -/
+def cmpKeyList {n : ℕ} : List (SortKey n) → List Datum → List Datum → Ordering
+  | k :: ks, a :: as, b :: bs => (k.cmpDatum a b).then (cmpKeyList ks as bs)
+  | _, _, _ => .eq
+
+/-- A row of a window's input with its partition key values, its sort key values and its
+position. -/
+abbrev WinRow (n : ℕ) := List Datum × List Datum × Row n × ℕ
+
+namespace WinCall
+
+variable {n : ℕ}
+
+/-- The window function's value at row `x`, among the input rows `all`. -/
+def value (c : WinCall n) (all : List (WinRow n)) (x : WinRow n) : Except EvalError Datum :=
+  let P := all.filter fun y => decide (y.1 = x.1)
+  let cmp (y : WinRow n) := cmpKeyList c.order y.2.1 x.2.1
+  match c.fn with
+  | .rowNumber => .ok (some (.int (1 + (P.filter fun y =>
+      cmp y == .lt || (cmp y == .eq && decide (y.2.2.2 < x.2.2.2))).length)))
+  | .rank => .ok (some (.int (1 + (P.filter fun y => cmp y == .lt).length)))
+  | .denseRank => .ok (some (.int (1 + ((P.filter fun y => cmp y == .lt).map (·.2.1)).dedup.length)))
+  | .agg a => a.eval ((P.filter fun y => cmp y != .gt).map (·.2.2.1))
+
+/-- The result type of the window function over input rows of type `Γ`. -/
+def typeOf (c : WinCall n) (Γ : Fin n → SqlType) : Option SqlType :=
+  if c.part.all (fun e => (e.typeOf Γ).isSome) && c.order.all (fun k => (k.e.typeOf Γ).isSome) then
+    match c.fn with
+    | .agg a => a.typeOf Γ
+    | _ => some .int
+  else none
+
+/-- Every division in the call's keys and argument is by a nonzero literal. -/
+def divSafe (c : WinCall n) : Bool :=
+  c.part.all (·.divSafe) && c.order.all (·.e.divSafe) &&
+    (match c.fn with | .agg a => a.divSafe | _ => true)
+
+end WinCall
+
 /-- A query over the schema `S` whose result rows have `n` columns. -/
 inductive Query (S : DbSchema) : ℕ → Type where
   /-- The rows of a table, in the instance's list order. -/
@@ -469,6 +529,9 @@ inductive Query (S : DbSchema) : ℕ → Type where
   /-- `q CROSS JOIN LATERAL body` (phase 9.4b, #462, decision D6): for each row `r` of `q`, the rows of
   `body` evaluated with `r` as its outer row, each appended to `r`. -/
   | lateral {n k : ℕ} (body : Query S k) (q : Query S n) : Query S (n + k)
+  /-- `q` with a window function's value appended to each row (phase 9.5, #463), the rows in
+  their input order. -/
+  | window {n : ℕ} (c : WinCall n) (q : Query S n) : Query S (n + 1)
 
 namespace Query
 
@@ -518,6 +581,11 @@ def evalIn (D : Database S) (env : Option ((m : ℕ) × Row m)) :
     let parts ← rs.mapM fun r => do
       return (← body.evalIn D (some ⟨_, r⟩)).map (Fin.append r)
     return parts.flatten
+  | _, window c q => do
+    let rs ← q.evalIn D env
+    let keyed ← rs.zipIdx.mapM fun (r, i) => do
+      return ((← c.part.mapM (·.eval r)), (← c.order.mapM (·.e.eval r)), r, i)
+    keyed.mapM fun x => do return Fin.append x.2.2.1 ![← c.value keyed x]
 
 /-- Evaluate a query on a database instance, with no outer row. -/
 def eval (D : Database S) {n : ℕ} (q : Query S n) : Except EvalError (List (Row n)) :=
@@ -720,6 +788,10 @@ def typeOfIn (Γo : Option ((m : ℕ) × (Fin m → SqlType))) :
     let Γ ← q.typeOfIn Γo
     let Δ ← body.typeOfIn (some ⟨_, Γ⟩)
     some (Fin.append Γ Δ)
+  | _, window c q => do
+    let Γ ← q.typeOfIn Γo
+    let τ ← c.typeOf Γ
+    some (Fin.append Γ ![τ])
 
 /-- The typing context of the query's result rows, with no outer row. -/
 def typeOf {n : ℕ} (q : Query S n) : Option (Fin n → SqlType) := q.typeOfIn none
@@ -945,6 +1017,7 @@ def divSafe : {n : ℕ} → Query S n → Bool
   | _, one => true
   | _, outer _ => true
   | _, lateral body q => body.divSafe && q.divSafe
+  | _, window c q => c.divSafe && q.divSafe
 
 /-- The query is well-typed and every division in it is by a nonzero literal; then it succeeds
 on every conforming instance (`Query.IsSafe.exists_eval_eq_ok`). -/
@@ -1016,6 +1089,47 @@ theorem mapM_evalRow_append {rs : List (Row n)} {Γ : Fin n → SqlType} (hrs : 
         exacts [htc, htsc u hu]
       · exact .inr ⟨by simp [List.mapM_cons, ht, hts], hP⟩
     · exact .inr ⟨by simp [List.mapM_cons, ht], hP⟩
+
+/-! ### Window functions: soundness (phase 9.5, #463) -/
+
+theorem mem_of_mem_zipIdx {α : Type} : ∀ {l : List α} {k : ℕ} {x : α} {i : ℕ},
+    (x, i) ∈ l.zipIdx k → x ∈ l
+  | [], _, _, _, h => by simp at h
+  | a :: l, k, x, i, h => by
+    simp only [List.zipIdx_cons, List.mem_cons, Prod.mk.injEq] at h
+    rcases h with ⟨rfl, -⟩ | h
+    · exact List.mem_cons_self
+    · exact List.mem_cons_of_mem _ (mem_of_mem_zipIdx h)
+
+/-- A list of well-typed expressions fails on a conforming row only by dividing by zero, at an
+expression that is not `divSafe`. -/
+theorem mapM_eval_spec {Γ : Fin n → SqlType} {r : Row n} (hr : r.Conforms Γ)
+    {l : List (Expr n)} (hl : ∀ e ∈ l, (e.typeOf Γ).isSome) :
+    Except.Spec (l.mapM (·.eval r)) (fun _ => True)
+      fun err => err = .divisionByZero ∧ ∃ e ∈ l, e.divSafe = false :=
+  (Except.Spec.mapM (R := fun _ _ => True) fun e he => by
+    obtain ⟨τ, hτ⟩ := Option.isSome_iff_exists.mp (hl e he)
+    exact (Expr.eval_spec hr hτ).mono (fun _ _ => trivial) fun _ h => ⟨h.1, e, he, h.2⟩).mono
+    (fun _ _ => trivial) fun _ h => h
+
+/-- A window function's value has its type, over conforming rows. -/
+theorem winValue_spec (c : WinCall n) {Γ : Fin n → SqlType} {all : List (WinRow n)}
+    (hall : ∀ y ∈ all, y.2.2.1.Conforms Γ) (x : WinRow n) {τ : SqlType}
+    (hτ : c.typeOf Γ = some τ) :
+    Except.Spec (c.value all x) (·.HasType τ)
+      fun err => err = .divisionByZero ∧ c.divSafe = false := by
+  obtain ⟨part, order, fn⟩ := c
+  simp only [WinCall.typeOf] at hτ
+  split_ifs at hτ
+  cases fn with
+  | rowNumber => cases hτ; exact rfl
+  | rank => cases hτ; exact rfl
+  | denseRank => cases hτ; exact rfl
+  | agg a =>
+    refine (AggCall.eval_spec (fun r hr => ?_) hτ).mono (fun _ h => h) fun _ h =>
+      ⟨h.1, by simp [WinCall.divSafe, h.2]⟩
+    obtain ⟨y, hy, rfl⟩ := List.mem_map.mp hr
+    exact hall y (List.mem_of_mem_filter (List.mem_of_mem_filter hy))
 
 /-- The outer row conforms to the outer typing context (phase 9.4b, #462, decision D6). -/
 def EnvOk (env : Option ((m : ℕ) × Row m)) (Γo : Option ((m : ℕ) × (Fin m → SqlType))) : Prop :=
@@ -1217,6 +1331,56 @@ theorem evalIn_spec {D : Database S} (hD : D.Conforms) {q : Query S n} :
       obtain ⟨r, rfl, hr⟩ := henv _ _ rfl
       simp only [evalIn, dite_true, Except.spec_ok, List.mem_singleton, forall_eq]
       exact hr
+  | window c q ih =>
+    intro env Γo Γ henv hq
+    simp only [typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.some.injEq] at hq
+    obtain ⟨Γq, hq₀, τ, hτ, rfl⟩ := hq
+    have hkeys : c.part.all (fun e => (e.typeOf Γq).isSome) = true ∧
+        c.order.all (fun k => (k.e.typeOf Γq).isSome) = true := by
+      simp only [WinCall.typeOf] at hτ
+      split_ifs at hτ with h
+      · simpa using h
+    refine ((ih henv hq₀).imp_right fun hs => by simp [divSafe, hs]).bind fun rs _ hrs => ?_
+    have hkey : Except.Spec (rs.zipIdx.mapM fun (r, i) => do
+          return ((← c.part.mapM (·.eval r)), (← c.order.mapM (·.e.eval r)), r, i))
+        (fun keyed : List (WinRow _) => ∀ y ∈ keyed, y.2.2.1.Conforms Γq)
+        fun e => e.IsRuntime ∧ (window c q).divSafe = false := by
+      refine (Except.Spec.mapM (R := fun (ri : Row _ × ℕ) (y : WinRow _) => y.2.2.1 = ri.1)
+        fun ri hri => ?_).mono (fun ys h y hy => ?_) (fun _ h => h)
+      · obtain ⟨r, i⟩ := ri
+        have hr := hrs r (mem_of_mem_zipIdx hri)
+        have hpd : ∀ err : EvalError, (err = .divisionByZero ∧ ∃ e ∈ c.part, e.divSafe = false) →
+            err.IsRuntime ∧ (window c q).divSafe = false := by
+          rintro _ ⟨rfl, e, he, hd⟩
+          have : c.part.all (·.divSafe) = false := by
+            rw [List.all_eq_false]; exact ⟨e, he, by simp [hd]⟩
+          exact ⟨.inl rfl, by simp [divSafe, WinCall.divSafe, this]⟩
+        have hod : ∀ err : EvalError, (err = .divisionByZero ∧ ∃ e ∈ c.order.map (·.e), e.divSafe = false) →
+            err.IsRuntime ∧ (window c q).divSafe = false := by
+          rintro _ ⟨rfl, e, he, hd⟩
+          obtain ⟨k, hk, rfl⟩ := List.mem_map.mp he
+          have : c.order.all (·.e.divSafe) = false := by
+            rw [List.all_eq_false]; exact ⟨k, hk, by simp [hd]⟩
+          exact ⟨.inl rfl, by simp [divSafe, WinCall.divSafe, this]⟩
+        have hp := (mapM_eval_spec hr (l := c.part) (by simpa using hkeys.1)).mono
+          (fun _ _ => trivial) hpd
+        have ho := (mapM_eval_spec hr (l := c.order.map (·.e)) (by simpa using hkeys.2)).mono
+          (fun _ _ => trivial) hod
+        rw [List.mapM_map] at ho
+        refine hp.bind fun ps _ _ => ho.bind fun os _ _ => Except.spec_ok.mpr rfl
+      · obtain ⟨ri, hri, hy'⟩ := h y hy
+        rw [hy']
+        exact hrs _ (mem_of_mem_zipIdx (show (ri.1, ri.2) ∈ _ from hri))
+    refine hkey.bind fun keyed _ hkeyed => ?_
+    refine (Except.Spec.mapM (R := fun _ (t : Row _) => t.Conforms (Fin.append Γq ![τ]))
+      fun y hy => ?_).mono (fun ts h t ht => ?_) (fun _ h => h)
+    · refine ((winValue_spec c hkeyed y hτ).mono (fun _ h => h) fun _ h =>
+        ⟨.inl h.1, by simp [divSafe, h.2]⟩).bind fun d _ hd => Except.spec_ok.mpr ?_
+      exact Row.conforms_append_iff.mpr ⟨hkeyed y hy, fun i => by
+        refine Fin.cases ?_ (fun j => j.elim0) i
+        simpa using hd⟩
+    · obtain ⟨_, _, h⟩ := h t ht
+      exact h
   | lateral body q ihb ihq =>
     intro env Γo Γ henv hq
     simp only [typeOfIn, Option.bind_eq_bind, Option.bind_eq_some_iff, Option.some.injEq] at hq
@@ -1290,6 +1454,7 @@ def closed : {n : ℕ} → Query S n → Bool
   | _, one => true
   | _, outer _ => false
   | _, lateral _ q => q.closed
+  | _, window _ q => q.closed
 
 /-- A closed query does not depend on the outer row. -/
 theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
@@ -1315,6 +1480,7 @@ theorem evalIn_of_closed (D : Database S) {q : Query S n} (h : q.closed = true)
   | one => rfl
   | outer Γ => simp [closed] at h
   | lateral body q _ ihq => simp only [closed] at h; simp only [eval, evalIn, ihq h]
+  | window c q ih => simp only [closed] at h; simp only [eval, evalIn, ih h]
 
 theorem eval_lateral (D : Database S) (body : Query S k) (q : Query S n) :
     (lateral body q).eval D = (do

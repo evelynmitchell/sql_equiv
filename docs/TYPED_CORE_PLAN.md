@@ -232,11 +232,26 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       Postgres
     - [x] subqueries in other positions, correlated or not (`attachSubs`): the SELECT list,
       `HAVING`, and items over the groups (the probe of an `IN` may be an aggregate); FROM-less
-      outer queries; `EXISTS` over a set operation. Not done: JOIN ON, ORDER BY, over window
-      functions (9.5), a `CASE` branch (rejected: the typed core evaluates an attached subquery
+      outer queries; `EXISTS` over a set operation; with window functions as the probe of an `IN`
+      (9.5). Not done: JOIN ON, ORDER BY, a `CASE` branch (rejected: the typed core evaluates an attached subquery
       whether or not the branch is taken), bare columns next to a subquery. Corpus 560 → 597
     - [ ] richer bodies (GROUP BY or set operations in a correlated body), if the corpus asks
-  - [ ] 9.5 Window functions (#463)
+  - [x] 9.5 Window functions (#463): `Query.window` with a `WinCall` (partition expressions,
+    sort keys, and ROW_NUMBER, RANK, DENSE_RANK or an aggregate over the partition's rows that do
+    not sort after the row, the SQL default frame `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+    ROW`), one column per window, appended to the row; typing, `evalIn_spec`, `Equiv.window`,
+    simplifier, canonicaliser and checker arms. The elaborator attaches a `window` per distinct
+    window node of the items and `ORDER BY`, over the `FROM` rows or over the groups after
+    `HAVING` (aggregates in the window's argument and keys read their columns), before the
+    subqueries of the SELECT list, so the probe of an `IN (subquery)` may be a window. `SELECT
+    DISTINCT` applies after the windows. The bridge theorems are unchanged: their fragments have
+    no window functions, and the elaborator takes the old path when there are none
+    (`selectHasWindowFn_frag`, `orderExprs_noWindow`). 44 window queries agree with SqlEquiv,
+    DuckDB and Postgres (one documented DuckDB difference: NULLs last under `DESC`, registry row
+    1). Corpus 647 → 834; the one window statement left has its window in a subquery in a join's
+    `ON`, where no subquery elaborates yet. Not done: a subquery inside a window's argument
+    (`subsOf` does not look inside a window); explicit frames (`ROWS`, `RANGE … PRECEDING`), rejected by the parser; a window as the
+    probe of an `IN (subquery)` under `GROUP BY` (the subqueries attach before `HAVING`)
   - [ ] 9.6 Recursive CTEs (#464)
   - [ ] 9.7 INSERT, UPDATE, DELETE (#465)
   - [ ] 9.8 Switch over and retire `SqlEquiv`'s evaluator (#466)

@@ -1294,8 +1294,14 @@ theorem elab_ordered_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem} 
     case hf => intros; rfl
     simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
       Bool.and_self, ↓reduceIte] at hraw
-    rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at hraw
-    simp only [List.isEmpty_nil, ↓reduceIte] at hraw
+    have hwo := orderExprs_noWindow (orderBy := orderBy) fun o ho => by
+      obtain ⟨c, hc⟩ := hcols' o ho
+      cases o
+      simp only [SqlEquiv.OrderByItem.expr] at hc ⊢
+      rw [hc]; rfl
+    rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit),
+      selectHasWindowFn_frag items hit, hwo] at hraw
+    simp only [List.isEmpty_nil, Bool.not_false, Bool.and_self, ↓reduceIte] at hraw
     rcases hits : elabItems N (requalify (N.fold (al.getD name)) (N.S.columns T)) items with _ | its
     · simp [hits] at hraw
     simp only [hits] at hraw
@@ -1312,8 +1318,14 @@ theorem elab_ordered_shape (N : NamedSchema) {items : List SqlEquiv.SelectItem} 
     case hf => intros; rfl
     simp only [List.isEmpty_nil, aggsOfOpt, List.append_nil, List.eraseDups_nil, Option.isNone_none,
       Bool.and_self, ↓reduceIte] at hraw
-    rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit)] at hraw
-    simp only [List.isEmpty_nil, ↓reduceIte] at hraw
+    have hwo := orderExprs_noWindow (orderBy := orderBy) fun o ho => by
+      obtain ⟨c, hc⟩ := hcols' o ho
+      cases o
+      simp only [SqlEquiv.OrderByItem.expr] at hc ⊢
+      rw [hc]; rfl
+    rw [distinctSubs_eq_nil (subsOfList_items (fun _ _ => rfl) items hit),
+      selectHasWindowFn_frag items hit, hwo] at hraw
+    simp only [List.isEmpty_nil, Bool.not_false, Bool.and_self, ↓reduceIte] at hraw
     rcases hits : elabItems N (requalify (N.fold (al.getD name)) (N.S.columns T)) items with _ | its
     · simp [hits] at hraw
     simp only [hits] at hraw
