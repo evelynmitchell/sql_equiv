@@ -1,6 +1,6 @@
 # PostgreSQL as a Testing Oracle for sql_equiv
 
-> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 23 Nov 2026 the codebase has **0 axioms** (all proved since PR #173) and **714 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. The optimizer and its axioms that it mentions were removed in PR #156.
+> **Historical snapshot.** Axiom/theorem counts in this document are as of when it was written. As of 25 Nov 2026 the codebase has **0 axioms** (all proved since PR #173) and **714 theorems**; run `python3 tools/count_axioms_theorems.py` for the live count. The optimizer and its axioms that it mentions were removed in PR #156.
 
 > **Status (2026-11-20):** mode 1 (semantics validation) landed as `LSpecTests/DiffPostgres.lean` (#224), with Postgres also the tiebreaker in the Spider evaluate harness (#225). Modes 2 and 3 below are not implemented.
 

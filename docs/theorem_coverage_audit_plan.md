@@ -3,7 +3,7 @@
 ## Status
 - Branch: `master` (current)
 - **0 axioms** across tracked `.lean` files (0 in `Equiv/`, 0 in infrastructure)
-- **711 theorems** proved (100.0%, 23 Nov 2026; the per-file tables below are as of writing)
+- **714 theorems** proved (100.0%, 25 Nov 2026; the per-file tables below are as of writing)
 - Axiom ratchet: 0 (`tools/axiom_count_minimum.txt`)
 - Live counts: `python3 tools/count_axioms_theorems.py -v`
 - Coverage validator: `uv run python tools/axiom_coverage_validator.py --runtime`
