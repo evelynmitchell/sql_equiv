@@ -336,6 +336,26 @@ def corpus : List (String × Expect) := [
   ("SELECT name, age IN (id, 30) AS r FROM users", .agree),
   ("SELECT name FROM users WHERE age NOT IN (id * 10, 25)", .agree),
   ("SELECT name FROM users WHERE 30 IN (age, NULL)", .agree),
+  -- #472: set operations across INT/DECIMAL and an untyped NULL branch; CASE and COALESCE
+  -- promote an integer next to a decimal
+  ("SELECT 1 UNION SELECT 1.0",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  ("SELECT 2 UNION ALL SELECT 1.5",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  ("SELECT 1 INTERSECT SELECT 1.0",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  ("SELECT id FROM users WHERE id < 3 EXCEPT SELECT 1.0",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  ("SELECT COUNT(DISTINCT v) AS c FROM (SELECT 1 AS v UNION ALL SELECT 1.0) AS t", .agree),
+  ("SELECT v, COUNT(*) FROM (SELECT 1 AS v UNION ALL SELECT 1.0 UNION ALL SELECT 2) AS t GROUP BY v ORDER BY v",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  ("SELECT price FROM items WHERE price > 2 UNION ALL SELECT NULL", .agree),
+  ("SELECT name FROM users WHERE id = 1 UNION ALL SELECT NULL", .agree),
+  ("SELECT DISTINCT p FROM (SELECT price AS p FROM items WHERE price IS NULL UNION ALL SELECT NULL) AS t", .agree),
+  ("SELECT name, CASE WHEN age > 28 THEN 1 ELSE 0.5 END FROM users",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
+  ("SELECT COALESCE(NULL, 1, 2.5), COALESCE(2.5, 1)",
+    .sqlEquivBug "#472 result type: the engines promote INT to DECIMAL, SqlEquiv keeps each value's type"),
   -- outside the fragment, or ill-typed
   -- GROUP BY and aggregates (phase 8a, #313)
   ("SELECT COUNT(*) FROM users", .agree),

@@ -218,6 +218,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     CONCAT written with `CASE` by the elaborator, `IN` over non-literals with `OR`. Corpus
     597 → 630. SqlEquiv's CONCAT (two arguments, NULL propagates) differs from the engines (any
     number, NULLs skipped); left as is (D4)
+  - [x] Set operations across INT/DECIMAL and untyped NULL branches, `CASE`/`COALESCE` promotion
+    (#472): `UnOp.toDecimal`; branches aligned when one has no `FROM` (the bridge theorems'
+    branches all have one). Corpus 630 → 647
   - [ ] 9.2 Non-recursive CTEs, by inlining (#460)
   - [ ] 9.3 Outer joins (#461)
   - [ ] 9.4b EXISTS and correlated subqueries, design D6 (#462):

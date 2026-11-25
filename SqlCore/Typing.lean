@@ -72,6 +72,8 @@ def UnOp.typeOf : UnOp → SqlType → Option SqlType
   | .lower, .text => some .text
   | .upper, .text => some .text
   | .length, .text => some .int
+  | .toDecimal, .int => some .decimal
+  | .toDecimal, .decimal => some .decimal
   | _, _ => none
 
 /-- The result type of an arithmetic operator: integers stay integers (integer `/` truncates), and a
@@ -160,6 +162,16 @@ theorem evalUnOp_ok_of_typeOf {op : UnOp} {τ τ' : SqlType} (h : op.typeOf τ =
     rcases hasType_text_cases hd with rfl | ⟨t, rfl⟩
     · exact ⟨none, rfl, trivial⟩
     · exact ⟨some (.int t.length), rfl, rfl⟩
+  | .toDecimal, .int, h =>
+    cases h
+    rcases hasType_int_cases hd with rfl | ⟨z, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.decimal z), rfl, rfl⟩
+  | .toDecimal, .decimal, h =>
+    cases h
+    rcases hasType_decimal_cases hd with rfl | ⟨q, rfl⟩
+    · exact ⟨none, rfl, trivial⟩
+    · exact ⟨some (.decimal q), rfl, rfl⟩
 
 private theorem hasType_numeric_cases {d : Datum} {τ : SqlType} (hτ : τ.isNumeric)
     (h : d.HasType τ) : d = none ∨ (∃ z, d = some (.int z)) ∨ ∃ q, d = some (.decimal q) := by

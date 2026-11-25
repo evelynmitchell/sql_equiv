@@ -94,7 +94,7 @@ def SqlType.rank : SqlType → ℕ
 
 def UnOp.rank : UnOp → ℕ
   | .not => 0 | .neg => 1 | .isNull => 2 | .isNotNull => 3 | .round _ => 4 | .lower => 5
-  | .upper => 6 | .length => 7
+  | .upper => 6 | .length => 7 | .toDecimal => 8
 
 /-- The parameter of a unary operator (`ROUND`'s places), to order operators of one rank. -/
 def UnOp.param : UnOp → ℤ
