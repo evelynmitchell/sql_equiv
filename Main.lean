@@ -3,8 +3,13 @@
 
   Interactive command-line interface for the sql_equiv project.
   Supports parsing, evaluation, equivalence checking, and normalization.
+
+  Since phase 9.8 (#466) `eval`, `equiv` and the batch mode run on the typed core
+  (`SqlBridge.Cli`); `SqlEquiv`'s evaluator is the reference oracle (decision D7), shown only
+  where the typed core does not elaborate a statement or disagrees with it.
 -/
 import SqlEquiv
+import SqlBridge.Cli
 
 open SqlEquiv
 
@@ -158,6 +163,54 @@ def prettyTable (result : Table) : String :=
       "\n" ++ sep ++ "\n" ++ headerLine ++ "\n" ++ sep ++ "\n" ++
       "\n".intercalate dataLines ++ "\n" ++ sep
 
+/-- The sample tables' typed declarations (the typed core's schema of `sampleDatabase`). -/
+def sampleDecls : List SqlBridge.Cli.TableDecl := [
+  ("users", [("id", .int), ("name", .text), ("age", .int), ("department", .text)]),
+  ("orders", [("id", .int), ("user_id", .int), ("amount", .int), ("product", .text)]),
+  ("products", [("id", .int), ("name", .text), ("price", .int)])]
+
+/-- A typed-core result as a table. -/
+def prettyResult (r : SqlBridge.Cli.Result) : String :=
+  if r.rows.isEmpty then Color.dimText "  (empty result set)"
+  else
+    let widths := getColumnWidths r.columns r.rows
+    let sep := separatorLine widths
+    "\n" ++ sep ++ "\n" ++ formatRow (r.columns.map Color.boldText) widths ++ "\n" ++ sep ++ "\n" ++
+      "\n".intercalate (r.rows.map fun row => formatRow row widths) ++ "\n" ++ sep
+
+/-- The reference oracle's rows, rendered as the typed core renders them (for comparison). -/
+def oracleRows (t : Table) : List (List String) :=
+  t.map fun row => row.map fun (_, v) => SqlBridge.SpiderEval.renderDatum (SqlBridge.Cli.datumOf v)
+
+/-- Rows as a bag (sorted), for comparing the typed core with the oracle. -/
+def bagOfRows (rows : List (List String)) : List String :=
+  (rows.map fun r => "|".intercalate r).mergeSort (· ≤ ·)
+
+/-- Run a statement on the typed core, and on the reference oracle where the typed core does not
+elaborate it or disagrees with it. `brief` limits the printed rows (batch mode). -/
+def runStatement (stmt : Stmt) (brief : Bool) : IO Unit := do
+  let oracle := evalStmt sampleDatabase stmt
+  let oracleTable : Option Table := match stmt with
+    | .query _ => oracle.2
+    | .insert i => some (oracle.1 i.table)
+    | .update u => some (oracle.1 u.table)
+    | .delete d => some (oracle.1 d.table)
+  match SqlBridge.Cli.typedRun sampleDecls sampleDatabase (← dialectRef.get) stmt with
+  | .ok r =>
+    IO.println s!"\n{Color.success "Result"} ({r.rows.length} rows, typed core):"
+    if !brief || r.rows.length ≤ 5 then IO.println (prettyResult r)
+    if let some t := oracleTable then
+      if bagOfRows (oracleRows t) != bagOfRows r.rows then
+        IO.println s!"\n{Color.warning "The reference oracle (SqlEquiv) disagrees"} ({t.length} rows):"
+        IO.println (prettyTable t)
+  | .error e =>
+    IO.println s!"\n{Color.warning "Typed core"}: {e}"
+    match oracleTable with
+    | some t =>
+      IO.println s!"{Color.dimText "Reference oracle (SqlEquiv)"} ({t.length} rows):"
+      if !brief || t.length ≤ 5 then IO.println (prettyTable t)
+    | none => pure ()
+
 -- ============================================================================
 -- AST Pretty Printing (for debugging)
 -- ============================================================================
@@ -205,7 +258,7 @@ where
 
   prettyFrom : FromClause -> String
   | .table t => t.name ++ (match t.alias with | some a => s!" AS {a}" | none => "")
-  | .subquery _ alias => s!"(subquery) AS {alias}"
+  | .subquery _ al => s!"(subquery) AS {al}"
   | .join l jt r _ => s!"{prettyFrom l} {jt.toSql} {prettyFrom r}"
 
 -- ============================================================================
@@ -263,14 +316,7 @@ def cmdParse (sql : String) : IO Unit := do
 def cmdEval (sql : String) : IO Unit := do
   IO.println s!"\n{Color.info "Evaluating"}: {sql}"
   match ← parseD sql with
-  | .ok stmt =>
-    let (_, result) := evalStmt sampleDatabase stmt
-    match result with
-    | some table =>
-      IO.println s!"\n{Color.success "Result"} ({table.length} rows):"
-      IO.println (prettyTable table)
-    | none =>
-      IO.println s!"\n{Color.success "Statement executed"} (no result set)"
+  | .ok stmt => runStatement stmt false
   | .error e =>
     IO.println s!"\n{Color.error "Parse error"}: {e}"
 
@@ -292,8 +338,15 @@ def cmdEquiv (input : String) : IO Unit := do
 
   match ← parseD sql1, ← parseD sql2 with
   | .ok stmt1, .ok stmt2 =>
-    -- Check syntactic equivalence
-    let result : EquivResult :=
+    -- the typed core first (#466): a proof from `Query.checkEquiv`, or the sample database
+    let typed := SqlBridge.Cli.typedEquiv sampleDecls sampleDatabase (← dialectRef.get) stmt1 stmt2
+    let result : EquivResult := match typed with
+      | .proved => .equivalent "proved by the typed core's checker (Query.checkEquiv) on every conforming database"
+      | .sameOnSample => .maybeEquivalent "not proved; same rows on the sample database (typed core)"
+      | .differOnSample why => .notEquivalent s!"{why} (typed core)"
+      | .notElaborated why =>
+      -- outside the typed core: the reference oracle's syntactic checks (SqlEquiv)
+      let _ := why
       if stmt1 == stmt2 then
         .equivalent "Queries are syntactically identical"
       else
@@ -317,11 +370,13 @@ def cmdEquiv (input : String) : IO Unit := do
               let r1 := evalSelect sampleDatabase sel1
               let r2 := evalSelect sampleDatabase sel2
               if r1 == r2 then
-                .maybeEquivalent "Results match on sample database (may not be universally equivalent)"
+                .maybeEquivalent "Results match on sample database (reference oracle; may not be universally equivalent)"
               else
-                .notEquivalent "Different results on sample database"
+                .notEquivalent "Different results on sample database (reference oracle)"
         | _, _ =>
           .notEquivalent "Different statement types or complex queries"
+    if let .notElaborated why := typed then
+      IO.println s!"  {Color.dimText s!"Typed core: does not elaborate ({why}); the reference oracle (SqlEquiv) decides"}"
 
     IO.println s!"  {result.toString}"
 
@@ -354,7 +409,7 @@ def cmdNormalize (sql : String) : IO Unit := do
       let normalized := normalizeSelect sel
       IO.println s!"\n{Color.success "Original"}:"
       IO.println s!"  {sel.toSql}"
-      IO.println s!"\n{Color.success "Normalized"}:"
+      IO.println s!"\n{Color.success "Normalized"} {Color.dimText "(reference oracle: SqlEquiv's normalizeExpr, decision D3)"}:"
       IO.println s!"  {normalized.toSql}"
 
       -- Show WHERE clause normalization details
@@ -375,7 +430,7 @@ def cmdNormalize (sql : String) : IO Unit := do
 def cmdHelp : IO Unit := do
   IO.println s!"\n{Color.boldCyan "SQL Equivalence REPL - Available Commands"}{Color.reset}\n"
   IO.println s!"  {Color.keyword "parse"} <sql>        Parse SQL and show AST"
-  IO.println s!"  {Color.keyword "eval"} <sql>         Evaluate query against sample database"
+  IO.println s!"  {Color.keyword "eval"} <sql>         Evaluate on the sample database (typed core)"
   IO.println s!"  {Color.keyword "equiv"} <q1> | <q2>  Check if two queries are equivalent"
   IO.println s!"  {Color.keyword "normalize"} <sql>    Show normalized form of query"
   IO.println s!"  {Color.keyword "schema"}             Show sample database schema"
@@ -445,15 +500,7 @@ def processBatchFile (filename : String) : IO Unit := do
       IO.println s!"{Color.dimText "---"} Line {lineNum}: {query.take 50}..."
 
       match ← parseD query with
-      | .ok stmt =>
-        let (_, result) := evalStmt sampleDatabase stmt
-        match result with
-        | some table =>
-          IO.println s!"{Color.success "OK"}: {table.length} rows"
-          if table.length <= 5 then
-            IO.println (prettyTable table)
-        | none =>
-          IO.println s!"{Color.success "OK"}: Statement executed"
+      | .ok stmt => runStatement stmt true
       | .error e =>
         IO.println s!"{Color.error "ERROR"}: {e}"
 

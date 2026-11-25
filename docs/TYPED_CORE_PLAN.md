@@ -308,12 +308,17 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
       `SqlBridge.SpiderEval`), `SqlEquiv` beside it; ratchets re-based (D5): exact 520 → 489,
       evaluate-agreement 559 → 520; the 44 queries the typed core does not elaborate are the only
       disagreements between the two (report section "Typed core vs SqlEquiv")
-    - [ ] the CLI (REPL and `--file`) on the typed core
-    - [ ] `certifiedRewrite`, `checkEquivFull`, the statement checkers and the `sql_equiv` tactic
-      replaced by `SqlCore.simplify` / `checkEquiv`; `/audit` config
-    - [ ] D3, group by group (each confirmed)
-    - [ ] `Strict.lean` removed; the evaluator labelled as the reference oracle; README trust
-      sections, mutation testing, coverage matrix, `TESTING_STRATEGY.md`
+    - [x] the CLI (REPL `eval` and `equiv`, and `--file`) on the typed core (`SqlBridge.Cli`):
+      `eval` elaborates and evaluates (DML: the written table), `equiv` asks `Query.checkEquiv`
+      for a proof, else compares on the sample database; the reference oracle's answer is shown,
+      labelled, where the typed core does not elaborate or disagrees. `normalize` waits for the
+      rewriter swap
+    - [x] D3 decided (25 Nov 2026): the 714 theorems stay as the oracle's theory; nothing is
+      ported or deleted. `certifiedRewrite`, `checkEquivFull`, the statement checkers, the
+      `sql_equiv` tactic and `Strict.lean` stay as oracle-level tools (D7 amended);
+      `SqlCore.simplify` / `checkEquiv` are the project's rewriter and checker
+    - [x] the evaluator and its tools labelled as the reference oracle (module docs); README
+      overview, trust and CSLib sections; `/audit` config; `TESTING_STRATEGY.md`
   - [ ] 9.9 Upstream conversation with cslib-frontier (#467)
 
 ## Phase 9 plan (#298, option B)
@@ -363,7 +368,7 @@ inside areas listed as supported, and the plan is re-estimated then.
 | 9.5 | Window functions | `Query.window` (partition, sort, function per row), composing with `aggregate` | | 3–4 | #463 |
 | 9.6 | `WITH RECURSIVE` | `Query.fix`, fuel-bounded | stop on bag equality as engines do, or on list equality; what running out of fuel is (an error, in a strict core, or the rows so far as `SqlEquiv`) | 2 | #464 |
 | 9.7 | INSERT / UPDATE / DELETE | `Stmt.exec : Instance → Except Error Instance`, conformance preserved; UPDATE reads the old row; INSERT fills columns by position | | 2–3 | #465 |
-| 9.8 | Switch over | CLI, Spider harness and differential suites on the typed core, both semantics compared during the transition (the three divergences above are expected); typed simplifier and checker replace `certifiedRewrite`, `checkEquivFull` and the `sql_equiv` tactic; D3 and D5 carried out; `SqlEquiv/Strict.lean` removed (the typed core is strict); README trust sections | the final form: remove `SqlEquiv`'s evaluator, or keep it as a labelled test oracle | 3–5 | #466 |
+| 9.8 | Switch over | CLI, Spider harness and differential suites on the typed core, both semantics compared during the transition (the three divergences above are expected); typed simplifier and checker become the project's (the old ones and `SqlEquiv/Strict.lean` stay as oracle-level tools, D7 amended); D3 and D5 carried out; README trust sections | the final form (decided: D7, a labelled reference oracle) | 3–5 | #466 |
 | 9.9 | Upstream | inventory of upstreamable modules, proposed order; the user opens the conversation | | | #467 |
 
 **First report of the metric (24 Nov 2026, `benchmarks/typed_corpus/report.md`).** 504 of 983
@@ -389,7 +394,9 @@ statements. And the order within 9.5–9.7 follows the corpus: windows (171) fir
 Outer joins matter least here (5 statements). The ceiling is about 920 of 983, since the
 type-error tests stay rejected.
 
-**D3 inventory** (theorem counts by `grep`, 714 in all; fates proposed, each confirmed in 9.8):
+**D3 inventory** (theorem counts by `grep`, 714 in all). The fates below were proposed; decided on
+25 Nov 2026 instead: every group stays, relabelled as the reference oracle's theory (D3, D7), and
+nothing is ported or deleted.
 
 | Module | Theorems | What they are | Proposed fate |
 |---|--:|---|---|

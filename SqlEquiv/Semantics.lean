@@ -3,6 +3,14 @@
 
   Defines what SQL statements *mean* using a relational algebra model.
   This enables formal equivalence proofs.
+
+  **Reference oracle (decision D7, #466).** This is `SqlEquiv`'s untyped evaluator, kept as a
+  labelled reference oracle. The project's semantics is the typed core (`SqlCore`): its rewriter
+  and checker (`SqlCore.Expr.simplify`, `Query.checkEquiv`) are what the CLI and the Spider harness
+  use. This evaluator serves the differential suites, and the bridge theorems
+  (`SqlBridge/Correct*.lean`) prove the elaborator agrees with it on their fragment. Its known
+  divergences from the engines are recorded in `docs/IMPLEMENTATION_DEFINED.md` (T21, T22, T25,
+  T26).
 -/
 import SqlEquiv.SemanticsBase
 import SqlEquiv.SemanticsCore

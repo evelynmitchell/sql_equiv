@@ -2,10 +2,11 @@
 
 This project uses several independent verification layers, each catching a different class of
 error, so that a gap in one is covered by another. The layers below are in the order CI runs
-them (`.github/workflows/ci.yml`). There are two semantics under test: the original untyped
-evaluator (`SqlEquiv`) and the typed core (`SqlCore`, reached from parsed SQL through
-`SqlBridge`); several layers exist to keep the two honest against each other and against real
-engines.
+them (`.github/workflows/ci.yml`). There are two semantics under test: the typed core
+(`SqlCore`, reached from parsed SQL through `SqlBridge`), which is the project's semantics, and
+the original untyped evaluator (`SqlEquiv`), kept since #466 as a labelled reference oracle with
+its theorems, rewriter, checkers and tactic (decisions D3, D7). Several layers exist to keep the
+two honest against each other and against real engines.
 
 ## Verification layers
 
@@ -86,14 +87,15 @@ engines.
 ### 5. Spider ratchets (north-star metrics)
 
 - **Parse rate** (`tools/spider_parse_baseline.py --check`), **evaluate agreement with sqlite**
-  (`tools/spider_eval_baseline.py --check`, Postgres as tiebreaker) and **typed-core
+  (`tools/spider_eval_baseline.py --check`, on the typed core since #466, Postgres as
+  tiebreaker; the report compares it with the reference oracle) and **typed-core
   elaboration** (`tools/spider_elab_baseline.py --check`). Each has a minimum in
   `tools/spider_*_minimum.txt`; CI fails on a regression, and `--update-ratchet` raises it.
 - **Watch for:** the evaluate figure is a sum of exact matches, tie-valid answers and
   TEXT-affinity emulation; only the sum is ratcheted today (#266). The reports under
   `benchmarks/spider/` are generated; failure classes in them become issues.
 
-### 6. Differential oracles for `SqlEquiv` (in `lake exe sql_equiv_lspec`)
+### 6. Differential oracles for the reference oracle `SqlEquiv` (in `lake exe sql_equiv_lspec`)
 
 - **Catches:** semantics that every internal layer agrees on and a real engine does not.
 - **How:** `LSpecTests/DiffSqlite.lean`, `DiffDuckdb.lean`, `DiffPostgres.lean` run one SQL
@@ -102,7 +104,9 @@ engines.
 - **Watch for:** where engines legitimately differ, the choice is a named dialect setting with a
   registry row (`docs/IMPLEMENTATION_DEFINED.md`): check the engines by running them, record the
   choice, and add an explicit disagreement case for the engines that differ. Where DuckDB and
-  Postgres raise a query error, `SqlEquiv` returns a quiet `none` (#270).
+  Postgres raise a query error, `SqlEquiv` returns a quiet `none` (#270); these suites compare
+  errors through its strict layer (`SqlEquiv/Strict.lean`), which stays with the oracle (D7). The
+  typed core has its own engine suites (`SqlCoreTest/*DiffTest.lean`, layer 4).
 
 ### 7. LSpec property tests (`lake exe sql_equiv_lspec`)
 
@@ -153,6 +157,8 @@ engines.
 - **Locally:** in a scratch worktree (it edits `SemanticsBase.lean` and leaves the build cache
   holding the last mutant): `python3 tools/mutation_test.py --list`, then
   `--sites evalFunc --out f.json` and `--merge f.json`. About one to two minutes per mutant.
+- **Scope:** it mutates the reference oracle (`SqlEquiv`), not the typed core; the typed core's
+  scalar semantics is checked by its kernel examples and engine suites (layer 4).
 - **Watch for:** survivors are test-writing tasks, but check each first: a mutant can be
   equivalent (no input tells it apart). The SqlCore / SqlBridge proofs are not built (they
   need Mathlib), so a mutant only they would reject shows as killed by tests or survived.
@@ -229,7 +235,8 @@ Never run `lake clean` (a full rebuild takes over twenty minutes).
 
 - 43 public `Equiv/` theorems have no test naming them (`tools/theorem_coverage_uncovered.txt`).
 - Database properties cover one fixed schema; random schemas are out of scope (#245).
-- Mutation testing covers the value-level dispatch arms only; the SELECT pipeline
+- Mutation testing covers the reference oracle's value-level dispatch arms only (not the typed
+  core); the SELECT pipeline
   (`SemanticsCore`, `SemanticsParam`) is not mutated (#210).
 - `SqlEquiv`'s equivalences are relative to its quiet-error model; the strict layer per dialect
   (#270, #448) transfers them only when neither side fails, and does not see bind-time errors.
