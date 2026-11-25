@@ -6,12 +6,39 @@
 -/
 import SqlBridge.Spider
 import SqlBridge.Coverage
+import SqlBridge.SpiderEval
 
 open Lean SqlBridge SqlBridge.Spider
 
+/-- `spider_elab --eval TABLES.json MANIFEST`: evaluate the manifest's queries on the typed core
+(phase 9.8, #466; `SqlBridge.SpiderEval`). -/
+def evalMain (tablesPath manifestPath : String) : IO UInt32 := do
+  let tj ← IO.ofExcept (Json.parse (← IO.FS.readFile tablesPath))
+  let arr ← IO.ofExcept (tj.getArr?)
+  let mut schemas : Std.HashMap String (Array TableInfo) := {}
+  for j in arr do
+    let (db, ts) ← IO.ofExcept (tablesOfJson j)
+    schemas := schemas.insert db ts
+  let (dbs, queries) := SpiderEval.parseManifest (← IO.FS.readFile manifestPath)
+  let mut i := 0
+  for (qdb, sql) in queries do
+    i := i + 1
+    let some ts := schemas[qdb]? | IO.println s!"#RESULT {i} err unknown database"; continue
+    match SpiderEval.evalOne ts ((dbs.lookup qdb).getD []) sql with
+    | .error e => IO.println s!"#RESULT {i} err {e}"
+    | .ok rows =>
+      IO.println s!"#RESULT {i} ok"
+      for row in rows do
+        IO.println ("|".intercalate row)
+      IO.println "#END"
+  return 0
+
 def main (args : List String) : IO UInt32 := do
+  if let ["--eval", tablesPath, manifestPath] := args then
+    return ← evalMain tablesPath manifestPath
   let [tablesPath, queriesPath] := args
-    | IO.eprintln "usage: spider_elab TABLES.json QUERIES.jsonl"; return 2
+    | IO.eprintln "usage: spider_elab TABLES.json QUERIES.jsonl | --eval TABLES.json MANIFEST"
+      return 2
   let tj ← IO.ofExcept (Json.parse (← IO.FS.readFile tablesPath))
   let arr ← IO.ofExcept (tj.getArr?)
   let mut schemas : Std.HashMap String (Array TableInfo) := {}

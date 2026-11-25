@@ -24,6 +24,7 @@ import SqlBridge.CorrectSub
 import SqlBridge.CorrectDerived
 import SqlBridge.Coverage
 import SqlBridge.Spider
+import SqlBridge.SpiderEval
 import Test.TrustBaseCommands
 
 #assert_trust_base SqlCore

@@ -50,6 +50,10 @@ REPORT = ROOT / "benchmarks" / "spider" / "eval_report.md"
 RATCHET = ROOT / "tools" / "spider_eval_minimum.txt"
 EXACT_RATCHET = ROOT / "tools" / "spider_eval_exact_minimum.txt"
 EXE = ROOT / ".lake" / "build" / "bin" / "sql_equiv"
+# The typed core (phase 9.8, #466): `spider_elab --eval` elaborates and evaluates each query.
+# It is the engine the ratchets measure; `SqlEquiv`'s evaluator (`EXE`) still runs beside it during
+# the transition, and the report counts where the two disagree.
+TYPED_EXE = ROOT / ".lake" / "build" / "bin" / "spider_elab"
 
 N_ROWS = 5
 
@@ -572,6 +576,35 @@ def _self_test_duckdb_verdict() -> None:
         assert duckdb_verdict(None, q, [], sq) is None
 
 
+def run_ours(manifest_path: str, typed: bool) -> dict[int, tuple[str, list]]:
+    """Run our engine on a manifest: the typed core (`spider_elab --eval`, the default since
+    #466) or `SqlEquiv`'s evaluator (`sql_equiv --spider-eval`). Result per manifest index:
+    ("ok", rows) or ("err", message)."""
+    cmd = ([str(TYPED_EXE), "--eval", str(TABLES), manifest_path] if typed else
+           [str(EXE), "--dialect", "sqlite", "--spider-eval", manifest_path])
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    ours: dict[int, tuple[str, list]] = {}
+    cur, cur_rows = None, []
+    for line in out.splitlines():
+        m = re.match(r"#RESULT (\d+) (ok|err ?(.*))", line)
+        if m:
+            if cur is not None and cur not in ours:
+                ours[cur] = ("ok", cur_rows)
+            idx = int(m.group(1))
+            if m.group(2) == "ok":
+                cur, cur_rows = idx, []
+            else:
+                ours[idx] = ("err", m.group(3) or "error")
+                cur = None
+        elif line == "#END":
+            if cur is not None:
+                ours[cur] = ("ok", cur_rows)
+                cur = None
+        elif cur is not None:
+            cur_rows.append(line.split("|"))
+    return ours
+
+
 def run_corpus(schemas: dict, pairs: list, variant: int):
     """Evaluate every corpus query on one data variant, with us and with sqlite. Returns
     (agree, tie_ok, affinity_ok, failures, oracle_err, accepted): `accepted[i]` is "agree" for an
@@ -615,29 +648,9 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
         f.write("\n".join(manifest_lines) + "\n")
         manifest_path = f.name
 
-    out = subprocess.run([str(EXE), "--dialect", "sqlite", "--spider-eval", manifest_path],
-                         capture_output=True, text=True, check=True).stdout
-
-    # Parse our results
-    ours: dict[int, tuple[str, list]] = {}
-    cur, cur_rows = None, []
-    for line in out.splitlines():
-        m = re.match(r"#RESULT (\d+) (ok|err ?(.*))", line)
-        if m:
-            if cur is not None and cur not in ours:
-                ours[cur] = ("ok", cur_rows)
-            idx = int(m.group(1))
-            if m.group(2) == "ok":
-                cur, cur_rows = idx, []
-            else:
-                ours[idx] = ("err", m.group(3) or "error")
-                cur = None
-        elif line == "#END":
-            if cur is not None:
-                ours[cur] = ("ok", cur_rows)
-                cur = None
-        elif cur is not None:
-            cur_rows.append(line.split("|"))
+    ours = run_ours(manifest_path, typed=True)
+    legacy = run_ours(manifest_path, typed=False)
+    os.unlink(manifest_path)
 
     duck_dir = Path(tempfile.mkdtemp(prefix="spider_duck_")) if DUCKDB else None
 
@@ -707,7 +720,19 @@ def run_corpus(schemas: dict, pairs: list, variant: int):
     if duck_dir is not None:
         shutil.rmtree(duck_dir, ignore_errors=True)
     postgres_drop(pg_schemas.values())
-    return agree, tie_ok, affinity_ok, failures, oracle_err, accepted
+    # The switch (#466): where the typed core and `SqlEquiv`'s evaluator disagree, by kind.
+    transition: dict[str, list[str]] = defaultdict(list)
+    for i, p in enumerate(pairs, start=1):
+        t, l = ours.get(i, ("err", "missing")), legacy.get(i, ("err", "missing"))
+        if t[0] == "ok" and l[0] == "ok":
+            if normalize(t[1]) != normalize(l[1]):
+                transition["both answer, different rows"].append(p["query"])
+        elif t[0] == "err" and l[0] == "ok":
+            transition[f"typed core: {str(t[1]).split(' ')[0]} {str(t[1]).split(' ')[1] if len(str(t[1]).split(' ')) > 1 else ''}".strip()
+                       + "; SqlEquiv answers"].append(p["query"])
+        elif t[0] == "ok" and l[0] == "err":
+            transition["SqlEquiv errors; typed core answers"].append(p["query"])
+    return agree, tie_ok, affinity_ok, failures, oracle_err, accepted, transition
 
 
 STRESS_REPORT = ROOT / "benchmarks" / "spider" / "stress_report.md"
@@ -719,7 +744,7 @@ def run_stress(schemas: dict, pairs: list, status0: dict, k: int) -> None:
     failure class. Not ratcheted: a backlog of issue candidates the fixed 5-row data hides."""
     hidden: dict[str, dict[str, tuple[int, str]]] = defaultdict(dict)  # class -> query -> example
     for v in range(1, k + 1):
-        _, _, _, failures, _, status = run_corpus(schemas, pairs, v)
+        _, _, _, failures, _, status, _ = run_corpus(schemas, pairs, v)
         cls_of = {q: (cls, d) for cls, items in failures.items() for q, d in items}
         for i, p in enumerate(pairs, start=1):
             if status0.get(i) == "agree" and status.get(i) != "agree":
@@ -758,11 +783,14 @@ def main() -> None:
     _self_test_postgres_tiebreak()
     if not EXE.exists():
         sys.exit(f"error: {EXE} not built — run `lake build sql_equiv` first")
+    if not TYPED_EXE.exists():
+        sys.exit(f"error: {TYPED_EXE} not built — run `lake build spider_elab` first")
 
     schemas = {s["db_id"]: s for s in json.load(open(TABLES))}
     pairs = [json.loads(l) for l in open(QUERIES)]
     stress = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--stress=")), 0)
-    agree, tie_ok, affinity_ok, failures, oracle_err, status0 = run_corpus(schemas, pairs, 0)
+    agree, tie_ok, affinity_ok, failures, oracle_err, status0, transition = run_corpus(
+        schemas, pairs, 0)
     if stress:
         run_stress(schemas, pairs, status0, stress)
     total = len(pairs) - oracle_err
@@ -820,6 +848,23 @@ def main() -> None:
             q, d = items[0]
             q = (q[:70] + "…") if len(q) > 70 else q
             lines.append(f"| {len(items)} | {cls} | `{q}` | {d[:60]} |")
+        n_tr = sum(len(v) for v in transition.values())
+        lines += [
+            "",
+            "## Typed core vs SqlEquiv (the switch, #466)",
+            "",
+            "Since #466 the engine measured above is the typed core (`spider_elab --eval`).",
+            "`SqlEquiv`'s evaluator still runs beside it; these are the corpus queries where the",
+            f"two disagree: **{n_tr}**. Queries the typed core does not elaborate (sqlite type",
+            "affinity, decision D5) are rejected by design.",
+            "",
+            "| Count | Kind | Example query |",
+            "|------:|------|---------------|",
+        ]
+        for kind, qs in sorted(transition.items(), key=lambda kv: -len(kv[1])):
+            q = qs[0]
+            q = (q[:70] + "…") if len(q) > 70 else q
+            lines.append(f"| {len(qs)} | {kind} | `{q}` |")
         REPORT.write_text("\n".join(lines) + "\n")
         print(f"Exact match: {agree}/{total} ({strict_rate:.1f}%); +{len(tie_ok)} tie-valid, "
               f"+{len(affinity_ok)} affinity-emulated = evaluate-agreement {accepted}/{total} "
