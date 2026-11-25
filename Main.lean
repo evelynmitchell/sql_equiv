@@ -409,7 +409,7 @@ def cmdNormalize (sql : String) : IO Unit := do
       let normalized := normalizeSelect sel
       IO.println s!"\n{Color.success "Original"}:"
       IO.println s!"  {sel.toSql}"
-      IO.println s!"\n{Color.success "Normalized"}:"
+      IO.println s!"\n{Color.success "Normalized"} {Color.dimText "(reference oracle: SqlEquiv's normalizeExpr, decision D3)"}:"
       IO.println s!"  {normalized.toSql}"
 
       -- Show WHERE clause normalization details
