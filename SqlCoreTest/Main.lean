@@ -25,6 +25,7 @@ import SqlCoreTest.SetOpExamples
 import SqlCoreTest.SubqueryExamples
 import SqlCoreTest.WindowExamples
 import SqlCoreTest.StmtExamples
+import SqlCoreTest.RecurseExamples
 import SqlCoreTest.SimplifyExamples
 import SqlCoreTest.BridgeDiffTest
 import SqlCoreTest.DuckdbDiffTest

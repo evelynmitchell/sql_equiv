@@ -364,6 +364,7 @@ def canon : {n : ℕ} → Query S n → Query S n
   | _, outer Γ => outer Γ
   | _, lateral body q => lateral body q.canon
   | _, window c q => window c q.canon
+  | _, recurse d k b st => recurse d k b st
 
 theorem select_sexpr {p p' : Expr n} (hp : p.SEquiv p') (q : Query S n) :
     Equiv ℓ (select p q) (select p' q) := fun D _ => by
@@ -409,6 +410,7 @@ theorem equiv_canon (q : Query S n) : Equiv .ordered q q.canon := by
   | outer Γ => exact .refl _
   | lateral body q _ ihq => exact Equiv.lateral body ihq
   | window c q ih => exact Equiv.window c ih
+  | recurse d k b st _ _ => exact .refl _
 
 end Query
 

@@ -56,11 +56,15 @@ inductive EvalError where
   | unsupported
   /-- A scalar subquery returned more than one row (phase 8f; the standard, Postgres and DuckDB). -/
   | cardinality
+  /-- `WITH RECURSIVE` still produced new rows after its round limit (phase 9.6, #464): the
+  engines would run on (Postgres until its statement timeout), so the strict core fails. -/
+  | recursionLimit
   deriving DecidableEq, Repr
 
-/-- The errors that a well-typed query can still raise: division by zero, and a scalar subquery
-with several rows. -/
-def EvalError.IsRuntime (e : EvalError) : Prop := e = .divisionByZero ∨ e = .cardinality
+/-- The errors that a well-typed query can still raise: division by zero, a scalar subquery with
+several rows, and a recursion past its round limit. -/
+def EvalError.IsRuntime (e : EvalError) : Prop :=
+  e = .divisionByZero ∨ e = .cardinality ∨ e = .recursionLimit
 
 @[simp] theorem ok_bind {ε α β : Type} (a : α) (f : α → Except ε β) :
     (Except.ok a >>= f) = f a := rfl
