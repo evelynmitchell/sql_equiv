@@ -70,6 +70,12 @@ jobs:
         # prebuilt Mathlib from cache.mathlib.org, as in CI
         run: lake exe cache get
 
+      # Compile the libraries first, on their own. In one `lake build …:docs` the heavy
+      # SqlBridge proof files compile alongside doc-gen4's core-docs process, and at that peak
+      # spawning doc-gen4's git helpers failed with "not enough memory" (twice, swap or not).
+      - name: Build the libraries
+        run: lake build SqlEquiv SqlCore SqlBridge
+
       - name: Build the docs
         # mkroot.sh writes the root module that imports SqlEquiv, SqlCore and every SqlBridge
         # module; doc-gen4 documents everything it imports
