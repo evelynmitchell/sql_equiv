@@ -65,6 +65,24 @@
       "file": "SqlEquiv/Strict.lean",
       "proof": "none (by design)",
       "note": "NOT a ≃ₑ rewriter: used only by the strict check of the duckdb dialect (checkQuery, registry row 23) so that a division or modulo by zero is not counted as an error. Contract: every other error still surfaces (a divisor that errors or is not a number, and a dividend that errors or is not a number: the zero arm is NULL = (a op 1), the operator's own type check of the dividend; since 25 Nov 2026, when NULL = a still hid name / 0). Audit it against that contract, not against ≃ₑ; it must never feed a result or a rewriter"
+    },
+    {
+      "name": "SqlBridge.Inline.query",
+      "file": "SqlBridge/Inline.lean",
+      "proof": "none (by design; differential)",
+      "note": "NOT a ≃ rewriter: inlines non-recursive CTEs as derived tables before elaboration (phase 9.2, #460). Contract: every table reference whose folded name a CTE binds is replaced by its body, everywhere a table can occur (FROM, joins, derived tables, subqueries in any expression, window arguments); a CTE sees only the earlier ones; a body naming its own CTE reads the base table; a WITH nested inside returns none. Sound because SQL fixes no evaluation strategy for a non-recursive CTE and no SQL function in the fragment is volatile. Checked against DuckDB and Postgres by BridgeDiffTest's WITH cases; audit it against that contract, not against an equivalence relation"
+    },
+    {
+      "name": "SqlBridge.bindView",
+      "file": "SqlBridge/Elab.lean",
+      "proof": "none (by design; differential)",
+      "note": "NOT a ≃ rewriter: substitutes a recursive CTE's elaborated query for its table while elaborating WITH RECURSIVE (phase 9.6, #464; Query.recurse reads the working table through outer). Contract: every arm of Query, including outerJoin, window and recurse, is traversed, and only references to the CTE's table are replaced. A missing arm drops the substitution silently (one was missed for outerJoin and fixed before #488), so check every Query constructor has an arm. Checked by RecurseExamples (kernel) and BridgeDiffTest's WITH RECURSIVE cases against DuckDB and Postgres"
+    },
+    {
+      "name": "SqlEquiv.effectiveHaving",
+      "file": "SqlEquiv/SemanticsParam.lean",
+      "proof": "none (by design; it defines the oracle's semantics)",
+      "note": "NOT a ≃ rewriter: the reference oracle evaluates a query whose only aggregate is in ORDER BY (orderByOnlyAggregates: no GROUP BY, no HAVING, no aggregate in the items, windows included) with HAVING TRUE, so it is one group, as DuckDB and Postgres do (#445, registry row 22; the sqlite dialect rejects it at parse time). Contract: it changes nothing else (effectiveHaving_of_not, _some, _nil, _cases); evalSelectCore, evalSelectAfterFilter and Strict's checkSelect all apply it, and must stay in step. Theorems that rule out an implicit group carry orderByOnlyAggregates … = false or are stated over effectiveHaving. Checked by SemanticsTest order_by_aggregate_only_* and the DiffDuckdb/DiffPostgres 'implicit group:' cases"
     }
   ],
   "evaluator": {
