@@ -26,7 +26,8 @@
   database has no schema), subqueries under `AND`/`OR`, past a CASE's first condition or in
   `EXISTS` (engines short-circuit or differ), the items of a window query under LIMIT without
   ORDER BY (which rows are returned is unknown), and `ORDER BY` keys of an aggregate query without
-  `GROUP BY` (one row, never compared).
+  `GROUP BY` (one row, never compared; the arguments of aggregates in them are checked like the
+  items').
 -/
 import SqlEquiv.Semantics
 
@@ -269,7 +270,10 @@ def checkSelect (m : ErrorMode) (db : Database) (outer : Row) (sel : SelectStmt)
   let groupErr := rowsErr "GROUP BY" filtered sel.groupBy
   let aggErr :=
     if grouped || aggregated then
-      rowsErr "aggregate argument" filtered ((items ++ having.toList).flatMap aggArgs)
+      -- every aggregate's argument is evaluated on every row, whether or not its result is ever
+      -- compared: ORDER BY keys included (`ORDER BY SUM(10 / (id - 1))`, #445 review)
+      rowsErr "aggregate argument" filtered
+        ((items ++ having.toList ++ sel.orderBy.map (·.expr)).flatMap aggArgs)
     else none
   let havingErr :=
     if grouped || aggregated then

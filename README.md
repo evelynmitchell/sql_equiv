@@ -841,7 +841,7 @@ All distributivity theorems require `isBoolValued` on all operands.
 | `scalar_subquery_is_first` | Scalar subquery = first column of first row |
 | `exists_monotonic` | EXISTS is monotonic (superset preserves TRUE) |
 | `subquery_where_true` | Adding WHERE TRUE doesn't change subquery |
-| `subquery_where_false` | Adding WHERE FALSE makes subquery empty |
+| `subquery_where_false` | Adding WHERE FALSE makes subquery empty (no aggregate, none only in ORDER BY) |
 | `in_singleton_subquery` | `x IN (single value v) = (x = v)` |
 | `in_subquery_unnest_to_join` | IN subquery unnested to semi-join (equal on values, as a bag) |
 | `not_in_subquery_unnest_to_antijoin` | NOT IN subquery unnested to anti-join, when `t.x` and `s.y` are never NULL |
@@ -850,7 +850,7 @@ All distributivity theorems require `isBoolValued` on all operands.
 
 | Theorem | Description |
 |---------|-------------|
-| `order_by_preserves_count` | ORDER BY doesn't change row count |
+| `order_by_preserves_count` | ORDER BY doesn't change row count, unless its only aggregate makes the query one group (#445) |
 | `order_by_length_invariant` | Different ORDER BY clauses produce same row count |
 | `order_limit_deterministic` | ORDER BY + LIMIT gives deterministic prefix |
 
@@ -888,9 +888,9 @@ All distributivity theorems require `isBoolValued` on all operands.
 | Theorem | Description |
 |---------|-------------|
 | `where_true_elim` | `SELECT ... WHERE TRUE` equals `SELECT ...` |
-| `where_false_empty` | `SELECT ... WHERE FALSE` returns empty |
+| `where_false_empty` | `SELECT ... WHERE FALSE` returns empty (no aggregate, none only in ORDER BY) |
 | `filter_true_elim'` | `filter(TRUE)` is identity |
-| `filter_false_empty'` | `filter(FALSE)` returns empty |
+| `filter_false_empty'` | `filter(FALSE)` returns empty (no aggregate, none only in ORDER BY) |
 
 ## Contributing
 

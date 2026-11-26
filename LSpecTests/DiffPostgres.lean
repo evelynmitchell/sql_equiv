@@ -655,6 +655,14 @@ def runAllTests : IO TestSeq := do
       "SELECT COUNT(*) AS c FROM users GROUP BY id / (age - 30)",
     diffErrors "division by zero in ORDER BY"
       "SELECT id FROM users ORDER BY id / (age - 30)",
+    -- an aggregate's argument is evaluated on every row even when the aggregate is only an
+    -- ORDER BY key of a one-row query (#445 review)
+    diffErrors "division by zero in an aggregate only in ORDER BY"
+      "SELECT 1 AS one FROM users ORDER BY SUM(id / (age - 30))",
+    diffErrors "division by zero in an ORDER BY aggregate beside an item aggregate"
+      "SELECT COUNT(*) AS c FROM users ORDER BY SUM(id / (age - 30))",
+    diffErrors "division by zero in an ORDER BY aggregate of a grouped query"
+      "SELECT department FROM users GROUP BY department ORDER BY SUM(id / (age - 30))",
     diffErrors "division by zero in a derived table"
       "SELECT x FROM (SELECT id / (age - 30) AS x FROM users) d",
     diffErrors "division by zero in a set-operation branch"

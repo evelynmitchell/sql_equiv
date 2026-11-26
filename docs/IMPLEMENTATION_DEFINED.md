@@ -121,7 +121,9 @@ even where it is never evaluated), since `SqlEquiv`'s database has no schema; su
 in `EXISTS` (Postgres ignores its select list and stops at the first row, DuckDB scans its WHERE in
 full); the select items of a window query under LIMIT without ORDER BY (Postgres evaluates them
 only on the rows it returns, in the windows' order; window arguments and keys are checked on every
-row); and ORDER BY keys of an aggregate query without GROUP BY (one row, never compared). Whatever is decided applies to every evaluation path alike: since #423 the aggregate and window paths combine an operand's error as the row evaluator does (`FALSE AND <error>` is FALSE, `<error> IS NULL` is TRUE), so an item's value no longer depends on whether another item has an aggregate or a window function.
+row); and ORDER BY keys of an aggregate query without GROUP BY (one row, never compared), except
+that the arguments of aggregates in them are checked on every row, as Postgres evaluates them
+(`SELECT 1 FROM t ORDER BY SUM(10 / (id - 1))` fails; #445 review, 26 Nov 2026). Whatever is decided applies to every evaluation path alike: since #423 the aggregate and window paths combine an operand's error as the row evaluator does (`FALSE AND <error>` is FALSE, `<error> IS NULL` is TRUE), so an item's value no longer depends on whether another item has an aggregate or a window function.
 
 ---
 
