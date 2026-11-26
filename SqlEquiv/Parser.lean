@@ -1718,18 +1718,17 @@ partial def parseSelectStmtCore (tail : Bool) : Parser SelectStmt := do
     Parser.fail ("for SELECT DISTINCT, a window function in ORDER BY is not supported; " ++
       "give the window item an alias and order by the alias")
 
-  -- #440 (registry row 22): without GROUP BY and without an aggregate in the select list (one
-  -- inside a window function counts), a HAVING makes the query one group in the standard,
-  -- DuckDB and Postgres dialects; sqlite rejects it. An aggregate only in ORDER BY is rejected
-  -- in every dialect: the evaluator decides grouping from the select list and HAVING.
+  -- #440, #445 (registry row 22): without GROUP BY and without an aggregate in the select list
+  -- (one inside a window function counts), a HAVING, or an aggregate only in ORDER BY, makes the
+  -- query one group in the standard, DuckDB and Postgres dialects (`effectiveHaving`); sqlite
+  -- rejects both, as sqlite does.
   let itemExprs := items.filterMap (fun | .exprItem e _ => some e | .star _ => none)
   if groupBy.isEmpty && !itemExprs.any exprMentionsAggregate then
     let ig ← fun st => .ok (st.config.implicitGroup, st)
     if having.isSome && ig == .reject then
       Parser.fail "HAVING clause on a non-aggregate query"
-    if having.isNone && orderBy.any (fun | .mk e _ _ => exprMentionsAggregate e) then
-      Parser.fail ("an aggregate in ORDER BY of a query without GROUP BY, HAVING or an " ++
-        "aggregate in the select list is not supported (#440)")
+    if having.isNone && ig == .reject && orderBy.any (fun | .mk e _ _ => exprMentionsAggregate e) then
+      Parser.fail "misuse of aggregate in ORDER BY of a non-aggregate query"
 
   return .mk distinct items fromClause whereClause groupBy having orderBy limitVal offsetVal
 

@@ -800,7 +800,7 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
     simp only [SqlEquiv.evalQuery]
     rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
       _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)
-      (orderByHasWindow_of_cols hcols)]
+      (orderByHasWindow_of_cols hcols) (orderByOnlyAggregates_of_cols hcols)]
     exact finish_rel cf N.fold db Γ items orderBy hR (hwo'.rel hq₀T hnbq₀ hRf hR hrows) hir
       hnbIt hlen hkr lim off hrs
   · -- under an outer row (a subquery body): the `FROM` rows carry it at the end, where no lookup
@@ -808,7 +808,7 @@ theorem elabStmt_correct_join_ctx (N : NamedSchema) (hfold : ∀ s, (N.fold s).t
     intro ctx
     rw [SqlEquiv.evalSelectWithContext_eq_evalSelectCore, evalSelectCore_project_ordered_ctx _ _ _ _
       _ _ _ _ _ _ _ _ _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)
-      (orderByHasWindow_of_cols hcols)]
+      (orderByHasWindow_of_cols hcols) (orderByOnlyAggregates_of_cols hcols)]
     have hrows' : List.Forall₂ (fun r u => RowRel cf N.fold r u ∧ r.Conforms Γ) Rf
         ((SqlEquiv.evalFrom db f).map fun row => row ++ ctx) := by
       rw [List.forall₂_map_right_iff]
@@ -900,7 +900,8 @@ theorem elabStmt_correct_star (N : NamedSchema) (hfold : ∀ s, (N.fold s).toLow
   refine ⟨rs, hrs, _, rfl, ?_⟩
   simp only [SqlEquiv.evalQuery]
   rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
-    _ _ _ _ _ (selectHasAggregate_star items hit) (selectHasWindowFn_star items hit) rfl]
+    _ _ _ _ _ (selectHasAggregate_star items hit) (selectHasWindowFn_star items hit) rfl
+    (by simp [SqlEquiv.orderByOnlyAggregates])]
   obtain ⟨base, hbase, rfl⟩ := eval_limitWrap D lim off _ hrs
   rw [applyOrder_eq]
   apply limit_rel

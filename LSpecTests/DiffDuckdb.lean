@@ -427,6 +427,17 @@ def runAllTests : IO TestSeq := do
       "SELECT 1 AS one FROM users WHERE age > 100 HAVING 1 = 1",
     diffTest "implicit group: ORDER BY an aggregate"
       "SELECT 1 AS one FROM users HAVING COUNT(*) > 1 ORDER BY COUNT(*)",
+    -- an aggregate only in ORDER BY: one group too (#445; sqlite rejects it)
+    diffTest "implicit group: aggregate only in ORDER BY"
+      "SELECT 1 AS one FROM users ORDER BY COUNT(*)",
+    diffTest "implicit group: aggregate only in ORDER BY, over no rows"
+      "SELECT 1 AS one FROM users WHERE age > 100 ORDER BY COUNT(*)",
+    diffTest "implicit group: aggregate only in ORDER BY, LIMIT 0"
+      "SELECT 1 AS one FROM users ORDER BY COUNT(*) LIMIT 0",
+    diffTest "implicit group: window item, aggregate only in ORDER BY"
+      "SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)",
+    diffTest "implicit group: ORDER BY a window over an aggregate"
+      "SELECT 1 AS one FROM users ORDER BY RANK() OVER (ORDER BY COUNT(*))",
     diffTest "window over aggregate: one group"
       "SELECT SUM(SUM(age)) OVER () AS s FROM users",
     diffTest "window over aggregate: order key"

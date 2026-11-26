@@ -244,18 +244,20 @@ def checkSelect (m : ErrorMode) (db : Database) (outer : Row) (sel : SelectStmt)
   let filtered : Table := match sel.whereClause with
     | some c => base.filter fun r => evalExprWithDb db r c == some (Value.bool true)
     | none => base
+  -- the HAVING the evaluator evaluates (#445)
+  let having := effectiveHaving sel.groupBy sel.items sel.having sel.orderBy
   let items := selectItemExprs sel.items
   let win := selectHasWindowFn sel.items
   let grouped := !sel.groupBy.isEmpty
-  let aggregated := selectHasAggregate sel.items || implicitGroup selectHasWindowFn sel.items sel.having
-  let calls := selectMinMaxCalls sel.items sel.having
+  let aggregated := selectHasAggregate sel.items || implicitGroup selectHasWindowFn sel.items having
+  let calls := selectMinMaxCalls sel.items having
   -- each group with its sample row (the row bare columns read)
   let groups : List (Table × Row) :=
     if grouped then
       (groupRowsByKeyParam ee db filtered sel.groupBy).filterMap fun (_, rows) =>
         (bareSampleRow (evalExprWithDb db) calls rows).map fun s => (rows, s)
     else [(filtered, (bareSampleRow (evalExprWithDb db) calls filtered).getD [])]
-  let passes (g : Table × Row) : Bool := match sel.having with
+  let passes (g : Table × Row) : Bool := match having with
     | none => true
     | some c => ea db g.1 g.2 c == some (Value.bool true)
   let surv := groups.filter passes
@@ -267,11 +269,11 @@ def checkSelect (m : ErrorMode) (db : Database) (outer : Row) (sel : SelectStmt)
   let groupErr := rowsErr "GROUP BY" filtered sel.groupBy
   let aggErr :=
     if grouped || aggregated then
-      rowsErr "aggregate argument" filtered ((items ++ sel.having.toList).flatMap aggArgs)
+      rowsErr "aggregate argument" filtered ((items ++ having.toList).flatMap aggArgs)
     else none
   let havingErr :=
     if grouped || aggregated then
-      match sel.having with
+      match having with
       | some c => groups.findSome? fun g => if badAgg g.1 g.2 c then some "HAVING" else subErr g.2 c
       | none => none
     else none

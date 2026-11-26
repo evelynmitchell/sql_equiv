@@ -416,6 +416,12 @@ def corpus : List (String × Expect) := [
   ("WITH c AS (SELECT * FROM users) SELECT c.name FROM c", .agree),
   ("WITH c AS (SELECT * FROM users) SELECT x.name FROM c AS x WHERE x.age > 25", .agree),
   ("WITH c AS (SELECT users.name, users.age FROM users) SELECT c.name FROM c ORDER BY c.age", .agree),
+  -- #445 (registry row 22): an aggregate only in ORDER BY makes the query one group
+  ("SELECT 1 AS one FROM users ORDER BY COUNT(*)", .agree),
+  ("SELECT 1 AS one FROM users WHERE age > 100 ORDER BY COUNT(*)", .agree),
+  ("SELECT 1 AS one FROM users ORDER BY MAX(age) DESC LIMIT 1", .agree),
+  ("SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)", .agree),
+  ("SELECT name FROM users ORDER BY COUNT(*)", .rejected "unsupported: column not in GROUP BY"),
   ("WITH a AS (SELECT id, age FROM users), b AS (SELECT id FROM a WHERE age > 25) SELECT * FROM b", .agree),
   ("WITH c AS (SELECT department, COUNT(*) AS n FROM users GROUP BY department) SELECT department FROM c WHERE n > 1", .agree),
   ("WITH c AS (SELECT id FROM users WHERE age > 28) SELECT name FROM users WHERE id IN (SELECT id FROM c)", .agree),

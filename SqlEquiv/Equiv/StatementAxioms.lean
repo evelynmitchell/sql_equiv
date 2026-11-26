@@ -42,7 +42,8 @@ theorem intersect_empty_right (db : Database) (a : SelectStmt) :
   simp only [evalQuery_compound, evalQuery_simple, applySetOp]
   have h : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
-      (by rfl) (by simp [implicitGroup, selectHasWindowFn]) (fun row => by simp [evalExprWithDb_lit])
+      (by rfl) (by simp [implicitGroup, selectHasWindowFn]) (by simp [orderByOnlyAggregates])
+      (fun row => by simp [evalExprWithDb_lit])
   rw [h]
   have hfilt : (List.filter (fun (_ : Row) => false) (evalSelect db a)) = [] := by
     rw [List.filter_eq_nil_iff]; intro x _ hx; exact absurd hx (by simp)
@@ -153,7 +154,8 @@ theorem union_empty_right (a : SelectStmt) :
   rw [evalQuery_compound, mem_valueKey_union]
   have hempty : evalSelect db (SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none) = [] :=
     evalSelect_filter_all_false db false [.star none] none (.lit (.bool false)) [] none [] none none
-      (by rfl) (by simp [implicitGroup, selectHasWindowFn]) (fun _row => by simp [evalExprWithDb_lit])
+      (by rfl) (by simp [implicitGroup, selectHasWindowFn]) (by simp [orderByOnlyAggregates])
+      (fun _row => by simp [evalExprWithDb_lit])
   rw [evalQuery_simple (sel := SelectStmt.mk false [.star none] none (some (.lit (.bool false))) [] none [] none none), hempty]
   simp
 
@@ -995,19 +997,22 @@ theorem subquery_where_true (db : Database) (row : Row)
   simp [evalExprWithDb_lit]
 
 /-- Adding WHERE FALSE to subquery makes it empty (requires no aggregates: none in the items,
-    and none inside a window or in `HAVING` that makes a window query aggregate, #438) -/
+    none inside a window or in `HAVING` that makes a window query aggregate, #438, and none only
+    in `ORDER BY`, #445) -/
 theorem subquery_where_false (db : Database) (row : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
     (hNoAgg : selectHasAggregate items = false)
-    (hNoWinAgg : implicitGroup selectHasWindowFn items having = false) :
+    (hNoWinAgg : implicitGroup selectHasWindowFn items having = false)
+    (hNoOB : orderByOnlyAggregates groupBy items having orderBy = false) :
     let selWithFalse := SelectStmt.mk distinct items from_ (some (.lit (.bool false))) groupBy having orderBy limit offset
     evalSelectWithContext db row selWithFalse = [] := by
   simp only
   apply evalSelectWithContext_filter_all_false
   · exact hNoAgg
   · exact hNoWinAgg
+  · exact hNoOB
   · intro r; simp [evalExprWithDb_lit]
 
 /-- IN with single-value subquery is equivalent to equality.
@@ -1702,16 +1707,18 @@ theorem in_subquery_unnest_to_join (db : Database)
 -- ORDER BY Theorems
 -- ============================================================================
 
-/-- ORDER BY preserves row count -/
+/-- ORDER BY preserves row count, unless its only aggregate makes the query one group (#445). -/
 theorem order_by_preserves_count (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (limit offset : Option Nat) (orderBy : List OrderByItem) :
+    (limit offset : Option Nat) (orderBy : List OrderByItem)
+    (hOB : orderByOnlyAggregates groupBy items having orderBy = false) :
     let selNoOrder := SelectStmt.mk distinct items from_ where_ groupBy having [] limit offset
     let selWithOrder := SelectStmt.mk distinct items from_ where_ groupBy having orderBy limit offset
     (evalSelect db selNoOrder).length = (evalSelect db selWithOrder).length := by
   simp only []
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having [] orderBy limit offset
+    (by rw [effectiveHaving_of_not hOB]; simp [effectiveHaving, orderByOnlyAggregates])
 
 
 /-- Different ORDER BY clauses produce same number of rows -/
@@ -1727,7 +1734,7 @@ theorem order_by_length_invariant (db : Database)
   simp only []
   exact evalSelect_orderBy_length db distinct items from_ where_ groupBy having
     [OrderByItem.mk col .asc n1, OrderByItem.mk col .desc n2] [OrderByItem.mk col .desc n3]
-    limit offset
+    limit offset (by simp [effectiveHaving, orderByOnlyAggregates, OrderByItem.expr])
 
 
 -- ============================================================================

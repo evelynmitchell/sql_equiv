@@ -1480,6 +1480,26 @@ def groupedWindowTests : List TestResult := [
   testColumn "having_one_group_order_by_aggregate"
     "SELECT 1 AS one FROM users HAVING COUNT(*) > 1 ORDER BY COUNT(*)"
     "one" [.int 1],
+  -- #445 (registry row 22): an aggregate only in ORDER BY makes the query one group too, as in
+  -- DuckDB and Postgres (sqlite rejects it at parse time); it was every row before #440
+  testColumn "order_by_aggregate_only_one_group"
+    "SELECT 1 AS one FROM users ORDER BY COUNT(*)"
+    "one" [.int 1],
+  testColumn "order_by_aggregate_only_over_no_rows_one_group"
+    "SELECT 1 AS one FROM users WHERE age > 100 ORDER BY COUNT(*)"
+    "one" [.int 1],
+  testColumn "order_by_aggregate_only_limit_zero"
+    "SELECT 1 AS one FROM users ORDER BY COUNT(*) LIMIT 0"
+    "one" [],
+  testColumn "order_by_aggregate_only_desc_max"
+    "SELECT 1 AS one FROM users ORDER BY MAX(age) DESC"
+    "one" [.int 1],
+  testColumn "order_by_aggregate_only_window_item"
+    "SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)"
+    "r" [.int 1],
+  testColumn "order_by_window_over_aggregate_one_group"
+    "SELECT 1 AS one FROM users ORDER BY RANK() OVER (ORDER BY COUNT(*))"
+    "one" [.int 1],
   testColumn "grouped_window_in_derived_table"
     "SELECT MAX(r) AS m FROM (SELECT department, RANK() OVER (ORDER BY SUM(age)) AS r FROM users GROUP BY department) t"
     "m" [.int 3]

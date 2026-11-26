@@ -68,7 +68,7 @@ theorem evalSelectCore_grouped_full (db : Database) (outerRow : Row)
   case h3 =>
     rw [evalSelectCore_eq_afterFilter]
     cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, evalSelectGroupOrderKeys,
-      hne, hNoWin, hOB] <;> rfl
+      hne, hNoWin, hOB, effectiveHaving, orderByOnlyAggregates] <;> rfl
   case h1 =>
     intro gs u h
     split
