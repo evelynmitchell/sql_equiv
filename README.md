@@ -235,6 +235,12 @@ QuickCheck-style testing with random expression generation to validate equivalen
 - Random row/database generation
 - Property verification for commutativity, associativity, etc.
 
+## API documentation
+
+Generated with doc-gen4 and published to GitHub Pages: <https://evelynmitchell.github.io/sql_equiv/>
+(`SqlEquiv`, `SqlCore`, `SqlBridge`). How it is built and how to build it locally:
+[`docs/API_DOCS.md`](docs/API_DOCS.md).
+
 ## Installation
 
 ### Prerequisites

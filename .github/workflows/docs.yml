@@ -1,0 +1,87 @@
+name: API docs
+
+# Builds the API documentation with doc-gen4 (the nested project in docbuild/) and publishes it to
+# GitHub Pages. Needs the repository's Pages source set to "GitHub Actions" (Settings > Pages).
+# See docs/API_DOCS.md.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '**.lean'
+      - 'lakefile.toml'
+      - 'lake-manifest.json'
+      - 'lean-toolchain'
+      - 'docbuild/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# one deployment at a time; a newer push waits rather than cancelling one in progress
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Install elan
+        run: |
+          curl -sSfL -o /tmp/elan.tar.gz https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/elan.tar.gz -C /tmp
+          /tmp/elan-init -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> $GITHUB_PATH
+
+      # Separate from CI's cache: this one also holds doc-gen4 and its dependencies (in
+      # .lake/packages) and the generated pages (docbuild/.lake), so a rebuild redoes only the
+      # modules that changed.
+      - name: Cache Lake packages and docs
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.elan/toolchains
+            .lake
+            !.lake/packages/mathlib/.lake/build
+            docbuild/.lake
+          key: ${{ runner.os }}-docs-${{ hashFiles('lakefile.toml', 'lake-manifest.json', 'lean-toolchain', 'docbuild/lakefile.toml', 'docbuild/lake-manifest.json') }}
+          restore-keys: |
+            ${{ runner.os }}-docs-
+
+      - name: Get Mathlib cache
+        # prebuilt Mathlib from cache.mathlib.org, as in CI
+        run: lake exe cache get
+
+      - name: Build the docs
+        # mkroot.sh writes the root module that imports SqlEquiv, SqlCore and every SqlBridge
+        # module; doc-gen4 documents everything it imports
+        working-directory: docbuild
+        run: |
+          ./mkroot.sh
+          lake build SqlEquivDocs:docs
+
+      # doc-gen4 writes relative links, so no base path is configured (no configure-pages step,
+      # which would also need a `pages` permission in this read-only job)
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: docbuild/.lake/build/doc
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
