@@ -1,0 +1,19 @@
+# API documentation (doc-gen4), as a nested project so that doc-gen4 stays out of the main
+# project's dependencies. Build from this directory:
+#   lake build SqlCore:docs SqlEquiv:docs SqlBridge:docs
+# The site is written to docbuild/.lake/build/doc (serve it over HTTP, e.g.
+# `python3 -m http.server` in that directory). See docs/API_DOCS.md.
+name = "docbuild"
+reservoir = false
+version = "0.1.0"
+packagesDir = "../.lake/packages"
+
+# Pinned to the release for our toolchain (lean-toolchain: v4.36.0-rc2); move it with the toolchain.
+[[require]]
+name = "doc-gen4"
+git = "https://github.com/leanprover/doc-gen4"
+rev = "v4.36.0-rc2"
+
+[[require]]
+name = "sql_equiv"
+path = "../"
