@@ -117,12 +117,65 @@ decreasing_by
 /-- A window query aggregates without `GROUP BY` and without an aggregate in its items outside
     window functions when an aggregate occurs inside a window in the items or in `HAVING`
     (`SELECT SUM(SUM(x)) OVER () FROM t`): sqlite, DuckDB and Postgres then form one group, as
-    for any aggregate query (#438). An aggregate only in `ORDER BY` is rejected by the parser.
+    for any aggregate query (#438). An aggregate only in `ORDER BY` is handled by
+    `effectiveHaving` (#445).
     The SELECT pipeline conjoins this with "the items have a window function"
     (`implicitGroup`), so a query without one keeps its path. -/
 def windowQueryAggregates (items : List SelectItem) (having : Option Expr) : Bool :=
   items.any (fun | .exprItem e _ => exprHasAggregateDeep e | .star _ => false) ||
   having.any exprHasAggregateDeep
+
+/-- A query whose only aggregate is in `ORDER BY` (#445, registry row 22): no `GROUP BY`, no
+    `HAVING`, and no aggregate in the items (one inside a window counts, as for #438), but one in an
+    `ORDER BY` key (`SELECT 1 FROM t ORDER BY COUNT(*)`). DuckDB and Postgres form one group, as for
+    any aggregate query; the sqlite dialect rejects it at parse time, as sqlite does. -/
+def orderByOnlyAggregates (groupBy : List Expr) (items : List SelectItem) (having : Option Expr)
+    (orderBy : List OrderByItem) : Bool :=
+  groupBy.isEmpty && having.isNone &&
+    !items.any (fun | .exprItem e _ => exprHasAggregateDeep e | .star _ => false) &&
+    orderBy.any (fun o => exprHasAggregateDeep o.expr)
+
+/-- The `HAVING` the SELECT pipeline evaluates: `HAVING TRUE` for a query whose only aggregate is
+    in `ORDER BY` (`orderByOnlyAggregates`), which makes it one group (`implicitGroup`) and keeps
+    the group; otherwise the query's own. -/
+def effectiveHaving (groupBy : List Expr) (items : List SelectItem) (having : Option Expr)
+    (orderBy : List OrderByItem) : Option Expr :=
+  if orderByOnlyAggregates groupBy items having orderBy then some (.lit (.bool true)) else having
+
+@[simp] theorem effectiveHaving_of_not {groupBy : List Expr} {items : List SelectItem}
+    {having : Option Expr} {orderBy : List OrderByItem}
+    (h : orderByOnlyAggregates groupBy items having orderBy = false) :
+    effectiveHaving groupBy items having orderBy = having := by
+  simp [effectiveHaving, h]
+
+/-- The evaluated `HAVING` is the query's own, or `HAVING TRUE` when the only aggregate is in
+    `ORDER BY`. -/
+theorem effectiveHaving_cases (groupBy : List Expr) (items : List SelectItem)
+    (having : Option Expr) (orderBy : List OrderByItem) :
+    effectiveHaving groupBy items having orderBy = having ∨
+    (orderByOnlyAggregates groupBy items having orderBy = true ∧
+      effectiveHaving groupBy items having orderBy = some (.lit (.bool true))) := by
+  unfold effectiveHaving
+  split <;> simp_all
+
+/-- A query whose only aggregate is in `ORDER BY` has an `ORDER BY` key. -/
+theorem orderByOnlyAggregates_mem {groupBy : List Expr} {items : List SelectItem}
+    {having : Option Expr} {orderBy : List OrderByItem}
+    (h : orderByOnlyAggregates groupBy items having orderBy = true) : ∃ o, o ∈ orderBy := by
+  simp only [orderByOnlyAggregates, Bool.and_eq_true, List.any_eq_true] at h
+  obtain ⟨_, o, ho, _⟩ := h
+  exact ⟨o, ho⟩
+
+/-- Without `ORDER BY` the query's own `HAVING` is the one evaluated. -/
+@[simp] theorem effectiveHaving_nil {groupBy : List Expr} {items : List SelectItem}
+    {having : Option Expr} : effectiveHaving groupBy items having [] = having := by
+  simp [effectiveHaving, orderByOnlyAggregates]
+
+/-- With a `HAVING` the query's own `HAVING` is the one evaluated. -/
+@[simp] theorem effectiveHaving_some {groupBy : List Expr} {items : List SelectItem}
+    {h : Expr} {orderBy : List OrderByItem} :
+    effectiveHaving groupBy items (some h) orderBy = some h := by
+  simp [effectiveHaving, orderByOnlyAggregates]
 
 /-- Check if SELECT items contain window functions -/
 def selectHasWindowFn (items : List SelectItem) : Bool :=

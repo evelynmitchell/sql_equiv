@@ -595,7 +595,8 @@ theorem evalSelectCore_project_ordered (db : Database)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
     (orderBy : List OrderByItem) (lim off : Option Nat)
     (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false)
-    (hOB : orderByHasWindow orderBy = false) :
+    (hOB : orderByHasWindow orderBy = false)
+    (hOA : orderByOnlyAggregates [] items none orderBy = false) :
     evalSelectCore db [] fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) wh [] none orderBy lim off) =
@@ -606,7 +607,8 @@ theorem evalSelectCore_project_ordered (db : Database)
       (src.map fun row => items.flatMap (selectItemEval db row)) := by
   rw [evalSelectCore_eq_afterFilter]
   cases wh <;>
-  simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin, hOB]
+  simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin, hOB,
+    effectiveHaving_of_not hOA]
 
 /-- `evalSelectCore_project_ordered` under an outer row, without `ORDER BY`: the source rows are
     the `FROM` rows with the outer row appended. (With `ORDER BY`, `SqlEquiv` aligns the sort on
@@ -635,7 +637,7 @@ theorem evalSelectCore_project_ctx (db : Database) (outerRow : Row)
   rw [evalSelectCore_eq_afterFilter]
   cases wh <;>
   simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin,
-    applyOrderByLimitOffsetAligned]
+    applyOrderByLimitOffsetAligned, effectiveHaving, orderByOnlyAggregates]
 
 /-- `evalSelectCore_project_ordered` under an outer row, with `ORDER BY` (#411): the source rows
     are the `FROM` rows with the outer row appended, and the sort reads each projected row next
@@ -653,7 +655,8 @@ theorem evalSelectCore_project_ordered_ctx (db : Database) (outerRow : Row)
     (items : List SelectItem) (from_ : FromClause) (wh : Option Expr)
     (orderBy : List OrderByItem) (lim off : Option Nat)
     (hNoAgg : hasAgg items = false) (hNoWin : hasWindowFn items = false)
-    (hOB : orderByHasWindow orderBy = false) :
+    (hOB : orderByHasWindow orderBy = false)
+    (hOA : orderByOnlyAggregates [] items none orderBy = false) :
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk false items (some from_) wh [] none orderBy lim off) =
@@ -665,7 +668,8 @@ theorem evalSelectCore_project_ordered_ctx (db : Database) (outerRow : Row)
       (src.map fun r => r.take (r.length - outerRow.length))
       (src.map fun row => items.flatMap (selectItemEval db row)) := by
   rw [evalSelectCore_eq_afterFilter]
-  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin, hOB]
+  cases wh <;> simp [evalSelectAfterFilter, evalSelectProjectDistinct, hNoAgg, hNoWin, hOB,
+    effectiveHaving_of_not hOA]
 
 /-- Column `ORDER BY` keys have no window function (#435). -/
 theorem orderByHasWindow_of_cols {orderBy : List OrderByItem}
@@ -674,6 +678,18 @@ theorem orderByHasWindow_of_cols {orderBy : List OrderByItem}
   intro o ho
   obtain ⟨c, hc⟩ := hcols o ho
   simp [hc, exprHasWindowFn]
+
+/-- Column `ORDER BY` keys have no aggregate, so they do not make the query one group (#445). -/
+theorem orderByOnlyAggregates_of_cols {groupBy : List Expr} {items : List SelectItem}
+    {having : Option Expr} {orderBy : List OrderByItem}
+    (hcols : ∀ o ∈ orderBy, ∃ c, o.expr = .col c) :
+    orderByOnlyAggregates groupBy items having orderBy = false := by
+  have : orderBy.any (fun o => exprHasAggregateDeep o.expr) = false := by
+    simp only [List.any_eq_false]
+    intro o ho
+    obtain ⟨c, hc⟩ := hcols o ho
+    simp [hc, exprHasAggregateDeep]
+  simp [orderByOnlyAggregates, this]
 
 end SqlBridge.CorrectOrder
 
@@ -1486,7 +1502,7 @@ theorem elabStmt_correct_ordered (N : NamedSchema) (hfold : ∀ s, (N.fold s).to
   simp only [SqlEquiv.evalQuery]
   rw [SqlEquiv.evalSelect_eq_evalSelectCore, evalSelectCore_project_ordered _ _ _ _ _ _ _ _ _ _ _
     _ _ _ _ _ (selectHasAggregate_frag items hit) (selectHasWindowFn_frag items hit)
-    (orderByHasWindow_of_cols hcols)]
+    (orderByHasWindow_of_cols hcols) (orderByOnlyAggregates_of_cols hcols)]
   -- the keys
   have hkr : keyList.length ≠ 0 → KeysRel (requalify (N.fold (al.getD name)) (N.S.columns T))
       N.fold db (N.S.ctx T) items orderBy hlen (fun i => keyList[i]) := fun hk0 => by

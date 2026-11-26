@@ -335,14 +335,14 @@ def windowParserTests : List TestResult := [
     "SELECT ROW_NUMBER() OVER () AS r FROM users HAVING COUNT(*) > 1",
   -- #440 (registry row 22): without GROUP BY and without an aggregate in the select list, a
   -- HAVING makes the query one group (standard, DuckDB, Postgres; sqlite rejects it, see
-  -- implicitGroupDialectTests); an aggregate only in ORDER BY is rejected in every dialect
+  -- implicitGroupDialectTests); so does an aggregate only in ORDER BY (#445)
   testParse "window_with_having_one_group"
     "SELECT name, ROW_NUMBER() OVER (ORDER BY age) AS r FROM users HAVING age > 1",
   testParse "having_without_group_by_one_group"
     "SELECT 1 FROM users HAVING COUNT(*) > 1",
-  testParseFailWith "window_with_aggregate_only_in_order_by_rejected" "(#440)"
+  testParse "window_with_aggregate_only_in_order_by_one_group"
     "SELECT ROW_NUMBER() OVER () AS r FROM users ORDER BY COUNT(*)",
-  testParseFailWith "aggregate_only_in_order_by_rejected" "(#440)"
+  testParse "aggregate_only_in_order_by_one_group"
     "SELECT 1 FROM users ORDER BY COUNT(*)",
   testParse "aggregate_in_order_by_with_having_accepted"
     "SELECT 1 FROM users HAVING COUNT(*) > 1 ORDER BY COUNT(*)",
@@ -556,11 +556,14 @@ private def usersDb : Database := fun n =>
 
 /-- Registry row 22 (#440): sqlite rejects a HAVING without GROUP BY when the select list has no
     aggregate (one inside a window function counts); the other dialects form one group. -/
-private def sqliteRejects (name sql : String) : TestResult :=
+private def sqliteRejectsWith (msg name sql : String) : TestResult :=
   match parse sql (dialect := .sqlite) with
-  | .error e => if (e.splitOn "HAVING clause on a non-aggregate query").length > 1 then .pass name
+  | .error e => if (e.splitOn msg).length > 1 then .pass name
                 else .fail name s!"unexpected error: {e}"
   | .ok _ => .fail name "sqlite dialect accepted it"
+
+private def sqliteRejects (name sql : String) : TestResult :=
+  sqliteRejectsWith "HAVING clause on a non-aggregate query" name sql
 
 private def acceptedIn (name : String) (d : Dialect) (sql : String) : TestResult :=
   match parse sql (dialect := d) with
@@ -581,7 +584,18 @@ def implicitGroupDialectTests : List TestResult := [
   acceptedIn "duckdb_having_without_aggregate_one_group" .duckdb
     "SELECT 1 FROM users HAVING COUNT(*) > 1",
   acceptedIn "postgres_having_without_aggregate_one_group" .postgres
-    "SELECT 1 FROM users HAVING COUNT(*) > 1"
+    "SELECT 1 FROM users HAVING COUNT(*) > 1",
+  -- an aggregate only in ORDER BY (#445): one group, except in sqlite ("misuse of aggregate")
+  sqliteRejectsWith "misuse of aggregate" "sqlite_aggregate_only_in_order_by_rejected"
+    "SELECT 1 FROM users ORDER BY COUNT(*)",
+  sqliteRejectsWith "misuse of aggregate" "sqlite_window_order_by_aggregate_rejected"
+    "SELECT 1 FROM users ORDER BY RANK() OVER (ORDER BY COUNT(*))",
+  acceptedIn "duckdb_aggregate_only_in_order_by_one_group" .duckdb
+    "SELECT 1 FROM users ORDER BY COUNT(*)",
+  acceptedIn "postgres_aggregate_only_in_order_by_one_group" .postgres
+    "SELECT 1 FROM users ORDER BY COUNT(*)",
+  acceptedIn "sqlite_aggregate_in_order_by_with_item_aggregate_accepted" .sqlite
+    "SELECT COUNT(*) FROM users ORDER BY COUNT(*)"
 ]
 
 def dialectPrintTests : List TestResult :=

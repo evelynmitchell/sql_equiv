@@ -603,7 +603,9 @@ theorem projectWindowItems_congr
     that is still evaluated as an aggregate query, one group:
     - a window query with an aggregate inside a window in the items or in `HAVING` (#438);
     - any query with a `HAVING` (#440), as in the standard, DuckDB and Postgres (registry
-      row 22; the sqlite dialect rejects it at parse time, as sqlite does). -/
+      row 22; the sqlite dialect rejects it at parse time, as sqlite does);
+    - a query whose only aggregate is in `ORDER BY` (#445), which the pipeline evaluates with
+      `HAVING TRUE` (`effectiveHaving`). -/
 def implicitGroup (hasWindowFn : List SelectItem → Bool) (items : List SelectItem)
     (having : Option Expr) : Bool :=
   (hasWindowFn items && windowQueryAggregates items having) || having.isSome
@@ -805,10 +807,13 @@ def evalSelectCore (db : Database) (outerRow : Row)
         exprEval db row cond == some (Value.bool true)
     | none => baseRowsWithContext
 
+  -- the HAVING evaluated: `HAVING TRUE` when the only aggregate is in ORDER BY (#445)
+  let having := effectiveHaving sel.groupBy sel.items sel.having sel.orderBy
+
   -- HAVING-filtered source rows: used by the window and plain projection
   -- paths, and as the aligned ORDER BY sources (#206). Grouped/aggregate
   -- paths apply HAVING per-group and ignore this binding.
-  let havingRows : Table := match sel.having with
+  let havingRows : Table := match having with
     | some cond =>
       filteredRows.filter fun row =>
         exprEval db row cond == some (Value.bool true)
@@ -818,11 +823,11 @@ def evalSelectCore (db : Database) (outerRow : Row)
   -- Groups that survive HAVING, for the window path over groups (#429).
   let windowGroups : List (Table × Row) :=
     if !sel.groupBy.isEmpty then
-      groupedSurvivors db exprEval exprWithAggEval sel.items sel.groupBy sel.having filteredRows
-    else aggSurvivors db exprEval exprWithAggEval sel.items sel.having filteredRows
+      groupedSurvivors db exprEval exprWithAggEval sel.items sel.groupBy having filteredRows
+    else aggSurvivors db exprEval exprWithAggEval sel.items having filteredRows
   let projectedRows : Table :=
     if (!sel.groupBy.isEmpty || hasAgg sel.items ||
-        implicitGroup hasWindowFn sel.items sel.having) && hasWindowFn sel.items then
+        implicitGroup hasWindowFn sel.items having) && hasWindowFn sel.items then
       projectGroupsWithWindows db selectItemWithAggEval exprWithAggEval sel.items windowGroups
     else if !sel.groupBy.isEmpty then
       -- GROUP BY present: partition rows and evaluate aggregates per group
@@ -835,10 +840,10 @@ def evalSelectCore (db : Database) (outerRow : Row)
         | none => groups ++ [(key, [row])]
       let groups := filteredRows.foldl addToGroups []
       let groupResults := groups.filterMap fun (_key, groupRows) =>
-        match bareSampleRow (exprEval db) (selectMinMaxCalls sel.items sel.having) groupRows with
+        match bareSampleRow (exprEval db) (selectMinMaxCalls sel.items having) groupRows with
         | none => none
         | some sampleRow =>
-          let passesHaving := match sel.having with
+          let passesHaving := match having with
             | none => true
             | some cond =>
               exprWithAggEval db groupRows sampleRow cond == some (Value.bool true)
@@ -847,10 +852,10 @@ def evalSelectCore (db : Database) (outerRow : Row)
           else
             none
       groupResults
-    else if hasAgg sel.items || implicitGroup hasWindowFn sel.items sel.having then
+    else if hasAgg sel.items || implicitGroup hasWindowFn sel.items having then
       let sampleRow :=
-        (bareSampleRow (exprEval db) (selectMinMaxCalls sel.items sel.having) filteredRows).getD []
-      let passesHaving := match sel.having with
+        (bareSampleRow (exprEval db) (selectMinMaxCalls sel.items having) filteredRows).getD []
+      let passesHaving := match having with
         | none => true
         | some cond =>
           exprWithAggEval db filteredRows sampleRow cond == some (Value.bool true)
@@ -884,21 +889,21 @@ def evalSelectCore (db : Database) (outerRow : Row)
   let groupedSort := !sel.distinct && !sel.groupBy.isEmpty
   let groupedDistinct := sel.distinct && !sel.groupBy.isEmpty
   let plainDistinct := sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items &&
-    !hasWindowFn sel.items && !implicitGroup hasWindowFn sel.items sel.having
+    !hasWindowFn sel.items && !implicitGroup hasWindowFn sel.items having
   let strippedSources := havingRows.map (fun r => r.take (r.length - outerRow.length))
   applyOrderByLimitOffsetAligned compareEval db
     (if groupedSort || groupedDistinct then groupOrderByItems sel.orderBy
      else if orderByHasWindow sel.orderBy then windowOrderByItems sel.orderBy else sel.orderBy)
     sel.limitVal sel.offsetVal
     ((!sel.distinct && sel.groupBy.isEmpty && !hasAgg sel.items &&
-        !implicitGroup hasWindowFn sel.items sel.having) || groupedSort ||
+        !implicitGroup hasWindowFn sel.items having) || groupedSort ||
       groupedDistinct || plainDistinct)
     (if groupedSort then
       (if hasWindowFn sel.items || orderByHasWindow sel.orderBy then
         groupWindowOrderKeys db exprWithAggEval sel.orderBy windowGroups projectedRows
        else
         evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
-          sel.items sel.groupBy sel.having sel.orderBy filteredRows)
+          sel.items sel.groupBy having sel.orderBy filteredRows)
      else if groupedDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         (projectedRows.zip
@@ -906,7 +911,7 @@ def evalSelectCore (db : Database) (outerRow : Row)
             groupWindowOrderKeys db exprWithAggEval sel.orderBy windowGroups projectedRows
            else
             evalSelectGroupOrderKeys db exprEval selectItemWithAggEval exprWithAggEval
-              sel.items sel.groupBy sel.having sel.orderBy filteredRows))).map Prod.snd
+              sel.items sel.groupBy having sel.orderBy filteredRows))).map Prod.snd
      else if plainDistinct then
       (dedupByKey (fun p => Row.valueKey p.1)
         ((havingRows.map fun row => sel.items.flatMap (selectItemEval db row)).zip
@@ -1348,6 +1353,8 @@ def evalSelectAfterFilter (db : Database)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy : List OrderByItem) (limit offset : Option Nat)
     (ctxLen : Nat) (filteredRows : Table) : Table :=
+  -- the HAVING evaluated: `HAVING TRUE` when the only aggregate is in ORDER BY (#445)
+  let having := effectiveHaving groupBy items having orderBy
   let havingRows : Table := match having with
     | some cond =>
       filteredRows.filter fun row =>
@@ -1415,7 +1422,9 @@ def evalSelectAfterFilter (db : Database)
 
 /-- ORDER BY never changes the row count of the post-WHERE pipeline: sort
     sources align with the projected rows in both the plain path (#206) and
-    the grouped path (#234). -/
+    the grouped path (#234). Unless it makes the query one group: an aggregate
+    only in ORDER BY does (#445), so the two orders must give the same evaluated
+    `HAVING` (`effectiveHaving`). -/
 theorem evalSelectAfterFilter_orderBy_length (db : Database)
     (exprEval : Database → Row → Expr → Option Value)
     (selectItemEval : Database → Row → SelectItem → List (String × Value))
@@ -1428,7 +1437,9 @@ theorem evalSelectAfterFilter_orderBy_length (db : Database)
     (distinct : Bool) (items : List SelectItem)
     (groupBy : List Expr) (having : Option Expr)
     (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat)
-    (ctxLen : Nat) (filteredRows : Table) :
+    (ctxLen : Nat) (filteredRows : Table)
+    (hEH : effectiveHaving groupBy items having orderBy1 =
+      effectiveHaving groupBy items having orderBy2) :
     (evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       distinct items groupBy having orderBy1 limit offset ctxLen filteredRows).length =
@@ -1436,6 +1447,8 @@ theorem evalSelectAfterFilter_orderBy_length (db : Database)
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       distinct items groupBy having orderBy2 limit offset ctxLen filteredRows).length := by
   simp only [evalSelectAfterFilter]
+  rw [hEH]
+  generalize effectiveHaving groupBy items having orderBy2 = having
   apply applyOrderByLimitOffsetAligned_length_eq_general
   all_goals
     intro huse
@@ -1565,7 +1578,9 @@ theorem evalSelectCore_orderBy_length (db : Database) (outerRow : Row)
     (hasAgg : List SelectItem → Bool)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat) :
+    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat)
+    (hEH : effectiveHaving groupBy items having orderBy1 =
+      effectiveHaving groupBy items having orderBy2) :
     (evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
@@ -1573,7 +1588,7 @@ theorem evalSelectCore_orderBy_length (db : Database) (outerRow : Row)
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length := by
   simp only [evalSelectCore_eq_afterFilter]
-  exact evalSelectAfterFilter_orderBy_length _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  exact evalSelectAfterFilter_orderBy_length _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hEH
 
 /-- Infrastructure: WHERE clause only affects filtering; equivalent WHERE clauses produce identical results. -/
 theorem evalSelectCore_where_congr (db : Database) (outerRow : Row)
@@ -1653,11 +1668,12 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
     hasAgg items = false →
     implicitGroup hasWindowFn items having = false →
+    orderByOnlyAggregates groupBy items having orderBy = false →
     (∀ row : Row, (exprEval db row cond == some (Value.bool true)) = false) →
     evalSelectCore db outerRow fromEval exprEval selectItemEval selectItemWithAggEval
       exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
       (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
-  intro hNoAgg hNoWA hAllFalse
+  intro hNoAgg hNoWA hOB hAllFalse
   -- Unfold evalSelectCore directly (it's a regular def)
   show evalSelectAfterFilter db exprEval selectItemEval selectItemWithAggEval
     exprWithAggEval compareEval exprWithWindowEval hasWindowFn hasAgg
@@ -1668,7 +1684,7 @@ theorem evalSelectCore_filter_all_false (db : Database) (outerRow : Row)
   -- filteredRows = [] because all rows are rejected
   rw [filter_eq_nil_of_false _ _ hAllFalse]
   -- evalSelectAfterFilter ... [] = aligned-orderBy (evalSelectProjectDistinct ... [])
-  simp only [evalSelectAfterFilter]
+  simp only [evalSelectAfterFilter, effectiveHaving_of_not hOB]
   -- evalSelectProjectDistinct ... [] = [] (no aggregates); the rows, and since #320 the
   -- grouped DISTINCT sources, hold one such term each
   simp only [evalSelectProjectDistinct_nil _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA]
@@ -1774,7 +1790,7 @@ private theorem evalSelectAfterFilter_star_identity (db : Database)
       false [SelectItem.star none] [] none [] none none ctxLen filteredRows = filteredRows := by
   intro ctxLen
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
-    h_hasAgg, h_hasWindowFn]
+    h_hasAgg, h_hasWindowFn, effectiveHaving, orderByOnlyAggregates]
   -- Goal: filteredRows.map (fun row => selectItemEval db row (.star none)) = filteredRows
   have : (fun row => selectItemEval db row (.star none)) = id := by
     funext row; exact h_star db row
@@ -2000,7 +2016,7 @@ theorem evalSelectCore_simple_project (db : Database) (outerRow : Row)
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
-    hNoAgg, hNoWin]
+    hNoAgg, hNoWin, effectiveHaving, orderByOnlyAggregates]
 
 /-- For a simple SELECT items FROM from_ WHERE cond (no GROUP BY, etc.),
     the result is filtering then projecting. -/
@@ -2026,7 +2042,7 @@ theorem evalSelectCore_simple_project_where (db : Database) (outerRow : Row)
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
-    hNoAgg, hNoWin]
+    hNoAgg, hNoWin, effectiveHaving, orderByOnlyAggregates]
 
 /-- For SELECT DISTINCT items FROM from_ (no WHERE, no GROUP BY, etc.),
     the result is (projection of each base row), deduplicated by value key (#315) -/
@@ -2051,7 +2067,7 @@ theorem evalSelectCore_distinct_project (db : Database) (outerRow : Row)
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
-    hNoAgg, hNoWin]
+    hNoAgg, hNoWin, effectiveHaving, orderByOnlyAggregates]
 
 /-- For SELECT DISTINCT items FROM from_ WHERE cond (no GROUP BY, etc.),
     the result is (filter then project), deduplicated by value key (#315) -/
@@ -2077,7 +2093,7 @@ theorem evalSelectCore_distinct_project_where (db : Database) (outerRow : Row)
   rw [evalSelectCore_eq_afterFilter]
   dsimp only []
   simp [evalSelectAfterFilter, applyOrderByLimitOffsetAligned, evalSelectProjectDistinct,
-    hNoAgg, hNoWin]
+    hNoAgg, hNoWin, effectiveHaving, orderByOnlyAggregates]
 
 -- ============================================================================
 -- Ground Expression Detection (non-partial mirror of Expr.isGround)
@@ -2910,7 +2926,7 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
     (h_wc : ∀ e, sel.whereClause = some e →
         ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
     (h_gb : ∀ e, e ∈ sel.groupBy → ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
-    (h_hv : ∀ e, sel.having = some e →
+    (h_hv : ∀ e, effectiveHaving sel.groupBy sel.items sel.having sel.orderBy = some e →
         ∀ row1 row2, exprEval db row1 e = exprEval db row2 e)
     (h_items_no_star : ∀ item ∈ sel.items, ∃ e alias_, item = .exprItem e alias_)
     (h_si : ∀ item ∈ sel.items, ∀ row1 row2,
@@ -2918,14 +2934,14 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
     (h_sia : ∀ item ∈ sel.items, ∀ rows1 rows2 s1 s2,
         rows1.length = rows2.length →
         selectItemWithAggEval db rows1 s1 item = selectItemWithAggEval db rows2 s2 item)
-    (h_ea : ∀ e, sel.having = some e → ∀ rows1 rows2 s1 s2,
+    (h_ea : ∀ e, effectiveHaving sel.groupBy sel.items sel.having sel.orderBy = some e → ∀ rows1 rows2 s1 s2,
         rows1.length = rows2.length →
         exprWithAggEval db rows1 s1 e = exprWithAggEval db rows2 s2 e)
     (h_ew : ∀ e alias_, .exprItem e alias_ ∈ sel.items → ∀ row1 row2 p1 p2 sp1 sp2 idx,
         p1.length = p2.length →
         exprWithWindowEval db row1 p1 sp1 idx e = exprWithWindowEval db row2 p2 sp2 idx e)
     (h_gwin : ((!sel.groupBy.isEmpty || hasAgg sel.items ||
-      implicitGroup hasWindowFn sel.items sel.having) && hasWindowFn sel.items) = false)
+      implicitGroup hasWindowFn sel.items (effectiveHaving sel.groupBy sel.items sel.having sel.orderBy)) && hasWindowFn sel.items) = false)
     (h_obw : orderByHasWindow sel.orderBy = false) :
     evalSelectCore db r1 fromEval exprEval selectItemEval selectItemWithAggEval exprWithAggEval
       compareEval exprWithWindowEval hasWindowFn hasAgg sel =
@@ -2936,6 +2952,8 @@ theorem evalSelectCore_outerRow_congr (db : Database) (r1 r2 : Row)
              SelectStmt.items, SelectStmt.orderBy] at *
   simp only [evalSelectCore_eq_afterFilter, evalSelectAfterFilter, h_obw, Bool.or_false,
     Bool.false_eq_true, ↓reduceIte]
+  -- the hypotheses are about the HAVING the pipeline evaluates (#445)
+  generalize effectiveHaving gb items hv ob = hv at h_hv h_ea h_gwin ⊢
   by_cases hg : (!d && !gb.isEmpty) = true
   · -- Grouped, no DISTINCT (#234): ORDER BY uses per-group key rows. The
     -- GROUP BY keys are row-independent, so there is at most one group, and
@@ -3334,8 +3352,8 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     (hasWindowFn hasAgg : List SelectItem → Bool) (sel : SelectStmt)
     (hF : ∀ f, sel.fromClause = some f → fA db f = fB db f)
     (hW : ∀ c, sel.whereClause = some c → ∀ r, eA db r c = eB db r c)
-    (hHe : ∀ c, sel.having = some c → ∀ r, eA db r c = eB db r c)
-    (hHa : ∀ c, sel.having = some c → ∀ rs r, aA db rs r c = aB db rs r c)
+    (hHe : ∀ c, effectiveHaving sel.groupBy sel.items sel.having sel.orderBy = some c → ∀ r, eA db r c = eB db r c)
+    (hHa : ∀ c, effectiveHaving sel.groupBy sel.items sel.having sel.orderBy = some c → ∀ rs r, aA db rs r c = aB db rs r c)
     (hG : ∀ r, sel.groupBy.map (eA db r) = sel.groupBy.map (eB db r))
     (hSI : ∀ r, sel.items.flatMap (siA db r) = sel.items.flatMap (siB db r))
     (hSIA : ∀ rs r, sel.items.flatMap (siaA db rs r) = sel.items.flatMap (siaB db rs r))
@@ -3345,8 +3363,8 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     (hC2 : ∀ r1 r2, cA db r1 r2 (groupOrderByItems sel.orderBy) =
       cB db r1 r2 (groupOrderByItems sel.orderBy))
     (hOK : ∀ o ∈ sel.orderBy, ∀ rs r, aA db rs r o.expr = aB db rs r o.expr)
-    (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls sel.items sel.having) rs =
-      bareSampleRow (eB db) (selectMinMaxCalls sel.items sel.having) rs)
+    (hB : ∀ rs, bareSampleRow (eA db) (selectMinMaxCalls sel.items (effectiveHaving sel.groupBy sel.items sel.having sel.orderBy)) rs =
+      bareSampleRow (eB db) (selectMinMaxCalls sel.items (effectiveHaving sel.groupBy sel.items sel.having sel.orderBy)) rs)
     (hSIA1 : ∀ item ∈ sel.items, ∀ rs r, siaA db rs r item = siaB db rs r item)
     (hGW : ∀ e a, SelectItem.exprItem e a ∈ sel.items → ∀ gs r p sp i,
       evalExprWithWindowParam (groupWindowEval aA gs) db r p sp i e =
@@ -3362,9 +3380,12 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
   obtain ⟨d, items, from_, w, gb, hv, ob, lim, off⟩ := sel
   simp only [SelectStmt.fromClause, SelectStmt.whereClause, SelectStmt.having,
     SelectStmt.groupBy, SelectStmt.items, SelectStmt.orderBy] at *
-  have hGK : ∀ rows, evalSelectGroupOrderKeys db eA siaA aA items gb hv ob rows =
-      evalSelectGroupOrderKeys db eB siaB aB items gb hv ob rows :=
-    fun rows => evalSelectGroupOrderKeys_congr db eA eB siaA siaB aA aB items gb hv ob rows
+  -- the hypotheses are about the HAVING the pipeline evaluates (#445)
+  obtain ⟨hv', hhv'⟩ : ∃ x, effectiveHaving gb items hv ob = x := ⟨_, rfl⟩
+  simp only [hhv'] at hHe hHa hB
+  have hGK : ∀ rows, evalSelectGroupOrderKeys db eA siaA aA items gb hv' ob rows =
+      evalSelectGroupOrderKeys db eB siaB aB items gb hv' ob rows :=
+    fun rows => evalSelectGroupOrderKeys_congr db eA eB siaA siaB aA aB items gb hv' ob rows
       hG hSIA hHa hOK hB
   have hWin : ∀ r p sp i, projectWindowItems wA db r p sp i items =
       projectWindowItems wB db r p sp i items :=
@@ -3390,16 +3411,16 @@ theorem evalSelectCore_callbacks_congr (db : Database) (outerRow : Row)
     cases from_ with
     | none => rfl
     | some f => exact hF f rfl
-  simp only [evalSelectCore, SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
+  simp only [evalSelectCore, hhv', SelectStmt.distinct, SelectStmt.items, SelectStmt.fromClause,
     SelectStmt.whereClause, SelectStmt.groupBy, SelectStmt.having, SelectStmt.orderBy,
     SelectStmt.limitVal, SelectStmt.offsetVal, groupKey_congr hG, hSI, hSIA, hWin, hGK, hB,
-    groupedSurvivors_congr db eA eB aA aB items gb hv _ hG hHa hB,
-    aggSurvivors_congr db eA eB aA aB items hv _ hHa hB,
+    groupedSurvivors_congr db eA eB aA aB items gb hv' _ hG hHa hB,
+    aggSurvivors_congr db eA eB aA aB items hv' _ hHa hB,
     projectGroupsWithWindows_congr db siaA siaB aA aB items _ hSIA1 (fun e a h => hGW e a h _),
     groupWindowOrderKeys_congr db aA aB ob hOK _ (fun o ho => hOWg o ho _),
     windowOrderKeyCols_congr wA wB db _ _ _ ob hOWp]
   erw [hOrd]
-  cases from_ <;> cases w <;> cases hv <;>
+  cases from_ <;> cases w <;> cases hv' <;>
     (try simp only [hF _ rfl]) <;> (try simp only [hW _ rfl]) <;>
     (try simp only [hHe _ rfl, hHa _ rfl]) <;> rfl
 

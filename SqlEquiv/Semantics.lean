@@ -922,8 +922,14 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
           have := minMaxCalls_arg_size e hin
           have := hItem e al hitem
           omega
-      · have := minMaxCallsOpt_arg_size hv hin
-        omega
+      · simp only [SelectStmt.groupBy, SelectStmt.orderBy] at hin
+        rcases effectiveHaving_cases gb items hv ob with heq | ⟨_, heq⟩
+        · rw [heq] at hin
+          have := minMaxCallsOpt_arg_size hv hin
+          omega
+        · -- `HAVING TRUE` (#445) has no MIN/MAX call
+          rw [heq] at hin
+          simp [minMaxCalls.minMaxCallsOpt, minMaxCalls] at hin
     exact hE a ha db r
   case hF =>
     intro f hf
@@ -937,15 +943,25 @@ theorem evalSelectWithContext_eq_evalSelectCore (db : Database) (outerRow : Row)
     exact hE c (by simp [Expr.sizeOpt] at hsz; omega) db
   case hHe =>
     intro c hc
-    simp only [SelectStmt.having] at hc
-    subst hc
-    exact hE c (by simp [Expr.sizeOpt] at hsz; omega) db
+    simp only [SelectStmt.groupBy, SelectStmt.items, SelectStmt.having, SelectStmt.orderBy] at hc
+    have hcN : c.size < N := by
+      rcases effectiveHaving_cases gb items hv ob with heq | ⟨hob, heq⟩
+      · rw [heq] at hc; subst hc; simp [Expr.sizeOpt] at hsz; omega
+      · -- `HAVING TRUE` (#445): size 1, below an ORDER BY key's
+        rw [heq] at hc; cases hc
+        obtain ⟨o, ho⟩ := orderByOnlyAggregates_mem hob
+        have := hOb o ho; have := Expr.size_pos o.expr; simp [Expr.size]; omega
+    exact hE c hcN db
   case hHa =>
     intro c hc rs r
-    simp only [SelectStmt.having] at hc
-    subst hc
-    exact evalExprWithAggParam_congr _ ee N hE db rs r c.size c (Nat.le_refl _)
-      (by simp [Expr.sizeOpt] at hsz; omega)
+    simp only [SelectStmt.groupBy, SelectStmt.items, SelectStmt.having, SelectStmt.orderBy] at hc
+    have hcN : c.size < N := by
+      rcases effectiveHaving_cases gb items hv ob with heq | ⟨hob, heq⟩
+      · rw [heq] at hc; subst hc; simp [Expr.sizeOpt] at hsz; omega
+      · rw [heq] at hc; cases hc
+        obtain ⟨o, ho⟩ := orderByOnlyAggregates_mem hob
+        have := hOb o ho; have := Expr.size_pos o.expr; simp [Expr.size]; omega
+    exact evalExprWithAggParam_congr _ ee N hE db rs r c.size c (Nat.le_refl _) hcN
   case hG =>
     intro r
     simp only [SelectStmt.groupBy]
@@ -1080,16 +1096,19 @@ theorem evalSelect_limit_offset (db : Database)
   exact evalSelectCore_limit_offset ..
 
 /-- Infrastructure: ORDER BY preserves row count (mergeSort preserves length).
-    Changing the ORDER BY clause does not change the number of result rows.
-    Proved via evalSelectCore bridge. -/
+    Changing the ORDER BY clause does not change the number of result rows, as long as both
+    give the same evaluated `HAVING` (an aggregate only in ORDER BY makes the query one group,
+    #445). Proved via evalSelectCore bridge. -/
 theorem evalSelect_orderBy_length (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
     (where_ : Option Expr) (groupBy : List Expr) (having : Option Expr)
-    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat) :
+    (orderBy1 orderBy2 : List OrderByItem) (limit offset : Option Nat)
+    (hEH : effectiveHaving groupBy items having orderBy1 =
+      effectiveHaving groupBy items having orderBy2) :
   (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy1 limit offset)).length =
   (evalSelect db (SelectStmt.mk distinct items from_ where_ groupBy having orderBy2 limit offset)).length := by
   rw [evalSelect_eq_evalSelectCore, evalSelect_eq_evalSelectCore]
-  exact evalSelectCore_orderBy_length ..
+  exact evalSelectCore_orderBy_length (hEH := hEH) ..
 
 /-- Infrastructure: WHERE clause only affects filtering; if two WHERE clauses
     produce the same filtering behavior for every row, evalSelect produces the same result.
@@ -1108,7 +1127,8 @@ theorem evalSelect_where_congr (db : Database)
   exact evalSelectCore_where_congr _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hCongr
 
 /-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates
-    (none in the items, and none that makes a window query aggregate, #438).
+    (none in the items, none that makes a window query aggregate, #438, and none only in
+    ORDER BY, #445).
     Proved via evalSelectCore bridge. -/
 theorem evalSelect_filter_all_false (db : Database)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
@@ -1116,11 +1136,12 @@ theorem evalSelect_filter_all_false (db : Database)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
   implicitGroup selectHasWindowFn items having = false →
+  orderByOnlyAggregates groupBy items having orderBy = false →
   (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelect db (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
-  intro hNoAgg hNoWA hAllFalse
+  intro hNoAgg hNoWA hOB hAllFalse
   rw [evalSelect_eq_evalSelectCore]
-  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA hAllFalse
+  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA hOB hAllFalse
 
 -- ============================================================================
 -- Infrastructure theorems for evalSelectWithContext (proved via evalSelectCore bridge)
@@ -1142,7 +1163,8 @@ theorem evalSelectWithContext_where_congr (db : Database) (outerRow : Row)
   exact evalSelectCore_where_congr _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hCongr
 
 /-- Infrastructure: WHERE clause that rejects all rows produces empty result when no aggregates
-    (none in the items, and none that makes a window query aggregate, #438).
+    (none in the items, none that makes a window query aggregate, #438, and none only in
+    ORDER BY, #445).
     For evalSelectWithContext (correlated subqueries). Proved via evalSelectCore bridge. -/
 theorem evalSelectWithContext_filter_all_false (db : Database) (outerRow : Row)
     (distinct : Bool) (items : List SelectItem) (from_ : Option FromClause)
@@ -1150,11 +1172,12 @@ theorem evalSelectWithContext_filter_all_false (db : Database) (outerRow : Row)
     (orderBy : List OrderByItem) (limit offset : Option Nat) :
   selectHasAggregate items = false →
   implicitGroup selectHasWindowFn items having = false →
+  orderByOnlyAggregates groupBy items having orderBy = false →
   (∀ row : Row, (evalExprWithDb db row cond == some (Value.bool true)) = false) →
   evalSelectWithContext db outerRow (SelectStmt.mk distinct items from_ (some cond) groupBy having orderBy limit offset) = [] := by
-  intro hNoAgg hNoWA hAllFalse
+  intro hNoAgg hNoWA hOB hAllFalse
   rw [evalSelectWithContext_eq_evalSelectCore]
-  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA hAllFalse
+  exact evalSelectCore_filter_all_false _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ hNoAgg hNoWA hOB hAllFalse
 
 /-- Infrastructure: evalSelectWithContext decomposes limit/offset into drop/take on the base result.
     Proved via evalSelectCore bridge. -/

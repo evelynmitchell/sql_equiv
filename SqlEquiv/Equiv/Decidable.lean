@@ -1151,6 +1151,23 @@ private theorem evalSelectCore_ground_outerRow_eq
   -- Helper: HAVING clause expression is ground
   have h_hv_ground : ∀ e, hv = some e → e.isGround = true := by
     intro e hhv; have h := h_having_ok; rw [hhv] at h; exact h
+  -- The HAVING the pipeline evaluates is ground and smaller than the query: the query's own, or
+  -- `HAVING TRUE` when the only aggregate is in ORDER BY (#445), smaller than an ORDER BY key
+  have h_eff : ∀ e, effectiveHaving gb items hv ob = some e →
+      e.isGround = true ∧ sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
+    intro e he
+    rcases effectiveHaving_cases gb items hv ob with heq | ⟨hob, heq⟩
+    · rw [heq] at he
+      refine ⟨h_hv_ground e he, ?_⟩
+      subst he; simp_wf; omega
+    · rw [heq] at he; cases he
+      refine ⟨by simp [Expr.isGround], ?_⟩
+      obtain ⟨o, ho⟩ := orderByOnlyAggregates_mem hob
+      have hlt := List.sizeOf_lt_of_mem ho
+      obtain ⟨oe, od, on⟩ := o
+      have hpos : 0 < sizeOf oe := Nat.pos_of_ne_zero (by cases oe <;> simp)
+      simp only [OrderByItem.mk.sizeOf_spec] at hlt
+      simp_wf; omega
   -- Apply the congruence lemma
   apply evalSelectCore_outerRow_congr
   -- h_wc: WHERE clause db row-independence
@@ -1169,10 +1186,7 @@ private theorem evalSelectCore_ground_outerRow_eq
     exact h_ee e hge h_sz row1 row2
   -- h_hv: HAVING clause db row-independence
   · intro e hhv row1 row2
-    have hge := h_hv_ground e hhv
-    have hhv' : hv = some e := hhv
-    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
-      subst hhv'; simp_wf; omega
+    obtain ⟨hge, h_sz⟩ := h_eff e hhv
     exact h_ee e hge h_sz row1 row2
   -- h_items_no_star
   · intro item hitem
@@ -1204,10 +1218,7 @@ private theorem evalSelectCore_ground_outerRow_eq
     rw [this]
   -- h_ea: exprWithAggParam for HAVING
   · intro e hhv rows1 rows2 s1 s2 hlen
-    have hge := h_hv_ground e hhv
-    have hhv' : hv = some e := hhv
-    have h_sz : sizeOf e < sizeOf (SelectStmt.mk d items from_ wc gb hv ob lim off) := by
-      subst hhv'; simp_wf; omega
+    obtain ⟨hge, h_sz⟩ := h_eff e hhv
     exact evalExprWithAggParam_ground_eq ee db rows1 rows2 s1 s2 e hlen hge
       (fun e' hge' hsize r1' r2' => h_ee e' hge' (by omega) r1' r2')
       (fun v' n' q hq hs r1' r2' => h_sub v' n' q hq (by omega) r1' r2')
