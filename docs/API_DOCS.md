@@ -58,8 +58,16 @@ cd docbuild && MATHLIB_NO_CACHE_ON_UPDATE=1 lake update doc-gen4
 (Settings > Pages > Build and deployment > Source), once.
 
 - The build job installs elan, restores its own Actions cache (the Lake packages with doc-gen4,
-  and the generated pages), fetches the prebuilt Mathlib (`lake exe cache get`), and builds
-  `SqlEquivDocs:docs`.
-- The deploy job uploads `docbuild/.lake/build/doc` as the Pages artifact and deploys it. Only
-  it holds the `pages: write` and `id-token: write` permissions.
+  and the generated pages), fetches the prebuilt Mathlib (`lake exe cache get`), compiles the
+  libraries by building the generated root (`lake build SqlEquivDocs`; `SqlBridge` has no root
+  module, so it cannot be built by name), then builds `SqlEquivDocs:docs`, and uploads
+  `docbuild/.lake/build/doc` as the Pages artifact. A cold run takes about 20 minutes, most of
+  it documenting the Lean core.
+- The runner needs two settings, which the job makes: `vm.overcommit_memory=1`, because
+  doc-gen4 spawns `git` from the Lake process for each package's source links, and under the
+  default overcommit heuristic that fork of a large process fails with "not enough memory"
+  even when memory is free; and 12 GB of swap, as headroom for the parallel doc-gen4 processes.
+- The deploy job deploys the artifact. Only it holds the `pages: write` and `id-token: write`
+  permissions. Until Pages is enabled with the GitHub Actions source it fails with
+  "Failed to create deployment (status: 404)".
 - Deployments do not overlap (`concurrency: pages`); a newer push waits for the one in progress.

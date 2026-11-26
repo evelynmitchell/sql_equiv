@@ -53,17 +53,42 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-docs-
 
+      # doc-gen4 finds each package's source links by spawning git from the Lake process, which
+      # is large by then. Under the kernel's default overcommit heuristic that fork failed with
+      # "resource exhausted (error code: 12, not enough memory)" with 14 GB of memory and 11 GB
+      # of swap free; mode 1 lets the fork through (the child execs git at once). The swap, on
+      # the runner's large scratch disk (/mnt), is headroom for the parallel doc-gen4 processes,
+      # each of which loads the Mathlib environment.
+      - name: Allow the fork, add swap
+        run: |
+          sudo sysctl -w vm.overcommit_memory=1
+          sudo swapoff -a || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Get Mathlib cache
         # prebuilt Mathlib from cache.mathlib.org, as in CI
         run: lake exe cache get
 
-      - name: Build the docs
-        # mkroot.sh writes the root module that imports SqlEquiv, SqlCore and every SqlBridge
-        # module; doc-gen4 documents everything it imports
+      # Compile the libraries first, on their own. In one `lake build …:docs` the heavy
+      # SqlBridge proof files compile alongside doc-gen4's core-docs process, and at that peak
+      # spawning doc-gen4's git helpers failed with "not enough memory" (twice, swap or not).
+      # The libraries are compiled through the docs root: `SqlBridge` has no root module (it is
+      # declared by globs), so `lake build SqlBridge` cannot be built as a target. mkroot.sh
+      # writes the root that imports SqlEquiv, SqlCore and every SqlBridge module.
+      - name: Build the libraries
         working-directory: docbuild
         run: |
           ./mkroot.sh
-          lake build SqlEquivDocs:docs
+          lake build SqlEquivDocs
+
+      - name: Build the docs
+        # doc-gen4 documents everything the root imports
+        working-directory: docbuild
+        run: lake build SqlEquivDocs:docs
 
       # doc-gen4 writes relative links, so no base path is configured (no configure-pages step,
       # which would also need a `pages` permission in this read-only job)
