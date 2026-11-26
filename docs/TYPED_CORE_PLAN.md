@@ -320,6 +320,9 @@ win. Use `lake exe cache get` for prebuilt Mathlib, and never run `lake clean`.
     - [x] the evaluator and its tools labelled as the reference oracle (module docs); README
       overview, trust and CSLib sections; `/audit` config; `TESTING_STRATEGY.md`
   - [ ] 9.9 Upstream conversation with cslib-frontier (#467)
+    - [x] inventory and proposed order: `docs/UPSTREAM_INVENTORY.md` (26 Nov 2026, against
+      upstream `296c23d`)
+    - [ ] conversation opened (the user)
 
 ## Phase 9 plan (#298, option B)
 
