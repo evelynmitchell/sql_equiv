@@ -53,6 +53,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-docs-
 
+      # doc-gen4 runs one process per module in parallel, each loading the Mathlib environment;
+      # on the 16 GB runner the first run ran out of memory ("resource exhausted (error code: 12,
+      # not enough memory)" starting its git helpers). Lake has no jobs limit, so add swap, on
+      # the runner's large scratch disk (/mnt), not the root disk the Mathlib cache fills.
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
       - name: Get Mathlib cache
         # prebuilt Mathlib from cache.mathlib.org, as in CI
         run: lake exe cache get
