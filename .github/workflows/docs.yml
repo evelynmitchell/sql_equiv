@@ -73,16 +73,19 @@ jobs:
       # Compile the libraries first, on their own. In one `lake build …:docs` the heavy
       # SqlBridge proof files compile alongside doc-gen4's core-docs process, and at that peak
       # spawning doc-gen4's git helpers failed with "not enough memory" (twice, swap or not).
+      # The libraries are compiled through the docs root: `SqlBridge` has no root module (it is
+      # declared by globs), so `lake build SqlBridge` cannot be built as a target. mkroot.sh
+      # writes the root that imports SqlEquiv, SqlCore and every SqlBridge module.
       - name: Build the libraries
-        run: lake build SqlEquiv SqlCore SqlBridge
-
-      - name: Build the docs
-        # mkroot.sh writes the root module that imports SqlEquiv, SqlCore and every SqlBridge
-        # module; doc-gen4 documents everything it imports
         working-directory: docbuild
         run: |
           ./mkroot.sh
-          lake build SqlEquivDocs:docs
+          lake build SqlEquivDocs
+
+      - name: Build the docs
+        # doc-gen4 documents everything the root imports
+        working-directory: docbuild
+        run: lake build SqlEquivDocs:docs
 
       # doc-gen4 writes relative links, so no base path is configured (no configure-pages step,
       # which would also need a `pages` permission in this read-only job)
