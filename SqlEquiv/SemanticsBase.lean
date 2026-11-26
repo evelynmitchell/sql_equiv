@@ -75,6 +75,13 @@ theorem hasQualifier_mk (q c : String) : hasQualifier q s!"{q}.{c}" = true := by
 def requalifyKey (alias k : String) : String :=
   if hasQualifier alias k then k else s!"{alias}.{(k.splitOn ".").getLastD k}"
 
+/-- A query result stored as a named table (a CTE, #482): each key reduced to its column part
+    (after the last `.`), as base tables store their rows, so that `FROM c [AS x]` qualifies it
+    by `c` (or `x`) once. Without it `WITH c AS (SELECT * FROM users)` exposed `c.users.id`,
+    and `c.id` resolved to nothing. -/
+def unqualifyRow (row : Row) : Row :=
+  row.map fun (k, v) => ((k.splitOn ".").getLastD k, v)
+
 /-- Re-qualify every key of a derived-table row by the table's alias. -/
 def requalifyRow (alias : String) (row : Row) : Row :=
   row.map fun (k, v) => (requalifyKey alias k, v)

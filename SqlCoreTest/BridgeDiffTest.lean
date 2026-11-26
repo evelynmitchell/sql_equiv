@@ -410,8 +410,12 @@ def corpus : List (String × Expect) := [
   ("SELECT name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = users.id) AS n, RANK() OVER (ORDER BY age) AS r FROM users", .agree),
   -- non-recursive WITH (phase 9.2, #460), inlined as derived tables
   ("WITH c AS (SELECT name, age FROM users WHERE age > 25) SELECT name FROM c", .agree),
-  ("WITH c AS (SELECT * FROM users) SELECT c.name, o.amount FROM c JOIN orders o ON c.id = o.user_id",
-    .sqlEquivBug "#482: a CTE joined on a qualified key gives no rows"),
+  -- #482 (fixed): a CTE's rows are stored with bare column keys, so `c.id` resolves (it was
+  -- `c.users.id`: the join gave no rows and `SELECT c.name FROM c` gave NULLs)
+  ("WITH c AS (SELECT * FROM users) SELECT c.name, o.amount FROM c JOIN orders o ON c.id = o.user_id", .agree),
+  ("WITH c AS (SELECT * FROM users) SELECT c.name FROM c", .agree),
+  ("WITH c AS (SELECT * FROM users) SELECT x.name FROM c AS x WHERE x.age > 25", .agree),
+  ("WITH c AS (SELECT users.name, users.age FROM users) SELECT c.name FROM c ORDER BY c.age", .agree),
   ("WITH a AS (SELECT id, age FROM users), b AS (SELECT id FROM a WHERE age > 25) SELECT * FROM b", .agree),
   ("WITH c AS (SELECT department, COUNT(*) AS n FROM users GROUP BY department) SELECT department FROM c WHERE n > 1", .agree),
   ("WITH c AS (SELECT id FROM users WHERE age > 28) SELECT name FROM users WHERE id IN (SELECT id FROM c)", .agree),

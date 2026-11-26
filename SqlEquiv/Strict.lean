@@ -354,10 +354,11 @@ def checkQuery (m : ErrorMode) (db : Database) (q : Query) : Option String :=
   | .withCTE [] query => checkQuery m db query
   | .withCTE (cte :: rest) query =>
     let withTable (w : Table) : Database := fun n => if n == cte.name then w else db n
-    let step := fun workingTable => evalQuery (withTable workingTable) cte.query
+    let step := fun workingTable =>
+      (evalQuery (withTable workingTable) cte.query).map unqualifyRow
     let cteResult :=
       if cte.isRecursive then fixedPointIterate step [] maxCTEIterations
-      else evalQuery db cte.query
+      else (evalQuery db cte.query).map unqualifyRow
     let newDb : Database := fun name => if name == cte.name then cteResult else db name
     (if cte.isRecursive then
       (fixedPointInputs step [] maxCTEIterations).findSome? fun w =>

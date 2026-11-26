@@ -474,7 +474,7 @@ def evalRecursiveCTEParam (db : Database) (cteName : String) (cteQuery : Query)
     else
       let dbWithCTE : Database := fun name =>
         if name == cteName then workingTable else db name
-      let result := queryEval dbWithCTE cteQuery
+      let result := (queryEval dbWithCTE cteQuery).map unqualifyRow
       if result == workingTable then workingTable
       else iterate result (iteration + 1)
   termination_by maxCTEIterations - iteration
@@ -503,10 +503,11 @@ def evalQuery (db : Database) (q : Query) : Table :=
       if cte.isRecursive then
         fixedPointIterate
           (fun workingTable =>
-            evalQuery (fun n => if n == cte.name then workingTable else db n) cte.query)
+            (evalQuery (fun n => if n == cte.name then workingTable else db n) cte.query).map
+              unqualifyRow)
           [] maxCTEIterations
       else
-        evalQuery db cte.query
+        (evalQuery db cte.query).map unqualifyRow
     let newDb : Database := fun name =>
       if name == cte.name then cteResult else db name
     evalQuery newDb (.withCTE rest query)
